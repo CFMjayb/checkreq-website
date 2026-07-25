@@ -35,10 +35,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import io
 import os
-import re
 import secrets as pysecrets
+import threading
 from datetime import date, datetime
 
 from fastapi import FastAPI, Request, Form, UploadFile
@@ -46,7 +45,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Resp
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
-from xhtml2pdf import pisa
 
 import db
 import approval_engine
@@ -751,21 +749,6 @@ def _amount_to_words(amount: float) -> str:
             remaining %= size
     dollars_words = " ".join(parts).strip() or "Zero"
     return f"{dollars_words} and {cents:02d}/100 Dollars"
-
-
-def _resolve_css_vars(css_text: str, tokens_css: str) -> str:
-    """xhtml2pdf's CSS engine does not resolve CSS custom properties --
-    verified empirically (var(--x) silently falls back to black/default
-    instead of the real value). Substitute them with literal values before
-    handing CSS to xhtml2pdf; the live browser preview keeps using the real
-    var()-based stylesheet unmodified via a normal <link> tag -- this
-    resolution only ever applies on the PDF-rendering path."""
-    tokens = dict(re.findall(r"--([\w-]+)\s*:\s*([^;]+);", tokens_css))
-
-    def repl(m):
-        return tokens.get(m.group(1), m.group(0))
-
-    return re.sub(r"var\(--([\w-]+)\)", repl, css_text)
 
 
 def _voucher_context(payment_request_id: int) -> dict | None:
@@ -1797,9 +1780,70 @@ async def vendor_w9_upload_submit(token: str, request: Request, file: UploadFile
     })
 
 
+def _html_to_pdf_bytes(html: str) -> bytes:
+    """Renders arbitrary HTML/CSS to PDF bytes using a real headless Chromium
+    instance via Playwright. Replaces xhtml2pdf (2026-07-25) after Jay
+    reported the generated Check Request PDF was "poorly rendered,
+    impossible to read... not even like the screen." Confirmed empirically,
+    not guessed: rendering the exact same check_voucher.html/.css through
+    xhtml2pdf produced a page where nearly every field sat in its own
+    stray bordered box with huge dead vertical whitespace between label and
+    value (a side-by-side pdfplumber word-position dump showed ~35-40pt gaps
+    between elements a real browser renders 2-3pt apart), the Amount box
+    was split in two by an unwanted rule, letter-spacing in 'em' units threw
+    silent "Not a float" parser warnings, and CSS custom properties
+    (var(--token)) never resolved at all without a manual pre-resolution
+    workaround (removed along with this rewrite). None of that is fixable
+    CSS-tuning -- xhtml2pdf's layout engine simply cannot reproduce this
+    modern, already-correct design. Using a real browser engine instead
+    makes the PDF pixel-faithful to the already-verified-correct live
+    preview pane, since it IS that same rendering engine -- var() resolves
+    natively, no CSS translation layer of any kind is needed.
+
+    Launches a fresh headless Chromium instance in a dedicated OS thread on
+    every call. This keeps the function safely callable both from a plain
+    sync route (GET /requests/{request_number}/pdf) and from deep inside an
+    async route (new_request_submit -> _archive_attachments): Playwright's
+    sync API refuses to run on a thread that already has an asyncio event
+    loop attached, but a brand-new thread never has one, regardless of what
+    the calling thread is doing. Not optimized for high volume (a fresh
+    browser launch per call) -- an accepted tradeoff for a low-traffic
+    internal AP tool where PDF generation is roughly one-per-submission /
+    one-per-view, never a hot path."""
+    result: dict = {}
+
+    def _run():
+        from playwright.sync_api import sync_playwright
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch()
+                try:
+                    page = browser.new_page()
+                    # networkidle so the Google Fonts <link> below finishes
+                    # loading before the page is rasterized to PDF.
+                    page.set_content(html, wait_until="networkidle", timeout=20000)
+                    result["pdf"] = page.pdf(
+                        format="Letter",
+                        print_background=True,
+                        margin={"top": "0.4in", "bottom": "0.4in", "left": "0.4in", "right": "0.4in"},
+                    )
+                finally:
+                    browser.close()
+        except Exception as exc:  # re-raised on the caller's thread below
+            result["error"] = exc
+
+    t = threading.Thread(target=_run)
+    t.start()
+    t.join()
+    if "error" in result:
+        raise result["error"]
+    return result["pdf"]
+
+
 def render_check_voucher_pdf(payment_request_id: int) -> bytes:
     """Renders check_voucher.html with real data for one payment request and
-    converts it to PDF bytes via xhtml2pdf. Shared by the on-demand
+    converts it to PDF bytes via a real headless-Chromium render (see
+    _html_to_pdf_bytes). Shared by the on-demand
     GET /requests/{request_number}/pdf route (always regenerates fresh, never
     stored) AND new_request_submit's attachment pipeline (which archives one
     point-in-time copy to GCS+SharePoint at submission time) -- one
@@ -1812,17 +1856,23 @@ def render_check_voucher_pdf(payment_request_id: int) -> bytes:
         tokens_css = f.read()
     with open(os.path.join(static_css_dir, "check_voucher.css"), encoding="utf-8") as f:
         voucher_css = f.read()
-    resolved_css = _resolve_css_vars(voucher_css, tokens_css)
 
-    html = f"""<html><head><meta charset="utf-8">
-<style>{resolved_css}
-body {{ margin: 0; padding: 20px; font-family: Helvetica, sans-serif; }}</style>
+    # Real Chromium resolves var(--token) natively -- no CSS-variable
+    # pre-resolution needed (that was purely an xhtml2pdf workaround). The
+    # Google Fonts <link> mirrors base.html's -- this fragment normally only
+    # inherits fonts from the app shell; standalone here, it needs its own.
+    html = f"""<!doctype html><html><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+{tokens_css}
+{voucher_css}
+html, body {{ margin: 0; padding: 0; background: #fff; }}
+body {{ padding: 20px 24px; }}
+</style>
 </head><body>{fragment}</body></html>"""
 
-    buf = io.BytesIO()
-    pisa.CreatePDF(html, dest=buf)
-    buf.seek(0)
-    return buf.read()
+    return _html_to_pdf_bytes(html)
 
 
 @app.get("/requests/{request_number}/pdf")

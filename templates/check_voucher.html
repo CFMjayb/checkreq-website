@@ -45,7 +45,12 @@ the final PDF are the same document:
       <tr><td>{{ line.account }}</td><td>{{ "%.2f"|format(line.amount) }}</td><td>{{ line.memo or "" }}</td></tr>
       {% endfor %}
     </tbody>
-    <tfoot><tr><td colspan="2">Total</td><td data-field="total">{{ voucher_total }}</td></tr></tfoot>
+    {#- 3 separate <td>s, not colspan="2" -- a colspan here pushes the total
+       dollar figure into the Memo column's x-position instead of the Amount
+       column's (confirmed both in the PDF and in a real browser -- this was
+       a genuine template bug affecting the on-screen preview too, not just
+       the PDF; found 2026-07-25 while rebuilding PDF generation) -#}
+    <tfoot><tr><td>Total</td><td data-field="total">{{ voucher_total }}</td><td></td></tr></tfoot>
   </table>
 
   <div class="voucher-row"><span class="label">Requested By</span> <span data-field="requested_by">{{ voucher_requested_by }}</span></div>

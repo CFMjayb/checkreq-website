@@ -7,5 +7,5 @@ psycopg[binary]>=3
 google-cloud-secret-manager
 google-cloud-storage
 msal
-xhtml2pdf
+playwright
 anthropic

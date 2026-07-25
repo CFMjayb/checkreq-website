@@ -6,7 +6,7 @@
   display: flex;
   gap: var(--space-5);
   height: calc(100vh - 76px); /* approx site-header height */
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-3) var(--space-5);
   box-sizing: border-box;
 }
 .split-pane { overflow-y: auto; } /* safety net -- shouldn't trigger on a normal screen */
@@ -16,6 +16,14 @@
   flex-direction: column;
 }
 .split-form h1 { font-size: 1.3rem; margin-bottom: var(--space-3); }
+/* This page has grown past the "fits in one 1366x768 viewport, no
+   body-level scroll" design intent stated above (upload row, vendor
+   validation/confirmed messages, new-vendor panel all added after that
+   comment was written) -- found live 2026-07-25 (Jay: a laptop-size screen
+   now requires scrolling). Trims base.css's shared .field margin-bottom
+   (16px) down specifically on this page rather than touching the
+   sitewide token. */
+.split-form .field { margin-bottom: var(--space-3); }
 .split-preview {
   flex: 1;
   display: flex;
@@ -62,7 +70,7 @@
   gap: var(--space-3);
 }
 
-.field-disclosure { margin-bottom: var(--space-3); }
+.field-disclosure { margin-bottom: var(--space-2); }
 .field-disclosure summary {
   cursor: pointer;
   font-size: 0.85rem;
@@ -72,7 +80,7 @@
 }
 .field-disclosure textarea { width: 100%; margin-top: var(--space-2); }
 
-.gl-section { margin-bottom: var(--space-3); }
+.gl-section { margin-bottom: var(--space-2); }
 .gl-section > label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: var(--space-2); }
 .gl-lines-scroll {
   max-height: 150px;
