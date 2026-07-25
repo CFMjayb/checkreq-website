@@ -629,7 +629,8 @@ def api_gl_accounts(org_id: int, program_area_id: int, request: Request, q: str 
 
     base_sql = r"""
         SELECT ga.id, ga.account_number,
-               COALESCE(NULLIF(pga.display_text, ''), ga.account_name) AS account_name
+               COALESCE(NULLIF(pga.display_text, ''), ga.account_name) AS account_name,
+               pga.sort_order
         FROM checkreq.program_area_gl_accounts pga
         JOIN checkreq.program_areas pa ON pa.id = pga.program_area_id
         JOIN checkreq.gl_accounts ga ON ga.id = pga.gl_account_id

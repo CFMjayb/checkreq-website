@@ -35,7 +35,24 @@ async function fillGlAccountOptions(selectEl) {
   const r = await fetch(`/api/gl-accounts/${CURRENT_ORG_ID}?program_area_id=${programAreaId}`);
   const accts = await r.json();
   selectEl.innerHTML = '<option value="">Account...</option>' +
-    accts.map(a => `<option value="${a.id}">${a.account_number} - ${a.account_name}</option>`).join('');
+    accts.map(a => `<option value="${a.id}">${glAccountOptionLabel(a)}</option>`).join('');
+}
+
+function glAccountOptionLabel(a) {
+  // Indentation depth is the number of digits AFTER the first "." in
+  // sort_order -- NOT the number of dots. Confirmed against real EDOM data
+  // (Jay, 2026-07-25): staff use a flat decimal scheme where "1" is a
+  // top-level header, "1.1"/"1.2" are one level under it, and "1.11"-"1.14"
+  // are a further level under "1.1" specifically -- all still with exactly
+  // one dot, distinguished only by the fractional part having 2 digits
+  // instead of 1. A missing/malformed sort_order (same regex the server
+  // uses to decide sort position) just renders unindented.
+  const m = /^[0-9]+(\.([0-9]+))?$/.exec(a.sort_order || '');
+  const depth = m && m[2] ? m[2].length : 0;
+  const indent = '  '.repeat(depth);
+  // "Display Name (Account Number)" per Jay's preference -- was
+  // "Account Number - Display Name".
+  return `${indent}${a.account_name} (${a.account_number})`;
 }
 
 function refreshAllGlAccountOptions() {
@@ -74,10 +91,16 @@ function computeNewVendorDisplayName() {
   return (first + ' ' + last).trim() || null;
 }
 
+function setVendorConfirmedMessage(show) {
+  document.getElementById('vendorConfirmedMsg').style.display = show ? '' : 'none';
+  document.getElementById('addNewVendorLink').style.display = show ? 'none' : '';
+}
+
 function showNewVendorPanel(show) {
   document.getElementById('usingNewVendor').value = show ? '1' : '0';
   document.getElementById('newVendorPanel').style.display = show ? '' : 'none';
   setVendorValidationMessage(''); // whichever mode is now active, the prior error no longer applies
+  setVendorConfirmedMessage(false); // no existing vendor is selected once the new-vendor panel is active
   if (vendorTomSelect) {
     if (show) vendorTomSelect.clear();
     // Tom Select renders its own wrapper next to the original <select> --
@@ -104,10 +127,12 @@ function initVendorSelect() {
     onItemAdd: function (value, item) {
       vendorDisplayText = item.textContent.trim();
       setVendorValidationMessage('');
+      setVendorConfirmedMessage(true);
       refreshPreview();
     },
     onItemRemove: function () {
       vendorDisplayText = '—';
+      setVendorConfirmedMessage(false);
       refreshPreview();
     },
   });

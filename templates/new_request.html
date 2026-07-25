@@ -45,6 +45,7 @@
       <label>Vendor</label>
       <select name="vendor_id" id="vendorSelect" placeholder="Search vendors..."></select>
       <a href="#" id="addNewVendorLink" class="add-vendor-link">Can't find this vendor? Add a new one.</a>
+      <div id="vendorConfirmedMsg" class="upload-status success" style="display:none;">&#10003; Vendor confirmed and active</div>
       <div id="vendorValidationMsg" class="upload-status error" style="display:none;"></div>
     </div>
 
@@ -93,7 +94,7 @@
 
     <div class="field">
       <label>Description / Reason</label>
-      <input type="text" name="description" id="descriptionInput" value="{{ edit_data.description if edit_data else '' }}" required>
+      <input type="text" name="description" id="descriptionInput" value="{{ edit_data.description if edit_data else '' }}" required autocomplete="off">
     </div>
 
     <details class="field-disclosure"{% if edit_data and edit_data.special_instructions %} open{% endif %}>
