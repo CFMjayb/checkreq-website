@@ -1,0 +1,62 @@
+.entity-picker {
+  background: linear-gradient(135deg, var(--color-franciscan-green), var(--color-franciscan-green-dark));
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  margin-bottom: var(--space-6);
+  color: #f4f1e8;
+}
+.entity-picker h2 { color: #f4f1e8; margin-bottom: var(--space-2); }
+.entity-picker .sub { color: #cfc8b3; margin-bottom: var(--space-5); }
+.entity-cards { display: flex; gap: var(--space-4); flex-wrap: wrap; }
+.entity-card {
+  flex: 1 1 200px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  text-align: center;
+  text-decoration: none;
+  color: #f4f1e8;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.entity-card:hover { background: rgba(255,255,255,0.16); transform: translateY(-2px); }
+.entity-card .code { font-family: var(--font-display); font-size: 1.4rem; font-weight: 700; color: var(--color-gold-light); }
+.entity-card .name { font-size: 0.85rem; color: #cfc8b3; margin-top: var(--space-1); }
+
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-5);
+}
+.module-tile {
+  background: var(--color-card-bg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-5);
+  text-decoration: none;
+  color: var(--color-ink);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  position: relative;
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+a.module-tile:hover { box-shadow: var(--shadow-card-hover); transform: translateY(-3px); }
+.module-tile .icon { width: 40px; height: 40px; color: var(--color-gold); }
+.module-tile h3 { margin: 0; font-size: 1.05rem; }
+.module-tile .desc { color: var(--color-text-muted); font-size: 0.88rem; margin: 0; }
+.module-tile.disabled { opacity: 0.55; cursor: default; }
+.module-tile.disabled .icon { color: var(--color-text-muted); }
+.coming-soon-badge {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #ece7da;
+  color: var(--color-text-muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+}

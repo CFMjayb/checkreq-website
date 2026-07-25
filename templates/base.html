@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Check Request Portal{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version('css/tokens.css') }}">
+  <link rel="stylesheet" href="/static/css/base.css?v={{ asset_version('css/base.css') }}">
+  {% block extra_css %}{% endblock %}
+</head>
+<body>
+  {% if impersonating %}
+  <div class="impersonation-bar">
+    Viewing as <strong>{{ user.display_name or user.email }}</strong> — impersonated by {{ real_user.display_name or real_user.email }}
+    <form method="post" action="/admin/impersonate/stop"><button type="submit">Exit Impersonation</button></form>
+  </div>
+  {% endif %}
+  {% if user %}
+  <header class="site-header">
+    <a href="/portal" class="brand">Cornerstone Check Request</a>
+    <nav>
+      <a href="/new-request">Check Request</a>
+      <a href="/my-requests">My Requests</a>
+      {% if real_user and real_user.is_cfo and not impersonating %}
+      <a href="/admin/impersonate">Impersonate a User</a>
+      {% endif %}
+      {% if current_org %}
+      <div class="entity-badge">
+        <span class="label">Entity</span>
+        <select id="entitySwitcher">
+          {% for o in all_orgs %}
+          <option value="{{ o.id }}" {% if current_org and o.id == current_org.id %}selected{% endif %}>{{ o.code|upper }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+      <a href="/logout">Log out ({{ user.display_name or user.email }})</a>
+    </nav>
+  </header>
+  {% endif %}
+  {% block content %}{% endblock %}
+  {% if user and current_org %}<script src="/static/js/entity_switcher.js?v={{ asset_version('js/entity_switcher.js') }}"></script>{% endif %}
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

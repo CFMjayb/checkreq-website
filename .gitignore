@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*_pre_*.md
+*_pre_*.py
+.env

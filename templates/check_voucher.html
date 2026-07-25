@@ -1,0 +1,56 @@
+{#
+check_voucher.html -- a fragment, NOT a full page (no {% extends %}).
+Used two ways with the exact same variable names, so the live JS preview and
+the final PDF are the same document:
+  1. Included inside new_request.html's right pane, rendered once server-side
+     with blank/placeholder values -- gives the live preview its initial DOM
+     structure, which new_request.js then updates in place as the user types.
+  2. Rendered standalone (real submitted data) by GET /requests/{request_number}/pdf,
+     wrapped in a minimal <html><head><style>...inlined check_voucher.css...</style>
+     and fed to xhtml2pdf.
+#}
+<div class="voucher" id="voucherPreview">
+  <div class="voucher-header">
+    <div class="voucher-org">{{ voucher_org_name }}</div>
+    <div class="voucher-title">Check Request</div>
+  </div>
+
+  <div class="voucher-meta">
+    <div><span class="label">Request #</span><span data-field="request_number">{{ voucher_request_number }}</span></div>
+    <div><span class="label">Date</span><span data-field="date">{{ voucher_date }}</span></div>
+  </div>
+
+  <div class="voucher-payee">
+    <span class="label">Pay to the Order of</span>
+    <div class="voucher-payee-name" data-field="vendor">{{ voucher_vendor }}</div>
+  </div>
+
+  <div class="voucher-amount-box">
+    <span class="label">Amount</span>
+    <div class="voucher-amount" data-field="amount">{{ voucher_amount }}</div>
+  </div>
+  <div class="voucher-amount-words" data-field="amount_words">{{ voucher_amount_words }}</div>
+
+  {#- explicit spaces between label/value below: xhtml2pdf does not reliably
+     honor margin between adjacent inline elements, verified empirically
+     (labels and values rendered jammed together with zero gap in the PDF
+     until a literal space was added here) -#}
+  <div class="voucher-row"><span class="label">Program Area</span> <span data-field="program_area">{{ voucher_program_area }}</span></div>
+  <div class="voucher-row"><span class="label">Description</span> <span data-field="description">{{ voucher_description }}</span></div>
+
+  <table class="voucher-gl-table">
+    <thead><tr><th>Account</th><th>Amount</th><th>Memo</th></tr></thead>
+    <tbody data-field="gl_lines">
+      {% for line in voucher_gl_lines %}
+      <tr><td>{{ line.account }}</td><td>{{ "%.2f"|format(line.amount) }}</td><td>{{ line.memo or "" }}</td></tr>
+      {% endfor %}
+    </tbody>
+    <tfoot><tr><td colspan="2">Total</td><td data-field="total">{{ voucher_total }}</td></tr></tfoot>
+  </table>
+
+  <div class="voucher-row"><span class="label">Requested By</span> <span data-field="requested_by">{{ voucher_requested_by }}</span></div>
+  <div class="voucher-approval">
+    <span class="label">Approval Chain Preview</span>
+    <div data-field="chain_summary">{{ voucher_chain_summary }}</div>
+  </div>
+</div>

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}New Check Request{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/vendor/tomselect/tom-select.default.min.css">
+<link rel="stylesheet" href="/static/css/check_voucher.css?v={{ asset_version('css/check_voucher.css') }}">
+<link rel="stylesheet" href="/static/css/new_request.css?v={{ asset_version('css/new_request.css') }}">
+{% endblock %}
+{% block content %}
+<div class="split-shell">
+
+<div class="split-pane split-form">
+  <h1>New Check Request</h1>
+  <form method="post" action="/new-request" id="reqForm" enctype="multipart/form-data">
+    <input type="hidden" name="org_id" value="{{ current_org.id }}">
+    <input type="hidden" name="request_type" value="check_request">
+
+    <div class="field field-readonly-line">
+      Working in: {{ current_org.name }} <a href="/portal">Change entity</a>
+    </div>
+
+    <div class="upload-row">
+      <label for="attachmentsInput">📎 Upload a document to prefill this form</label>
+      <input type="file" name="attachments" id="attachmentsInput" multiple
+             accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
+      <div id="uploadStatus" class="upload-status"></div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label>Program Area</label>
+        <select name="program_area_id" id="programAreaSelect" required>
+          <option value="">Loading...</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Pay Date</label>
+        <input type="date" name="requested_pay_date" id="payDateInput" value="{{ today }}">
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Vendor</label>
+      <select name="vendor_id" id="vendorSelect" placeholder="Search vendors..."></select>
+    </div>
+
+    <div class="field">
+      <label>Description / Reason</label>
+      <input type="text" name="description" id="descriptionInput" required>
+    </div>
+
+    <details class="field-disclosure">
+      <summary>+ Add special instructions</summary>
+      <textarea name="special_instructions" id="specialInstructionsInput" rows="2"></textarea>
+    </details>
+
+    <div class="gl-section">
+      <label>GL Coding</label>
+      <div id="glLines" class="gl-lines-scroll">
+        <div class="gl-line">
+          <div class="field"><select class="glAccount" name="gl_account_id" required><option value="">Account...</option></select></div>
+          <div class="field"><input type="number" step="0.01" class="glAmount" name="gl_amount" placeholder="0.00" required></div>
+          <div class="field"><input type="text" class="glMemo" name="gl_memo" placeholder="Optional memo"></div>
+          <button type="button" class="remove-line" onclick="removeGlLine(this)">&times;</button>
+        </div>
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="addGlLine()">+ Add GL line</button>
+    </div>
+
+    <div class="submit-row">
+      <button type="submit" class="btn btn-primary btn-block">Submit Request</button>
+    </div>
+  </form>
+</div>
+
+<div class="split-pane split-preview">
+  {% include "check_voucher.html" %}
+</div>
+
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>const CURRENT_ORG_ID = {{ current_org.id }};</script>
+<script src="/static/vendor/tomselect/tom-select.complete.min.js"></script>
+<script src="/static/js/new_request.js?v={{ asset_version('js/new_request.js') }}"></script>
+{% endblock %}

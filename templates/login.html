@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Sign In — Check Request Portal{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/login.css?v={{ asset_version('css/login.css') }}">{% endblock %}
+{% block content %}
+<div class="login-hero">
+  <div class="login-card">
+    <div class="wordmark">Cornerstone Franciscan Ministries</div>
+    <h1>Check Request Portal</h1>
+    <p class="tagline">Sign in with your Cornerstone Microsoft account to continue.</p>
+    {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+    <a href="/auth/start" class="btn btn-primary btn-block">Sign in with Microsoft</a>
+  </div>
+</div>
+{% endblock %}

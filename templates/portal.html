@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Portal — Check Request{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/portal.css?v={{ asset_version('css/portal.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell">
+
+  {% if not current_org %}
+  <div class="entity-picker">
+    <h2>Select an Entity</h2>
+    <p class="sub">Choose which organization you want to work on. You can switch at any time from the header once one is picked.</p>
+    <div class="entity-cards">
+      {% for o in all_orgs %}
+      <a class="entity-card" href="/select-entity/{{ o.id }}?next=/portal">
+        <div class="code">{{ o.code|upper }}</div>
+        <div class="name">{{ o.name }}</div>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <h1>Welcome{% if current_org %}, working in {{ current_org.name }}{% endif %}</h1>
+  <div class="module-grid">
+    {% for m in modules %}
+      {% if m.enabled and current_org %}
+      <a class="module-tile" href="{{ m.url }}">
+        <h3>{{ m.title }}</h3>
+        <p class="desc">{{ m.desc }}</p>
+      </a>
+      {% else %}
+      <div class="module-tile disabled">
+        {% if not m.enabled %}<span class="coming-soon-badge">Coming Soon</span>{% endif %}
+        <h3>{{ m.title }}</h3>
+        <p class="desc">{% if not current_org %}Select an entity above first.{% else %}{{ m.desc }}{% endif %}</p>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}

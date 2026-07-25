@@ -1,0 +1,116 @@
+/* check_voucher.css -- shared by the live JS preview (real browser, loaded
+   via <link>) and the PDF route (xhtml2pdf, inlined into a <style> tag at
+   render time). Deliberately block/inline-block/table layout only -- no
+   flexbox or grid -- so xhtml2pdf's more limited CSS engine renders this
+   exactly like the browser does. Keep it that way when editing. */
+
+.voucher {
+  background: #fffdf8;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 20px 24px;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--color-ink);
+}
+
+.voucher-header {
+  text-align: center;
+  border-bottom: 2px solid var(--color-franciscan-green);
+  padding-bottom: 10px;
+  margin-bottom: 14px;
+}
+.voucher-org {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.15rem;
+  color: var(--color-franciscan-green);
+}
+.voucher-title {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.voucher .label {
+  display: block;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  margin-bottom: 1px;
+}
+
+.voucher-meta { margin-bottom: 12px; }
+.voucher-meta > div { display: inline-block; width: 48%; vertical-align: top; }
+
+.voucher-payee { margin-bottom: 10px; }
+.voucher-payee-name {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 4px;
+  min-height: 1.4em;
+}
+
+.voucher-amount-box {
+  border: 1px solid var(--color-ink);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  text-align: right;
+  margin-bottom: 4px;
+  background: #fff;
+}
+.voucher-amount {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.4rem;
+  color: var(--color-franciscan-green);
+}
+.voucher-amount-words {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 0.85rem;
+  border-bottom: 1px dotted var(--color-text-muted);
+  padding-bottom: 6px;
+  margin-bottom: 14px;
+  min-height: 1.3em;
+}
+
+.voucher-row { margin-bottom: 10px; }
+.voucher-row .label { display: inline; margin-right: 6px; }
+
+.voucher-gl-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0 14px;
+  font-size: 0.8rem;
+}
+.voucher-gl-table th {
+  text-align: left;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+  padding: 4px 6px;
+}
+.voucher-gl-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+.voucher-gl-table tfoot td {
+  font-weight: 700;
+  border-bottom: none;
+  border-top: 1px solid var(--color-ink);
+}
+
+.voucher-approval {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  background: #f4f0e4;
+  font-size: 0.8rem;
+}

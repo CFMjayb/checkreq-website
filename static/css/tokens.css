@@ -1,0 +1,39 @@
+:root {
+  --color-ink: #1a1f2e;
+  --color-parchment: #f7f3ea;
+  /* Franciscan green -- replaces the earlier navy primary per Jay's direct
+     feedback ("I don't like the dark blue... prefer a franciscan green").
+     Pairs with the gold accent and the warm wood/stone tones actually
+     present in the reference hero photo (sampled directly, not guessed --
+     it's dominated by browns/golds, not blue, so navy was fighting the
+     photo and green sits with it instead). */
+  --color-franciscan-green: #1f3d2e;
+  --color-franciscan-green-dark: #142822;
+  --color-gold: #c9a227;
+  --color-gold-light: #e8c766;
+  --color-card-bg: #ffffff;
+  --color-border: #ddd4c0;
+  --color-text-muted: #6b6455;
+  --color-danger: #9c0006;
+  --color-success: #1f6b3d;
+  --color-warning: #7a4a00;
+  --color-warning-bg: #f5c04a;
+
+  --font-display: 'Merriweather', Georgia, 'Times New Roman', serif;
+  --font-body: 'Inter', 'Open Sans', -apple-system, 'Segoe UI', Arial, sans-serif;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+
+  --shadow-card: 0 1px 3px rgba(26, 31, 46, 0.08), 0 4px 12px rgba(26, 31, 46, 0.06);
+  --shadow-card-hover: 0 2px 6px rgba(26, 31, 46, 0.10), 0 8px 24px rgba(26, 31, 46, 0.10);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-8: 48px;
+}

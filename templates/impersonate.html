@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Impersonate a User{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Impersonate a User</h1>
+<div class="banner banner-info">
+  Actions taken while impersonating are real — they hit live data and, once approvals go live, real QBO postings.
+  Clean up any test submissions afterward, same as any other test data in this system.
+</div>
+<div class="card">
+  <table class="simple-table">
+    <thead>
+      <tr><th>Name</th><th>Email</th><th>CFO</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.display_name or "—" }}</td>
+        <td>{{ u.email }}</td>
+        <td>{% if u.is_cfo %}<span class="badge badge-approved">CFO</span>{% endif %}</td>
+        <td>
+          <form method="post" action="/admin/impersonate/{{ u.id }}">
+            <button type="submit" class="btn btn-secondary">Become this user</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">No other active users found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+</div>
+{% endblock %}

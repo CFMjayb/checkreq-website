@@ -1,0 +1,108 @@
+/* Two-pane, single-viewport layout -- designed so a typical check request
+   (1-3 GL lines) never needs body-level scroll on a 1366x768 monitor or
+   larger. The GL-lines region gets its own bounded scroll instead of letting
+   the page grow -- see .gl-lines-scroll. */
+.split-shell {
+  display: flex;
+  gap: var(--space-5);
+  height: calc(100vh - 76px); /* approx site-header height */
+  padding: var(--space-4) var(--space-5);
+  box-sizing: border-box;
+}
+.split-pane { overflow-y: auto; } /* safety net -- shouldn't trigger on a normal screen */
+.split-form {
+  flex: 0 0 44%;
+  display: flex;
+  flex-direction: column;
+}
+.split-form h1 { font-size: 1.3rem; margin-bottom: var(--space-3); }
+.split-preview {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  padding-top: 28px; /* roughly aligns the voucher with the form fields, not the h1 */
+}
+.split-preview .voucher { width: 100%; }
+
+.upload-row {
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: #f4f0e4;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.upload-row label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+.upload-row input[type=file] { font-size: 0.8rem; width: 100%; }
+.upload-status {
+  font-size: 0.8rem;
+  margin-top: 4px;
+  min-height: 1.1em; /* reserves its line so the row never grows/shrinks the layout */
+}
+.upload-status.success { color: var(--color-success); }
+.upload-status.error { color: var(--color-danger); }
+.upload-status .caveat { display: block; color: var(--color-warning); font-style: italic; }
+
+/* "AI-suggested, not yet human-reviewed" -- removed the moment the field is edited */
+.auto-filled { border-color: var(--color-warning) !important; background: #fdf6e8; }
+
+.field-readonly-line {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-3);
+}
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.field-disclosure { margin-bottom: var(--space-3); }
+.field-disclosure summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--color-franciscan-green);
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+.field-disclosure textarea { width: 100%; margin-top: var(--space-2); }
+
+.gl-section { margin-bottom: var(--space-3); }
+.gl-section > label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: var(--space-2); }
+.gl-lines-scroll {
+  max-height: 150px;
+  overflow-y: auto;
+  padding-right: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.gl-line {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1.5fr auto;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+.gl-line select, .gl-line input { font-size: 0.85rem; padding: 6px 8px; }
+.gl-line .remove-line {
+  background: none; border: none; color: var(--color-danger);
+  font-size: 1rem; cursor: pointer; padding: 0 var(--space-1); line-height: 1;
+}
+.btn-sm { padding: 4px 12px; font-size: 0.82rem; }
+
+.submit-row { margin-top: auto; padding-top: var(--space-3); }
+
+/* Tom Select theme tweaks to match the design system */
+.ts-control {
+  border-color: var(--color-border) !important;
+  border-radius: var(--radius-sm) !important;
+  box-shadow: none !important;
+  font-family: var(--font-body);
+}
+.ts-control.focus { border-color: var(--color-gold) !important; box-shadow: 0 0 0 3px rgba(201,162,39,0.18) !important; }
+.ts-dropdown { font-family: var(--font-body); border-color: var(--color-border) !important; }
+.ts-dropdown .active { background: #f4f0e4 !important; color: var(--color-ink) !important; }
