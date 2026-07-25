@@ -57,7 +57,21 @@ import document_extract
 ATTACHMENTS_BUCKET = "cfm-checkreq-attachments"
 
 app = FastAPI(title="26-129 Check Request")
-app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SESSION_SECRET", "dev-only-not-secure"))
+
+# INSTANCE_CONNECTION_NAME only ever exists in the Cloud Run environment (see
+# db.py's connection logic) -- reused here and by /dev/auth-as below as the
+# one signal that distinguishes "really deployed" from "someone's local dev
+# server". https_only=True is correct once this app is reachable at a real
+# https:// Cloud Run URL, but would silently break every local dev session
+# (cookie never gets set over plain http://localhost), so it can't be
+# unconditional.
+ON_CLOUD_RUN = bool(os.environ.get("INSTANCE_CONNECTION_NAME"))
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.environ.get("SESSION_SECRET", "dev-only-not-secure"),
+    https_only=ON_CLOUD_RUN,
+)
 
 
 @app.middleware("http")
@@ -373,11 +387,9 @@ def impersonate_start(user_id: int, request: Request):
 def dev_auth_as(email: str, request: Request):
     """Local-only self-verification bypass for the real MSAL login, which
     cannot be completed non-interactively. Double-gated: requires an
-    explicit opt-in env var AND refuses if INSTANCE_CONNECTION_NAME is set
-    (that variable only ever exists in the Cloud Run environment, per
-    db.py's own connection logic). Never add ENABLE_DEV_AUTH_BYPASS to the
-    Dockerfile or any deploy config."""
-    if os.environ.get("ENABLE_DEV_AUTH_BYPASS") != "1" or os.environ.get("INSTANCE_CONNECTION_NAME"):
+    explicit opt-in env var AND refuses whenever ON_CLOUD_RUN is true. Never
+    add ENABLE_DEV_AUTH_BYPASS to the Dockerfile or any deploy config."""
+    if os.environ.get("ENABLE_DEV_AUTH_BYPASS") != "1" or ON_CLOUD_RUN:
         return JSONResponse({"error": "not available"}, status_code=404)
 
     user = db.query_one("SELECT * FROM checkreq.app_users WHERE email = %s", (email,))
@@ -456,7 +468,13 @@ def _user_can_submit_for(user: dict, program_area_id: int) -> bool:
 
 
 @app.get("/api/vendors/{org_id}")
-def api_vendors(org_id: int, q: str = ""):
+def api_vendors(org_id: int, request: Request, q: str = ""):
+    # Was missing this check entirely (every sibling /api/* route has it) --
+    # found live 2026-07-25 while hardening for the first public Cloud Run
+    # deploy. Matches /api/program-areas' pattern: login required, no
+    # further org-membership restriction (same as that endpoint).
+    if not _current_user(request):
+        return JSONResponse({"error": "Not signed in"}, status_code=401)
     if q:
         return db.query(
             "SELECT id, display_name FROM checkreq.vendors "
@@ -471,7 +489,10 @@ def api_vendors(org_id: int, q: str = ""):
 
 
 @app.get("/api/gl-accounts/{org_id}")
-def api_gl_accounts(org_id: int, q: str = ""):
+def api_gl_accounts(org_id: int, request: Request, q: str = ""):
+    # Same missing-auth gap as /api/vendors above, fixed the same way.
+    if not _current_user(request):
+        return JSONResponse({"error": "Not signed in"}, status_code=401)
     if q:
         return db.query(
             "SELECT id, account_number, account_name FROM checkreq.gl_accounts "
@@ -527,7 +548,11 @@ async def api_extract_document(request: Request, file: UploadFile):
     try:
         result = await asyncio.to_thread(document_extract.extract_fields, content, mime_type)
     except Exception as exc:
-        return JSONResponse({"error": f"Couldn't read this document: {exc}"})
+        # Log the real detail server-side, but never echo a raw internal
+        # exception (could contain SDK/API error text) back to the client --
+        # tightened 2026-07-25 for the first public Cloud Run deploy.
+        print(f"[extract-document] {type(exc).__name__}: {exc}")
+        return JSONResponse({"error": "Couldn't read this document. Please fill in the form manually."})
 
     matched_vendor_id = None
     vendor_name = result.get("vendor_name")
