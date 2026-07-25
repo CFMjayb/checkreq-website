@@ -131,5 +131,14 @@
   font-family: var(--font-body);
 }
 .ts-control.focus { border-color: var(--color-gold) !important; box-shadow: 0 0 0 3px rgba(201,162,39,0.18) !important; }
+/* base.css's global `input[type=text] { width: 100% }` rule unintentionally
+   captures Tom Select's own internal search input (it renders a plain
+   <input type="text"> inside .ts-control) -- forcing it to 100% width
+   guarantees it wraps onto its own new line the moment an item chip is
+   already occupying part of the row. Found live 2026-07-25 (Jay: "why is a
+   line added?"). Reset it to sit inline like Tom Select's own default CSS
+   intends -- .ts-control already provides the visible border/padding, so
+   the input itself needs none of its own. */
+.ts-control input { width: auto !important; min-width: 40px; padding: 0 !important; border: none !important; box-shadow: none !important; }
 .ts-dropdown { font-family: var(--font-body); border-color: var(--color-border) !important; }
 .ts-dropdown .active { background: #f4f0e4 !important; color: var(--color-ink) !important; }
