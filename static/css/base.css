@@ -154,6 +154,11 @@ input:focus, select:focus, textarea:focus {
 }
 .field-readonly a { margin-left: var(--space-2); font-size: 0.85rem; }
 
+/* Generic muted small-text utility -- .entity-picker .sub (portal.css) predates
+   this and stays scoped there; this is the reusable version for any other page
+   (added 2026-07-25 for vendor_requests.html / vendor_w9_upload.html). */
+.sub { color: var(--color-text-muted); font-size: 0.85rem; }
+
 .banner { padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); margin-bottom: var(--space-4); font-size: 0.92rem; }
 .banner-error { background: #fbe9e9; color: var(--color-danger); border: 1px solid #f0c2c2; }
 .banner-success { background: #e9f5ee; color: var(--color-success); border: 1px solid #b9e0c8; }
