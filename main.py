@@ -489,22 +489,43 @@ def api_vendors(org_id: int, request: Request, q: str = ""):
 
 
 @app.get("/api/gl-accounts/{org_id}")
-def api_gl_accounts(org_id: int, request: Request, q: str = ""):
-    # Same missing-auth gap as /api/vendors above, fixed the same way.
+def api_gl_accounts(org_id: int, program_area_id: int, request: Request, q: str = ""):
+    """Filtered/ordered by the Program Area <-> GL Account mapping
+    (checkreq.program_area_gl_accounts) -- that mapping's display_text/
+    allow_post/sort_order columns were added and deployed on the
+    qbo-mcp-server side (for the staff Setup Tables workbook) 2026-07-25,
+    but this route was never actually updated to use it -- it was still
+    querying checkreq.gl_accounts directly, unfiltered, in raw
+    account-number order, always showing the account's own name never a
+    display_text override. Found live by Jay testing a real submission the
+    same day. allow_post=false rows (header/grouping records) are never
+    selectable here. Mirrors qbo-mcp-server's
+    get_program_area_gl_accounts() sort logic exactly -- same hierarchical
+    dot-notation ordering, same malformed-sort_order safety guard."""
     if not _current_user(request):
         return JSONResponse({"error": "Not signed in"}, status_code=401)
+
+    base_sql = r"""
+        SELECT ga.id, ga.account_number,
+               COALESCE(NULLIF(pga.display_text, ''), ga.account_name) AS account_name
+        FROM checkreq.program_area_gl_accounts pga
+        JOIN checkreq.program_areas pa ON pa.id = pga.program_area_id
+        JOIN checkreq.gl_accounts ga ON ga.id = pga.gl_account_id
+        WHERE pa.org_id = %s AND pga.program_area_id = %s AND pga.allow_post AND ga.is_active
+    """
+    order_sql = r"""
+        ORDER BY CASE WHEN pga.sort_order ~ '^[0-9]+(\.[0-9]+)*$' THEN 0 ELSE 1 END,
+                 CASE WHEN pga.sort_order ~ '^[0-9]+(\.[0-9]+)*$'
+                      THEN string_to_array(pga.sort_order, '.')::int[] ELSE NULL END,
+                 ga.account_number
+        LIMIT 50
+    """
     if q:
         return db.query(
-            "SELECT id, account_number, account_name FROM checkreq.gl_accounts "
-            "WHERE org_id = %s AND is_active AND "
-            "(account_number ILIKE %s OR account_name ILIKE %s) ORDER BY account_number LIMIT 25",
-            (org_id, f"%{q}%", f"%{q}%"),
+            base_sql + " AND (ga.account_number ILIKE %s OR ga.account_name ILIKE %s OR pga.display_text ILIKE %s) " + order_sql,
+            (org_id, program_area_id, f"%{q}%", f"%{q}%", f"%{q}%"),
         )
-    return db.query(
-        "SELECT id, account_number, account_name FROM checkreq.gl_accounts "
-        "WHERE org_id = %s AND is_active ORDER BY account_number LIMIT 25",
-        (org_id,),
-    )
+    return db.query(base_sql + order_sql, (org_id, program_area_id))
 
 
 @app.get("/api/approval-chain-preview")
@@ -877,6 +898,12 @@ async def new_request_submit(request: Request):
     request_type = form.get("request_type", "check_request")
     vendor_id = int(form["vendor_id"]) if form.get("vendor_id") else None
     requested_pay_date = form.get("requested_pay_date") or None
+    if not requested_pay_date:
+        # HTML5 `required` on the field is not a real guarantee (a client
+        # can post around it) -- this is the request date of the CR itself,
+        # not optional, and it also drives the archived filename's date
+        # component, so a missing value can't be allowed through.
+        return JSONResponse({"error": "Pay Date is required."}, status_code=400)
     description = form.get("description", "")
     special_instructions = form.get("special_instructions", "")
 

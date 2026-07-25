@@ -21,10 +21,32 @@ async function loadProgramAreas() {
 }
 
 async function fillGlAccountOptions(selectEl) {
-  const r = await fetch(`/api/gl-accounts/${CURRENT_ORG_ID}`);
+  // Filtered/ordered by whichever Program Area is currently selected, via
+  // checkreq.program_area_gl_accounts -- NOT the raw, unfiltered chart of
+  // accounts. Found live 2026-07-25 (Jay): this was never actually wired
+  // up despite the mapping table/display_text/allow_post/sort_order all
+  // already existing server-side. Until a program area is chosen, there's
+  // nothing to filter by, so just show the placeholder.
+  const programAreaId = document.getElementById('programAreaSelect').value;
+  if (!programAreaId) {
+    selectEl.innerHTML = '<option value="">Account...</option>';
+    return;
+  }
+  const r = await fetch(`/api/gl-accounts/${CURRENT_ORG_ID}?program_area_id=${programAreaId}`);
   const accts = await r.json();
   selectEl.innerHTML = '<option value="">Account...</option>' +
     accts.map(a => `<option value="${a.id}">${a.account_number} - ${a.account_name}</option>`).join('');
+}
+
+function refreshAllGlAccountOptions() {
+  // Re-populate every existing GL line's account dropdown whenever the
+  // Program Area changes -- which accounts are even allowed differs per
+  // program area, so a stale selection from a different area must not
+  // silently survive the switch.
+  document.querySelectorAll('.glAccount').forEach(sel => {
+    sel.value = '';
+    fillGlAccountOptions(sel);
+  });
 }
 
 function initVendorSelect() {
@@ -208,11 +230,12 @@ function applyExtractedFields(data, filename) {
     return;
   }
 
-  if (data.date) {
-    const dateInput = document.getElementById('payDateInput');
-    dateInput.value = data.date;
-    markAutoFilled(dateInput);
-  }
+  // data.date is the INVOICE's own printed date, not the requested pay date
+  // of this check request -- those are different things and must not be
+  // conflated. payDateInput already defaults to today and is required;
+  // silently overwriting it with an old invoice date caused a real, live
+  // bug (found by Jay 2026-07-25: a MileIQ invoice from 2025 replaced the
+  // correct 2026 request date). Deliberately not auto-filled here.
   if (data.description) {
     const descInput = document.getElementById('descriptionInput');
     descInput.value = data.description;
@@ -265,7 +288,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('payDateInput').addEventListener('input', refreshPreview);
   document.getElementById('descriptionInput').addEventListener('input', refreshPreview);
-  document.getElementById('programAreaSelect').addEventListener('change', refreshPreview);
+  document.getElementById('programAreaSelect').addEventListener('change', () => {
+    refreshAllGlAccountOptions();
+    refreshPreview();
+  });
   document.getElementById('glLines').addEventListener('input', refreshPreview);
   document.getElementById('glLines').addEventListener('change', refreshPreview);
   document.getElementById('attachmentsInput').addEventListener('change', (e) => handleAttachmentUpload(e.target));
