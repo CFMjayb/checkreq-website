@@ -9,6 +9,12 @@
   <a href="/requests/{{ submitted }}/pdf" target="_blank">View / Download PDF</a>
 </div>
 {% endif %}
+{% if edited %}
+<div class="banner banner-success">
+  Updated: {{ edited }} —
+  <a href="/requests/{{ edited }}/pdf" target="_blank">View / Download PDF</a>
+</div>
+{% endif %}
 {% if archive_warning %}
 <div class="banner banner-error">
   Submitted successfully, but archiving to the permanent record failed: {{ archive_warning }}
@@ -27,7 +33,12 @@
       <td>${{ "%.2f"|format(r.amount) }}</td>
       <td><span class="badge badge-{{ r.status|lower|replace(' ', '-') }}">{{ r.status }}</span></td>
       <td>{{ r.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-      <td><a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a></td>
+      <td>
+        <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
+        {% if r.editable %}
+        · <a href="/requests/{{ r.request_number }}/edit">Edit</a>
+        {% endif %}
+      </td>
     </tr>
     {% else %}
     <tr><td colspan="8">No requests yet.</td></tr>

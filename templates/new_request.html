@@ -9,10 +9,13 @@
 <div class="split-shell">
 
 <div class="split-pane split-form">
-  <h1>New Check Request</h1>
+  <h1>{% if edit_data %}Edit Check Request — {{ edit_data.editing_request_number }}{% else %}New Check Request{% endif %}</h1>
   <form method="post" action="/new-request" id="reqForm" enctype="multipart/form-data">
     <input type="hidden" name="org_id" value="{{ current_org.id }}">
     <input type="hidden" name="request_type" value="check_request">
+    {% if edit_data %}
+    <input type="hidden" name="editing_request_number" value="{{ edit_data.editing_request_number }}">
+    {% endif %}
 
     <div class="field field-readonly-line">
       Working in: {{ current_org.name }} <a href="/portal">Change entity</a>
@@ -34,7 +37,7 @@
       </div>
       <div class="field">
         <label>Pay Date</label>
-        <input type="date" name="requested_pay_date" id="payDateInput" value="{{ today }}" required>
+        <input type="date" name="requested_pay_date" id="payDateInput" value="{{ edit_data.requested_pay_date if edit_data else today }}" required>
       </div>
     </div>
 
@@ -42,6 +45,7 @@
       <label>Vendor</label>
       <select name="vendor_id" id="vendorSelect" placeholder="Search vendors..."></select>
       <a href="#" id="addNewVendorLink" class="add-vendor-link">Can't find this vendor? Add a new one.</a>
+      <div id="vendorValidationMsg" class="upload-status error" style="display:none;"></div>
     </div>
 
     <input type="hidden" name="using_new_vendor" id="usingNewVendor" value="0">
@@ -64,18 +68,18 @@
 
       <div id="newVendorEntityFields" class="field-row" style="display:none;">
         <div class="field"><label>Company Name*</label><input type="text" name="new_vendor_company_name" id="nvCompanyName"></div>
-        <div class="field"><label>DBA (optional)</label><input type="text" name="new_vendor_dba_name"></div>
+        <div class="field"><label>DBA (optional)</label><input type="text" name="new_vendor_dba_name" id="nvDbaName"></div>
       </div>
 
       <div class="field"><label>Address Line 1*</label><input type="text" name="new_vendor_address_line1" id="nvAddr1"></div>
-      <div class="field"><label>Address Line 2</label><input type="text" name="new_vendor_address_line2"></div>
+      <div class="field"><label>Address Line 2</label><input type="text" name="new_vendor_address_line2" id="nvAddr2"></div>
       <div class="field-row">
         <div class="field"><label>City*</label><input type="text" name="new_vendor_city" id="nvCity"></div>
         <div class="field"><label>State*</label><input type="text" name="new_vendor_state" id="nvState" maxlength="2"></div>
       </div>
       <div class="field-row">
         <div class="field"><label>Zip*</label><input type="text" name="new_vendor_zip" id="nvZip"></div>
-        <div class="field"><label>Phone (optional)</label><input type="text" name="new_vendor_phone"></div>
+        <div class="field"><label>Phone (optional)</label><input type="text" name="new_vendor_phone" id="nvPhone"></div>
       </div>
 
       <div class="field-row">
@@ -89,12 +93,12 @@
 
     <div class="field">
       <label>Description / Reason</label>
-      <input type="text" name="description" id="descriptionInput" required>
+      <input type="text" name="description" id="descriptionInput" value="{{ edit_data.description if edit_data else '' }}" required>
     </div>
 
-    <details class="field-disclosure">
+    <details class="field-disclosure"{% if edit_data and edit_data.special_instructions %} open{% endif %}>
       <summary>+ Add special instructions</summary>
-      <textarea name="special_instructions" id="specialInstructionsInput" rows="2"></textarea>
+      <textarea name="special_instructions" id="specialInstructionsInput" rows="2">{{ edit_data.special_instructions if edit_data else '' }}</textarea>
     </details>
 
     <div class="gl-section">
@@ -111,7 +115,7 @@
     </div>
 
     <div class="submit-row">
-      <button type="submit" class="btn btn-primary btn-block">Submit Request</button>
+      <button type="submit" class="btn btn-primary btn-block">{% if edit_data %}Save Changes{% else %}Submit Request{% endif %}</button>
     </div>
   </form>
 </div>
@@ -123,7 +127,10 @@
 </div>
 {% endblock %}
 {% block extra_js %}
-<script>const CURRENT_ORG_ID = {{ current_org.id }};</script>
+<script>
+const CURRENT_ORG_ID = {{ current_org.id }};
+const EDIT_DATA = {{ (edit_data | tojson) if edit_data else 'null' }};
+</script>
 <script src="/static/vendor/tomselect/tom-select.complete.min.js"></script>
 <script src="/static/js/new_request.js?v={{ asset_version('js/new_request.js') }}"></script>
 {% endblock %}

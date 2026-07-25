@@ -442,7 +442,104 @@ def new_request_form(request: Request):
         "voucher_total": "$0.00",
         "voucher_requested_by": user.get("display_name") or user.get("email"),
         "voucher_chain_summary": "—",
+        "editing_request_number": None,
+        "edit_data": None,
     })
+
+
+@app.get("/requests/{request_number}/edit", response_class=HTMLResponse)
+def edit_request_form(request_number: str, request: Request):
+    """Renders the SAME new_request.html template used for a brand-new
+    submission, pre-filled with an existing payment_request's values, plus a
+    hidden editing_request_number field so new_request_submit's POST handler
+    knows this is an edit, not a new submission (see that route's own
+    docstring-comment for the full edit/reset design).
+
+    Who can edit: the original submitter only (matches my_requests.html's own
+    submitter_user_id scoping) -- Jay's spec didn't give a clear signal on
+    whether a CFO/admin should also be able to, so this defaults to
+    submitter-only, a deliberately easy decision to widen later if asked.
+    Locking: whenever _request_is_editable(status) is False (status ==
+    'Posted to QBO'), matching Jay's exact locking rule."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+
+    pr = db.query_one(
+        "SELECT * FROM checkreq.payment_requests WHERE request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if pr["submitter_user_id"] != user["id"]:
+        # Matches request_pdf's existing authorization-response convention.
+        return JSONResponse({"error": "Not authorized to edit this request"}, status_code=403)
+    if not _request_is_editable(pr["status"]):
+        return JSONResponse(
+            {"error": "This request has been posted to QBO and can no longer be edited."},
+            status_code=403,
+        )
+
+    # Edit operates in the request's ORIGINAL org context, not whatever
+    # entity happens to be selected in the session right now -- GL accounts/
+    # vendors/program areas are all org-scoped, and a stale session org could
+    # otherwise silently mismatch the request being edited. Mirrors the
+    # impersonation flow's own precedent of resetting current_org_id on a
+    # context switch (see impersonate_start). Side effect worth knowing:
+    # this changes the user's "current entity" for the rest of their
+    # session, same as impersonation already does -- not new behavior for
+    # this codebase, just applied here too.
+    request.session["current_org_id"] = pr["org_id"]
+
+    gl_lines = db.query(
+        """
+        SELECT gl.gl_account_id, gl.amount, gl.memo, ga.account_number, ga.account_name
+        FROM checkreq.payment_request_gl_lines gl
+        JOIN checkreq.gl_accounts ga ON ga.id = gl.gl_account_id
+        WHERE gl.payment_request_id = %s ORDER BY gl.id
+        """,
+        (pr["id"],),
+    )
+
+    vendor_prefill = None
+    new_vendor_prefill = None
+    if pr["vendor_id"]:
+        v = db.query_one("SELECT id, display_name FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],))
+        if v:
+            vendor_prefill = {"id": v["id"], "display_name": v["display_name"]}
+    elif pr["vendor_request_id"]:
+        vr = db.query_one("SELECT * FROM checkreq.vendor_requests WHERE id = %s", (pr["vendor_request_id"],))
+        if vr:
+            new_vendor_prefill = {
+                "entity_type": vr["entity_type"],
+                "first_name": vr["first_name"], "last_name": vr["last_name"],
+                "company_name": vr["company_name"], "dba_name": vr["dba_name"],
+                "address_line1": vr["address_line1"], "address_line2": vr["address_line2"],
+                "city": vr["city"], "state": vr["state"], "zip": vr["zip"], "phone": vr["phone"],
+                "contact_name": vr["contact_name"], "contact_email": vr["contact_email"],
+            }
+
+    edit_data = {
+        "editing_request_number": pr["request_number"],
+        "program_area_id": pr["program_area_id"],
+        "requested_pay_date": pr["requested_pay_date"].isoformat() if pr["requested_pay_date"] else None,
+        "description": pr["description"] or "",
+        "special_instructions": pr["special_instructions"] or "",
+        "gl_lines": [
+            {"gl_account_id": g["gl_account_id"], "amount": float(g["amount"]), "memo": g["memo"] or ""}
+            for g in gl_lines
+        ],
+        "vendor": vendor_prefill,
+        "new_vendor": new_vendor_prefill,
+    }
+
+    ctx = _voucher_context(pr["id"]) or {}
+    ctx.update({
+        "today": date.today().isoformat(),
+        "editing_request_number": pr["request_number"],
+        "edit_data": edit_data,
+    })
+    return _render(request, "new_request.html", user, ctx)
 
 
 @app.get("/api/program-areas/{org_id}")
@@ -467,6 +564,16 @@ def api_program_areas(org_id: int, request: Request):
         """,
         (org_id, user["id"]),
     )
+
+
+def _request_is_editable(status: str) -> bool:
+    """Locking rule, Jay's exact words (2026-07-25): 'You can make changes
+    until it is posted to QBO.' Everything else remains editable -- there is
+    no live path that sets 'Posted to QBO' yet (no approval-action workflow
+    exists to drive a request to that status), so today every request is
+    editable; this check is still implemented for real now so it's already
+    correct once that posting path exists."""
+    return status != "Posted to QBO"
 
 
 def _user_can_submit_for(user: dict, program_area_id: int) -> bool:
@@ -1046,6 +1153,37 @@ async def new_request_submit(request: Request):
 
     request_type = form.get("request_type", "check_request")
 
+    # Editing an existing request (see edit_request_form) instead of
+    # submitting a new one -- editing_request_number is a hidden field that
+    # route's template renders only when editing. Re-verify ownership and
+    # the locking rule server-side too (never trust that the GET route's own
+    # checks are the only gate -- a POST can be replayed/crafted directly).
+    editing_request_number = form.get("editing_request_number") or None
+    existing_pr = None
+    if editing_request_number:
+        existing_pr = db.query_one(
+            "SELECT * FROM checkreq.payment_requests WHERE request_number = %s",
+            (editing_request_number,),
+        )
+        if not existing_pr:
+            return JSONResponse({"error": "Request not found."}, status_code=404)
+        if existing_pr["submitter_user_id"] != user["id"]:
+            return JSONResponse({"error": "Not authorized to edit this request."}, status_code=403)
+        if not _request_is_editable(existing_pr["status"]):
+            return JSONResponse(
+                {"error": "This request has been posted to QBO and can no longer be edited."},
+                status_code=403,
+            )
+        if existing_pr["org_id"] != org_id:
+            # Shouldn't happen (edit_request_form pins the session's entity
+            # to the request's own org before rendering the form), but guard
+            # rather than silently letting a cross-org edit through if the
+            # entity switcher was used mid-edit.
+            return JSONResponse(
+                {"error": "Entity mismatch -- please reopen this request's Edit link and try again."},
+                status_code=400,
+            )
+
     # New Vendor Onboarding (New Vendor Onboarding Plan.md, Section 2): the
     # "Add new vendor" panel and the existing-vendor Tom Select are mutually
     # exclusive -- using_new_vendor (a hidden field set by new_request.js
@@ -1089,6 +1227,25 @@ async def new_request_submit(request: Request):
             return JSONResponse({"error": "Contact Name and Contact Email are required for a new vendor "
                                            "(the person to email about the W-9 -- may differ from the vendor itself)."}, status_code=400)
 
+    # Real bug found live 2026-07-25 (Jay): document.upload-to-prefill's
+    # setTextboxValue() (see applyExtractedFields() in new_request.js) writes
+    # display text into Tom Select's search box WITHOUT ever calling
+    # addItem() when there's no matched_vendor_id -- so the underlying
+    # <select>'s value stays empty. Combined with using_new_vendor staying
+    # "0" (the "Add a new vendor" panel was never opened), a submission could
+    # go through with NEITHER a real vendor_id NOR a new_vendor_fields dict at
+    # all. HTML5 `required` on a Tom Select-controlled <select> is not a
+    # reliable guard here -- Tom Select keeps the backing <select> at
+    # display:none, and the HTML5 spec excludes display:none elements from
+    # constraint validation entirely, regardless of required/value state.
+    # This server-side check is the definitive fix, matching every other
+    # "required" field in this route's existing validation above.
+    if not using_new_vendor and vendor_id is None:
+        return JSONResponse(
+            {"error": "Please select a vendor from the list, or add a new vendor."},
+            status_code=400,
+        )
+
     requested_pay_date = form.get("requested_pay_date") or None
     if not requested_pay_date:
         # HTML5 `required` on the field is not a real guarantee (a client
@@ -1123,6 +1280,184 @@ async def new_request_submit(request: Request):
     chain_summary = approval_engine.describe_chain(chain)
     first_step = chain[0] if chain else None
 
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+
+    if existing_pr:
+        # ── EDIT branch ──────────────────────────────────────────────────
+        # Approval reset rule, Jay's exact words (2026-07-25): "If you do
+        # edit the CR's Vendor or Amount, you have to erase the approval
+        # workflow and restart." Compare the NEW vendor identity (vendor_id
+        # or vendor_request_id, whichever applies) and the NEW total against
+        # what was stored on the row BEFORE this update. Vendor-identity
+        # comparison: if using_new_vendor and the request already had a
+        # vendor_request_id, that same row is updated in place below (same
+        # id, not a new one) -- so by this rule that is NOT a vendor change
+        # (the plan gives no reason to force a re-approval just because the
+        # new vendor's address/contact fields were corrected). Any other
+        # combination (switching between an existing vendor and a new one,
+        # or picking a different existing vendor_id) IS a vendor-identity
+        # change.
+        request_number = existing_pr["request_number"]
+        payment_request_id = existing_pr["id"]
+        old_vendor_id = existing_pr["vendor_id"]
+        old_vendor_request_id = existing_pr["vendor_request_id"]
+        old_total = round(float(existing_pr["amount"]), 2)
+
+        if using_new_vendor:
+            vendor_changed = old_vendor_request_id is None
+        else:
+            vendor_changed = (vendor_id != old_vendor_id)
+        amount_changed = (total_amount != old_total)
+        reset_approval = vendor_changed or amount_changed
+
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                # Vendor bookkeeping first, so the resolved vendor_request_id
+                # is known before the payment_requests UPDATE below. NOTE:
+                # only Vendor/Amount changes reset approval per Jay's rule
+                # above -- this vendor_requests write itself always applies
+                # (a corrected address on an unrelated field shouldn't be
+                # silently discarded just because it doesn't trigger a
+                # re-approval).
+                new_vendor_request_id = old_vendor_request_id
+                if using_new_vendor:
+                    requires_w9 = total_amount > VENDOR_W9_AMOUNT_THRESHOLD
+                    if old_vendor_request_id:
+                        # Same underlying vendor_request row this payment
+                        # request already pointed to -- update its fields in
+                        # place rather than creating a duplicate row (a
+                        # payment_request has at most one vendor_request,
+                        # per the schema's 1:1 FK design).
+                        cur.execute(
+                            """
+                            UPDATE checkreq.vendor_requests SET
+                                entity_type = %s, first_name = %s, last_name = %s,
+                                company_name = %s, dba_name = %s, address_line1 = %s,
+                                address_line2 = %s, city = %s, state = %s, zip = %s,
+                                phone = %s, contact_name = %s, contact_email = %s,
+                                requires_w9 = %s
+                            WHERE id = %s
+                            """,
+                            (new_vendor_fields["entity_type"], new_vendor_fields["first_name"],
+                             new_vendor_fields["last_name"], new_vendor_fields["company_name"],
+                             new_vendor_fields["dba_name"], new_vendor_fields["address_line1"],
+                             new_vendor_fields["address_line2"], new_vendor_fields["city"],
+                             new_vendor_fields["state"], new_vendor_fields["zip"],
+                             new_vendor_fields["phone"], new_vendor_fields["contact_name"],
+                             new_vendor_fields["contact_email"], requires_w9, old_vendor_request_id),
+                        )
+                    else:
+                        # Switching FROM an existing vendor (or none) TO a
+                        # brand-new one -- same INSERT shape as the new-
+                        # submission path.
+                        upload_token = pysecrets.token_urlsafe(32)
+                        cur.execute(
+                            """
+                            INSERT INTO checkreq.vendor_requests
+                                (org_id, payment_request_id, entity_type, first_name, last_name,
+                                 company_name, dba_name, address_line1, address_line2, city, state, zip,
+                                 phone, contact_name, contact_email, requires_w9, upload_token,
+                                 created_by_user_id)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            RETURNING id
+                            """,
+                            (org_id, payment_request_id, new_vendor_fields["entity_type"],
+                             new_vendor_fields["first_name"], new_vendor_fields["last_name"],
+                             new_vendor_fields["company_name"], new_vendor_fields["dba_name"],
+                             new_vendor_fields["address_line1"], new_vendor_fields["address_line2"],
+                             new_vendor_fields["city"], new_vendor_fields["state"], new_vendor_fields["zip"],
+                             new_vendor_fields["phone"], new_vendor_fields["contact_name"],
+                             new_vendor_fields["contact_email"], requires_w9, upload_token, user["id"]),
+                        )
+                        new_vendor_request_id = cur.fetchone()["id"]
+                else:
+                    # Picking (or keeping) an existing vendor. Any prior
+                    # vendor_request row this payment_request pointed to is
+                    # simply unlinked, not deleted -- preserves its own
+                    # approval/W-9 history in case it's independently
+                    # relevant, rather than destroying data on an edit.
+                    new_vendor_request_id = None
+
+                if reset_approval:
+                    cur.execute(
+                        """
+                        UPDATE checkreq.payment_requests SET
+                            program_area_id = %s, vendor_id = %s, vendor_request_id = %s,
+                            amount = %s, requested_pay_date = %s, description = %s,
+                            special_instructions = %s, status = %s, current_approver_id = %s,
+                            serial_group_current = %s, approval_chain_summary = %s,
+                            cfo_override = FALSE, cfo_override_date = NULL, updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (program_area_id, vendor_id, new_vendor_request_id, total_amount,
+                         requested_pay_date, description, special_instructions,
+                         "Submitted",
+                         first_step["approver_user_id"] if first_step else None,
+                         first_step["serial_group"] if first_step else None,
+                         chain_summary, payment_request_id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE checkreq.payment_requests SET
+                            program_area_id = %s, vendor_id = %s, vendor_request_id = %s,
+                            requested_pay_date = %s, description = %s,
+                            special_instructions = %s, updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (program_area_id, vendor_id, new_vendor_request_id,
+                         requested_pay_date, description, special_instructions, payment_request_id),
+                    )
+
+                # Replace GL lines wholesale -- delete + reinsert, matching
+                # this codebase's stated preference for straightforward code
+                # over cleverness (a diff-based reconciliation would need to
+                # match old-to-new lines by some key that doesn't exist).
+                cur.execute(
+                    "DELETE FROM checkreq.payment_request_gl_lines WHERE payment_request_id = %s",
+                    (payment_request_id,),
+                )
+                for acct_id, amt, memo in gl_lines:
+                    cur.execute(
+                        "INSERT INTO checkreq.payment_request_gl_lines "
+                        "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
+                        (payment_request_id, acct_id, amt, memo),
+                    )
+
+                if reset_approval:
+                    audit_comment = (
+                        f"Vendor and/or amount changed on edit (was ${old_total:,.2f}, "
+                        f"now ${total_amount:,.2f}) -- approval workflow reset.\n{chain_summary}"
+                    )
+                    cur.execute(
+                        "INSERT INTO checkreq.audit_log "
+                        "(payment_request_id, action_by_user_id, action_type, comment, "
+                        " previous_status, new_status, impersonated_by_user_id) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (payment_request_id, user["id"], "Edited — Approval Reset", audit_comment,
+                         existing_pr["status"], "Submitted", impersonated_by),
+                    )
+                else:
+                    cur.execute(
+                        "INSERT INTO checkreq.audit_log "
+                        "(payment_request_id, action_by_user_id, action_type, comment, "
+                        " previous_status, new_status, impersonated_by_user_id) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (payment_request_id, user["id"], "Edited",
+                         "Fields updated (vendor and amount unchanged; approval workflow untouched).",
+                         existing_pr["status"], existing_pr["status"], impersonated_by),
+                    )
+
+        # Deliberately NOT touching payment_request_attachments or re-running
+        # the GCS/SharePoint archival pipeline here -- the archived copy is a
+        # point-in-time snapshot from original submission (out of scope for
+        # an edit, per this task's own spec). GET /requests/{request_number}/pdf
+        # always regenerates fresh from the live DB on every hit, so it
+        # already reflects this edit with zero extra work.
+        return RedirectResponse(f"/my-requests?edited={request_number}", status_code=303)
+
+    # ── NEW SUBMISSION branch (unchanged from before this session) ────────
     request_number = _next_request_number()
     with db.connect() as conn:
         with conn.cursor() as cur:
@@ -1151,8 +1486,6 @@ async def new_request_submit(request: Request):
                     (payment_request_id, acct_id, amt, memo),
                 )
 
-            imp_id = request.session.get("impersonating_user_id")
-            impersonated_by = _real_user(request)["id"] if imp_id else None
             cur.execute(
                 "INSERT INTO checkreq.audit_log "
                 "(payment_request_id, action_by_user_id, action_type, comment, new_status, impersonated_by_user_id) "
@@ -1215,7 +1548,7 @@ async def new_request_submit(request: Request):
 
 
 @app.get("/my-requests", response_class=HTMLResponse)
-def my_requests(request: Request, submitted: str = "", archive_warning: str = ""):
+def my_requests(request: Request, submitted: str = "", archive_warning: str = "", edited: str = ""):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
@@ -1233,8 +1566,12 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
         """,
         (user["id"],),
     )
+    for r in rows:
+        # Locking rule (Jay, 2026-07-25): "You can make changes until it is
+        # posted to QBO." Drives whether the Edit link renders below.
+        r["editable"] = _request_is_editable(r["status"])
     return _render(request, "my_requests.html", user, {
-        "rows": rows, "submitted": submitted, "archive_warning": archive_warning,
+        "rows": rows, "submitted": submitted, "archive_warning": archive_warning, "edited": edited,
     })
 
 

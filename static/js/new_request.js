@@ -77,6 +77,7 @@ function computeNewVendorDisplayName() {
 function showNewVendorPanel(show) {
   document.getElementById('usingNewVendor').value = show ? '1' : '0';
   document.getElementById('newVendorPanel').style.display = show ? '' : 'none';
+  setVendorValidationMessage(''); // whichever mode is now active, the prior error no longer applies
   if (vendorTomSelect) {
     if (show) vendorTomSelect.clear();
     // Tom Select renders its own wrapper next to the original <select> --
@@ -102,6 +103,7 @@ function initVendorSelect() {
     },
     onItemAdd: function (value, item) {
       vendorDisplayText = item.textContent.trim();
+      setVendorValidationMessage('');
       refreshPreview();
     },
     onItemRemove: function () {
@@ -306,6 +308,94 @@ function applyExtractedFields(data, filename) {
   setUploadStatus(`Filled from "${filename}" -- please review before submitting.${confidenceNote}${vendorNote}`, 'success', data.caveats);
 }
 
+// ---- Vendor selection required at submit time ----
+// Real bug found live 2026-07-25 (Jay): the upload-to-prefill feature can
+// leave the underlying vendor <select> with no value at all (see
+// applyExtractedFields()'s setTextboxValue() branch above) while
+// usingNewVendor is still "0" -- so the form would silently POST with no
+// vendor identified whatsoever. HTML5 `required` on vendorSelect doesn't
+// catch this: Tom Select keeps the real <select> at display:none, and the
+// HTML5 constraint-validation spec explicitly excludes display:none
+// elements, regardless of required/value state. This client-side check is
+// just a fast, friendly pre-submit guard -- the definitive fix is the
+// server-side check in new_request_submit (main.py); this only saves a
+// round-trip and gives a clearer inline message than a generic 400 would.
+
+function setVendorValidationMessage(msg) {
+  const el = document.getElementById('vendorValidationMsg');
+  el.textContent = msg;
+  el.style.display = msg ? '' : 'none';
+}
+
+function vendorSelectionIsValid() {
+  const usingNewVendor = document.getElementById('usingNewVendor').value === '1';
+  if (usingNewVendor) return true; // the "Add a new vendor" panel's own required fields cover this case
+  const vendorId = document.getElementById('vendorSelect').value;
+  return !!vendorId;
+}
+
+// ---- Edit prefill ----
+// EDIT_DATA is emitted by new_request.html only when this page was reached
+// via GET /requests/{request_number}/edit (main.py's edit_request_form) --
+// null on a brand-new /new-request. Reconstructs however many GL lines the
+// original request had (the form always starts with exactly one blank line
+// otherwise) and pre-selects the vendor, either an existing vendor (Tom
+// Select addItem, same pattern applyExtractedFields() already uses for a
+// matched vendor) or the "Add a new vendor" panel's fields (when the
+// original request used a not-yet-onboarded vendor_request).
+
+async function applyEditPrefill() {
+  const d = EDIT_DATA;
+  if (!d) return;
+
+  const paSel = document.getElementById('programAreaSelect');
+  paSel.value = String(d.program_area_id);
+
+  const container = document.getElementById('glLines');
+  container.innerHTML = '';
+  const lines = (d.gl_lines && d.gl_lines.length) ? d.gl_lines : [{ gl_account_id: '', amount: 0, memo: '' }];
+  for (const line of lines) {
+    const div = document.createElement('div');
+    div.className = 'gl-line';
+    div.innerHTML = `
+      <div class="field"><select class="glAccount" name="gl_account_id" required><option value="">Account...</option></select></div>
+      <div class="field"><input type="number" step="0.01" class="glAmount" name="gl_amount" placeholder="0.00" required></div>
+      <div class="field"><input type="text" class="glMemo" name="gl_memo" placeholder="Optional memo"></div>
+      <button type="button" class="remove-line" onclick="removeGlLine(this)">&times;</button>`;
+    container.appendChild(div);
+    const acctSel = div.querySelector('.glAccount');
+    await fillGlAccountOptions(acctSel);
+    if (line.gl_account_id) acctSel.value = String(line.gl_account_id);
+    if (line.amount) div.querySelector('.glAmount').value = Number(line.amount).toFixed(2);
+    if (line.memo) div.querySelector('.glMemo').value = line.memo;
+  }
+
+  if (d.vendor) {
+    vendorTomSelect.addOption({ id: String(d.vendor.id), display_name: d.vendor.display_name });
+    vendorTomSelect.addItem(String(d.vendor.id));
+  } else if (d.new_vendor) {
+    showNewVendorPanel(true);
+    const nv = d.new_vendor;
+    const radio = document.querySelector(`input[name="new_vendor_entity_type"][value="${nv.entity_type}"]`);
+    if (radio) radio.checked = true;
+    updateNewVendorEntityFieldVisibility();
+    document.getElementById('nvFirstName').value = nv.first_name || '';
+    document.getElementById('nvLastName').value = nv.last_name || '';
+    document.getElementById('nvCompanyName').value = nv.company_name || '';
+    document.getElementById('nvDbaName').value = nv.dba_name || '';
+    document.getElementById('nvAddr1').value = nv.address_line1 || '';
+    document.getElementById('nvAddr2').value = nv.address_line2 || '';
+    document.getElementById('nvCity').value = nv.city || '';
+    document.getElementById('nvState').value = nv.state || '';
+    document.getElementById('nvZip').value = nv.zip || '';
+    document.getElementById('nvPhone').value = nv.phone || '';
+    document.getElementById('nvContactName').value = nv.contact_name || '';
+    document.getElementById('nvContactEmail').value = nv.contact_email || '';
+  }
+
+  refreshPreview();
+}
+
 async function handleAttachmentUpload(fileInput) {
   const files = fileInput.files;
   if (!files || !files.length) return;
@@ -323,9 +413,23 @@ async function handleAttachmentUpload(fileInput) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  loadProgramAreas().then(refreshPreview);
-  document.querySelectorAll('.glAccount').forEach(sel => fillGlAccountOptions(sel));
   initVendorSelect();
+  loadProgramAreas().then(() => {
+    if (window.EDIT_DATA) {
+      applyEditPrefill();
+    } else {
+      refreshPreview();
+    }
+  });
+  document.querySelectorAll('.glAccount').forEach(sel => fillGlAccountOptions(sel));
+
+  document.getElementById('reqForm').addEventListener('submit', (e) => {
+    if (!vendorSelectionIsValid()) {
+      e.preventDefault();
+      setVendorValidationMessage('Please select a vendor from the list, or click "Add a new one" below.');
+      document.getElementById('vendorSelect').closest('.field').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  });
 
   document.getElementById('payDateInput').addEventListener('input', refreshPreview);
   document.getElementById('descriptionInput').addEventListener('input', refreshPreview);
