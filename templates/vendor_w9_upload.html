@@ -1,0 +1,34 @@
+{#
+vendor_w9_upload.html -- the one unauthenticated, external-facing page in
+this app (New Vendor Onboarding Plan.md, Section 4a). Extends base.html the
+same way login.html does; base.html's header block is guarded on
+{% if user %}, so it renders cleanly with no session/nav at all -- exactly
+right for a vendor contact with no account here.
+#}
+{% extends "base.html" %}
+{% block title %}Upload W-9 — {{ org_name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/login.css?v={{ asset_version('css/login.css') }}">{% endblock %}
+{% block content %}
+<div class="login-hero">
+  <div class="login-card">
+    <div class="wordmark">{{ org_name }}</div>
+    <h1>Form W-9 Upload</h1>
+
+    {% if already_uploaded %}
+      <p class="tagline">Thank you -- we've received your completed W-9 for <strong>{{ vendor_name }}</strong>.</p>
+      <p>No further action is needed here. Our Business Office will review it shortly.</p>
+    {% else %}
+      <p class="tagline">Please upload a completed IRS Form W-9 for <strong>{{ vendor_name }}</strong>.</p>
+      {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+      <form method="post" action="/vendor-w9-upload/{{ token }}" enctype="multipart/form-data">
+        <div class="field">
+          <label>Completed W-9 (PDF or a clear photo)</label>
+          <input type="file" name="file" accept="application/pdf,image/jpeg,image/png,image/gif,image/webp" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Upload</button>
+      </form>
+      <p class="sub" style="margin-top:1rem;">Accepted formats: PDF, JPG, PNG, GIF, or WebP -- max 10MB.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

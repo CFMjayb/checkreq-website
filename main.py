@@ -34,6 +34,7 @@ NOT built yet (see handoff notes):
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import os
 import re
@@ -53,8 +54,22 @@ import auth_azure
 import gcs_client
 import sharepoint_client
 import document_extract
+import email_client
 
 ATTACHMENTS_BUCKET = "cfm-checkreq-attachments"
+
+# New Vendor Onboarding (New Vendor Onboarding Plan.md, 2026-07-25, approved).
+# requires_w9: payment_requests.amount > this threshold, computed once at
+# vendor_request creation time -- not re-evaluated later even if the amount
+# changes (a change needs its own re-approval anyway, per the plan's Section 4).
+VENDOR_W9_AMOUNT_THRESHOLD = 2000
+
+# Section 6, decision 4: "not resolved in this pass -- defaulting to the same
+# EDOM mailbox sending on Claggett's behalf too, until Jay provides a
+# dedicated Claggett address. This is a one-line config change whenever he
+# does." businessoffice@episcopalmaryland.org is already an allowed 26-122
+# sender (used elsewhere in this codebase for AP-related correspondence).
+W9_SENDER_EMAIL = os.environ.get("W9_SENDER_EMAIL", "businessoffice@episcopalmaryland.org")
 
 app = FastAPI(title="26-129 Check Request")
 
@@ -651,11 +666,16 @@ def _voucher_context(payment_request_id: int) -> dict | None:
     pr = db.query_one(
         """
         SELECT pr.*, o.name AS org_name, pa.title AS program_area_title,
-               v.display_name AS vendor_name, u.display_name AS submitter_name, u.email AS submitter_email
+               v.display_name AS vendor_name,
+               vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
+               vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
+               vr.dba_name AS vr_dba_name, vr.status AS vr_status,
+               u.display_name AS submitter_name, u.email AS submitter_email
         FROM checkreq.payment_requests pr
         JOIN checkreq.organizations o ON o.id = pr.org_id
         JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
         LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+        LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
         JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
         WHERE pr.id = %s
         """,
@@ -663,6 +683,20 @@ def _voucher_context(payment_request_id: int) -> dict | None:
     )
     if not pr:
         return None
+
+    # A payment_request may reference a not-yet-QBO-vendor "new vendor"
+    # request instead of an existing checkreq.vendors row (New Vendor
+    # Onboarding Plan.md) -- resolve a display name from whichever is set.
+    # exactly one of vendor_id/vendor_request_id is ever set per request,
+    # enforced in new_request_submit, not a DB constraint (per the plan's
+    # own stated preference for this codebase).
+    vendor_name = pr["vendor_name"]
+    if not vendor_name and pr.get("vr_entity_type"):
+        vendor_name = _vendor_request_row_display_name(pr["vr_entity_type"], pr["vr_company_name"],
+                                                         pr["vr_dba_name"], pr["vr_first_name"],
+                                                         pr["vr_last_name"])
+        if pr.get("vr_status") == "pending_approval":
+            vendor_name = f"{vendor_name} (new vendor, pending approval)"
     gl_lines = db.query(
         """
         SELECT gl.amount, gl.memo, ga.account_number, ga.account_name
@@ -677,7 +711,7 @@ def _voucher_context(payment_request_id: int) -> dict | None:
         "voucher_org_name": pr["org_name"],
         "voucher_request_number": pr["request_number"],
         "voucher_date": pr["requested_pay_date"].strftime("%B %d, %Y") if pr["requested_pay_date"] else "—",
-        "voucher_vendor": pr["vendor_name"] or "—",
+        "voucher_vendor": vendor_name or "—",
         "voucher_amount": f"${amount:,.2f}",
         "voucher_amount_words": _amount_to_words(amount),
         "voucher_program_area": pr["program_area_title"],
@@ -690,6 +724,28 @@ def _voucher_context(payment_request_id: int) -> dict | None:
         "voucher_requested_by": pr["submitter_name"] or pr["submitter_email"],
         "voucher_chain_summary": pr["approval_chain_summary"] or "—",
     }
+
+
+def _vendor_request_row_display_name(entity_type: str, company_name: str | None, dba_name: str | None,
+                                      first_name: str | None, last_name: str | None) -> str:
+    """Vendor display name for a checkreq.vendor_requests row, mirroring
+    the plan's Section 2 preview rule: individual -> 'First Last',
+    entity -> Company Name. Used both by the live voucher preview's server
+    side (_voucher_context) and anywhere else a vendor_request needs a
+    human-readable label (the approval queue, the W-9 email)."""
+    if entity_type == "entity":
+        return (company_name or dba_name or "New Vendor").strip()
+    full = f"{first_name or ''} {last_name or ''}".strip()
+    return full or "New Vendor"
+
+
+def _vendor_request_display_name(vr: dict) -> str:
+    """Same as _vendor_request_row_display_name but takes a full
+    vendor_requests row dict (as returned by db.query/query_one)."""
+    return _vendor_request_row_display_name(
+        vr.get("entity_type"), vr.get("company_name"), vr.get("dba_name"),
+        vr.get("first_name"), vr.get("last_name"),
+    )
 
 
 def _custom_titlecase(name: str) -> str:
@@ -762,11 +818,22 @@ def _archive_attachments(org: dict, payment_request_id: int, request_number: str
         )
 
     vendor_row = db.query_one(
-        "SELECT v.display_name FROM checkreq.payment_requests pr "
-        "LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id WHERE pr.id = %s",
+        "SELECT v.display_name, vr.entity_type, vr.company_name, vr.dba_name, "
+        "vr.first_name, vr.last_name "
+        "FROM checkreq.payment_requests pr "
+        "LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id "
+        "LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id "
+        "WHERE pr.id = %s",
         (payment_request_id,),
     )
-    vendor_name = vendor_row["display_name"] if vendor_row else None
+    vendor_name = None
+    if vendor_row:
+        vendor_name = vendor_row["display_name"]
+        if not vendor_name and vendor_row.get("entity_type"):
+            vendor_name = _vendor_request_row_display_name(
+                vendor_row["entity_type"], vendor_row["company_name"], vendor_row["dba_name"],
+                vendor_row["first_name"], vendor_row["last_name"],
+            )
 
     items = [{
         "source": "generated_pdf",
@@ -858,6 +925,88 @@ def cleanup_gcs_attachment(payment_request_id: int) -> None:
                 )
 
 
+_W9_PDF_PATH = os.path.join(os.path.dirname(__file__), "static", "forms", "fw9.pdf")
+
+
+def _send_w9_request_email(vr: dict, org_name: str, request: Request) -> dict:
+    """Sends the W-9 request email for a just-approved vendor_request whose
+    requires_w9 is TRUE (Section 4/4a). Attaches the official public IRS
+    Form W-9 PDF (fetched 2026-07-25 from irs.gov -- static/forms/fw9.pdf,
+    a standard non-proprietary government form, per the plan's own
+    resolution of this open question) and embeds the unique, unguessable
+    upload link. Reuses 26-122 Cloud Email Server's existing send_email
+    mechanism via email_client.py -- no new email infrastructure.
+
+    Returns whatever email_client.send_email() returns
+    ({"status": "sent"} or {"error": "..."}) -- never raises. The caller
+    (vendor_request_approve) stamps w9_email_sent_at only on a real
+    {"status": "sent"}, matching this project's existing archive_warning
+    graceful-degradation pattern for a recoverable-but-visible failure."""
+    vendor_name = _vendor_request_display_name(vr)
+    base_url = str(request.base_url).rstrip("/")
+    upload_url = f"{base_url}/vendor-w9-upload/{vr['upload_token']}"
+    subject = f"W-9 Request — {vendor_name}"
+    body_html = (
+        f"<p>Hello {vr.get('contact_name') or ''},</p>"
+        f"<p>{org_name} is setting up <strong>{vendor_name}</strong> as a new payee and "
+        f"needs a completed IRS Form W-9 on file before any payment can be issued.</p>"
+        f"<p>A blank W-9 is attached for reference. Please complete it and upload it "
+        f"using the secure link below:</p>"
+        f'<p><a href="{upload_url}">{upload_url}</a></p>'
+        f"<p>Thank you,<br>{org_name} Business Office</p>"
+    )
+    body_text = (
+        f"Hello {vr.get('contact_name') or ''},\n\n"
+        f"{org_name} is setting up {vendor_name} as a new payee and needs a completed "
+        f"IRS Form W-9 on file before any payment can be issued.\n\n"
+        f"A blank W-9 is attached for reference. Please complete it and upload it using "
+        f"this secure link:\n{upload_url}\n\n"
+        f"Thank you,\n{org_name} Business Office"
+    )
+
+    attachments = None
+    try:
+        with open(_W9_PDF_PATH, "rb") as f:
+            pdf_bytes = f.read()
+        attachments = [{
+            "name": "Form W-9 (blank).pdf",
+            "content_type": "application/pdf",
+            "content_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+        }]
+    except OSError:
+        pass  # send without the attachment rather than blocking the email entirely
+
+    return email_client.send_email(
+        to=vr["contact_email"],
+        subject=subject,
+        body_html=body_html,
+        body_text=body_text,
+        sender=W9_SENDER_EMAIL,
+        attachments=attachments,
+    )
+
+
+def _vendor_request_by_upload_token(token: str) -> dict | None:
+    """404-safe lookup for the unauthenticated /vendor-w9-upload/{token}
+    route (Section 4a). Returns None (never a distinguishing error) for a
+    bad token OR a token whose vendor_request has left 'approved' status --
+    the upload window closes automatically the moment approval status
+    changes (rejected / posted_to_qbo), without relying on the vendor to
+    notice."""
+    if not token:
+        return None
+    return db.query_one(
+        """
+        SELECT vr.*, o.name AS org_name, o.code AS org_code, o.sp_hostname,
+               o.sp_site_path, o.sp_library_folder
+        FROM checkreq.vendor_requests vr
+        JOIN checkreq.organizations o ON o.id = vr.org_id
+        WHERE vr.upload_token = %s AND vr.status = 'approved'
+        """,
+        (token,),
+    )
+
+
 def _next_request_number() -> str:
     today = date.today().strftime("%Y%m%d")
     with db.connect() as conn:
@@ -896,7 +1045,50 @@ async def new_request_submit(request: Request):
         )
 
     request_type = form.get("request_type", "check_request")
-    vendor_id = int(form["vendor_id"]) if form.get("vendor_id") else None
+
+    # New Vendor Onboarding (New Vendor Onboarding Plan.md, Section 2): the
+    # "Add new vendor" panel and the existing-vendor Tom Select are mutually
+    # exclusive -- using_new_vendor (a hidden field set by new_request.js
+    # when the panel is shown) decides which branch below applies. Exactly
+    # one of vendor_id / new_vendor_* is ever honored, enforced here in
+    # application code rather than a DB constraint, per the plan's own
+    # stated preference for this codebase.
+    using_new_vendor = form.get("using_new_vendor") == "1"
+    vendor_id = int(form["vendor_id"]) if (not using_new_vendor and form.get("vendor_id")) else None
+
+    new_vendor_fields: dict | None = None
+    if using_new_vendor:
+        nv_entity_type = form.get("new_vendor_entity_type", "individual")
+        if nv_entity_type not in ("individual", "entity"):
+            return JSONResponse({"error": "Invalid new-vendor entity type."}, status_code=400)
+        new_vendor_fields = {
+            "entity_type": nv_entity_type,
+            "first_name": form.get("new_vendor_first_name", "").strip() or None,
+            "last_name": form.get("new_vendor_last_name", "").strip() or None,
+            "company_name": form.get("new_vendor_company_name", "").strip() or None,
+            "dba_name": form.get("new_vendor_dba_name", "").strip() or None,
+            "address_line1": form.get("new_vendor_address_line1", "").strip() or None,
+            "address_line2": form.get("new_vendor_address_line2", "").strip() or None,
+            "city": form.get("new_vendor_city", "").strip() or None,
+            "state": form.get("new_vendor_state", "").strip() or None,
+            "zip": form.get("new_vendor_zip", "").strip() or None,
+            "phone": form.get("new_vendor_phone", "").strip() or None,
+            "contact_name": form.get("new_vendor_contact_name", "").strip(),
+            "contact_email": form.get("new_vendor_contact_email", "").strip(),
+        }
+        # Server-side validation -- HTML5 `required` on the client is not a
+        # real guarantee, same reasoning as the Pay Date check just below.
+        if nv_entity_type == "individual" and not (new_vendor_fields["first_name"] and new_vendor_fields["last_name"]):
+            return JSONResponse({"error": "First Name and Last Name are required for an individual vendor."}, status_code=400)
+        if nv_entity_type == "entity" and not new_vendor_fields["company_name"]:
+            return JSONResponse({"error": "Company Name is required for an entity vendor."}, status_code=400)
+        if not new_vendor_fields["address_line1"] or not new_vendor_fields["city"] \
+                or not new_vendor_fields["state"] or not new_vendor_fields["zip"]:
+            return JSONResponse({"error": "Address Line 1, City, State, and Zip are required for a new vendor."}, status_code=400)
+        if not new_vendor_fields["contact_name"] or not new_vendor_fields["contact_email"]:
+            return JSONResponse({"error": "Contact Name and Contact Email are required for a new vendor "
+                                           "(the person to email about the W-9 -- may differ from the vendor itself)."}, status_code=400)
+
     requested_pay_date = form.get("requested_pay_date") or None
     if not requested_pay_date:
         # HTML5 `required` on the field is not a real guarantee (a client
@@ -968,6 +1160,39 @@ async def new_request_submit(request: Request):
                 (payment_request_id, user["id"], "Submitted", chain_summary, "Submitted", impersonated_by),
             )
 
+            # New Vendor Onboarding (Section 1/2): the vendor_requests row
+            # references payment_request_id (NOT NULL), so it can only be
+            # created after the payment_request row above already has an
+            # id -- then payment_requests.vendor_request_id is set to point
+            # back, in the same transaction (both inserts commit together
+            # or not at all).
+            if new_vendor_fields:
+                requires_w9 = total_amount > VENDOR_W9_AMOUNT_THRESHOLD
+                upload_token = pysecrets.token_urlsafe(32)
+                cur.execute(
+                    """
+                    INSERT INTO checkreq.vendor_requests
+                        (org_id, payment_request_id, entity_type, first_name, last_name,
+                         company_name, dba_name, address_line1, address_line2, city, state, zip,
+                         phone, contact_name, contact_email, requires_w9, upload_token,
+                         created_by_user_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (org_id, payment_request_id, new_vendor_fields["entity_type"],
+                     new_vendor_fields["first_name"], new_vendor_fields["last_name"],
+                     new_vendor_fields["company_name"], new_vendor_fields["dba_name"],
+                     new_vendor_fields["address_line1"], new_vendor_fields["address_line2"],
+                     new_vendor_fields["city"], new_vendor_fields["state"], new_vendor_fields["zip"],
+                     new_vendor_fields["phone"], new_vendor_fields["contact_name"],
+                     new_vendor_fields["contact_email"], requires_w9, upload_token, user["id"]),
+                )
+                vendor_request_id = cur.fetchone()["id"]
+                cur.execute(
+                    "UPDATE checkreq.payment_requests SET vendor_request_id = %s WHERE id = %s",
+                    (vendor_request_id, payment_request_id),
+                )
+
     # Archive the generated check-voucher PDF (always) + any optional
     # user-uploaded supporting attachments -- to GCS staging then the
     # entity's permanent SharePoint archive. Deliberately runs AFTER the
@@ -1010,6 +1235,227 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
     )
     return _render(request, "my_requests.html", user, {
         "rows": rows, "submitted": submitted, "archive_warning": archive_warning,
+    })
+
+
+# ── New Vendor Onboarding: vendor-approval queue ─────────────────────────────
+# Gated on is_vendor_approver (Section 6, decision 1) -- a new, dedicated
+# role, deliberately NOT folded into is_cfo or GlobalApprovers. No per-org
+# scoping table exists for this flag (the plan found no evidence it needs
+# one), so a vendor-approver sees every org's pending requests, same
+# blanket-access shape as is_cfo's own bypass elsewhere in this app.
+
+def _require_vendor_approver(request: Request):
+    """Returns (user, None) if allowed, or (None, error_response) if not --
+    callers do `user, err = _require_vendor_approver(request); if err: return err`."""
+    user = _current_user(request)
+    if not user:
+        return None, RedirectResponse("/login")
+    if not user.get("is_vendor_approver"):
+        return None, JSONResponse({"error": "Vendor-approver access required"}, status_code=403)
+    return user, None
+
+
+@app.get("/admin/vendor-requests", response_class=HTMLResponse)
+def vendor_requests_list(request: Request, email_warning: str = ""):
+    user, err = _require_vendor_approver(request)
+    if err:
+        return err
+
+    rows = db.query(
+        """
+        SELECT vr.id, vr.entity_type, vr.first_name, vr.last_name, vr.company_name,
+               vr.dba_name, vr.contact_name, vr.contact_email, vr.requires_w9,
+               vr.w9_email_sent_at, vr.w9_received, vr.status, vr.rejected_reason,
+               vr.created_at, o.name AS org_name, pr.request_number, pr.amount
+        FROM checkreq.vendor_requests vr
+        JOIN checkreq.organizations o ON o.id = vr.org_id
+        JOIN checkreq.payment_requests pr ON pr.id = vr.payment_request_id
+        ORDER BY (vr.status = 'pending_approval') DESC, vr.created_at DESC
+        """
+    )
+    for r in rows:
+        r["display_name"] = _vendor_request_display_name(r)
+
+    return _render(request, "vendor_requests.html", user, {"rows": rows, "email_warning": email_warning})
+
+
+@app.post("/admin/vendor-requests/{vr_id}/approve")
+def vendor_request_approve(vr_id: int, request: Request):
+    """Approving (Section 3): sets status='approved' + stamps
+    approved_by_user_id/approved_at; if requires_w9, sends the W-9 request
+    email immediately and stamps w9_email_sent_at -- but ONLY on a real
+    send success, so a delivery failure stays visible (surfaced via
+    ?email_warning=) rather than silently claimed. Never touches QBO --
+    that's the not-yet-built review queue's job (Section 3/5)."""
+    user, err = _require_vendor_approver(request)
+    if err:
+        return err
+
+    vr = db.query_one(
+        "SELECT vr.*, o.name AS org_name FROM checkreq.vendor_requests vr "
+        "JOIN checkreq.organizations o ON o.id = vr.org_id WHERE vr.id = %s",
+        (vr_id,),
+    )
+    if not vr or vr["status"] != "pending_approval":
+        return RedirectResponse("/admin/vendor-requests", status_code=303)
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.vendor_requests SET status = 'approved', "
+                "approved_by_user_id = %s, approved_at = NOW() WHERE id = %s",
+                (user["id"], vr_id),
+            )
+
+    email_warning = ""
+    if vr["requires_w9"]:
+        result = _send_w9_request_email(vr, vr["org_name"], request)
+        if result.get("status") == "sent":
+            with db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE checkreq.vendor_requests SET w9_email_sent_at = NOW() WHERE id = %s",
+                        (vr_id,),
+                    )
+        else:
+            email_warning = result.get("error") or "unknown error sending the W-9 request email"
+
+    redirect_url = "/admin/vendor-requests"
+    if email_warning:
+        from urllib.parse import quote
+        redirect_url += f"?email_warning={quote(email_warning)}"
+    return RedirectResponse(redirect_url, status_code=303)
+
+
+@app.post("/admin/vendor-requests/{vr_id}/reject")
+async def vendor_request_reject(vr_id: int, request: Request):
+    user, err = _require_vendor_approver(request)
+    if err:
+        return err
+
+    form = await request.form()
+    reason = form.get("rejected_reason", "").strip() or None
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.vendor_requests SET status = 'rejected', "
+                "approved_by_user_id = %s, approved_at = NOW(), rejected_reason = %s "
+                "WHERE id = %s AND status = 'pending_approval'",
+                (user["id"], reason, vr_id),
+            )
+    return RedirectResponse("/admin/vendor-requests", status_code=303)
+
+
+@app.post("/admin/vendor-requests/{vr_id}/w9-received")
+def vendor_request_w9_received(vr_id: int, request: Request):
+    """Staff confirms a vendor's uploaded W-9 was actually reviewed and is
+    correct -- the upload itself never flips this flag on its own (Section
+    4a: 'Staff still confirms it, rather than the upload alone flipping the
+    gate' -- catches a wrong/incomplete document before it silently
+    unblocks the not-yet-built QBO-posting step)."""
+    user, err = _require_vendor_approver(request)
+    if err:
+        return err
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.vendor_requests SET w9_received = TRUE WHERE id = %s",
+                (vr_id,),
+            )
+    return RedirectResponse("/admin/vendor-requests", status_code=303)
+
+
+# ── W-9 upload — the ONE deliberate unauthenticated route in this app ───────
+# (Section 4a). The person on the other end (an external vendor contact) has
+# no account here. Hardened per the plan: 404 (not a distinguishing error)
+# on a bad/wrong-state token; same size/mime-type allowlist as the existing
+# extraction route; NEVER routed through document_extract.py's AI pipeline
+# (a completed W-9 contains a real SSN/EIN -- confirmed with Jay, no
+# extraction on W-9 uploads, ever); uploaded file goes straight to the same
+# GCS + SharePoint archive pattern already built for check-request
+# attachments.
+
+_W9_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+_W9_UPLOAD_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/gif", "image/webp"}
+
+
+@app.get("/vendor-w9-upload/{token}", response_class=HTMLResponse)
+def vendor_w9_upload_form(token: str, request: Request):
+    vr = _vendor_request_by_upload_token(token)
+    if not vr:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+
+    return templates.TemplateResponse(request, "vendor_w9_upload.html", {
+        "already_uploaded": bool(vr["w9_uploaded_at"]),
+        "vendor_name": _vendor_request_display_name(vr),
+        "org_name": vr["org_name"],
+        "token": token,
+        "error": "",
+    })
+
+
+@app.post("/vendor-w9-upload/{token}", response_class=HTMLResponse)
+async def vendor_w9_upload_submit(token: str, request: Request, file: UploadFile):
+    vr = _vendor_request_by_upload_token(token)
+    if not vr:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+
+    vendor_name = _vendor_request_display_name(vr)
+
+    content = await file.read()
+    if len(content) > _W9_UPLOAD_MAX_BYTES:
+        return templates.TemplateResponse(request, "vendor_w9_upload.html", {
+            "already_uploaded": False, "vendor_name": vendor_name, "org_name": vr["org_name"],
+            "token": token, "error": "File is too large (max 10MB).",
+        })
+    mime_type = file.content_type or ""
+    if mime_type not in _W9_UPLOAD_ALLOWED_TYPES:
+        return templates.TemplateResponse(request, "vendor_w9_upload.html", {
+            "already_uploaded": False, "vendor_name": vendor_name, "org_name": vr["org_name"],
+            "token": token,
+            "error": f"Unsupported file type ({mime_type or 'unknown'}). Please upload a PDF, "
+                     f"or a JPG/PNG/GIF/WebP photo of the completed form.",
+        })
+
+    ext = _guess_extension(file.filename or "w9", mime_type)
+    archived_filename = (
+        f"{vr['org_code'].upper()} W9 {_custom_titlecase(vendor_name)} "
+        f"{datetime.today().strftime('%Y.%m.%d')}.{ext}"
+    )
+
+    gcs_path = None
+    sp_path = None
+    try:
+        gcs_path = f"vendor_w9/{vr['id']}/{archived_filename}"
+        gcs_client.upload_bytes(ATTACHMENTS_BUCKET, gcs_path, content, mime_type)
+
+        if vr.get("sp_hostname") and vr.get("sp_site_path") and vr.get("sp_library_folder"):
+            sp_token = sharepoint_client.get_access_token()
+            site_id = sharepoint_client.get_site_id(sp_token, vr["sp_hostname"], vr["sp_site_path"])
+            sharepoint_client.upload_bytes(
+                sp_token, site_id, vr["sp_library_folder"], archived_filename, content, mime_type,
+            )
+            sp_path = f"{vr['sp_library_folder'].strip('/')}/{archived_filename}"
+    except Exception as exc:
+        # Never show the external vendor a raw internal error, and never
+        # silently claim success either -- log server-side; the admin page
+        # is where a staff member finds out archival needs manual attention.
+        print(f"[vendor-w9-upload] archive error for token {token[:8]}...: {exc}")
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.vendor_requests SET w9_file_gcs_path = %s, w9_file_sp_path = %s, "
+                "w9_uploaded_at = NOW() WHERE id = %s",
+                (gcs_path, sp_path, vr["id"]),
+            )
+
+    return templates.TemplateResponse(request, "vendor_w9_upload.html", {
+        "already_uploaded": True, "vendor_name": vendor_name, "org_name": vr["org_name"],
+        "token": token, "error": "",
     })
 
 

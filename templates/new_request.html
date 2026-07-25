@@ -41,6 +41,50 @@
     <div class="field">
       <label>Vendor</label>
       <select name="vendor_id" id="vendorSelect" placeholder="Search vendors..."></select>
+      <a href="#" id="addNewVendorLink" class="add-vendor-link">Can't find this vendor? Add a new one.</a>
+    </div>
+
+    <input type="hidden" name="using_new_vendor" id="usingNewVendor" value="0">
+
+    <div class="new-vendor-panel" id="newVendorPanel" style="display:none;">
+      <div class="new-vendor-header">
+        <strong>Add a new vendor</strong>
+        <a href="#" id="cancelNewVendorLink">Use an existing vendor instead</a>
+      </div>
+
+      <div class="field-row">
+        <label><input type="radio" name="new_vendor_entity_type" value="individual" checked> Individual</label>
+        <label><input type="radio" name="new_vendor_entity_type" value="entity"> Entity</label>
+      </div>
+
+      <div id="newVendorIndividualFields" class="field-row">
+        <div class="field"><label>First Name*</label><input type="text" name="new_vendor_first_name" id="nvFirstName"></div>
+        <div class="field"><label>Last Name*</label><input type="text" name="new_vendor_last_name" id="nvLastName"></div>
+      </div>
+
+      <div id="newVendorEntityFields" class="field-row" style="display:none;">
+        <div class="field"><label>Company Name*</label><input type="text" name="new_vendor_company_name" id="nvCompanyName"></div>
+        <div class="field"><label>DBA (optional)</label><input type="text" name="new_vendor_dba_name"></div>
+      </div>
+
+      <div class="field"><label>Address Line 1*</label><input type="text" name="new_vendor_address_line1" id="nvAddr1"></div>
+      <div class="field"><label>Address Line 2</label><input type="text" name="new_vendor_address_line2"></div>
+      <div class="field-row">
+        <div class="field"><label>City*</label><input type="text" name="new_vendor_city" id="nvCity"></div>
+        <div class="field"><label>State*</label><input type="text" name="new_vendor_state" id="nvState" maxlength="2"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Zip*</label><input type="text" name="new_vendor_zip" id="nvZip"></div>
+        <div class="field"><label>Phone (optional)</label><input type="text" name="new_vendor_phone"></div>
+      </div>
+
+      <div class="field-row">
+        <div class="field"><label>Contact Name*</label><input type="text" name="new_vendor_contact_name" id="nvContactName"></div>
+        <div class="field"><label>Contact Email*</label><input type="email" name="new_vendor_contact_email" id="nvContactEmail"></div>
+      </div>
+      <p class="field-hint">We'll email this contact a request for a completed IRS Form W-9 once
+        this vendor is approved (payments over $2,000 require one on file before posting). No tax
+        ID / SSN / EIN is collected here -- that comes back separately via the W-9 itself.</p>
     </div>
 
     <div class="field">

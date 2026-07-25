@@ -23,6 +23,9 @@
     <nav>
       <a href="/new-request">Check Request</a>
       <a href="/my-requests">My Requests</a>
+      {% if user and user.is_vendor_approver %}
+      <a href="/admin/vendor-requests">Vendor Approvals</a>
+      {% endif %}
       {% if real_user and real_user.is_cfo and not impersonating %}
       <a href="/admin/impersonate">Impersonate a User</a>
       {% endif %}

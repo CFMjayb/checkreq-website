@@ -49,6 +49,45 @@ function refreshAllGlAccountOptions() {
   });
 }
 
+// ---- New Vendor Onboarding: "Add a new vendor" inline panel ----
+// Exactly one of "pick existing vendor" / "add new vendor" is active at a
+// time (New Vendor Onboarding Plan.md, Section 2). #usingNewVendor (a
+// hidden field) is what new_request_submit's server-side branch actually
+// reads -- this JS only toggles visibility and keeps the live voucher
+// preview's vendor line in sync with whichever mode is active.
+
+function updateNewVendorEntityFieldVisibility() {
+  const checked = document.querySelector('input[name="new_vendor_entity_type"]:checked');
+  const entityType = checked ? checked.value : 'individual';
+  document.getElementById('newVendorIndividualFields').style.display = entityType === 'individual' ? '' : 'none';
+  document.getElementById('newVendorEntityFields').style.display = entityType === 'entity' ? '' : 'none';
+}
+
+function computeNewVendorDisplayName() {
+  const checked = document.querySelector('input[name="new_vendor_entity_type"]:checked');
+  const entityType = checked ? checked.value : 'individual';
+  if (entityType === 'entity') {
+    return document.getElementById('nvCompanyName').value.trim() || null;
+  }
+  const first = document.getElementById('nvFirstName').value.trim();
+  const last = document.getElementById('nvLastName').value.trim();
+  return (first + ' ' + last).trim() || null;
+}
+
+function showNewVendorPanel(show) {
+  document.getElementById('usingNewVendor').value = show ? '1' : '0';
+  document.getElementById('newVendorPanel').style.display = show ? '' : 'none';
+  if (vendorTomSelect) {
+    if (show) vendorTomSelect.clear();
+    // Tom Select renders its own wrapper next to the original <select> --
+    // hide/show that wrapper so exactly one vendor-picking UI is visible.
+    const wrapper = document.getElementById('vendorSelect').closest('.ts-wrapper') ||
+      document.getElementById('vendorSelect').parentElement.querySelector('.ts-wrapper');
+    if (wrapper) wrapper.style.display = show ? 'none' : '';
+  }
+  refreshPreview();
+}
+
 function initVendorSelect() {
   vendorTomSelect = new TomSelect('#vendorSelect', {
     valueField: 'id',
@@ -187,7 +226,9 @@ async function updateChainPreview(programAreaId, total) {
 }
 
 function refreshPreview() {
-  setField('vendor', vendorDisplayText);
+  const usingNewVendorEl = document.getElementById('usingNewVendor');
+  const usingNewVendor = usingNewVendorEl && usingNewVendorEl.value === '1';
+  setField('vendor', usingNewVendor ? (computeNewVendorDisplayName() || '—') : vendorDisplayText);
   setField('date', formatDisplayDate(document.getElementById('payDateInput').value));
   setField('description', document.getElementById('descriptionInput').value || '—');
 
@@ -295,6 +336,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('glLines').addEventListener('input', refreshPreview);
   document.getElementById('glLines').addEventListener('change', refreshPreview);
   document.getElementById('attachmentsInput').addEventListener('change', (e) => handleAttachmentUpload(e.target));
+
+  document.getElementById('addNewVendorLink').addEventListener('click', (e) => { e.preventDefault(); showNewVendorPanel(true); });
+  document.getElementById('cancelNewVendorLink').addEventListener('click', (e) => { e.preventDefault(); showNewVendorPanel(false); });
+  document.querySelectorAll('input[name="new_vendor_entity_type"]').forEach(r => r.addEventListener('change', () => {
+    updateNewVendorEntityFieldVisibility();
+    refreshPreview();
+  }));
+  document.getElementById('newVendorPanel').addEventListener('input', refreshPreview);
 
   refreshPreview();
 });
