@@ -570,8 +570,12 @@ def _request_is_editable(status: str) -> bool:
     no live path that sets 'Posted to QBO' yet (no approval-action workflow
     exists to drive a request to that status), so today every request is
     editable; this check is still implemented for real now so it's already
-    correct once that posting path exists."""
-    return status != "Posted to QBO"
+    correct once that posting path exists.
+
+    Extended 2026-07-26 (Task 2, Cancel a Check Request): a cancelled
+    request must also stop being editable -- same lock, same reasoning,
+    just a second terminal status alongside 'Posted to QBO'."""
+    return status not in ("Posted to QBO", "Cancelled")
 
 
 def _user_can_submit_for(user: dict, program_area_id: int) -> bool:
@@ -1098,16 +1102,32 @@ def _vendor_request_by_upload_token(token: str) -> dict | None:
     )
 
 
-def _next_request_number() -> str:
-    today = date.today().strftime("%Y%m%d")
+# Type-abbreviation prefix used both by _next_request_number() and by the My
+# Requests table/legend (Task 1/5, 2026-07-26). "??" is a deliberate,
+# visible fallback rather than a silent guess if a third request_type is ever
+# added without updating this dict too.
+_REQUEST_TYPE_ABBR = {"check_request": "CR", "invoice_payment": "IV"}
+
+
+def _next_request_number(request_type: str) -> str:
+    """New format (2026-07-26, Task 5): '{CR|IV}{YY}-{NNN}', e.g. 'CR26-001',
+    resetting per calendar YEAR (not per day, the old 'CR-YYYYMMDD-NNN'
+    format's behavior) and prefixed by request type. Sequence is the max
+    existing sequence number under this exact prefix + 1 -- extracted via a
+    trailing-digits regex rather than COUNT(*), so a gap (e.g. a deleted test
+    row) can never cause a duplicate request_number."""
+    prefix = _REQUEST_TYPE_ABBR.get(request_type, "XX")
+    yy = date.today().strftime("%y")
+    full_prefix = f"{prefix}{yy}-"
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT COUNT(*) AS n FROM checkreq.payment_requests WHERE request_number LIKE %s",
-                (f"CR-{today}-%",),
+                r"SELECT COALESCE(MAX(CAST(SUBSTRING(request_number FROM '(\d+)$') AS INTEGER)), 0) AS max_seq "
+                r"FROM checkreq.payment_requests WHERE request_number LIKE %s",
+                (f"{full_prefix}%",),
             )
-            n = cur.fetchone()["n"] + 1
-    return f"CR-{today}-{n:03d}"
+            max_seq = cur.fetchone()["max_seq"]
+    return f"{full_prefix}{max_seq + 1:03d}"
 
 
 @app.post("/new-request")
@@ -1376,7 +1396,7 @@ async def new_request_submit(request: Request):
                         """,
                         (program_area_id, vendor_id, new_vendor_request_id, total_amount,
                          requested_pay_date, description, special_instructions,
-                         "Submitted",
+                         "UnderReview",
                          first_step["approver_user_id"] if first_step else None,
                          first_step["serial_group"] if first_step else None,
                          chain_summary, payment_request_id),
@@ -1420,7 +1440,7 @@ async def new_request_submit(request: Request):
                         " previous_status, new_status, impersonated_by_user_id) "
                         "VALUES (%s, %s, %s, %s, %s, %s, %s)",
                         (payment_request_id, user["id"], "Edited — Approval Reset", audit_comment,
-                         existing_pr["status"], "Submitted", impersonated_by),
+                         existing_pr["status"], "UnderReview", impersonated_by),
                     )
                 else:
                     cur.execute(
@@ -1442,7 +1462,7 @@ async def new_request_submit(request: Request):
         return RedirectResponse(f"/my-requests?edited={request_number}", status_code=303)
 
     # ── NEW SUBMISSION branch (unchanged from before this session) ────────
-    request_number = _next_request_number()
+    request_number = _next_request_number(request_type)
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1456,7 +1476,7 @@ async def new_request_submit(request: Request):
                 """,
                 (request_number, request_type, org_id, program_area_id, user["id"],
                  vendor_id, total_amount, requested_pay_date, description, special_instructions,
-                 "Submitted",
+                 "UnderReview",
                  first_step["approver_user_id"] if first_step else None,
                  first_step["serial_group"] if first_step else None,
                  chain_summary),
@@ -1470,11 +1490,18 @@ async def new_request_submit(request: Request):
                     (payment_request_id, acct_id, amt, memo),
                 )
 
+            # action_type "Submitted" describes the ACTION the user just took
+            # (submitting) and stays "Submitted" even though the request's
+            # STATUS the row transitions into is now "UnderReview" -- these
+            # are two different things (Task 3, 2026-07-26): action_type is a
+            # verb describing what happened, new_status is the state that
+            # resulted. Conflating them would make the audit trail read as if
+            # the request were literally in a status called "Submitted".
             cur.execute(
                 "INSERT INTO checkreq.audit_log "
                 "(payment_request_id, action_by_user_id, action_type, comment, new_status, impersonated_by_user_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s)",
-                (payment_request_id, user["id"], "Submitted", chain_summary, "Submitted", impersonated_by),
+                (payment_request_id, user["id"], "Submitted", chain_summary, "UnderReview", impersonated_by),
             )
 
             # New Vendor Onboarding (Section 1/2): the vendor_requests row
@@ -1531,31 +1558,142 @@ async def new_request_submit(request: Request):
     return RedirectResponse(redirect_url, status_code=303)
 
 
-@app.get("/my-requests", response_class=HTMLResponse)
-def my_requests(request: Request, submitted: str = "", archive_warning: str = "", edited: str = ""):
+@app.post("/requests/{request_number}/cancel")
+def cancel_request(request_number: str, request: Request):
+    """Task 2 (2026-07-26): a soft cancel, matching this whole app's "never
+    truly delete, keep the audit trail" philosophy (same reasoning already
+    applied to attachments -- gcs_deleted_at is stamped, never NULLed back
+    out -- and to why editing never touches archived files). Sets
+    status='Cancelled' (a new value in the same free-text status column --
+    no migration needed, payment_requests.status has no CHECK constraint),
+    writes one audit_log row, and otherwise leaves GL lines/attachments/
+    vendor_request completely untouched.
+
+    Same ownership + locking convention as edit_request_form/
+    new_request_submit's edit branch: submitter-only, and only while
+    _request_is_editable() is still true (now also excludes 'Cancelled'
+    itself, so a request can't be cancelled twice)."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
 
-    rows = db.query(
-        """
-        SELECT pr.request_number, pr.request_type, pr.amount, pr.status,
-               pr.approval_chain_summary, pr.created_at, o.name AS org_name,
-               pa.title AS program_area_title
-        FROM checkreq.payment_requests pr
-        JOIN checkreq.organizations o ON o.id = pr.org_id
-        JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
-        WHERE pr.submitter_user_id = %s
-        ORDER BY pr.created_at DESC
-        """,
-        (user["id"],),
+    pr = db.query_one(
+        "SELECT * FROM checkreq.payment_requests WHERE request_number = %s",
+        (request_number,),
     )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if pr["submitter_user_id"] != user["id"]:
+        return JSONResponse({"error": "Not authorized to cancel this request"}, status_code=403)
+    if not _request_is_editable(pr["status"]):
+        return JSONResponse(
+            {"error": "This request can no longer be cancelled (already posted to QBO or already cancelled)."},
+            status_code=403,
+        )
+
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.payment_requests SET status = 'Cancelled', updated_at = NOW() WHERE id = %s",
+                (pr["id"],),
+            )
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, "
+                " previous_status, new_status, impersonated_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (pr["id"], user["id"], "Cancelled", "Cancelled by submitter.",
+                 pr["status"], "Cancelled", impersonated_by),
+            )
+
+    return RedirectResponse(f"/my-requests?cancelled={request_number}", status_code=303)
+
+
+@app.get("/my-requests", response_class=HTMLResponse)
+def my_requests(request: Request, submitted: str = "", archive_warning: str = "", edited: str = "",
+                cancelled: str = "", view: str = "mine"):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+
+    # Task 6 (2026-07-26): CFO-only "My Requests" vs "All Requests" toggle.
+    # "All Requests" deliberately stays scoped to the currently selected
+    # entity (org_id = current_org_id), NOT a global cross-entity view --
+    # Jay's explicit call. A non-CFO passing ?view=all gets silently treated
+    # as "mine" rather than an error -- same "no silent broadening of access"
+    # posture as _user_can_submit_for, just expressed as a quiet fallback
+    # since this is a read-only list view, not a submission.
+    show_all = (view == "all") and bool(user["is_cfo"])
+
+    if show_all:
+        org = _current_org(request)
+        if not org:
+            return RedirectResponse("/portal")
+        rows = db.query(
+            """
+            SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
+                   pr.approval_chain_summary, pr.created_at, o.code AS org_code,
+                   pa.title AS program_area_title, u.display_name AS submitter_name,
+                   u.email AS submitter_email
+            FROM checkreq.payment_requests pr
+            JOIN checkreq.organizations o ON o.id = pr.org_id
+            JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+            JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
+            WHERE pr.org_id = %s
+            ORDER BY pr.created_at DESC
+            """,
+            (org["id"],),
+        )
+    else:
+        # Unchanged from before this session -- no org_id filter here (never
+        # had one), per Task 6's explicit instruction that "My Requests"
+        # behaves exactly as it did previously.
+        rows = db.query(
+            """
+            SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
+                   pr.approval_chain_summary, pr.created_at, o.code AS org_code,
+                   pa.title AS program_area_title
+            FROM checkreq.payment_requests pr
+            JOIN checkreq.organizations o ON o.id = pr.org_id
+            JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+            WHERE pr.submitter_user_id = %s
+            ORDER BY pr.created_at DESC
+            """,
+            (user["id"],),
+        )
+
+    # Task 4 (2026-07-26): status-pill popup history. Embedded server-side at
+    # render time (one extra query total, keyed by payment_request_id) rather
+    # than a separate per-click API endpoint -- fewer moving parts, and this
+    # codebase already has a precedent for embedding data server-side into
+    # the page rather than adding a new round-trip API for something this
+    # small (new_request_form's EDIT_DATA JS global for edit prefill).
+    history_by_id: dict[int, list[dict]] = {}
+    pr_ids = [r["pr_id"] for r in rows]
+    if pr_ids:
+        history_rows = db.query(
+            "SELECT payment_request_id, action_type, action_date, comment, "
+            "previous_status, new_status FROM checkreq.audit_log "
+            "WHERE payment_request_id = ANY(%s) ORDER BY action_date",
+            (pr_ids,),
+        )
+        for h in history_rows:
+            history_by_id.setdefault(h["payment_request_id"], []).append(h)
+
     for r in rows:
-        # Locking rule (Jay, 2026-07-25): "You can make changes until it is
-        # posted to QBO." Drives whether the Edit link renders below.
+        # Locking rule (Jay, 2026-07-25, extended 2026-07-26 for Cancel):
+        # "You can make changes until it is posted to QBO." Drives whether
+        # the Edit/Cancel links render below.
         r["editable"] = _request_is_editable(r["status"])
+        r["type_abbr"] = _REQUEST_TYPE_ABBR.get(r["request_type"], "??")
+        r["history"] = history_by_id.get(r["pr_id"], [])
+
     return _render(request, "my_requests.html", user, {
-        "rows": rows, "submitted": submitted, "archive_warning": archive_warning, "edited": edited,
+        "rows": rows, "submitted": submitted, "archive_warning": archive_warning,
+        "edited": edited, "cancelled": cancelled, "show_all": show_all,
     })
 
 

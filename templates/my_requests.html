@@ -15,35 +15,100 @@
   <a href="/requests/{{ edited }}/pdf" target="_blank">View / Download PDF</a>
 </div>
 {% endif %}
+{% if cancelled %}
+<div class="banner banner-info">
+  Cancelled: {{ cancelled }}
+</div>
+{% endif %}
 {% if archive_warning %}
 <div class="banner banner-error">
   Submitted successfully, but archiving to the permanent record failed: {{ archive_warning }}
   Please attach the document(s) to this request's SharePoint archive manually, or contact an admin.
 </div>
 {% endif %}
+
+{% if user.is_cfo %}
+<div class="view-toggle" role="tablist" aria-label="Requests view">
+  <a href="/my-requests" class="view-toggle-tab {% if not show_all %}active{% endif %}">My Requests</a>
+  <a href="/my-requests?view=all" class="view-toggle-tab {% if show_all %}active{% endif %}">All Requests</a>
+</div>
+{% endif %}
+
+<div class="type-legend">CR = Check Request &middot; IV = Invoice Payment</div>
+
 <div class="card">
-  <table class="simple-table">
-    <tr><th>Request #</th><th>Type</th><th>Entity</th><th>Program Area</th><th>Amount</th><th>Status</th><th>Submitted</th><th></th></tr>
+  <table class="simple-table my-requests-table">
+    <colgroup>
+      <col class="col-reqnum">
+      <col class="col-type">
+      <col class="col-entity">
+      <col class="col-program">
+      {% if show_all %}<col class="col-submitter">{% endif %}
+      <col class="col-amount">
+      <col class="col-status">
+      <col class="col-date">
+      <col class="col-actions">
+    </colgroup>
+    <tr>
+      <th>Request #</th>
+      <th>Type</th>
+      <th>Entity</th>
+      <th>Program Area</th>
+      {% if show_all %}<th>Submitted By</th>{% endif %}
+      <th>Amount</th>
+      <th>Status</th>
+      <th>Submitted</th>
+      <th></th>
+    </tr>
     {% for r in rows %}
     <tr>
       <td>{{ r.request_number }}</td>
-      <td>{{ r.request_type }}</td>
-      <td>{{ r.org_name }}</td>
-      <td>{{ r.program_area_title }}</td>
-      <td>${{ "%.2f"|format(r.amount) }}</td>
-      <td><span class="badge badge-{{ r.status|lower|replace(' ', '-') }}">{{ r.status }}</span></td>
-      <td>{{ r.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-      <td>
+      <td>{{ r.type_abbr }}</td>
+      <td>{{ r.org_code }}</td>
+      <td class="program-area-cell">{{ r.program_area_title }}</td>
+      {% if show_all %}<td>{{ r.submitter_name or r.submitter_email }}</td>{% endif %}
+      <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
+      <td class="status-cell">
+        <button type="button" class="status-pill-btn" data-popup="status-popup-{{ loop.index }}">
+          <span class="badge badge-{{ r.status|lower|replace(' ', '-') }}">{{ r.status }}</span>
+        </button>
+        <div class="status-popup" id="status-popup-{{ loop.index }}" hidden>
+          <div class="status-popup-title">Status History — {{ r.request_number }}</div>
+          {% if r.history %}
+          <table class="status-history-table">
+            <tr><th>Date</th><th>Action</th><th>Status</th><th>Comment</th></tr>
+            {% for h in r.history %}
+            <tr>
+              <td>{{ h.action_date.strftime("%Y-%m-%d %H:%M") }}</td>
+              <td>{{ h.action_type }}</td>
+              <td>{% if h.previous_status %}{{ h.previous_status }} &rarr; {% endif %}{{ h.new_status or "—" }}</td>
+              <td>{{ h.comment or "—" }}</td>
+            </tr>
+            {% endfor %}
+          </table>
+          {% else %}
+          <div class="sub">No history recorded.</div>
+          {% endif %}
+        </div>
+      </td>
+      <td>{{ r.created_at.strftime("%Y-%m-%d") }}</td>
+      <td class="col-actions">
         <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
         {% if r.editable %}
         · <a href="/requests/{{ r.request_number }}/edit">Edit</a>
+        · <form method="post" action="/requests/{{ r.request_number }}/cancel" class="cancel-form">
+            <button type="submit" class="link-button cancel-btn">Cancel</button>
+          </form>
         {% endif %}
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="8">No requests yet.</td></tr>
+    <tr><td colspan="{{ 9 if show_all else 8 }}">No requests yet.</td></tr>
     {% endfor %}
   </table>
 </div>
 </div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/my_requests.js?v={{ asset_version('js/my_requests.js') }}"></script>
 {% endblock %}

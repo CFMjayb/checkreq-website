@@ -167,11 +167,100 @@ input:focus, select:focus, textarea:focus {
 .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; }
 .badge-draft { background: #ece7da; color: var(--color-text-muted); }
 .badge-submitted { background: #eaf1ec; color: var(--color-franciscan-green); }
+/* "Submitted" (the payment_requests.status VALUE) was renamed "UnderReview"
+   2026-07-26 (Task 3) -- badge-submitted kept above too, harmlessly unused,
+   in case any historical audit_log-derived display ever needs the old
+   status word rendered as a badge again. */
+.badge-underreview { background: #eaf1ec; color: var(--color-franciscan-green); }
 .badge-pending, .badge-pending-approval { background: #fdf0d6; color: #8a5a00; }
 .badge-approved, .badge-cfo-override { background: #e0f0e6; color: var(--color-success); }
 .badge-rejected { background: #fbe6e6; color: var(--color-danger); }
 .badge-posted-to-qbo { background: #dfe9e2; color: var(--color-franciscan-green); }
+.badge-cancelled { background: #ece7da; color: var(--color-text-muted); }
 
 table.simple-table { width: 100%; border-collapse: collapse; }
 table.simple-table th { text-align: left; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--color-text-muted); border-bottom: 2px solid var(--color-border); padding: var(--space-2) var(--space-3); }
 table.simple-table td { padding: var(--space-3); border-bottom: 1px solid var(--color-border); font-size: 0.92rem; }
+
+/* ---- My Requests table (2026-07-26 redesign, Task 1) ----
+   table-layout:fixed + explicit per-column widths so a normal row fits on
+   one line and never wraps to 2 lines (Jay's real screenshot showed this
+   happening under the old auto-layout table, mostly on Program Area and
+   the full org name -- which is why Entity now shows organizations.code
+   ("EDOM"/"Claggett") instead of the full name too). white-space:nowrap on
+   the columns that are short by nature (request #, type, entity, amount,
+   status, date) so they can never wrap even under a narrow viewport;
+   Program Area is deliberately the one column allowed to wrap (long
+   program-area titles are the one field genuinely too long to guarantee
+   single-line at every viewport width, and it's the least harmful one to
+   wrap since it isn't a number/code/date the eye needs on one line). */
+table.my-requests-table { table-layout: fixed; }
+table.my-requests-table .col-reqnum { width: 11%; }
+table.my-requests-table .col-type { width: 6%; }
+table.my-requests-table .col-entity { width: 9%; }
+table.my-requests-table .col-program { width: 22%; }
+table.my-requests-table .col-submitter { width: 14%; }
+table.my-requests-table .col-amount { width: 10%; }
+table.my-requests-table .col-status { width: 12%; }
+table.my-requests-table .col-date { width: 9%; }
+table.my-requests-table .col-actions { width: 15%; }
+table.my-requests-table td, table.my-requests-table th { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The status cell must never clip -- it's the popup's own positioning
+   anchor (position:relative), and .status-popup's own overflow (set below)
+   is independent of this cell's overflow:hidden regardless, but this avoids
+   any ambiguity. */
+table.my-requests-table td.status-cell { overflow: visible; }
+/* Program Area is the one column allowed to actually wrap onto a second
+   line rather than truncate with an ellipsis (see comment above). Targeted
+   by class, not nth-child, since Program Area's column position shifts
+   when the CFO "All Requests" view inserts the Submitted By column. */
+table.my-requests-table td.program-area-cell { white-space: normal; }
+
+.type-legend { color: var(--color-text-muted); font-size: 0.82rem; margin-bottom: var(--space-3); }
+
+/* ---- CFO "My Requests" / "All Requests" toggle (Task 6) ---- */
+.view-toggle { display: flex; gap: var(--space-2); margin-bottom: var(--space-4); }
+.view-toggle-tab {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  background: #ece7da;
+  border: 1px solid var(--color-border);
+  border-bottom: none;
+}
+.view-toggle-tab.active { background: var(--color-card-bg); color: var(--color-franciscan-green); }
+
+/* ---- Status pill popup (Task 4) -- the first real modal-style UI in this
+   app, per Jay's explicit instruction ("a real popup... not inline
+   expansion"). Positioned relative to .status-cell, dismissed by
+   my_requests.js's outside-click listener, never by CSS alone. ---- */
+.status-cell { position: relative; }
+.status-pill-btn { background: none; border: none; padding: 0; cursor: pointer; font: inherit; }
+.status-popup {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 200;
+  margin-top: var(--space-1);
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card-hover);
+  padding: var(--space-3);
+  min-width: 340px;
+  white-space: normal;
+}
+.status-popup-title { font-weight: 700; font-size: 0.85rem; margin-bottom: var(--space-2); color: var(--color-franciscan-green); }
+table.status-history-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+table.status-history-table th { text-align: left; color: var(--color-text-muted); border-bottom: 1px solid var(--color-border); padding: var(--space-1) var(--space-2); }
+table.status-history-table td { padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--color-border); white-space: normal; }
+
+/* ---- Plain link-styled buttons (Cancel, Task 2) -- a <button> inside a
+   <form> so the POST can't be triggered by a bare GET link, but styled to
+   read exactly like the adjacent PDF/Edit <a> links. ---- */
+.cancel-form { display: inline; }
+.link-button { background: none; border: none; padding: 0; margin: 0; font: inherit; color: var(--color-franciscan-green); text-decoration: underline; cursor: pointer; }
+.cancel-btn { color: var(--color-danger); }
