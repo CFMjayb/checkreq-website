@@ -140,6 +140,22 @@
   background: none; border: none; color: var(--color-danger);
   font-size: 1rem; cursor: pointer; padding: 0 var(--space-1); line-height: 1;
 }
+
+/* Budget Overspend Tracking Plan.md (2026-07-26), Section 4: a small,
+   per-GL-line live budget/spend indicator -- inline, in the same
+   already-internally-scrolling GL-coding region, not a new panel or a
+   right-pane expansion (both were explicitly ruled out to preserve the
+   one-viewport constraint). grid-column: 1/-1 spans the full .gl-line grid
+   row (which is otherwise 4 columns: account/amount/memo/remove) so this
+   renders as its own compact line directly under each row. */
+.gl-budget-status {
+  grid-column: 1 / -1;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  min-height: 1em;
+  margin-top: -2px;
+}
+.gl-budget-status.over-budget { color: var(--color-danger); font-weight: 600; }
 .btn-sm { padding: 4px 12px; font-size: 0.82rem; }
 
 .submit-row { margin-top: auto; padding-top: var(--space-3); }

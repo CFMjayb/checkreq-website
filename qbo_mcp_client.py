@@ -75,6 +75,46 @@ def _post(path_template: str, company: str, body: dict, timeout: int = 30) -> tu
         return None, str(exc)
 
 
+def _get(path_template: str, company: str, params: dict, timeout: int = 20) -> tuple[dict | None, str | None]:
+    url = f"{QBO_MCP_URL}{path_template.format(company=company)}"
+    try:
+        resp = requests.get(
+            url,
+            headers={"X-API-Key": _get_api_key()},
+            params=params,
+            timeout=timeout,
+        )
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+        if not resp.ok:
+            return None, data.get("error") or f"HTTP {resp.status_code}: {resp.text[:300]}"
+        if "error" in data:
+            return None, data["error"]
+        return data, None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def get_budget_status(company: str, account_number: str, fiscal_year: int) -> tuple[dict | None, str | None]:
+    """GET /api/checkreq/budget-status/{company}. Returns
+    ({"account_number", "fiscal_year", "annual_budget", "budget_found",
+      "actual_spend", "as_of_date"}, None) on success, or (None, "error text")
+    on failure.
+
+    Budget Overspend Tracking Plan.md (2026-07-26): a live diagnostic query
+    confirmed QBO's native Budget entity is real and usable for both
+    EDOM/Claggett -- this reads it directly via qbo-mcp-server, no new
+    Postgres budget table needed. First callers: main.py's
+    /api/budget-status live-preview route and
+    _evaluate_gl_line_budgets()'s submission-time enforcement."""
+    return _get(
+        "/api/checkreq/budget-status/{company}", company,
+        {"gl_account_number": account_number, "fiscal_year": fiscal_year},
+    )
+
+
 def create_vendor(
     company: str,
     display_name: str,

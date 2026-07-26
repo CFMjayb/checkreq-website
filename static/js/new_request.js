@@ -217,10 +217,12 @@ function addGlLine() {
     <div class="field"><select class="glAccount" name="gl_account_id" required><option value="">Account...</option></select></div>
     <div class="field"><input type="number" step="0.01" class="glAmount" name="gl_amount" placeholder="0.00" required></div>
     <div class="field"><input type="text" class="glMemo" name="gl_memo" placeholder="Optional memo"></div>
-    <button type="button" class="remove-line" onclick="removeGlLine(this)">&times;</button>`;
+    <button type="button" class="remove-line" onclick="removeGlLine(this)">&times;</button>
+    <div class="gl-budget-status"></div>`;
   container.appendChild(div);
   initGlAccountSelect(div.querySelector('.glAccount'));
   refreshPreview();
+  scheduleBudgetChecks();
 }
 
 // ---- Live voucher preview ----
@@ -327,6 +329,63 @@ function refreshPreview() {
 
   const total = updateVoucherGlTable();
   scheduleChainPreview(paSel.value, total);
+  scheduleBudgetChecks();
+}
+
+// ---- Budget/Overspend live preview (Budget Overspend Tracking Plan.md,
+// 2026-07-26, Section 4) ----
+// Per GL line, shows "Budget: $X * Spent: $Y" (Y already includes this
+// line's own typed amount, per the plan's wording), switching red when
+// over budget. Reuses the exact debounce pattern the approval-chain
+// preview already uses (scheduleChainPreview/updateChainPreview above) --
+// one shared timer, all currently-visible lines re-checked together (no
+// per-line timers -- simpler, and a single 350ms debounce already collapses
+// rapid typing across multiple fields/lines just fine).
+
+let budgetDebounceTimer = null;
+
+function scheduleBudgetChecks() {
+  clearTimeout(budgetDebounceTimer);
+  budgetDebounceTimer = setTimeout(updateAllBudgetChecks, 350);
+}
+
+async function updateAllBudgetChecks() {
+  const programAreaId = document.getElementById('programAreaSelect').value;
+  const rows = [...document.querySelectorAll('#glLines .gl-line')];
+  await Promise.all(rows.map(async (row) => {
+    const statusEl = row.querySelector('.gl-budget-status');
+    if (!statusEl) return;
+    const glAccountId = row.querySelector('.glAccount').value;
+    const amount = parseFloat(row.querySelector('.glAmount').value) || 0;
+    if (!programAreaId || !glAccountId || amount <= 0) {
+      statusEl.textContent = '';
+      statusEl.classList.remove('over-budget');
+      statusEl.title = '';
+      return;
+    }
+    try {
+      const r = await fetch(`/api/budget-status?program_area_id=${programAreaId}&gl_account_id=${glAccountId}&amount=${amount}`);
+      const d = await r.json();
+      if (!d.budget_found) {
+        statusEl.textContent = '';
+        statusEl.classList.remove('over-budget');
+        statusEl.title = '';
+        return;
+      }
+      statusEl.textContent = `Budget: ${fmtMoney(d.annual_budget)} · Spent: ${fmtMoney(d.projected)}`;
+      statusEl.classList.toggle('over-budget', d.is_over);
+      if (!d.is_over) {
+        statusEl.title = '';
+      } else if (d.blocked) {
+        statusEl.title = 'Over budget -- overspend is not allowed for this account. This line will block submission.';
+      } else {
+        statusEl.title = 'Over budget -- allowed (Allow Overspend = Yes). Will be flagged for CFO review on submission.';
+      }
+    } catch {
+      statusEl.textContent = '';
+      statusEl.classList.remove('over-budget');
+    }
+  }));
 }
 
 // ---- Upload-to-prefill extraction ----
@@ -456,7 +515,8 @@ async function applyEditPrefill() {
       <div class="field"><select class="glAccount" name="gl_account_id" required><option value="">Account...</option></select></div>
       <div class="field"><input type="number" step="0.01" class="glAmount" name="gl_amount" placeholder="0.00" required></div>
       <div class="field"><input type="text" class="glMemo" name="gl_memo" placeholder="Optional memo"></div>
-      <button type="button" class="remove-line" onclick="removeGlLine(this)">&times;</button>`;
+      <button type="button" class="remove-line" onclick="removeGlLine(this)">&times;</button>
+      <div class="gl-budget-status"></div>`;
     container.appendChild(div);
     const acctSel = div.querySelector('.glAccount');
     const ts = initGlAccountSelect(acctSel);
@@ -465,6 +525,7 @@ async function applyEditPrefill() {
     if (line.amount) div.querySelector('.glAmount').value = Number(line.amount).toFixed(2);
     if (line.memo) div.querySelector('.glMemo').value = line.memo;
   }
+  scheduleBudgetChecks();
 
   if (d.vendor) {
     vendorTomSelect.addOption({ id: String(d.vendor.id), display_name: d.vendor.display_name });

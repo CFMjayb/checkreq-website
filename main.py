@@ -621,6 +621,100 @@ def _user_can_submit_for(user: dict, program_area_id: int) -> bool:
     return row is not None
 
 
+# ── Budget/Overspend Tracking (Budget Overspend Tracking Plan.md, 2026-07-26) ──
+# Jay's decisions, applied literally, no re-litigating:
+#   1. allow_overspend=False + over budget => HARD BLOCK submission entirely
+#      (not just an auto-approve bypass).
+#   2. Fiscal year = calendar year for both EDOM and Claggett -- no FY-offset
+#      logic anywhere in this feature.
+#   3. Program Area + GL Account is the budget-scoping key -- no QBO Class
+#      disambiguation needed.
+#   4. "Actual spend" = the account's REAL QBO GL balance for the calendar
+#      year to date (qbo_mcp_client.get_budget_status()'s actual_spend,
+#      itself qbo-mcp-server's fetch_gl() net_change -- a true QBO-computed
+#      running-balance difference, inherently net of credits/refunds, never
+#      a manual sum of individual debit/credit lines) PLUS this GL line's
+#      own amount, compared against the account's QBO-native annual budget.
+#
+# A live one-time diagnostic query (2026-07-26) confirmed QBO already has a
+# real, usable native Budget entity for both companies -- no new
+# program_area_gl_account_budgets table was needed; see
+# qbo-mcp-server's new GET /api/checkreq/budget-status/{company} endpoint.
+
+def _evaluate_gl_line_budgets(
+    org: dict, program_area_id: int, gl_lines: list[tuple[int, float, str]]
+) -> tuple[list[str], list[str]]:
+    """Per-GL-line budget check. Each line is evaluated INDEPENDENTLY against
+    (this account's real QBO year-to-date spend + that line's own amount)
+    vs. its QBO-native annual budget -- matches the live-preview UI's own
+    per-line framing (Section 4 of the plan: "actual_spend + this_line's_
+    amount"). Deliberately does NOT sum multiple lines on the SAME
+    submission that happen to code to the same GL account -- a documented
+    simplification, not something Jay was asked about; see CLAUDE.md.
+
+    A GL account with no QBO Budget data at all (budget_found=False) is
+    silently skipped for both blocking and flagging -- there's nothing to
+    compare against. Likewise a GL line with no program_area_gl_accounts
+    mapping row at all (shouldn't normally happen -- the picker only ever
+    offers mapped accounts -- but guarded rather than assumed).
+
+    Returns (block_messages, flag_details):
+      block_messages: non-empty => the caller MUST reject the submission
+        with a 400 BEFORE writing anything to the database.
+      flag_details: one human-readable string per line that exceeded budget
+        but was allowed through (allow_overspend=true) -- stored verbatim on
+        payment_requests.overspend_detail for /admin/ap-review to surface,
+        per the plan's Section 6 resolution (slot into the AP review screen
+        that already exists for this, not a second competing queue).
+    """
+    if not gl_lines:
+        return [], []
+    company = (org.get("code") or "").lower()
+    fiscal_year = date.today().year
+    block_messages: list[str] = []
+    flag_details: list[str] = []
+
+    for acct_id, amt, _memo in gl_lines:
+        row = db.query_one(
+            """
+            SELECT ga.account_number, ga.account_name, pga.allow_overspend
+            FROM checkreq.gl_accounts ga
+            JOIN checkreq.program_area_gl_accounts pga
+                ON pga.gl_account_id = ga.id AND pga.program_area_id = %s
+            WHERE ga.id = %s
+            """,
+            (program_area_id, acct_id),
+        )
+        if not row:
+            continue  # no Program Area/GL Account mapping -- nothing to check against
+
+        status, err = qbo_mcp_client.get_budget_status(company, row["account_number"], fiscal_year)
+        if err or not status or not status.get("budget_found"):
+            continue  # no QBO budget data for this account -- can't enforce
+
+        projected = round(status["actual_spend"] + amt, 2)
+        if projected <= status["annual_budget"]:
+            continue
+
+        label = row["account_name"] or row["account_number"]
+        if row["allow_overspend"]:
+            flag_details.append(
+                f"GL {row['account_number']} ({label}): annual budget "
+                f"${status['annual_budget']:,.2f}, projected spend "
+                f"${projected:,.2f} after this request (${amt:,.2f} this line)."
+            )
+        else:
+            block_messages.append(
+                f"GL {row['account_number']} ({label}): this line would bring the "
+                f"account's year-to-date spend to ${projected:,.2f} against a "
+                f"${status['annual_budget']:,.2f} annual budget, and overspend is "
+                f"not allowed for this Program Area/GL Account combination. Reduce "
+                f"the amount, choose a different GL account, or ask an admin to "
+                f"enable Allow Overspend for this mapping."
+            )
+    return block_messages, flag_details
+
+
 # ── Approval Action Workflow helpers (AP Review Workflow Plan.md, Section 1a/2b) ──
 
 def _serial_group_display_approver(chain: list[dict], serial_group: int | None) -> int | None:
@@ -788,6 +882,58 @@ def api_approval_chain_preview(program_area_id: int, amount: float, request: Req
         return JSONResponse({"error": "Not signed in"}, status_code=401)
     chain = approval_engine.build_approval_chain(program_area_id, amount)
     return {"summary": approval_engine.describe_chain(chain)}
+
+
+@app.get("/api/budget-status")
+def api_budget_status(request: Request, program_area_id: int, gl_account_id: int, amount: float = 0):
+    """Budget/Overspend Tracking Plan.md (2026-07-26) live-preview endpoint --
+    same "just exposes what new_request_submit already computes" pattern as
+    /api/approval-chain-preview above. `amount` is THIS GL LINE's own typed
+    amount only (not summed across other lines on the same submission that
+    might share the same GL account -- see _evaluate_gl_line_budgets'
+    docstring for why). Returns a soft {"budget_found": false} rather than an
+    error for "nothing to show" cases (no mapping row, no QBO budget data,
+    qbo-mcp-server unreachable) -- the UI simply shows nothing rather than
+    breaking, matching this codebase's established soft-error convention
+    (e.g. /api/extract-document)."""
+    user = _current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not signed in"}, status_code=401)
+    org = _current_org(request)
+    if not org:
+        return {"budget_found": False}
+
+    row = db.query_one(
+        """
+        SELECT ga.account_number, pga.allow_overspend
+        FROM checkreq.gl_accounts ga
+        JOIN checkreq.program_area_gl_accounts pga
+            ON pga.gl_account_id = ga.id AND pga.program_area_id = %s
+        WHERE ga.id = %s AND ga.org_id = %s
+        """,
+        (program_area_id, gl_account_id, org["id"]),
+    )
+    if not row:
+        return {"budget_found": False}
+
+    status, err = qbo_mcp_client.get_budget_status(
+        (org.get("code") or "").lower(), row["account_number"], date.today().year
+    )
+    if err or not status or not status.get("budget_found"):
+        return {"budget_found": False}
+
+    projected = round(status["actual_spend"] + amount, 2)
+    is_over = projected > status["annual_budget"]
+    return {
+        "budget_found":    True,
+        "annual_budget":   status["annual_budget"],
+        "actual_spend":    status["actual_spend"],
+        "amount":          amount,
+        "projected":       projected,
+        "is_over":         is_over,
+        "allow_overspend": bool(row["allow_overspend"]),
+        "blocked":         is_over and not row["allow_overspend"],
+    }
 
 
 _EXTRACT_MAX_BYTES = 10 * 1024 * 1024
@@ -1425,6 +1571,24 @@ async def new_request_submit(request: Request):
     ]
     total_amount = round(sum(amt for _, amt, _ in gl_lines), 2)
 
+    # Budget/Overspend Tracking Plan.md (2026-07-26), decision 1: HARD BLOCK
+    # the entire submission (never just an auto-approve bypass) if any GL
+    # line would push its account over its QBO-native annual budget while
+    # allow_overspend is False for that Program Area/GL Account mapping.
+    # Runs BEFORE any database write, for both the new-submission and edit
+    # branches below (this check sits above the branch split). A line that
+    # IS allowed over budget (allow_overspend=True) is not blocked, but
+    # overspend_flagged/overspend_detail (written into both branches below)
+    # flag it for /admin/ap-review per the plan's Section 6 resolution.
+    block_messages, flag_details = _evaluate_gl_line_budgets(org, program_area_id, gl_lines)
+    if block_messages:
+        return JSONResponse(
+            {"error": "Cannot submit -- over budget:\n" + "\n".join(block_messages)},
+            status_code=400,
+        )
+    overspend_flagged = bool(flag_details)
+    overspend_detail = "\n".join(flag_details) if flag_details else None
+
     # Optional user attachments (not required -- see form). Read all bytes
     # now, while we still have the async UploadFile objects; everything
     # downstream (archival) works with plain bytes.
@@ -1553,6 +1717,12 @@ async def new_request_submit(request: Request):
                     # relevant, rather than destroying data on an edit.
                     new_vendor_request_id = None
 
+                # Budget Overspend Tracking Plan.md (2026-07-26): recomputed
+                # and written on EVERY edit, not just a reset_approval edit --
+                # GL lines are always replaced wholesale below regardless of
+                # whether vendor/amount changed (e.g. a same-total
+                # reallocation between GL lines can still change which
+                # accounts are over budget).
                 if reset_approval:
                     cur.execute(
                         """
@@ -1561,14 +1731,15 @@ async def new_request_submit(request: Request):
                             amount = %s, requested_pay_date = %s, description = %s,
                             special_instructions = %s, status = %s, current_approver_id = %s,
                             serial_group_current = %s, approval_chain_summary = %s,
-                            cfo_override = FALSE, cfo_override_date = NULL, updated_at = NOW()
+                            cfo_override = FALSE, cfo_override_date = NULL,
+                            overspend_flagged = %s, overspend_detail = %s, updated_at = NOW()
                         WHERE id = %s
                         """,
                         (program_area_id, vendor_id, new_vendor_request_id, total_amount,
                          requested_pay_date, description, special_instructions,
                          "UnderReview",
                          first_display_approver, first_serial_group,
-                         chain_summary, payment_request_id),
+                         chain_summary, overspend_flagged, overspend_detail, payment_request_id),
                     )
                     # AP Review Workflow Plan.md, Section 1a: mark any still-
                     # pending rows from the OLD chain skipped, then
@@ -1581,11 +1752,13 @@ async def new_request_submit(request: Request):
                         UPDATE checkreq.payment_requests SET
                             program_area_id = %s, vendor_id = %s, vendor_request_id = %s,
                             requested_pay_date = %s, description = %s,
-                            special_instructions = %s, updated_at = NOW()
+                            special_instructions = %s,
+                            overspend_flagged = %s, overspend_detail = %s, updated_at = NOW()
                         WHERE id = %s
                         """,
                         (program_area_id, vendor_id, new_vendor_request_id,
-                         requested_pay_date, description, special_instructions, payment_request_id),
+                         requested_pay_date, description, special_instructions,
+                         overspend_flagged, overspend_detail, payment_request_id),
                     )
 
                 # Replace GL lines wholesale -- delete + reinsert, matching
@@ -1654,15 +1827,16 @@ async def new_request_submit(request: Request):
                 INSERT INTO checkreq.payment_requests
                     (request_number, request_type, org_id, program_area_id, submitter_user_id,
                      vendor_id, amount, requested_pay_date, description, special_instructions,
-                     status, current_approver_id, serial_group_current, approval_chain_summary)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     status, current_approver_id, serial_group_current, approval_chain_summary,
+                     overspend_flagged, overspend_detail)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (request_number, request_type, org_id, program_area_id, user["id"],
                  vendor_id, total_amount, requested_pay_date, description, special_instructions,
                  "UnderReview",
                  first_display_approver, first_serial_group,
-                 chain_summary),
+                 chain_summary, overspend_flagged, overspend_detail),
             )
             payment_request_id = cur.fetchone()["id"]
 
@@ -2705,6 +2879,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
         """
         SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount,
                pr.approval_chain_summary, pr.created_at, pr.vendor_request_id,
+               pr.overspend_flagged, pr.overspend_detail,
                o.code AS org_code, o.name AS org_name,
                pa.title AS program_area_title, u.display_name AS submitter_name,
                u.email AS submitter_email,

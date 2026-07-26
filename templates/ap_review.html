@@ -37,12 +37,20 @@ that writes to QuickBooks.</p>
       <td>{{ r.vendor_name }}</td>
       <td>{{ r.submitter_name or r.submitter_email }}</td>
       <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
-      <td><span class="sub">{{ r.approval_chain_summary or "—" }}</span></td>
+      <td>
+        <span class="sub">{{ r.approval_chain_summary or "—" }}</span>
+        {% if r.overspend_flagged %}
+        <br><span class="sub overspend-detail">{{ (r.overspend_detail or "") | e | replace("\n", "<br>") | safe }}</span>
+        {% endif %}
+      </td>
       <td>
         {% if r.vendor_gate_wait %}
         <span class="badge badge-pending">Waiting: {{ r.vendor_gate_wait }}</span>
         {% else %}
         <span class="badge badge-approved">Ready to post</span>
+        {% endif %}
+        {% if r.overspend_flagged %}
+        <br><span class="badge badge-overspend" title="Allowed over budget (Allow Overspend = Yes) -- review before posting.">Over Budget (Allowed)</span>
         {% endif %}
       </td>
       <td class="col-actions">
