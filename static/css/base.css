@@ -203,23 +203,37 @@ table.simple-table td { padding: var(--space-3); border-bottom: 1px solid var(--
    wrap since it isn't a number/code/date the eye needs on one line). */
 table.my-requests-table { table-layout: fixed; }
 table.my-requests-table .col-reqnum { width: 10%; }
-table.my-requests-table .col-type { width: 5%; }
-table.my-requests-table .col-entity { width: 8%; }
+table.my-requests-table .col-type { width: 4%; }
+table.my-requests-table .col-entity { width: 7%; }
 table.my-requests-table .col-program { width: 15%; }
 /* Vendor column (Task 3, 2026-07-26) -- who the payment is actually to,
    previously missing entirely from this table. */
-table.my-requests-table .col-vendor { width: 13%; }
-table.my-requests-table .col-submitter { width: 12%; }
-table.my-requests-table .col-amount { width: 9%; }
+table.my-requests-table .col-vendor { width: 12%; }
+table.my-requests-table .col-submitter { width: 11%; }
+table.my-requests-table .col-amount { width: 8%; }
 table.my-requests-table .col-status { width: 11%; }
-table.my-requests-table .col-date { width: 8%; }
-table.my-requests-table .col-actions { width: 13%; }
+table.my-requests-table .col-date { width: 7%; }
+/* Widened 13% -> 17% and right-aligned (2026-07-26, Jay: actions were
+   getting silently ellipsis-truncated in the old 13% column -- "if you
+   allow [truncation] then you have to allow the user to hover over it and
+   see what is not displayed," which nothing here actually supported. Real
+   estate borrowed from Type/Entity/Vendor/Submitter/Amount/Date, none of
+   which need their full previous width for realistic real content -- Type
+   is 2 chars, Entity is a short code, Date is a fixed-format string. */
+table.my-requests-table .col-actions { width: 17%; }
 table.my-requests-table td, table.my-requests-table th { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The status cell must never clip -- it's the popup's own positioning
    anchor (position:relative), and .status-popup's own overflow (set below)
    is independent of this cell's overflow:hidden regardless, but this avoids
    any ambiguity. */
 table.my-requests-table td.status-cell { overflow: visible; }
+/* Actions must show completely, never truncate -- a chopped "Edi…" link
+   would be non-functional, not just ugly. Right-aligned per Jay's explicit
+   preference (2026-07-26): "the options on each row to the right." If a
+   future action gets added and this still doesn't fit even with the width
+   above, that's the signal to revisit (Jay: "we will remove it later if
+   you can't show it completely") -- not to silently let it truncate again. */
+table.my-requests-table td.col-actions { overflow: visible; text-overflow: clip; text-align: right; }
 /* Program Area is the one column allowed to actually wrap onto a second
    line rather than truncate with an ellipsis (see comment above). Targeted
    by class, not nth-child, since Program Area's column position shifts
