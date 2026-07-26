@@ -21,6 +21,38 @@
       Working in: {{ current_org.name }} <a href="/portal">Change entity</a>
     </div>
 
+    {% if edit_data %}
+    <div class="attachments-section">
+      <label>Attachments</label>
+      {% if attachments %}
+      <ul class="attachment-list">
+        {% for a in attachments %}
+        <li class="attachment-item">
+          <a href="/requests/{{ edit_data.editing_request_number }}/attachments/{{ a.id }}/view" target="_blank" rel="noopener">
+            {% if a.source == 'generated_pdf' %}Generated Check Request (PDF){% else %}{{ a.original_filename }}{% endif %}
+          </a>
+          <span class="attachment-meta">{{ (a.size_bytes / 1024) | round(1) }} KB</span>
+          <form method="post" action="/requests/{{ edit_data.editing_request_number }}/attachments/{{ a.id }}/remove"
+                class="attachment-remove-form"
+                onsubmit="return confirm('Remove this file from the list? The archived copy stays on file in SharePoint -- this only hides it here.');">
+            <button type="submit" class="attachment-remove-btn" title="Remove">&times;</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="attachment-empty">No attachments on file.</div>
+      {% endif %}
+      <form method="post" action="/requests/{{ edit_data.editing_request_number }}/attachments/add"
+            enctype="multipart/form-data" class="attachment-add-form">
+        <input type="file" name="attachments" multiple
+               accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
+        <button type="submit" class="btn btn-secondary btn-sm">Add</button>
+      </form>
+      {% if add_error %}<div class="upload-status error">{{ add_error }}</div>{% endif %}
+    </div>
+    {% endif %}
+
     <div class="upload-row">
       <label for="attachmentsInput">📎 Upload a document to prefill this form</label>
       <input type="file" name="attachments" id="attachmentsInput" multiple

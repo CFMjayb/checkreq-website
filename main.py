@@ -446,7 +446,7 @@ def new_request_form(request: Request):
 
 
 @app.get("/requests/{request_number}/edit", response_class=HTMLResponse)
-def edit_request_form(request_number: str, request: Request):
+def edit_request_form(request_number: str, request: Request, add_error: str = ""):
     """Renders the SAME new_request.html template used for a brand-new
     submission, pre-filled with an existing payment_request's values, plus a
     hidden editing_request_number field so new_request_submit's POST handler
@@ -458,7 +458,15 @@ def edit_request_form(request_number: str, request: Request):
     whether a CFO/admin should also be able to, so this defaults to
     submitter-only, a deliberately easy decision to widen later if asked.
     Locking: whenever _request_is_editable(status) is False (status ==
-    'Posted to QBO'), matching Jay's exact locking rule."""
+    'Posted to QBO'), matching Jay's exact locking rule.
+
+    Extended 2026-07-25 (attachment view/delete/add): also renders the
+    current attachment list (_active_attachments) so the editor can see
+    every document on file, including the generated CR itself -- add_error
+    is a redirect-carried banner from the add_attachment route below (the
+    remove route's own errors are surfaced the same way the rest of this
+    app already handles a rejected mutation: a JSON 4xx, since removal is a
+    single-click action with no form state worth preserving on failure)."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
@@ -536,6 +544,8 @@ def edit_request_form(request_number: str, request: Request):
         "today": date.today().isoformat(),
         "editing_request_number": pr["request_number"],
         "edit_data": edit_data,
+        "attachments": _active_attachments(pr["id"]),
+        "add_error": add_error,
     })
     return _render(request, "new_request.html", user, ctx)
 
@@ -894,6 +904,52 @@ def _compute_archived_filename(org_code: str, pay_date_str: str | None, vendor_n
     return f"{base}.{ext}"
 
 
+def _vendor_display_name_for_request(payment_request_id: int) -> str | None:
+    """Resolves the vendor display name used by the archived-filename
+    convention (_compute_archived_filename) -- either an existing vendor's
+    display_name, or a new-vendor-onboarding row's computed display name.
+    Extracted out of _archive_attachments (2026-07-25, attachment
+    view/delete/add work) so the Add-attachment-during-edit path
+    (add_attachment route) can reuse the identical lookup instead of
+    duplicating it -- pure extraction, no behavior change for the original
+    submission-time archival path below."""
+    vendor_row = db.query_one(
+        "SELECT v.display_name, vr.entity_type, vr.company_name, vr.dba_name, "
+        "vr.first_name, vr.last_name "
+        "FROM checkreq.payment_requests pr "
+        "LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id "
+        "LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id "
+        "WHERE pr.id = %s",
+        (payment_request_id,),
+    )
+    if not vendor_row:
+        return None
+    vendor_name = vendor_row["display_name"]
+    if not vendor_name and vendor_row.get("entity_type"):
+        vendor_name = _vendor_request_row_display_name(
+            vendor_row["entity_type"], vendor_row["company_name"], vendor_row["dba_name"],
+            vendor_row["first_name"], vendor_row["last_name"],
+        )
+    return vendor_name
+
+
+def _active_attachments(payment_request_id: int) -> list[dict]:
+    """Attachments currently visible on the Edit page -- excludes any
+    soft-removed (removed_at IS NOT NULL) rows. The generated PDF always
+    sorts first (matching its always-index-1 archived-filename convention),
+    then user uploads in the order they were added."""
+    return db.query(
+        """
+        SELECT id, source, original_filename, archived_filename, content_type,
+               size_bytes, uploaded_at
+        FROM checkreq.payment_request_attachments
+        WHERE payment_request_id = %s AND removed_at IS NULL
+        ORDER BY CASE WHEN source = 'generated_pdf' THEN 0 ELSE 1 END, uploaded_at, id
+        """,
+        (payment_request_id,),
+    )
+
+
 def _archive_attachments(org: dict, payment_request_id: int, request_number: str,
                           pay_date_str: str | None, total_amount: float, user_id: int,
                           uploaded_attachments: list[tuple[str, str, bytes]]) -> None:
@@ -912,23 +968,7 @@ def _archive_attachments(org: dict, payment_request_id: int, request_number: str
             f"set sp_hostname/sp_site_path/sp_library_folder in checkreq.organizations."
         )
 
-    vendor_row = db.query_one(
-        "SELECT v.display_name, vr.entity_type, vr.company_name, vr.dba_name, "
-        "vr.first_name, vr.last_name "
-        "FROM checkreq.payment_requests pr "
-        "LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id "
-        "LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id "
-        "WHERE pr.id = %s",
-        (payment_request_id,),
-    )
-    vendor_name = None
-    if vendor_row:
-        vendor_name = vendor_row["display_name"]
-        if not vendor_name and vendor_row.get("entity_type"):
-            vendor_name = _vendor_request_row_display_name(
-                vendor_row["entity_type"], vendor_row["company_name"], vendor_row["dba_name"],
-                vendor_row["first_name"], vendor_row["last_name"],
-            )
+    vendor_name = _vendor_display_name_for_request(payment_request_id)
 
     items = [{
         "source": "generated_pdf",
@@ -1610,6 +1650,270 @@ def cancel_request(request_number: str, request: Request):
             )
 
     return RedirectResponse(f"/my-requests?cancelled={request_number}", status_code=303)
+
+
+@app.get("/requests/{request_number}/attachments/{attachment_id}/view")
+def view_attachment(request_number: str, attachment_id: int, request: Request):
+    """Streams the real archived file from SharePoint (the permanent record
+    -- GCS is transient staging only, see gcs_client.py's own docstring)
+    through THIS app's own service-credential Graph access
+    (sharepoint_client.get_access_token(), the same client-credentials grant
+    _archive_attachments already uses) rather than redirecting to the stored
+    sp_web_url.
+
+    This was verified, not assumed: sp_web_url points at
+    episcopalmaryland.sharepoint.com -- a DIFFERENT Azure AD tenant than the
+    one this app's own users sign into (cfmins.org). A user with no
+    account/guest access on that tenant would hit a Microsoft login wall they
+    can't get past -- the exact cross-tenant gap already documented
+    elsewhere in this project (Chris McCloud's identity mismatch, EDOM
+    federation deferred). Proxying through our own already-working Graph
+    credential sidesteps that entirely and keeps the authorization check on
+    THIS app's own session, matching every other authenticated route here.
+
+    Authorization mirrors request_pdf exactly: owner, CFO, or an approver
+    for this request's program area -- deliberately not restricted to
+    "editable" requests only, since viewing a document on a posted/cancelled
+    request should still work (same reasoning request_pdf already applies)."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+
+    pr = db.query_one(
+        "SELECT id, submitter_user_id, program_area_id, org_id FROM checkreq.payment_requests "
+        "WHERE request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+
+    allowed = (
+        user["is_cfo"]
+        or pr["submitter_user_id"] == user["id"]
+        or _user_can_submit_for(user, pr["program_area_id"])
+    )
+    if not allowed:
+        return JSONResponse({"error": "Not authorized to view this attachment"}, status_code=403)
+
+    att = db.query_one(
+        "SELECT * FROM checkreq.payment_request_attachments "
+        "WHERE id = %s AND payment_request_id = %s AND removed_at IS NULL",
+        (attachment_id, pr["id"]),
+    )
+    if not att:
+        return JSONResponse({"error": "Attachment not found"}, status_code=404)
+
+    org = db.query_one(
+        "SELECT sp_hostname, sp_site_path FROM checkreq.organizations WHERE id = %s",
+        (pr["org_id"],),
+    )
+    if not org or not (org.get("sp_hostname") and org.get("sp_site_path")):
+        return JSONResponse({"error": "Entity SharePoint configuration missing"}, status_code=500)
+
+    token = sharepoint_client.get_access_token()
+    site_id = sharepoint_client.get_site_id(token, org["sp_hostname"], org["sp_site_path"])
+    content = sharepoint_client.download_bytes(token, site_id, att["sp_file_path"])
+
+    return Response(
+        content=content,
+        media_type=att["content_type"] or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{att["archived_filename"]}"'},
+    )
+
+
+@app.post("/requests/{request_number}/attachments/{attachment_id}/remove")
+def remove_attachment(request_number: str, attachment_id: int, request: Request):
+    """The Edit page's "X" -- soft-delete only, matching this whole app's
+    established "never truly delete" philosophy (same reasoning already
+    applied to gcs_deleted_at, which is stamped and never NULLed back out,
+    and to Cancel, a soft status rather than a row delete). Stamps
+    removed_at; never touches the real SharePoint file or the GCS blob, and
+    never deletes the payment_request_attachments row itself -- the file
+    stays in the permanent SharePoint archive, it's just excluded from
+    _active_attachments() (and therefore from the Edit-page list and from
+    view_attachment's own lookup) going forward.
+
+    Same ownership + locking convention as edit_request_form/cancel_request:
+    submitter-only, and only while _request_is_editable() is still true."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+
+    pr = db.query_one(
+        "SELECT * FROM checkreq.payment_requests WHERE request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if pr["submitter_user_id"] != user["id"]:
+        return JSONResponse({"error": "Not authorized to modify this request"}, status_code=403)
+    if not _request_is_editable(pr["status"]):
+        return JSONResponse(
+            {"error": "This request can no longer be modified (posted to QBO or cancelled)."},
+            status_code=403,
+        )
+
+    att = db.query_one(
+        "SELECT * FROM checkreq.payment_request_attachments "
+        "WHERE id = %s AND payment_request_id = %s AND removed_at IS NULL",
+        (attachment_id, pr["id"]),
+    )
+    if not att:
+        return JSONResponse({"error": "Attachment not found (or already removed)"}, status_code=404)
+
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.payment_request_attachments SET removed_at = NOW() WHERE id = %s",
+                (attachment_id,),
+            )
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, impersonated_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (pr["id"], user["id"], "Attachment Removed",
+                 f"Removed from view: {att['original_filename']} "
+                 f"(file remains archived in SharePoint, not deleted).",
+                 impersonated_by),
+            )
+
+    return RedirectResponse(f"/requests/{request_number}/edit", status_code=303)
+
+
+@app.post("/requests/{request_number}/attachments/add")
+async def add_attachment(request_number: str, request: Request):
+    """The Edit page's "Add" button -- per Jay's request (2026-07-26):
+    "Additional files can also be uploaded during edit." A standalone
+    action (its own small <form>, not folded into new_request_submit's big
+    edit POST) because that edit-submit path deliberately does NOT touch
+    payment_request_attachments or re-run archival at all (see its own
+    comment, right where the edit branch returns) -- keeping this separate
+    avoids entangling attachment uploads with the vendor/amount
+    approval-reset logic, and lets an addition succeed or fail on its own
+    without interacting with the rest of the edit form.
+
+    Reuses the exact archived-filename convention and GCS+SharePoint upload
+    pipeline _archive_attachments established, but one file at a time after
+    the fact rather than as part of the initial "generated PDF + optional
+    uploads" batch -- written as its own function rather than stretching
+    that batch function to also support a post-hoc single add, since the
+    two have different transaction/rollback shapes (the original batch
+    inserts DB rows only after every file uploads cleanly; a one-off add
+    here commits each file's own row immediately so one failing file in a
+    multi-file Add doesn't lose the ones that already succeeded)."""
+    from urllib.parse import quote
+
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+
+    pr = db.query_one(
+        "SELECT * FROM checkreq.payment_requests WHERE request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if pr["submitter_user_id"] != user["id"]:
+        return JSONResponse({"error": "Not authorized to modify this request"}, status_code=403)
+    if not _request_is_editable(pr["status"]):
+        return JSONResponse(
+            {"error": "This request can no longer be modified (posted to QBO or cancelled)."},
+            status_code=403,
+        )
+
+    org = db.query_one(
+        "SELECT id, code, name, sp_hostname, sp_site_path, sp_library_folder "
+        "FROM checkreq.organizations WHERE id = %s",
+        (pr["org_id"],),
+    )
+    if not org or not (org.get("sp_hostname") and org.get("sp_site_path") and org.get("sp_library_folder")):
+        return RedirectResponse(
+            f"/requests/{request_number}/edit?add_error="
+            f"{quote('No SharePoint archive location configured for this entity.')}",
+            status_code=303,
+        )
+
+    form = await request.form()
+    files = [f for f in form.getlist("attachments") if getattr(f, "filename", None)]
+    if not files:
+        return RedirectResponse(
+            f"/requests/{request_number}/edit?add_error={quote('No file selected.')}", status_code=303,
+        )
+
+    vendor_name = _vendor_display_name_for_request(pr["id"])
+    pay_date_str = pr["requested_pay_date"].isoformat() if pr["requested_pay_date"] else None
+    total_amount = float(pr["amount"])
+
+    # Next archived-filename index must be unique across every attachment
+    # EVER created for this request, not just the currently-active ones --
+    # reusing an index a removed row already used would silently overwrite
+    # that row's real file in SharePoint the moment it's re-uploaded
+    # (upload_bytes() overwrites unconditionally on a filename collision,
+    # by design -- see its own docstring). COUNT(*) with no removed_at
+    # filter is the simplest index that can never collide with a prior one.
+    next_index = db.query_one(
+        "SELECT COUNT(*) AS c FROM checkreq.payment_request_attachments WHERE payment_request_id = %s",
+        (pr["id"],),
+    )["c"]
+
+    token = sharepoint_client.get_access_token()
+    site_id = sharepoint_client.get_site_id(token, org["sp_hostname"], org["sp_site_path"])
+
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+
+    errors = []
+    for f in files:
+        content = await f.read()
+        if not content:
+            continue
+        try:
+            next_index += 1
+            content_type = f.content_type or "application/octet-stream"
+            ext = _guess_extension(f.filename, content_type)
+            archived_filename = _compute_archived_filename(
+                org["code"], pay_date_str, vendor_name, total_amount, request_number, next_index, ext,
+            )
+            blob_path = f"{request_number}/{archived_filename}"
+            gcs_client.upload_bytes(ATTACHMENTS_BUCKET, blob_path, content, content_type)
+            try:
+                sp_result = sharepoint_client.upload_bytes(
+                    token, site_id, org["sp_library_folder"], archived_filename, content, content_type,
+                )
+            except Exception:
+                gcs_client.delete_blob(ATTACHMENTS_BUCKET, blob_path)
+                raise
+
+            with db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO checkreq.payment_request_attachments
+                            (payment_request_id, source, original_filename, archived_filename,
+                             content_type, size_bytes, gcs_bucket, gcs_blob_path, sp_file_path,
+                             sp_web_url, uploaded_by_user_id)
+                        VALUES (%s, 'user_upload', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (pr["id"], f.filename, archived_filename, content_type, len(content),
+                         ATTACHMENTS_BUCKET, blob_path,
+                         f"{org['sp_library_folder'].strip('/')}/{archived_filename}",
+                         sp_result.get("webUrl"), user["id"]),
+                    )
+                    cur.execute(
+                        "INSERT INTO checkreq.audit_log "
+                        "(payment_request_id, action_by_user_id, action_type, comment, impersonated_by_user_id) "
+                        "VALUES (%s, %s, %s, %s, %s)",
+                        (pr["id"], user["id"], "Attachment Added", f"Added: {f.filename}", impersonated_by),
+                    )
+        except Exception as exc:
+            errors.append(f"{f.filename}: {exc}")
+
+    redirect_url = f"/requests/{request_number}/edit"
+    if errors:
+        redirect_url += f"?add_error={quote('; '.join(errors))}"
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @app.get("/my-requests", response_class=HTMLResponse)

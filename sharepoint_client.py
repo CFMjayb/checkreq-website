@@ -102,3 +102,43 @@ def upload_bytes(token: str, site_id: str, folder_path: str, filename: str, data
         f'upload "{seg}"',
     )
     return resp.json()
+
+
+def download_bytes(token: str, site_id: str, file_path: str) -> bytes:
+    """Downloads a file's raw bytes via the same :/content addressing scheme
+    as upload_bytes -- added 2026-07-25 for the Edit-page attachment "view"
+    feature. Graph's own /content endpoint issues a 302 to a pre-authenticated
+    short-lived download URL; `requests` follows redirects by default, so this
+    returns the real file bytes in one call, no special-casing needed.
+
+    Deliberate design choice over linking users straight to a stored
+    sp_web_url: sp_web_url points at a *different* Azure AD tenant
+    (episcopalmaryland.sharepoint.com) than the one this app's own users sign
+    into (cfmins.org) -- proxying through this same service credential
+    (already used for upload) works regardless of the viewer's own SharePoint
+    tenant access, avoiding a second, unrelated login wall."""
+    seg = file_path.strip("/")
+    url = f"{GRAPH_BASE}/sites/{site_id}/drive/root:/{seg}:/content"
+    resp = _check(requests.get(url, headers=_headers(token, content_type=None)), f'download "{seg}"')
+    return resp.content
+
+
+def delete_file(token: str, site_id: str, file_path: str) -> None:
+    """Not currently called by any route (attachment removal in this app is a
+    soft-delete only -- see payment_request_attachments.removed_at) -- added
+    for parity/completeness since a prior session (2026-07-26) had to fall
+    back to a raw requests.delete() call for test-cleanup with a comment
+    flagging this gap. Kept here for any future genuinely-destructive cleanup
+    need (e.g. a real GDPR-style purge), not wired to anything today.
+
+    Deletes the driveItem itself -- addressed WITHOUT the :/content suffix
+    (that suffix addresses an item's content stream, used by upload/download;
+    a DELETE against .../content is a different, undocumented operation that
+    was empirically confirmed here to return 200 with the file's own bytes
+    echoed back rather than deleting anything -- caught live while testing
+    this exact function, fixed before ever relying on it)."""
+    seg = file_path.strip("/")
+    url = f"{GRAPH_BASE}/sites/{site_id}/drive/root:/{seg}"
+    resp = requests.delete(url, headers=_headers(token, content_type=None))
+    if resp.status_code not in (204, 404):
+        raise RuntimeError(f'Graph delete "{seg}" failed ({resp.status_code}): {resp.text[:300]!r}')
