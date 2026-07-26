@@ -2353,27 +2353,37 @@ def approve_request(request_number: str, request: Request):
             # Is every OTHER row in this same serial_group also approved now?
             # (the parallel-group gate Section 1a exists for -- e.g. a
             # global_approvers step with 2 rows can't advance until both
-            # are in.)
-            remaining = db.query_one(
+            # are in.) Real bug caught live during verification: this MUST
+            # use the same open cursor `cur`, not db.query_one/db.query --
+            # those open a brand-new connection/transaction and would read
+            # the pre-UPDATE state (the just-committed-within-this-
+            # transaction 'approved' row is invisible to a separate
+            # connection until this transaction commits), so the group
+            # would never appear to clear and the request would never
+            # advance past its first serial group.
+            cur.execute(
                 "SELECT COUNT(*) AS c FROM checkreq.approval_actions "
                 "WHERE payment_request_id = %s AND serial_group = %s AND status = 'pending'",
                 (pr["id"], pr["serial_group_current"]),
-            )["c"]
+            )
+            remaining = cur.fetchone()["c"]
 
             if remaining == 0:
                 # Whole group cleared -- look for a later serial group.
-                later_groups = db.query(
+                cur.execute(
                     "SELECT DISTINCT serial_group FROM checkreq.approval_actions "
                     "WHERE payment_request_id = %s AND serial_group > %s ORDER BY serial_group",
                     (pr["id"], pr["serial_group_current"]),
                 )
+                later_groups = cur.fetchall()
                 if later_groups:
                     next_group = later_groups[0]["serial_group"]
-                    next_approvers = db.query(
+                    cur.execute(
                         "SELECT approver_user_id FROM checkreq.approval_actions "
                         "WHERE payment_request_id = %s AND serial_group = %s",
                         (pr["id"], next_group),
                     )
+                    next_approvers = cur.fetchall()
                     next_display_approver = (
                         next_approvers[0]["approver_user_id"] if len(next_approvers) == 1 else None
                     )
