@@ -68,6 +68,7 @@ import os
 import secrets as pysecrets
 import threading
 from datetime import date, datetime
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request, Form, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
@@ -393,7 +394,6 @@ def auth_route(request: Request, email: str = ""):
             "email": email,
         })
 
-    from urllib.parse import quote
     if provider == "microsoft":
         return RedirectResponse(f"/auth/start?email={quote(email)}")
     return RedirectResponse(f"/auth/google/start?email={quote(email)}")
