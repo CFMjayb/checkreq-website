@@ -6,9 +6,23 @@
   <div class="login-card">
     <div class="wordmark">Cornerstone Franciscan Ministries</div>
     <h1>Beacon</h1>
-    <p class="tagline">Sign in with your Cornerstone Microsoft account to continue.</p>
+    <p class="tagline">Enter your work email address to sign in.</p>
     {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
-    <a href="/auth/start" class="btn btn-primary btn-block">Sign in with Microsoft</a>
+    <!--
+      Email-first routing (Multi-Provider Authentication Plan.md, Section 3
+      / Section 6 decision 3): the user types their email, /auth/route looks
+      up the domain in checkreq.identity_provider_domains and redirects to
+      the correct provider's own sign-in page (Microsoft or Google) -- no
+      "pick your provider" button, matching Jay's explicit choice over the
+      plan's own recommended two-button design.
+    -->
+    <form method="get" action="/auth/route" class="login-email-form">
+      <label for="email" class="sr-only">Work email address</label>
+      <input type="email" id="email" name="email" required autofocus
+             placeholder="you@yourorganization.org" value="{{ email or '' }}"
+             class="login-email-input">
+      <button type="submit" class="btn btn-primary btn-block">Continue</button>
+    </form>
   </div>
 </div>
 {% endblock %}

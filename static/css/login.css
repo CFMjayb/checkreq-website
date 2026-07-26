@@ -40,3 +40,28 @@
   margin-bottom: var(--space-6);
 }
 .login-card .btn-primary { padding: var(--space-3) var(--space-6); }
+
+/* Email-first login (Multi-Provider Authentication Plan.md, 2026-07-26) */
+.login-email-form { display: flex; flex-direction: column; gap: var(--space-3); }
+.login-email-input {
+  width: 100%;
+  padding: var(--space-3);
+  font-size: 1rem;
+  border: 1px solid var(--color-border, #ccc);
+  border-radius: var(--radius-md, 6px);
+  box-sizing: border-box;
+  text-align: left;
+}
+.login-email-input:focus {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 1px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
