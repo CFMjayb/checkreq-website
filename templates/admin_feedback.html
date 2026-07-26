@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Feedback Log{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Feedback Log</h1>
+<p class="sub">Read-only. CFO view of everything submitted via the Feedback nav link.</p>
+
+<div class="card">
+  <table class="simple-table">
+    <tr>
+      <th>Date</th>
+      <th>Entity</th>
+      <th>Submitted By</th>
+      <th>Comment</th>
+    </tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+      <td>{{ r.org_code or "—" }}</td>
+      <td>{{ r.submitter_name or r.submitter_email }}</td>
+      <td style="white-space:normal;">{{ r.comment }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No feedback submitted yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+</div>
+{% endblock %}

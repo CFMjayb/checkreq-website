@@ -195,15 +195,18 @@ table.simple-table td { padding: var(--space-3); border-bottom: 1px solid var(--
    single-line at every viewport width, and it's the least harmful one to
    wrap since it isn't a number/code/date the eye needs on one line). */
 table.my-requests-table { table-layout: fixed; }
-table.my-requests-table .col-reqnum { width: 11%; }
-table.my-requests-table .col-type { width: 6%; }
-table.my-requests-table .col-entity { width: 9%; }
-table.my-requests-table .col-program { width: 22%; }
-table.my-requests-table .col-submitter { width: 14%; }
-table.my-requests-table .col-amount { width: 10%; }
-table.my-requests-table .col-status { width: 12%; }
-table.my-requests-table .col-date { width: 9%; }
-table.my-requests-table .col-actions { width: 15%; }
+table.my-requests-table .col-reqnum { width: 10%; }
+table.my-requests-table .col-type { width: 5%; }
+table.my-requests-table .col-entity { width: 8%; }
+table.my-requests-table .col-program { width: 15%; }
+/* Vendor column (Task 3, 2026-07-26) -- who the payment is actually to,
+   previously missing entirely from this table. */
+table.my-requests-table .col-vendor { width: 13%; }
+table.my-requests-table .col-submitter { width: 12%; }
+table.my-requests-table .col-amount { width: 9%; }
+table.my-requests-table .col-status { width: 11%; }
+table.my-requests-table .col-date { width: 8%; }
+table.my-requests-table .col-actions { width: 13%; }
 table.my-requests-table td, table.my-requests-table th { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The status cell must never clip -- it's the popup's own positioning
    anchor (position:relative), and .status-popup's own overflow (set below)
@@ -242,7 +245,7 @@ table.my-requests-table td.program-area-cell { white-space: normal; }
 .status-popup {
   position: absolute;
   top: 100%;
-  left: 0;
+  right: 0;
   z-index: 200;
   margin-top: var(--space-1);
   background: var(--color-card-bg);
@@ -250,13 +253,45 @@ table.my-requests-table td.program-area-cell { white-space: normal; }
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card-hover);
   padding: var(--space-3);
-  min-width: 340px;
+  /* Task 9 (2026-07-26 batch): the original 340px min-width forced every
+     column (Date/Action/Status/Comment) to wrap onto multiple lines even
+     for a typical short row. Widened substantially and anchored the popup
+     to the RIGHT edge of .status-cell (was left:0) -- Status is one of the
+     later columns in this table, so a much wider popup growing left
+     instead of right stays inside the page rather than overflowing off the
+     right edge of the viewport. max-width still caps it on a narrow screen.
+     A first attempt left table-layout as auto (letting columns size to
+     their own content) -- live-tested and found this actually made things
+     WORSE: auto layout's percentage-width hint on the Comment column
+     doesn't reliably translate to real space in practice, and a real
+     26-character comment ("Group 1: mdickson-patrick") wrapped onto 3
+     lines even at 460px wide (confirmed via getClientRects() in a live
+     browser check, not assumed). Switched to table-layout:fixed with
+     explicit pixel widths per column instead -- fixed layout's widths are a
+     hard guarantee, not a hint. */
+  min-width: 800px;
+  max-width: min(90vw, 800px);
   white-space: normal;
 }
 .status-popup-title { font-weight: 700; font-size: 0.85rem; margin-bottom: var(--space-2); color: var(--color-franciscan-green); }
-table.status-history-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+table.status-history-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; table-layout: fixed; }
 table.status-history-table th { text-align: left; color: var(--color-text-muted); border-bottom: 1px solid var(--color-border); padding: var(--space-1) var(--space-2); }
-table.status-history-table td { padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--color-border); white-space: normal; }
+table.status-history-table td { padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--color-border); }
+/* Date/Action/Status are short, fixed-format strings -- given a generous
+   fixed pixel width each (live-measured against real data to comfortably
+   fit the longest real values in this app -- "2026-07-25 23:53", "Edited —
+   Approval Reset", "Submitted → Submitted" -- all confirmed one line at
+   these widths) and never wrap. Comment gets whatever's left (fixed
+   layout: an unspecified column absorbs remaining table width -- live-
+   measured at ~210px of real usable text width here, enough for a typical
+   short comment like "Group 1: mdickson-patrick" to render on one line)
+   and is the only column still free to wrap when a comment genuinely is
+   long (e.g. the vendor/amount-change audit comment, which will always
+   need multiple lines regardless of column width). */
+table.status-history-table th:nth-child(1), table.status-history-table td:nth-child(1) { width: 150px; white-space: nowrap; }
+table.status-history-table th:nth-child(2), table.status-history-table td:nth-child(2) { width: 195px; white-space: nowrap; }
+table.status-history-table th:nth-child(3), table.status-history-table td:nth-child(3) { width: 205px; white-space: nowrap; }
+table.status-history-table th:nth-child(4), table.status-history-table td:nth-child(4) { white-space: normal; word-break: break-word; }
 
 /* ---- Plain link-styled buttons (Cancel, Task 2) -- a <button> inside a
    <form> so the POST can't be triggered by a bare GET link, but styled to
@@ -264,3 +299,18 @@ table.status-history-table td { padding: var(--space-1) var(--space-2); border-b
 .cancel-form { display: inline; }
 .link-button { background: none; border: none; padding: 0; margin: 0; font: inherit; color: var(--color-franciscan-green); text-decoration: underline; cursor: pointer; }
 .cancel-btn { color: var(--color-danger); }
+
+/* ---- Feedback (Task 10) -- Jay's exact required header text, styled to
+   read as a warm callout, not a plain paragraph. ---- */
+.feedback-card { max-width: 640px; }
+.feedback-gift-line {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  color: var(--color-franciscan-green);
+  background: #eaf1ec;
+  border: 1px solid #c9dccf;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.feedback-card textarea { width: 100%; }

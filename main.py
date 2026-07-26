@@ -69,7 +69,7 @@ VENDOR_W9_AMOUNT_THRESHOLD = 2000
 # sender (used elsewhere in this codebase for AP-related correspondence).
 W9_SENDER_EMAIL = os.environ.get("W9_SENDER_EMAIL", "businessoffice@episcopalmaryland.org")
 
-app = FastAPI(title="26-129 Check Request")
+app = FastAPI(title="Beacon")
 
 # INSTANCE_CONNECTION_NAME only ever exists in the Cloud Run environment (see
 # db.py's connection logic) -- reused here and by /dev/auth-as below as the
@@ -1932,41 +1932,65 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
     # since this is a read-only list view, not a submission.
     show_all = (view == "all") and bool(user["is_cfo"])
 
+    # Task 3 (2026-07-26 batch): Vendor column -- resolve from either an
+    # onboarded checkreq.vendors row OR a not-yet-onboarded vendor_requests
+    # row, same "exactly one of the two is ever set" design new_request_submit
+    # already enforces. Both branches below select the same vr_* fields and
+    # resolve the display name the same way in the loop below, reusing
+    # _vendor_request_row_display_name() (the same helper _voucher_context()
+    # already uses for this exact resolution) rather than duplicating it.
+    #
+    # Task 4 (2026-07-26 batch, real bug): the "mine" branch had NO org_id
+    # filter at all -- a user's requests across BOTH EDOM and Claggett showed
+    # regardless of the session's currently-selected entity, while "All
+    # Requests" was already correctly scoped. Fixed by adding the identical
+    # `pr.org_id = %s` scoping "All Requests" already had, keyed off the same
+    # _current_org(request) used everywhere else in this app.
+    org = _current_org(request)
+    if not org:
+        return RedirectResponse("/portal")
+
     if show_all:
-        org = _current_org(request)
-        if not org:
-            return RedirectResponse("/portal")
         rows = db.query(
             """
             SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
                    pr.approval_chain_summary, pr.created_at, o.code AS org_code,
                    pa.title AS program_area_title, u.display_name AS submitter_name,
-                   u.email AS submitter_email
+                   u.email AS submitter_email,
+                   v.display_name AS vendor_display_name,
+                   vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
+                   vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
+                   vr.dba_name AS vr_dba_name
             FROM checkreq.payment_requests pr
             JOIN checkreq.organizations o ON o.id = pr.org_id
             JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
             JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
+            LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+            LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
             WHERE pr.org_id = %s
             ORDER BY pr.created_at DESC
             """,
             (org["id"],),
         )
     else:
-        # Unchanged from before this session -- no org_id filter here (never
-        # had one), per Task 6's explicit instruction that "My Requests"
-        # behaves exactly as it did previously.
         rows = db.query(
             """
             SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
                    pr.approval_chain_summary, pr.created_at, o.code AS org_code,
-                   pa.title AS program_area_title
+                   pa.title AS program_area_title,
+                   v.display_name AS vendor_display_name,
+                   vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
+                   vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
+                   vr.dba_name AS vr_dba_name
             FROM checkreq.payment_requests pr
             JOIN checkreq.organizations o ON o.id = pr.org_id
             JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
-            WHERE pr.submitter_user_id = %s
+            LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+            LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+            WHERE pr.submitter_user_id = %s AND pr.org_id = %s
             ORDER BY pr.created_at DESC
             """,
-            (user["id"],),
+            (user["id"], org["id"]),
         )
 
     # Task 4 (2026-07-26): status-pill popup history. Embedded server-side at
@@ -1994,11 +2018,85 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
         r["editable"] = _request_is_editable(r["status"])
         r["type_abbr"] = _REQUEST_TYPE_ABBR.get(r["request_type"], "??")
         r["history"] = history_by_id.get(r["pr_id"], [])
+        # Task 3 (2026-07-26 batch): Vendor column -- either an onboarded
+        # vendor's own display_name, or (not yet onboarded) a computed name
+        # from the linked vendor_requests row, via the same helper
+        # _voucher_context() already uses for this exact resolution.
+        if r.get("vendor_display_name"):
+            r["vendor_name"] = r["vendor_display_name"]
+        elif r.get("vr_entity_type"):
+            r["vendor_name"] = _vendor_request_row_display_name(
+                r["vr_entity_type"], r["vr_company_name"], r["vr_dba_name"],
+                r["vr_first_name"], r["vr_last_name"],
+            )
+        else:
+            r["vendor_name"] = "—"
 
     return _render(request, "my_requests.html", user, {
         "rows": rows, "submitted": submitted, "archive_warning": archive_warning,
         "edited": edited, "cancelled": cancelled, "show_all": show_all,
     })
+
+
+# ── Feedback (Task 10, UI/UX batch, 2026-07-26) ──────────────────────────────
+# Jay: "We need a feedback section on the main row to gather people's
+# feedback." Deliberately simple -- a comment box, no workflow/status, just a
+# durable place for comments to land for later staff review. No admin-only
+# gate on submission (any signed-in user); a light CFO-only listing page is
+# included as the nice-to-have the task called out, not the core ask.
+
+@app.get("/feedback", response_class=HTMLResponse)
+def feedback_form(request: Request, submitted: bool = False):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    return _render(request, "feedback.html", user, {"submitted": submitted})
+
+
+@app.post("/feedback")
+async def feedback_submit(request: Request):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+
+    form = await request.form()
+    comment = (form.get("comment") or "").strip()
+    if not comment:
+        return RedirectResponse("/feedback", status_code=303)
+
+    org = _current_org(request)  # nullable -- feedback can be given before any entity is picked
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO checkreq.app_feedback (org_id, submitted_by_user_id, comment) "
+                "VALUES (%s, %s, %s)",
+                (org["id"] if org else None, user["id"], comment),
+            )
+    return RedirectResponse("/feedback?submitted=1", status_code=303)
+
+
+@app.get("/admin/feedback", response_class=HTMLResponse)
+def feedback_list(request: Request):
+    """CFO-only listing -- the task's own stated "nice-to-have," not the
+    core ask (which is just collecting feedback). No edit/resolve workflow;
+    read-only, matching the deliberately-simple scope of this feature."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    if not user.get("is_cfo"):
+        return JSONResponse({"error": "CFO access required"}, status_code=403)
+
+    rows = db.query(
+        """
+        SELECT f.id, f.comment, f.created_at, o.code AS org_code,
+               u.display_name AS submitter_name, u.email AS submitter_email
+        FROM checkreq.app_feedback f
+        LEFT JOIN checkreq.organizations o ON o.id = f.org_id
+        JOIN checkreq.app_users u ON u.id = f.submitted_by_user_id
+        ORDER BY f.created_at DESC
+        """
+    )
+    return _render(request, "admin_feedback.html", user, {"rows": rows})
 
 
 # ── New Vendor Onboarding: vendor-approval queue ─────────────────────────────

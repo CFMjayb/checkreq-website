@@ -43,6 +43,7 @@
       <col class="col-type">
       <col class="col-entity">
       <col class="col-program">
+      <col class="col-vendor">
       {% if show_all %}<col class="col-submitter">{% endif %}
       <col class="col-amount">
       <col class="col-status">
@@ -54,6 +55,7 @@
       <th>Type</th>
       <th>Entity</th>
       <th>Program Area</th>
+      <th>Vendor</th>
       {% if show_all %}<th>Submitted By</th>{% endif %}
       <th>Amount</th>
       <th>Status</th>
@@ -66,6 +68,7 @@
       <td>{{ r.type_abbr }}</td>
       <td>{{ r.org_code }}</td>
       <td class="program-area-cell">{{ r.program_area_title }}</td>
+      <td>{{ r.vendor_name }}</td>
       {% if show_all %}<td>{{ r.submitter_name or r.submitter_email }}</td>{% endif %}
       <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
       <td class="status-cell">
@@ -103,7 +106,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="{{ 9 if show_all else 8 }}">No requests yet.</td></tr>
+    <tr><td colspan="{{ 10 if show_all else 9 }}">No requests yet.</td></tr>
     {% endfor %}
   </table>
 </div>

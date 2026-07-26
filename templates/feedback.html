@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Feedback{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Feedback</h1>
+
+{% if submitted %}
+<div class="banner banner-success">Thanks! Your feedback was submitted.</div>
+{% endif %}
+
+<div class="card feedback-card">
+  <div class="feedback-gift-line">Feedback is a Gift! Thank you for taking the time to give us some.</div>
+  <form method="post" action="/feedback">
+    <div class="field">
+      <label for="feedbackComment">Your feedback</label>
+      <textarea name="comment" id="feedbackComment" rows="6" required
+                placeholder="What's working, what's not, what would help..."></textarea>
+    </div>
+    <button type="submit" class="btn btn-primary">Submit Feedback</button>
+  </form>
+</div>
+</div>
+{% endblock %}

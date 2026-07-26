@@ -20,49 +20,98 @@ async function loadProgramAreas() {
     areas.map(a => `<option value="${a.id}">${a.title}</option>`).join('');
 }
 
-async function fillGlAccountOptions(selectEl) {
-  // Filtered/ordered by whichever Program Area is currently selected, via
-  // checkreq.program_area_gl_accounts -- NOT the raw, unfiltered chart of
-  // accounts. Found live 2026-07-25 (Jay): this was never actually wired
-  // up despite the mapping table/display_text/allow_post/sort_order all
-  // already existing server-side. Until a program area is chosen, there's
-  // nothing to filter by, so just show the placeholder.
-  const programAreaId = document.getElementById('programAreaSelect').value;
-  if (!programAreaId) {
-    selectEl.innerHTML = '<option value="">Account...</option>';
-    return;
-  }
-  const r = await fetch(`/api/gl-accounts/${CURRENT_ORG_ID}?program_area_id=${programAreaId}`);
-  const accts = await r.json();
-  selectEl.innerHTML = '<option value="">Account...</option>' +
-    accts.map(a => `<option value="${a.id}">${glAccountOptionLabel(a)}</option>`).join('');
+// ---- GL Account picker (Task 5/6, 2026-07-26 batch) ----
+// Was a plain native <select>, repopulated by writing raw <option> HTML
+// directly. Jay's request (Task 5): "Same behavior for the Account Number
+// [as Vendor]" -- searchable, full list shown on click. Converted to a Tom
+// Select per GL line, matching the Vendor field's exact preload: 'focus'
+// pattern (see initVendorSelect's comment for why that option actually
+// shows the full list on click, not just page load).
+//
+// Task 6 (indentation): originally depth was "digits after the first dot"
+// to match real EDOM data that used one-dot values like "1.11" for what was
+// clearly meant to be a THIRD nesting level. Jay has now clarified the real
+// intended rule explicitly: "'1' is the furthest to the left, '1.1' is
+// indented one level to the right, '1.1.1' is two levels in, and so forth"
+// -- genuine dot-count hierarchy. This directly conflicted with the old
+// digits-after-decimal rule (under true dot-counting, "1.11" and "1.1" are
+// the SAME depth), so the underlying DATA needed correcting too, not just
+// this formula -- see migrations/009_fix_ambiguous_sort_order.py, applied
+// live before this change shipped. glAccountDepth() below is now a simple,
+// literal dot count, matching main.py's/qbo-mcp-server's own ORDER BY logic
+// (string_to_array(sort_order,'.') -- always was depth-agnostic and needed
+// no change of its own).
+
+function glAccountLabel(a) {
+  // "Display Name (Account Number)" per Jay's preference -- was
+  // "Account Number - Display Name". Deliberately plain text with no
+  // indentation baked in -- indentation is rendered separately (via Tom
+  // Select's render.option, see initGlAccountSelect) so the live voucher
+  // preview / underlying <select>'s real <option> text (which the printed
+  // check-voucher table reads via .selectedIndex/.options[...].text) never
+  // shows leading indentation characters.
+  return `${a.account_name} (${a.account_number})`;
 }
 
-function glAccountOptionLabel(a) {
-  // Indentation depth is the number of digits AFTER the first "." in
-  // sort_order -- NOT the number of dots. Confirmed against real EDOM data
-  // (Jay, 2026-07-25): staff use a flat decimal scheme where "1" is a
-  // top-level header, "1.1"/"1.2" are one level under it, and "1.11"-"1.14"
-  // are a further level under "1.1" specifically -- all still with exactly
-  // one dot, distinguished only by the fractional part having 2 digits
-  // instead of 1. A missing/malformed sort_order (same regex the server
-  // uses to decide sort position) just renders unindented.
-  const m = /^[0-9]+(\.([0-9]+))?$/.exec(a.sort_order || '');
-  const depth = m && m[2] ? m[2].length : 0;
-  const indent = '  '.repeat(depth);
-  // "Display Name (Account Number)" per Jay's preference -- was
-  // "Account Number - Display Name".
-  return `${indent}${a.account_name} (${a.account_number})`;
+function glAccountDepth(sortOrder) {
+  const s = String(sortOrder || '').trim();
+  if (!/^[0-9]+(\.[0-9]+)*$/.test(s)) return 0; // malformed -- same regex the server uses; renders unindented
+  return s.split('.').length - 1;
+}
+
+async function fetchGlAccountOptions(programAreaId, q) {
+  // Filtered/ordered by whichever Program Area is currently selected, via
+  // checkreq.program_area_gl_accounts -- NOT the raw, unfiltered chart of
+  // accounts (found missing entirely, live, 2026-07-25). Until a program
+  // area is chosen, there's nothing to filter by -- return no options
+  // rather than hitting the API with a blank program_area_id (that query
+  // param is required server-side, main.py's api_gl_accounts route would
+  // 422 on an empty value).
+  if (!programAreaId) return [];
+  const r = await fetch(`/api/gl-accounts/${CURRENT_ORG_ID}?program_area_id=${programAreaId}&q=${encodeURIComponent(q || '')}`);
+  const accts = await r.json();
+  return accts.map(a => ({ id: a.id, label: glAccountLabel(a), depth: glAccountDepth(a.sort_order) }));
+}
+
+function initGlAccountSelect(selectEl) {
+  const ts = new TomSelect(selectEl, {
+    valueField: 'id',
+    labelField: 'label',
+    searchField: ['label'],
+    placeholder: 'Search GL accounts...',
+    preload: 'focus', // same "full list on click" behavior as the Vendor field
+    load: function (query, callback) {
+      const programAreaId = document.getElementById('programAreaSelect').value;
+      fetchGlAccountOptions(programAreaId, query).then(callback).catch(() => callback());
+    },
+    render: {
+      // Indentation is applied ONLY here (a 16px-per-depth-level left pad on
+      // the dropdown row) -- the item chip / underlying <select>'s real
+      // <option> text (labelField) stays plain, unindented text.
+      option: function (data, escape) {
+        const pad = (data.depth || 0) * 16;
+        return `<div style="padding-left:${pad}px">${escape(data.label)}</div>`;
+      },
+    },
+    onItemAdd: function () { refreshPreview(); },
+    onItemRemove: function () { refreshPreview(); },
+  });
+  return ts;
 }
 
 function refreshAllGlAccountOptions() {
   // Re-populate every existing GL line's account dropdown whenever the
   // Program Area changes -- which accounts are even allowed differs per
   // program area, so a stale selection from a different area must not
-  // silently survive the switch.
+  // silently survive the switch. Destroy + reinit each Tom Select instance
+  // (rather than trying to clear/reload options in place) -- simplest way
+  // to guarantee no stale cached search results/selected value survive the
+  // switch; Tom Select's own destroy() restores the underlying <select> to
+  // its construction-time markup automatically.
   document.querySelectorAll('.glAccount').forEach(sel => {
-    sel.value = '';
-    fillGlAccountOptions(sel);
+    if (sel.tomselect) sel.tomselect.destroy();
+    sel.innerHTML = '<option value="">Account...</option>';
+    initGlAccountSelect(sel);
   });
 }
 
@@ -118,6 +167,17 @@ function initVendorSelect() {
     labelField: 'display_name',
     searchField: 'display_name',
     placeholder: 'Search vendors...',
+    // Task 5 (2026-07-26 batch), Jay's exact request: "The Vendor needs to
+    // do the first pull of vendors when you click in the box." preload:
+    // 'focus' calls Tom Select's own preload() on first focus, which invokes
+    // this load() with an empty query directly (bypassing the normal
+    // shouldLoad gate that only fires load() once you've typed a
+    // character) -- confirmed against the vendored tom-select.complete.min.js
+    // source (v2.6.2) before relying on it: preload()'s implementation is
+    // exactly `this.load("")`, and the /api/vendors/{org_id} route already
+    // returns a real default list (first 25 by display_name) for an empty
+    // `q`, so this "just works" with zero server-side change.
+    preload: 'focus',
     load: function (query, callback) {
       fetch(`/api/vendors/${CURRENT_ORG_ID}?q=${encodeURIComponent(query)}`)
         .then(r => r.json())
@@ -141,7 +201,10 @@ function initVendorSelect() {
 function removeGlLine(btn) {
   const container = document.getElementById('glLines');
   if (container.children.length > 1) {
-    btn.closest('.gl-line').remove();
+    const line = btn.closest('.gl-line');
+    const sel = line.querySelector('.glAccount');
+    if (sel && sel.tomselect) sel.tomselect.destroy();
+    line.remove();
     refreshPreview();
   }
 }
@@ -156,7 +219,7 @@ function addGlLine() {
     <div class="field"><input type="text" class="glMemo" name="gl_memo" placeholder="Optional memo"></div>
     <button type="button" class="remove-line" onclick="removeGlLine(this)">&times;</button>`;
   container.appendChild(div);
-  fillGlAccountOptions(div.querySelector('.glAccount'));
+  initGlAccountSelect(div.querySelector('.glAccount'));
   refreshPreview();
 }
 
@@ -377,8 +440,15 @@ async function applyEditPrefill() {
   paSel.value = String(d.program_area_id);
 
   const container = document.getElementById('glLines');
+  container.querySelectorAll('.glAccount').forEach(sel => { if (sel.tomselect) sel.tomselect.destroy(); });
   container.innerHTML = '';
   const lines = (d.gl_lines && d.gl_lines.length) ? d.gl_lines : [{ gl_account_id: '', amount: 0, memo: '' }];
+
+  // Fetch the allowed GL accounts for this program area ONCE (not once per
+  // line) -- every line under the same program area shares the identical
+  // option list, so this avoids N redundant fetches for an N-line request.
+  const glOptions = await fetchGlAccountOptions(paSel.value);
+
   for (const line of lines) {
     const div = document.createElement('div');
     div.className = 'gl-line';
@@ -389,8 +459,9 @@ async function applyEditPrefill() {
       <button type="button" class="remove-line" onclick="removeGlLine(this)">&times;</button>`;
     container.appendChild(div);
     const acctSel = div.querySelector('.glAccount');
-    await fillGlAccountOptions(acctSel);
-    if (line.gl_account_id) acctSel.value = String(line.gl_account_id);
+    const ts = initGlAccountSelect(acctSel);
+    if (glOptions.length) ts.addOption(glOptions);
+    if (line.gl_account_id) ts.addItem(String(line.gl_account_id));
     if (line.amount) div.querySelector('.glAmount').value = Number(line.amount).toFixed(2);
     if (line.memo) div.querySelector('.glMemo').value = line.memo;
   }
@@ -446,7 +517,7 @@ document.addEventListener('DOMContentLoaded', () => {
       refreshPreview();
     }
   });
-  document.querySelectorAll('.glAccount').forEach(sel => fillGlAccountOptions(sel));
+  document.querySelectorAll('.glAccount').forEach(sel => initGlAccountSelect(sel));
 
   document.getElementById('reqForm').addEventListener('submit', (e) => {
     if (!vendorSelectionIsValid()) {

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Check Request Portal{% endblock %}</title>
+  <title>{% block title %}Beacon{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version('css/tokens.css') }}">
@@ -19,12 +19,16 @@
   {% endif %}
   {% if user %}
   <header class="site-header">
-    <a href="/portal" class="brand">Cornerstone Check Request</a>
+    <a href="/portal" class="brand">Beacon</a>
     <nav>
-      <a href="/new-request">Check Request</a>
-      <a href="/my-requests">My Requests</a>
+      <a href="/new-request">New Request</a>
+      <a href="/my-requests">Requests</a>
+      <a href="/feedback">Feedback</a>
       {% if user and user.is_vendor_approver %}
       <a href="/admin/vendor-requests">Vendor Approvals</a>
+      {% endif %}
+      {% if user and user.is_cfo %}
+      <a href="/admin/feedback">Feedback Log</a>
       {% endif %}
       {% if real_user and real_user.is_cfo and not impersonating %}
       <a href="/admin/impersonate">Impersonate a User</a>
