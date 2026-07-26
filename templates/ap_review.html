@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}AP Review{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>AP Review</h1>
+<p class="sub">Requests that have cleared every approval step and are ready for final review and posting to
+QuickBooks. Posting here creates the real QBO Vendor (if new) and Bill -- this is the one place in the app
+that writes to QuickBooks.</p>
+
+{% if posted %}<div class="banner banner-success">Posted to QBO: {{ posted }}</div>{% endif %}
+{% if returned %}<div class="banner banner-info">Returned to submitter: {{ returned }}</div>{% endif %}
+{% if post_error %}
+<div class="banner banner-error">
+  Could not post {{ post_error }}
+  Nothing was changed in QuickBooks -- safe to fix the underlying issue and try again.
+</div>
+{% endif %}
+{% if email_warning %}
+<div class="banner banner-error">
+  Done, but the notification email to the submitter could not be sent: {{ email_warning }}
+  Please follow up with the submitter directly.
+</div>
+{% endif %}
+
+<div class="card">
+  <table class="simple-table">
+    <tr>
+      <th>Request #</th><th>Type</th><th>Entity</th><th>Program Area</th><th>Vendor</th>
+      <th>Submitted By</th><th>Amount</th><th>Chain Summary</th><th>Status</th><th>Actions</th>
+    </tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.request_number }}</td>
+      <td>{{ r.type_abbr }}</td>
+      <td>{{ r.org_code }}</td>
+      <td class="program-area-cell">{{ r.program_area_title }}</td>
+      <td>{{ r.vendor_name }}</td>
+      <td>{{ r.submitter_name or r.submitter_email }}</td>
+      <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
+      <td><span class="sub">{{ r.approval_chain_summary or "—" }}</span></td>
+      <td>
+        {% if r.vendor_gate_wait %}
+        <span class="badge badge-pending">Waiting: {{ r.vendor_gate_wait }}</span>
+        {% else %}
+        <span class="badge badge-approved">Ready to post</span>
+        {% endif %}
+      </td>
+      <td class="col-actions">
+        <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
+        · <form method="post" action="/requests/{{ r.request_number }}/post-to-qbo" style="display:inline">
+            <button type="submit" class="btn btn-primary btn-sm"
+                    {% if r.vendor_gate_wait %}disabled title="{{ r.vendor_gate_wait }}"{% endif %}>Post to QBO</button>
+          </form>
+        · <form method="post" action="/requests/{{ r.request_number }}/ap-return" style="display:inline" onsubmit="return promptReturnReason(this)">
+            <input type="hidden" name="return_reason" value="">
+            <button type="submit" class="btn btn-secondary btn-sm">Return to Submitter</button>
+          </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="10">Nothing waiting for AP review.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+function promptReturnReason(form) {
+  const reason = prompt("Reason for returning this request to the submitter (required):", "");
+  if (!reason) { alert("A reason is required."); return false; }
+  form.querySelector('input[name="return_reason"]').value = reason;
+  return true;
+}
+</script>
+{% endblock %}

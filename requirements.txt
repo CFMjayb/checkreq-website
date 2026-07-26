@@ -9,3 +9,4 @@ google-cloud-storage
 msal
 playwright
 anthropic
+requests

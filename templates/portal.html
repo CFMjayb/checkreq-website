@@ -22,17 +22,19 @@
   <h1>Welcome{% if current_org %}, working in {{ current_org.name }}{% endif %}</h1>
   <div class="module-grid">
     {% for m in modules %}
-      {% if m.enabled and current_org %}
-      <a class="module-tile" href="{{ m.url }}">
-        <h3>{{ m.title }}</h3>
-        <p class="desc">{{ m.desc }}</p>
-      </a>
-      {% else %}
-      <div class="module-tile disabled">
-        {% if not m.enabled %}<span class="coming-soon-badge">Coming Soon</span>{% endif %}
-        <h3>{{ m.title }}</h3>
-        <p class="desc">{% if not current_org %}Select an entity above first.{% else %}{{ m.desc }}{% endif %}</p>
-      </div>
+      {% if not m.gate or (m.gate == 'ap_reviewer' and user.is_ap_reviewer) %}
+        {% if m.enabled and current_org %}
+        <a class="module-tile" href="{{ m.url }}">
+          <h3>{{ m.title }}</h3>
+          <p class="desc">{{ m.desc }}</p>
+        </a>
+        {% else %}
+        <div class="module-tile disabled">
+          {% if not m.enabled %}<span class="coming-soon-badge">Coming Soon</span>{% endif %}
+          <h3>{{ m.title }}</h3>
+          <p class="desc">{% if not current_org %}Select an entity above first.{% else %}{{ m.desc }}{% endif %}</p>
+        </div>
+        {% endif %}
       {% endif %}
     {% endfor %}
   </div>

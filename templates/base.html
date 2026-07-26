@@ -23,9 +23,13 @@
     <nav>
       <a href="/new-request">New Request</a>
       <a href="/my-requests">Requests</a>
+      <a href="/my-approvals">My Approvals</a>
       <a href="/feedback">Feedback</a>
       {% if user and user.is_vendor_approver %}
       <a href="/admin/vendor-requests">Vendor Approvals</a>
+      {% endif %}
+      {% if user and user.is_ap_reviewer %}
+      <a href="/admin/ap-review">AP Review</a>
       {% endif %}
       {% if user and user.is_cfo %}
       <a href="/admin/feedback">Feedback Log</a>

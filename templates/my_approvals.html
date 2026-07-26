@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}My Approvals{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>My Approvals</h1>
+<p class="sub">Requests currently awaiting your approval. Click "View chain" on any row to see who else is
+involved and who has already acted.</p>
+
+{% if approved %}
+<div class="banner banner-success">Approved: {{ approved }}</div>
+{% endif %}
+{% if rejected %}
+<div class="banner banner-info">Rejected: {{ rejected }}</div>
+{% endif %}
+{% if email_warning %}
+<div class="banner banner-error">
+  Done, but the notification email to the submitter could not be sent: {{ email_warning }}
+  The rejection was still recorded -- please follow up with the submitter directly.
+</div>
+{% endif %}
+
+{% if user.is_cfo %}
+<div class="view-toggle" role="tablist" aria-label="Approvals view">
+  <a href="/my-approvals" class="view-toggle-tab {% if not show_all %}active{% endif %}">My Approvals</a>
+  <a href="/my-approvals?view=all" class="view-toggle-tab {% if show_all %}active{% endif %}">All Pending Approvals</a>
+</div>
+{% endif %}
+
+<div class="card">
+  <table class="simple-table my-requests-table">
+    <tr>
+      <th>Request #</th>
+      <th>Type</th>
+      <th>Entity</th>
+      <th>Program Area</th>
+      <th>Vendor</th>
+      {% if show_all %}<th>Submitted By</th>{% endif %}
+      <th>Amount</th>
+      <th>Chain</th>
+      <th>Submitted</th>
+      <th>Actions</th>
+    </tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.request_number }}</td>
+      <td>{{ r.type_abbr }}</td>
+      <td>{{ r.org_code }}</td>
+      <td class="program-area-cell">{{ r.program_area_title }}</td>
+      <td>{{ r.vendor_name }}</td>
+      {% if show_all %}<td>{{ r.submitter_name or r.submitter_email }}</td>{% endif %}
+      <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
+      <td class="status-cell">
+        <button type="button" class="status-pill-btn" data-popup="chain-popup-{{ loop.index }}">
+          <span class="link-button">View chain</span>
+        </button>
+        <div class="status-popup" id="chain-popup-{{ loop.index }}" hidden>
+          <div class="status-popup-title">Approval Chain — {{ r.request_number }}</div>
+          {% if r.chain %}
+          <table class="status-history-table">
+            <tr><th>Group</th><th>Approver</th><th>Status</th><th>Acted</th></tr>
+            {% for c in r.chain %}
+            <tr>
+              <td>{{ c.serial_group }}</td>
+              <td>{{ c.display_name or c.email }}</td>
+              <td><span class="badge badge-{{ c.status }}">{{ c.status|capitalize }}</span></td>
+              <td>{{ c.acted_at.strftime("%Y-%m-%d %H:%M") if c.acted_at else "—" }}</td>
+            </tr>
+            {% endfor %}
+          </table>
+          {% else %}
+          <div class="sub">No chain recorded.</div>
+          {% endif %}
+        </div>
+      </td>
+      <td>{{ r.created_at.strftime("%Y-%m-%d") }}</td>
+      <td class="col-actions">
+        <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
+        · <form method="post" action="/requests/{{ r.request_number }}/approve" style="display:inline">
+            <button type="submit" class="btn btn-primary btn-sm">Approve</button>
+          </form>
+        · <form method="post" action="/requests/{{ r.request_number }}/reject" style="display:inline" onsubmit="return promptRejectReason(this)">
+            <input type="hidden" name="rejected_reason" value="">
+            <button type="submit" class="btn btn-secondary btn-sm">Reject</button>
+          </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="{{ 9 if show_all else 8 }}">Nothing waiting on your approval.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/my_requests.js?v={{ asset_version('js/my_requests.js') }}"></script>
+<script>
+function promptRejectReason(form) {
+  const reason = prompt("Reason for rejecting this request (required):", "");
+  if (!reason) { alert("A rejection reason is required."); return false; }
+  form.querySelector('input[name="rejected_reason"]').value = reason;
+  return true;
+}
+</script>
+{% endblock %}

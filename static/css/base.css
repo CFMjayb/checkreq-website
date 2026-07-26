@@ -177,6 +177,13 @@ input:focus, select:focus, textarea:focus {
 .badge-rejected { background: #fbe6e6; color: var(--color-danger); }
 .badge-posted-to-qbo { background: #dfe9e2; color: var(--color-franciscan-green); }
 .badge-cancelled { background: #ece7da; color: var(--color-text-muted); }
+/* AP Review Workflow Plan.md (2026-07-26): 'Returned by AP' -- a payment_
+   requests.status value, distinct from mid-chain 'Rejected' (Decision 1).
+   'skipped' -- a checkreq.approval_actions row status (superseded-by-edit
+   or the rest of a chain once one reject fires), used in the chain-history
+   popup on /my-approvals. */
+.badge-returned-by-ap { background: #fdf0d6; color: #8a5a00; }
+.badge-skipped { background: #ece7da; color: var(--color-text-muted); }
 
 table.simple-table { width: 100%; border-collapse: collapse; }
 table.simple-table th { text-align: left; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--color-text-muted); border-bottom: 2px solid var(--color-border); padding: var(--space-2) var(--space-3); }

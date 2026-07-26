@@ -23,13 +23,23 @@ Working end-to-end against live checkreq Postgres tables:
 
 NOT built yet (see handoff notes):
   - Invoice-for-payment PDF upload/extraction (manual-entry only for now)
-  - Approval action UI (approve/reject/escalate) — chain is computed and
-    stored, but nothing drives it forward yet
-  - QBO posting trigger on final approval
-  - File attachment storage (no bucket wired up)
   - New-user provisioning UX: a first-time login auto-creates an app_users
     row (see /auth/callback below), but nothing yet assigns them to a
     program area or approval role — an admin still has to do that separately.
+  - Day-5 escalation / reminder emails (backup_approver_id exists but is
+    unused) and the dormant cfo_override mechanism — both explicitly
+    deferred, see AP Review Workflow Plan.md Section 7.
+
+BUILT 2026-07-26 (AP Review Workflow Plan.md, all Section 8 decisions
+answered directly by Jay): the approval action workflow (GET /my-approvals,
+POST /requests/{request_number}/approve|reject), the AP Review screen
+(GET /admin/ap-review, gated on is_ap_reviewer) and its
+POST /requests/{request_number}/post-to-qbo trigger (qbo_mcp_client.py's
+first real caller), and cleanup_gcs_attachment()'s first real call site.
+checkreq.approval_actions is the real per-approver/per-step gate — see that
+table's own comment in migrations/011_approval_actions.sql for why a new
+table was unavoidable (current_approver_id/serial_group_current are scalar
+display-only fields that cannot represent a parallel multi-approver group).
 """
 from __future__ import annotations
 
@@ -53,6 +63,7 @@ import gcs_client
 import sharepoint_client
 import document_extract
 import email_client
+import qbo_mcp_client
 
 ATTACHMENTS_BUCKET = "cfm-checkreq-attachments"
 
@@ -137,14 +148,23 @@ if os.environ.get("ENABLE_DEV_AUTH_BYPASS") == "1":
 # Must exactly match a redirect URI registered on the Azure AD app registration.
 REDIRECT_URI = os.environ.get("AZURE_REDIRECT_URI", "http://localhost:8123/auth/callback")
 
-# Portal module tiles. A plain list is enough for this scope (5 tiles) --
+# Portal module tiles. A plain list is enough for this scope (6 tiles) --
 # revisit as a real "modules" config table if this grows much past that.
+# "gate" (AP Review Workflow Plan.md, 2026-07-26): None = visible to every
+# logged-in user; "ap_reviewer" = only shown when the current user has
+# is_ap_reviewer=TRUE (checked in portal.html, since MODULES itself is a
+# module-level constant shared by every request, not per-user).
 MODULES = [
-    {"key": "check_request", "title": "Check Request", "desc": "Submit a classic check request.", "url": "/new-request", "enabled": True},
-    {"key": "my_requests", "title": "My Requests", "desc": "Track requests you've submitted.", "url": "/my-requests", "enabled": True},
-    {"key": "invoice_payment", "title": "Invoice for Payment", "desc": "Upload and match an invoice.", "url": None, "enabled": False},
-    {"key": "vendor_requests", "title": "Vendor Requests", "desc": "Request a new vendor be added.", "url": None, "enabled": False},
-    {"key": "approval_queue", "title": "Approval Queue", "desc": "Review requests awaiting your approval.", "url": None, "enabled": False},
+    {"key": "check_request", "title": "Check Request", "desc": "Submit a classic check request.", "url": "/new-request", "enabled": True, "gate": None},
+    {"key": "my_requests", "title": "My Requests", "desc": "Track requests you've submitted.", "url": "/my-requests", "enabled": True, "gate": None},
+    {"key": "invoice_payment", "title": "Invoice for Payment", "desc": "Upload and match an invoice.", "url": None, "enabled": False, "gate": None},
+    {"key": "vendor_requests", "title": "Vendor Requests", "desc": "Request a new vendor be added.", "url": None, "enabled": False, "gate": None},
+    # Flipped enabled 2026-07-26 (was a disabled "Coming Soon" placeholder) --
+    # AP Review Workflow Plan.md Section 2a: visible to every logged-in user,
+    # same as My Requests -- an empty queue is a harmless empty state, not
+    # worth its own permission gate.
+    {"key": "approval_queue", "title": "Approval Queue", "desc": "Review requests awaiting your approval.", "url": "/my-approvals", "enabled": True, "gate": None},
+    {"key": "ap_review", "title": "AP Review", "desc": "Final review and QBO posting for fully-approved requests.", "url": "/admin/ap-review", "enabled": True, "gate": "ap_reviewer"},
 ]
 
 
@@ -599,6 +619,101 @@ def _user_can_submit_for(user: dict, program_area_id: int) -> bool:
         (user["id"], program_area_id),
     )
     return row is not None
+
+
+# ── Approval Action Workflow helpers (AP Review Workflow Plan.md, Section 1a/2b) ──
+
+def _serial_group_display_approver(chain: list[dict], serial_group: int | None) -> int | None:
+    """current_approver_id is DISPLAY-ONLY (the real gate is always
+    checkreq.approval_actions, see _materialize_approval_actions below) --
+    a single FK genuinely cannot represent "either of these two people,"
+    so this returns the approver's id only when the given serial_group has
+    exactly one approver in the chain, and None whenever it has more than
+    one (Jay's decision 6: this parallel-group rule applies generally, to
+    any multi-approver serial_group -- program-area or global -- not just
+    today's real global_approvers case)."""
+    if serial_group is None:
+        return None
+    approvers = [c["approver_user_id"] for c in chain if c["serial_group"] == serial_group]
+    return approvers[0] if len(approvers) == 1 else None
+
+
+def _materialize_approval_actions(cur, payment_request_id: int, chain: list[dict]) -> None:
+    """Persists every step of a just-computed approval chain as its own
+    'pending' checkreq.approval_actions row -- the real per-approver,
+    per-step state this whole workflow is built on (Section 1a).
+    approval_engine.build_approval_chain() can legitimately return multiple
+    approvers in the same serial_group (a global_approvers parallel step);
+    only a per-row table, not a scalar field, can correctly gate "every
+    approver in this group must act before it advances." Called at the
+    same two moments main.py already computes a chain: the original
+    submission INSERT and the edit-triggered approval-reset UPDATE."""
+    for step in chain:
+        cur.execute(
+            "INSERT INTO checkreq.approval_actions "
+            "(payment_request_id, serial_group, approver_user_id, status) "
+            "VALUES (%s, %s, %s, 'pending')",
+            (payment_request_id, step["serial_group"], step["approver_user_id"]),
+        )
+
+
+def _supersede_pending_approval_actions(cur, payment_request_id: int) -> None:
+    """Edit-triggered approval reset: mark every still-pending
+    approval_actions row 'skipped' (never deleted -- matches this app's
+    established "never truly delete" philosophy, same reasoning already
+    applied to payment_request_attachments.removed_at and to Cancel) before
+    a fresh chain is materialized for the request via
+    _materialize_approval_actions."""
+    cur.execute(
+        "UPDATE checkreq.approval_actions SET status = 'skipped', "
+        "comment = 'Superseded by edit' WHERE payment_request_id = %s AND status = 'pending'",
+        (payment_request_id,),
+    )
+
+
+def _require_ap_reviewer(request: Request):
+    """Mirrors _require_vendor_approver exactly -- returns (user, None) if
+    allowed, or (None, error_response) if not. Callers do
+    `user, err = _require_ap_reviewer(request); if err: return err`."""
+    user = _current_user(request)
+    if not user:
+        return None, RedirectResponse("/login")
+    if not user.get("is_ap_reviewer"):
+        return None, JSONResponse({"error": "AP-reviewer access required"}, status_code=403)
+    return user, None
+
+
+def _send_rejection_email(pr: dict, new_status: str, reason: str, request: Request) -> dict:
+    """Decision 2 (AP Review Workflow Plan.md, Section 8): any rejection --
+    mid-chain ('Rejected') or AP-stage ('Returned by AP') -- emails the
+    submitter, reusing the exact same 26-122/email_client.py path already
+    used for the New Vendor Onboarding W-9 request email
+    (_send_w9_request_email above). Fails soft by design -- email_client.
+    send_email() never raises; the caller surfaces whatever comes back
+    ({"status": "sent"} or {"error": "..."}) as a visible-but-non-blocking
+    email_warning, matching this app's established archive_warning pattern.
+    pr must include submitter_email/submitter_name/org_name and
+    request_number (the reject/ap_return routes' own SELECT joins these
+    in)."""
+    verb = "returned by the Business Office (AP) for corrections" if new_status == "Returned by AP" else "rejected"
+    edit_url = f"{str(request.base_url).rstrip('/')}/requests/{pr['request_number']}/edit"
+    subject = f"Check Request {pr['request_number']} was {verb}"
+    body_html = (
+        f"<p>Hello {pr.get('submitter_name') or ''},</p>"
+        f"<p>Your check request <strong>{pr['request_number']}</strong> "
+        f"({pr['org_name']}) was {verb}.</p>"
+        f"<p><strong>Reason:</strong> {reason}</p>"
+        f"<p>You can edit and resubmit it here: <a href=\"{edit_url}\">{edit_url}</a></p>"
+    )
+    body_text = (
+        f"Hello {pr.get('submitter_name') or ''},\n\n"
+        f"Your check request {pr['request_number']} ({pr['org_name']}) was {verb}.\n\n"
+        f"Reason: {reason}\n\nEdit and resubmit here: {edit_url}"
+    )
+    return email_client.send_email(
+        to=pr["submitter_email"], subject=subject, body_html=body_html, body_text=body_text,
+        sender=W9_SENDER_EMAIL,
+    )
 
 
 @app.get("/api/vendors/{org_id}")
@@ -1323,6 +1438,12 @@ async def new_request_submit(request: Request):
     chain = approval_engine.build_approval_chain(program_area_id, total_amount)
     chain_summary = approval_engine.describe_chain(chain)
     first_step = chain[0] if chain else None
+    # current_approver_id/serial_group_current are display-only fields (see
+    # _serial_group_display_approver's own docstring) -- the real gate is
+    # checkreq.approval_actions, materialized below at both the new-
+    # submission and edit-reset call sites.
+    first_serial_group = first_step["serial_group"] if first_step else None
+    first_display_approver = _serial_group_display_approver(chain, first_serial_group)
 
     imp_id = request.session.get("impersonating_user_id")
     impersonated_by = _real_user(request)["id"] if imp_id else None
@@ -1353,7 +1474,16 @@ async def new_request_submit(request: Request):
         else:
             vendor_changed = (vendor_id != old_vendor_id)
         amount_changed = (total_amount != old_total)
-        reset_approval = vendor_changed or amount_changed
+        # Decision 1, second half (AP Review Workflow Plan.md, Section 2c):
+        # a real gap the plan found -- a request left in a terminal-but-
+        # fixable state ('Rejected' mid-chain, or 'Returned by AP' from the
+        # AP screen) must ALWAYS re-enter the chain on edit, regardless of
+        # whether vendor/amount changed. Without this, editing only a
+        # description/GL-line memo on such a request would save
+        # successfully but silently stay in that terminal status forever,
+        # with no path back into review.
+        status_forces_reset = existing_pr["status"] in ("Rejected", "Returned by AP")
+        reset_approval = vendor_changed or amount_changed or status_forces_reset
 
         with db.connect() as conn:
             with conn.cursor() as cur:
@@ -1437,10 +1567,14 @@ async def new_request_submit(request: Request):
                         (program_area_id, vendor_id, new_vendor_request_id, total_amount,
                          requested_pay_date, description, special_instructions,
                          "UnderReview",
-                         first_step["approver_user_id"] if first_step else None,
-                         first_step["serial_group"] if first_step else None,
+                         first_display_approver, first_serial_group,
                          chain_summary, payment_request_id),
                     )
+                    # AP Review Workflow Plan.md, Section 1a: mark any still-
+                    # pending rows from the OLD chain skipped, then
+                    # materialize the freshly-recomputed chain's rows.
+                    _supersede_pending_approval_actions(cur, payment_request_id)
+                    _materialize_approval_actions(cur, payment_request_id, chain)
                 else:
                     cur.execute(
                         """
@@ -1470,10 +1604,20 @@ async def new_request_submit(request: Request):
                     )
 
                 if reset_approval:
-                    audit_comment = (
-                        f"Vendor and/or amount changed on edit (was ${old_total:,.2f}, "
-                        f"now ${total_amount:,.2f}) -- approval workflow reset.\n{chain_summary}"
-                    )
+                    if vendor_changed or amount_changed:
+                        audit_comment = (
+                            f"Vendor and/or amount changed on edit (was ${old_total:,.2f}, "
+                            f"now ${total_amount:,.2f}) -- approval workflow reset.\n{chain_summary}"
+                        )
+                    else:
+                        # status_forces_reset case (Decision 1) -- neither
+                        # vendor nor amount changed, but the request was
+                        # 'Rejected'/'Returned by AP' and must always
+                        # re-enter the chain regardless of what changed.
+                        audit_comment = (
+                            f"Request was '{existing_pr['status']}' -- edited and resubmitted "
+                            f"for approval (re-enters the chain regardless of what changed).\n{chain_summary}"
+                        )
                     cur.execute(
                         "INSERT INTO checkreq.audit_log "
                         "(payment_request_id, action_by_user_id, action_type, comment, "
@@ -1517,8 +1661,7 @@ async def new_request_submit(request: Request):
                 (request_number, request_type, org_id, program_area_id, user["id"],
                  vendor_id, total_amount, requested_pay_date, description, special_instructions,
                  "UnderReview",
-                 first_step["approver_user_id"] if first_step else None,
-                 first_step["serial_group"] if first_step else None,
+                 first_display_approver, first_serial_group,
                  chain_summary),
             )
             payment_request_id = cur.fetchone()["id"]
@@ -1529,6 +1672,12 @@ async def new_request_submit(request: Request):
                     "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
                     (payment_request_id, acct_id, amt, memo),
                 )
+
+            # AP Review Workflow Plan.md, Section 1a: materialize the whole
+            # computed chain as its own set of 'pending' approval_actions
+            # rows -- this, not current_approver_id, is the real gate
+            # /requests/{request_number}/approve checks.
+            _materialize_approval_actions(cur, payment_request_id, chain)
 
             # action_type "Submitted" describes the ACTION the user just took
             # (submitting) and stays "Submitted" even though the request's
@@ -2038,6 +2187,305 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
     })
 
 
+# ── Approval Action Workflow (AP Review Workflow Plan.md, Section 2) ────────
+# GET /my-approvals: an approver's queue -- fundamentally a different query
+# shape than My Requests (submitter_user_id = me): here it's "requests where
+# I am owed an action right now," across every submitter. Visible to every
+# logged-in user (MODULES' approval_queue tile, gate=None) -- an empty queue
+# is a harmless empty state, not worth its own permission gate.
+
+@app.get("/my-approvals", response_class=HTMLResponse)
+def my_approvals(request: Request, view: str = "mine", approved: str = "",
+                  rejected: str = "", email_warning: str = ""):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    org = _current_org(request)
+    if not org:
+        return RedirectResponse("/portal")
+
+    # Same ?view=all CFO toggle convention Task 6 (2026-07-26) already built
+    # for My Requests -- "My Approvals" (default, my own pending items) vs.
+    # "All Pending Approvals" (every request currently awaiting anyone's
+    # action, scoped to the session's selected entity, same precedent).
+    show_all = (view == "all") and bool(user["is_cfo"])
+
+    if show_all:
+        rows = db.query(
+            """
+            SELECT DISTINCT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount,
+                   pr.status, pr.approval_chain_summary, pr.created_at, o.code AS org_code,
+                   pa.title AS program_area_title, u.display_name AS submitter_name,
+                   u.email AS submitter_email,
+                   v.display_name AS vendor_display_name,
+                   vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
+                   vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
+                   vr.dba_name AS vr_dba_name
+            FROM checkreq.payment_requests pr
+            JOIN checkreq.approval_actions aa
+              ON aa.payment_request_id = pr.id AND aa.serial_group = pr.serial_group_current
+             AND aa.status = 'pending'
+            JOIN checkreq.organizations o ON o.id = pr.org_id
+            JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+            JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
+            LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+            LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+            WHERE pr.status = 'UnderReview' AND pr.org_id = %s
+            ORDER BY pr.created_at
+            """,
+            (org["id"],),
+        )
+    else:
+        rows = db.query(
+            """
+            SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
+                   pr.approval_chain_summary, pr.created_at, o.code AS org_code,
+                   pa.title AS program_area_title,
+                   v.display_name AS vendor_display_name,
+                   vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
+                   vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
+                   vr.dba_name AS vr_dba_name
+            FROM checkreq.payment_requests pr
+            JOIN checkreq.approval_actions aa
+              ON aa.payment_request_id = pr.id AND aa.serial_group = pr.serial_group_current
+             AND aa.approver_user_id = %s AND aa.status = 'pending'
+            JOIN checkreq.organizations o ON o.id = pr.org_id
+            JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+            LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+            LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+            WHERE pr.status = 'UnderReview'
+            ORDER BY pr.created_at
+            """,
+            (user["id"],),
+        )
+
+    # Full-chain visibility (Decision 3): reuse My Requests' exact
+    # status-pill-popup mechanism (Task 4, 2026-07-26), sourced from
+    # approval_actions joined to app_users instead of audit_log -- shows an
+    # approver plainly who else is in the chain and who has already acted.
+    chain_by_id: dict[int, list[dict]] = {}
+    pr_ids = [r["pr_id"] for r in rows]
+    if pr_ids:
+        chain_rows = db.query(
+            """
+            SELECT aa.payment_request_id, aa.serial_group, aa.status, aa.acted_at, aa.comment,
+                   u.display_name, u.email
+            FROM checkreq.approval_actions aa
+            JOIN checkreq.app_users u ON u.id = aa.approver_user_id
+            WHERE aa.payment_request_id = ANY(%s)
+            ORDER BY aa.serial_group, aa.id
+            """,
+            (pr_ids,),
+        )
+        for c in chain_rows:
+            chain_by_id.setdefault(c["payment_request_id"], []).append(c)
+
+    for r in rows:
+        r["type_abbr"] = _REQUEST_TYPE_ABBR.get(r["request_type"], "??")
+        r["chain"] = chain_by_id.get(r["pr_id"], [])
+        if r.get("vendor_display_name"):
+            r["vendor_name"] = r["vendor_display_name"]
+        elif r.get("vr_entity_type"):
+            r["vendor_name"] = _vendor_request_row_display_name(
+                r["vr_entity_type"], r["vr_company_name"], r["vr_dba_name"],
+                r["vr_first_name"], r["vr_last_name"],
+            )
+        else:
+            r["vendor_name"] = "—"
+
+    return _render(request, "my_approvals.html", user, {
+        "rows": rows, "show_all": show_all, "approved": approved,
+        "rejected": rejected, "email_warning": email_warning,
+    })
+
+
+@app.post("/requests/{request_number}/approve")
+def approve_request(request_number: str, request: Request):
+    """AP Review Workflow Plan.md, Section 2b. The real gate is
+    checkreq.approval_actions, not current_approver_id (display-only) --
+    this correctly handles a parallel multi-approver serial_group, which a
+    single scalar FK cannot represent."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+
+    pr = db.query_one(
+        "SELECT * FROM checkreq.payment_requests WHERE request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if pr["status"] != "UnderReview":
+        return JSONResponse({"error": "This request is not currently awaiting approval."}, status_code=400)
+
+    my_action = db.query_one(
+        "SELECT * FROM checkreq.approval_actions WHERE payment_request_id = %s "
+        "AND approver_user_id = %s AND serial_group = %s AND status = 'pending'",
+        (pr["id"], user["id"], pr["serial_group_current"]),
+    )
+    if not my_action:
+        return JSONResponse(
+            {"error": "This isn't waiting on your approval right now (not your turn, "
+                      "or you've already acted)."},
+            status_code=403,
+        )
+
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.approval_actions SET status = 'approved', acted_at = NOW(), "
+                "acted_by_user_id = %s WHERE id = %s",
+                (user["id"], my_action["id"]),
+            )
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, serial_group, "
+                " previous_status, new_status, impersonated_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (pr["id"], user["id"], "Approved",
+                 f"Approved (serial group {pr['serial_group_current']}).",
+                 pr["serial_group_current"], pr["status"], pr["status"], impersonated_by),
+            )
+
+            # Is every OTHER row in this same serial_group also approved now?
+            # (the parallel-group gate Section 1a exists for -- e.g. a
+            # global_approvers step with 2 rows can't advance until both
+            # are in.)
+            remaining = db.query_one(
+                "SELECT COUNT(*) AS c FROM checkreq.approval_actions "
+                "WHERE payment_request_id = %s AND serial_group = %s AND status = 'pending'",
+                (pr["id"], pr["serial_group_current"]),
+            )["c"]
+
+            if remaining == 0:
+                # Whole group cleared -- look for a later serial group.
+                later_groups = db.query(
+                    "SELECT DISTINCT serial_group FROM checkreq.approval_actions "
+                    "WHERE payment_request_id = %s AND serial_group > %s ORDER BY serial_group",
+                    (pr["id"], pr["serial_group_current"]),
+                )
+                if later_groups:
+                    next_group = later_groups[0]["serial_group"]
+                    next_approvers = db.query(
+                        "SELECT approver_user_id FROM checkreq.approval_actions "
+                        "WHERE payment_request_id = %s AND serial_group = %s",
+                        (pr["id"], next_group),
+                    )
+                    next_display_approver = (
+                        next_approvers[0]["approver_user_id"] if len(next_approvers) == 1 else None
+                    )
+                    cur.execute(
+                        "UPDATE checkreq.payment_requests SET serial_group_current = %s, "
+                        "current_approver_id = %s, updated_at = NOW() WHERE id = %s",
+                        (next_group, next_display_approver, pr["id"]),
+                    )
+                else:
+                    # Last step -- fully approved, now appears on the AP
+                    # Review screen (Section 3).
+                    cur.execute(
+                        "UPDATE checkreq.payment_requests SET status = 'Approved', "
+                        "current_approver_id = NULL, updated_at = NOW() WHERE id = %s",
+                        (pr["id"],),
+                    )
+                    cur.execute(
+                        "INSERT INTO checkreq.audit_log "
+                        "(payment_request_id, action_by_user_id, action_type, comment, "
+                        " previous_status, new_status, impersonated_by_user_id) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (pr["id"], user["id"], "Fully Approved",
+                         "All approval steps complete -- ready for AP review.",
+                         pr["status"], "Approved", impersonated_by),
+                    )
+
+    return RedirectResponse(f"/my-approvals?approved={request_number}", status_code=303)
+
+
+@app.post("/requests/{request_number}/reject")
+async def reject_request(request_number: str, request: Request):
+    """AP Review Workflow Plan.md, Section 2c. Mid-chain reject -- from
+    anywhere in the chain, unconditionally terminal for that chain:
+    status='Rejected', current_approver_id/serial_group_current cleared,
+    every still-pending approval_actions row (including later groups)
+    flipped to 'skipped' so it stops appearing in anyone else's queue.
+    Decision 1: uses the plain 'Rejected' status (distinct from the
+    AP-stage 'Returned by AP' -- see ap_return_request below). Decision 2:
+    emails the submitter."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+
+    form = await request.form()
+    reason = (form.get("rejected_reason") or "").strip()
+    if not reason:
+        return JSONResponse({"error": "A rejection reason is required."}, status_code=400)
+
+    pr = db.query_one(
+        "SELECT pr.*, u.email AS submitter_email, u.display_name AS submitter_name, "
+        "o.name AS org_name "
+        "FROM checkreq.payment_requests pr "
+        "JOIN checkreq.app_users u ON u.id = pr.submitter_user_id "
+        "JOIN checkreq.organizations o ON o.id = pr.org_id "
+        "WHERE pr.request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if pr["status"] != "UnderReview":
+        return JSONResponse({"error": "This request is not currently awaiting approval."}, status_code=400)
+
+    my_action = db.query_one(
+        "SELECT * FROM checkreq.approval_actions WHERE payment_request_id = %s "
+        "AND approver_user_id = %s AND serial_group = %s AND status = 'pending'",
+        (pr["id"], user["id"], pr["serial_group_current"]),
+    )
+    if not my_action:
+        return JSONResponse(
+            {"error": "This isn't waiting on your approval right now (not your turn, "
+                      "or you've already acted)."},
+            status_code=403,
+        )
+
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.approval_actions SET status = 'rejected', acted_at = NOW(), "
+                "acted_by_user_id = %s, comment = %s WHERE id = %s",
+                (user["id"], reason, my_action["id"]),
+            )
+            cur.execute(
+                "UPDATE checkreq.approval_actions SET status = 'skipped' "
+                "WHERE payment_request_id = %s AND status = 'pending'",
+                (pr["id"],),
+            )
+            cur.execute(
+                "UPDATE checkreq.payment_requests SET status = 'Rejected', "
+                "current_approver_id = NULL, serial_group_current = NULL, updated_at = NOW() "
+                "WHERE id = %s",
+                (pr["id"],),
+            )
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, serial_group, "
+                " previous_status, new_status, impersonated_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (pr["id"], user["id"], "Rejected", reason, pr["serial_group_current"],
+                 pr["status"], "Rejected", impersonated_by),
+            )
+
+    email_result = _send_rejection_email(pr, "Rejected", reason, request)
+    redirect_url = f"/my-approvals?rejected={request_number}"
+    if email_result.get("status") != "sent":
+        from urllib.parse import quote
+        redirect_url += f"&email_warning={quote(email_result.get('error') or 'unknown error sending rejection email')}"
+    return RedirectResponse(redirect_url, status_code=303)
+
+
 # ── Feedback (Task 10, UI/UX batch, 2026-07-26) ──────────────────────────────
 # Jay: "We need a feedback section on the main row to gather people's
 # feedback." Deliberately simple -- a comment box, no workflow/status, just a
@@ -2227,6 +2675,310 @@ def vendor_request_w9_received(vr_id: int, request: Request):
                 (vr_id,),
             )
     return RedirectResponse("/admin/vendor-requests", status_code=303)
+
+
+# ── AP Review screen (AP Review Workflow Plan.md, Section 3/4) ─────────────
+# Gated on is_ap_reviewer (Section 1b) -- a new, dedicated role, deliberately
+# NOT folded into is_cfo or is_vendor_approver. No per-org scoping table for
+# this flag either (Decision 4: any single AP reviewer can act alone, same
+# blanket-access precedent as is_vendor_approver) -- an AP reviewer sees
+# every org's fully-chain-approved requests, org-wide.
+
+@app.get("/admin/ap-review", response_class=HTMLResponse)
+def ap_review_list(request: Request, posted: str = "", returned: str = "",
+                    post_error: str = "", email_warning: str = ""):
+    user, err = _require_ap_reviewer(request)
+    if err:
+        return err
+
+    rows = db.query(
+        """
+        SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount,
+               pr.approval_chain_summary, pr.created_at, pr.vendor_request_id,
+               o.code AS org_code, o.name AS org_name,
+               pa.title AS program_area_title, u.display_name AS submitter_name,
+               u.email AS submitter_email,
+               v.display_name AS vendor_display_name,
+               vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
+               vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
+               vr.dba_name AS vr_dba_name, vr.status AS vr_status,
+               vr.requires_w9 AS vr_requires_w9, vr.w9_received AS vr_w9_received
+        FROM checkreq.payment_requests pr
+        JOIN checkreq.organizations o ON o.id = pr.org_id
+        JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+        JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
+        LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+        LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+        WHERE pr.status = 'Approved'
+        ORDER BY pr.created_at
+        """
+    )
+    for r in rows:
+        r["type_abbr"] = _REQUEST_TYPE_ABBR.get(r["request_type"], "??")
+        if r.get("vendor_display_name"):
+            r["vendor_name"] = r["vendor_display_name"]
+        elif r.get("vr_entity_type"):
+            r["vendor_name"] = _vendor_request_row_display_name(
+                r["vr_entity_type"], r["vr_company_name"], r["vr_dba_name"],
+                r["vr_first_name"], r["vr_last_name"],
+            )
+        else:
+            r["vendor_name"] = "—"
+
+        # Section 4, step 2: the same vendor gate New Vendor Onboarding
+        # Plan.md's own Section 5 specifies -- 'Post to QBO' waits here,
+        # visibly, until it clears. Also the interlock point Section 6
+        # flags for a future CFO-overspend flag: this per-row loop and the
+        # template's per-row cell layout deliberately leave room for one
+        # more status indicator alongside vendor_gate_wait, without needing
+        # to restructure either when that (separate, not-yet-built) feature
+        # lands.
+        if r["vendor_request_id"]:
+            if r["vr_status"] != "approved":
+                r["vendor_gate_wait"] = f"Vendor not yet approved (status: {r['vr_status']})"
+            elif r["vr_requires_w9"] and not r["vr_w9_received"]:
+                r["vendor_gate_wait"] = "W-9 not yet received"
+            else:
+                r["vendor_gate_wait"] = None
+        else:
+            r["vendor_gate_wait"] = None
+
+    return _render(request, "ap_review.html", user, {
+        "rows": rows, "posted": posted, "returned": returned,
+        "post_error": post_error, "email_warning": email_warning,
+    })
+
+
+@app.post("/requests/{request_number}/post-to-qbo")
+def post_to_qbo(request_number: str, request: Request):
+    """AP Review Workflow Plan.md, Section 4 -- sequencing and failure
+    handling, implemented exactly per that section's own numbered steps:
+
+      1. Re-select + confirm status == 'Approved' at the moment of the
+         click (guards a double-click/race).
+      2. If vendor_request_id is set, check the New Vendor Onboarding gate
+         (vendor_requests.status == 'approved' AND (NOT requires_w9 OR
+         w9_received)) -- if it fails, post NOTHING; leave status at
+         'Approved', show a clear wait reason (an expected wait state, not
+         an error -- the row just stays here until the vendor side clears).
+      3/4. If the gate passes and qbo_vendor_id is still NULL, call
+         qbo_mcp_client.create_vendor() -- its first real caller. On
+         success, stamp vendor_requests.qbo_vendor_id + status=
+         'posted_to_qbo' in its own committed step, separate from the Bill
+         call that follows. This makes a retry after a Bill failure
+         naturally idempotent: step 3 is skipped automatically next time
+         since qbo_vendor_id is already set -- nothing extra to track.
+         On failure: stop here entirely, surface QBO's real Fault detail
+         (this codebase's hard-won 2026-07-22 lesson from 26-124's
+         JE-collision incident -- never a generic error), leave status
+         'Approved', safe to retry.
+      5. Resolve the real QBO vendor id to bill against: checkreq.vendors.
+         qbo_vendor_id for an existing-vendor request, or the just-resolved
+         vendor_requests.qbo_vendor_id for a new-vendor request.
+      6. Call qbo_mcp_client.create_bill() with the request's GL lines,
+         doc_number=request_number, private_note=approval_chain_summary.
+         On success: stamp qbo_bill_id/qbo_bill_url, status=
+         'Posted to QBO', audit_log row. On failure: same philosophy as
+         step 3 -- surface the real error, leave status 'Approved'.
+      7. Only once status actually reaches 'Posted to QBO': call the
+         existing, already-written cleanup_gcs_attachment() -- its first
+         real caller (Section 5) -- wrapped in its own try/except, matching
+         _archive_attachments'/_send_w9_request_email's own established "a
+         storage hiccup is recoverable and must never block or un-post a
+         real transaction" philosophy. A cleanup failure here is logged,
+         not surfaced -- the Bill is already posted and that's the outcome
+         that matters.
+    """
+    from urllib.parse import quote
+
+    user, err = _require_ap_reviewer(request)
+    if err:
+        return err
+
+    pr = db.query_one(
+        "SELECT pr.*, o.code AS org_code FROM checkreq.payment_requests pr "
+        "JOIN checkreq.organizations o ON o.id = pr.org_id "
+        "WHERE pr.request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if pr["status"] != "Approved":
+        return RedirectResponse(
+            f"/admin/ap-review?post_error="
+            f"{quote(request_number + ': someone already acted on this request (status is now ' + pr['status'] + ').')}",
+            status_code=303,
+        )
+
+    company = pr["org_code"]
+
+    # Step 2/3/4: New Vendor Onboarding gate + vendor creation, only if this
+    # request used the "Add a new vendor" panel instead of an existing
+    # checkreq.vendors row.
+    qbo_vendor_id = None
+    if pr["vendor_request_id"]:
+        vr = db.query_one(
+            "SELECT * FROM checkreq.vendor_requests WHERE id = %s", (pr["vendor_request_id"],),
+        )
+        if not vr or vr["status"] != "approved":
+            return RedirectResponse(
+                f"/admin/ap-review?post_error={quote(request_number + ': vendor not yet approved.')}",
+                status_code=303,
+            )
+        if vr["requires_w9"] and not vr["w9_received"]:
+            return RedirectResponse(
+                f"/admin/ap-review?post_error={quote(request_number + ': W-9 not yet received.')}",
+                status_code=303,
+            )
+
+        if vr["qbo_vendor_id"]:
+            qbo_vendor_id = vr["qbo_vendor_id"]
+        else:
+            display_name = _vendor_request_display_name(vr)
+            result, vendor_error = qbo_mcp_client.create_vendor(
+                company, display_name,
+                company_name=vr.get("company_name") or "",
+                address_line1=vr.get("address_line1") or "", address_line2=vr.get("address_line2") or "",
+                city=vr.get("city") or "", state=vr.get("state") or "", zip_code=vr.get("zip") or "",
+                phone=vr.get("phone") or "", email=vr.get("contact_email") or "",
+            )
+            if vendor_error:
+                return RedirectResponse(
+                    f"/admin/ap-review?post_error="
+                    f"{quote(f'{request_number}: vendor creation failed -- {vendor_error}')}",
+                    status_code=303,
+                )
+            qbo_vendor_id = result["vendor_id"]
+            with db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE checkreq.vendor_requests SET qbo_vendor_id = %s, "
+                        "status = 'posted_to_qbo' WHERE id = %s",
+                        (qbo_vendor_id, vr["id"]),
+                    )
+    else:
+        v = db.query_one("SELECT qbo_vendor_id FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],))
+        if not v or not v.get("qbo_vendor_id"):
+            return RedirectResponse(
+                f"/admin/ap-review?post_error="
+                f"{quote(request_number + ': this vendor has no qbo_vendor_id on file -- cannot post.')}",
+                status_code=303,
+            )
+        qbo_vendor_id = v["qbo_vendor_id"]
+
+    # Step 5/6: resolve GL lines and post the Bill.
+    gl_lines = db.query(
+        "SELECT gl.amount, gl.memo, ga.account_number FROM checkreq.payment_request_gl_lines gl "
+        "JOIN checkreq.gl_accounts ga ON ga.id = gl.gl_account_id "
+        "WHERE gl.payment_request_id = %s ORDER BY gl.id",
+        (pr["id"],),
+    )
+    bill_lines = [
+        {"account_ref": g["account_number"], "amount": float(g["amount"]), "description": g["memo"] or ""}
+        for g in gl_lines
+    ]
+
+    result, bill_error = qbo_mcp_client.create_bill(
+        company, qbo_vendor_id,
+        pr["requested_pay_date"].isoformat() if pr["requested_pay_date"] else date.today().isoformat(),
+        bill_lines, doc_number=pr["request_number"],
+        private_note=pr["approval_chain_summary"] or f"Check Request {pr['request_number']}",
+    )
+    if bill_error:
+        return RedirectResponse(
+            f"/admin/ap-review?post_error={quote(f'{request_number}: Bill creation failed -- {bill_error}')}",
+            status_code=303,
+        )
+
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.payment_requests SET status = 'Posted to QBO', "
+                "qbo_bill_id = %s, qbo_bill_url = %s, updated_at = NOW() WHERE id = %s",
+                (result.get("bill_id"), result.get("qbo_url"), pr["id"]),
+            )
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, "
+                " previous_status, new_status, impersonated_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (pr["id"], user["id"], "Posted to QBO",
+                 f"QBO Bill {result.get('bill_number') or result.get('bill_id')} created.",
+                 "Approved", "Posted to QBO", impersonated_by),
+            )
+
+    # Step 7: cleanup_gcs_attachment()'s first real call site.
+    try:
+        cleanup_gcs_attachment(pr["id"])
+    except Exception as exc:
+        print(f"[post-to-qbo] cleanup_gcs_attachment failed for {request_number}: {exc}")
+
+    return RedirectResponse(f"/admin/ap-review?posted={request_number}", status_code=303)
+
+
+@app.post("/requests/{request_number}/ap-return")
+async def ap_return_request(request_number: str, request: Request):
+    """AP Review Workflow Plan.md, Section 3 ('Return to Submitter') +
+    Decision 1: AP-stage rejection uses a NEW, distinct 'Returned by AP'
+    status -- NOT the same terminal 'Rejected' the mid-chain reject route
+    uses -- since these are semantically different situations (a hard
+    denial vs. 'AP found a data problem, fix and resend'). Unconditionally
+    re-enters the request into Edit: the actual "always re-enter the chain
+    regardless of what changed" mechanics live in new_request_submit's edit
+    branch (status_forces_reset), not here -- this route only needs to set
+    the status. Decision 2: emails the submitter, same path as the
+    mid-chain reject route."""
+    user, err = _require_ap_reviewer(request)
+    if err:
+        return err
+
+    form = await request.form()
+    reason = (form.get("return_reason") or "").strip()
+    if not reason:
+        return JSONResponse({"error": "A reason is required."}, status_code=400)
+
+    pr = db.query_one(
+        "SELECT pr.*, u.email AS submitter_email, u.display_name AS submitter_name, "
+        "o.name AS org_name "
+        "FROM checkreq.payment_requests pr "
+        "JOIN checkreq.app_users u ON u.id = pr.submitter_user_id "
+        "JOIN checkreq.organizations o ON o.id = pr.org_id "
+        "WHERE pr.request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if pr["status"] != "Approved":
+        return JSONResponse({"error": "This request is not on the AP review queue right now."}, status_code=400)
+
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.payment_requests SET status = 'Returned by AP', "
+                "current_approver_id = NULL, serial_group_current = NULL, updated_at = NOW() "
+                "WHERE id = %s",
+                (pr["id"],),
+            )
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, "
+                " previous_status, new_status, impersonated_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (pr["id"], user["id"], "AP Rejected", reason, pr["status"], "Returned by AP", impersonated_by),
+            )
+
+    email_result = _send_rejection_email(pr, "Returned by AP", reason, request)
+    from urllib.parse import quote
+    redirect_url = f"/admin/ap-review?returned={request_number}"
+    if email_result.get("status") != "sent":
+        redirect_url += f"&email_warning={quote(email_result.get('error') or 'unknown error sending return email')}"
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 # ── W-9 upload — the ONE deliberate unauthenticated route in this app ───────
