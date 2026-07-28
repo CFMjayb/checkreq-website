@@ -56,6 +56,14 @@
   outline: 2px solid var(--color-gold);
   outline-offset: 1px;
 }
+/* "Remember this browser" continue-as state (2026-07-26) */
+.continue-as-btn { word-break: break-all; }
+.switch-account-link {
+  display: block;
+  margin-top: var(--space-4);
+  font-size: 0.85rem;
+  color: var(--color-text-muted, #666);
+}
 .sr-only {
   position: absolute;
   width: 1px; height: 1px;

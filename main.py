@@ -280,6 +280,25 @@ _NOT_REGISTERED_MESSAGE = (
     "administrator to be added, then try signing in again."
 )
 
+# "Remember this browser's email" (2026-07-26, Jay: wants an SSO-like feel --
+# the actual sign-in is already invisible on a domain-joined device thanks to
+# Azure AD's native seamless SSO, the only remaining manual step was typing
+# the email into Beacon's own page every time). A plain, non-httponly-relevant
+# cookie -- it is NOT a credential and NOT the access gate (app_users remains
+# the only real gate, via _complete_login below); it only pre-fills/skips the
+# email-entry step so returning users land on a "Continue as X" button
+# instead of a blank input. Sameite=lax to survive the OAuth-provider
+# redirect chain, matching the session cookie's own settings.
+_REMEMBER_COOKIE = "beacon_last_email"
+_REMEMBER_MAX_AGE = 60 * 60 * 24 * 365  # ~1 year
+
+
+def _remember_email(response: Response, email: str) -> None:
+    response.set_cookie(
+        _REMEMBER_COOKIE, email, max_age=_REMEMBER_MAX_AGE,
+        httponly=True, samesite="lax", secure=ON_CLOUD_RUN,
+    )
+
 
 def _domain_of(email: str) -> str:
     email = (email or "").strip().lower()
@@ -362,17 +381,28 @@ def _complete_login(request: Request, email: str, display_name: str, provider: s
 
 
 @app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, error: str = "", email: str = ""):
+def login_page(request: Request, error: str = "", email: str = "", switch: str = ""):
     """Renders the styled sign-in card -- now email-first (Multi-Provider
     Authentication Plan.md, Section 3): the card asks for an email address
     and submits to /auth/route, which looks up the domain and redirects to
     the correct provider. The actual per-provider OAuth redirects are
     separate routes (/auth/start, /auth/google/start) -- this route must
     render, not redirect, or the cathedral-themed login page is unreachable
-    in normal use."""
+    in normal use.
+
+    "Remember this browser" (2026-07-26): if beacon_last_email is set and
+    the caller didn't explicitly ask to switch accounts (?switch=1), show a
+    one-click "Continue as X" state instead of a blank email input -- the
+    actual sign-in step is already invisible on a domain-joined device via
+    Azure AD's native seamless SSO; this removes the one remaining manual
+    step (typing the email) on repeat visits. Not the access gate --
+    app_users (via _complete_login) remains that regardless."""
     if _current_user(request):
         return RedirectResponse("/portal")
-    return templates.TemplateResponse(request, "login.html", {"error": error, "email": email})
+    remembered_email = "" if switch else (request.cookies.get(_REMEMBER_COOKIE) or "")
+    return templates.TemplateResponse(request, "login.html", {
+        "error": error, "email": email, "remembered_email": remembered_email,
+    })
 
 
 @app.get("/auth/route", response_class=HTMLResponse)
@@ -434,7 +464,9 @@ def auth_callback(request: Request, code: str = "", state: str = "", error: str 
     if reject_reason == "deactivated":
         return templates.TemplateResponse(request, "login.html", {"error": f"{email} is deactivated in checkreq.app_users — contact an admin."})
 
-    return RedirectResponse("/portal", status_code=303)
+    resp = RedirectResponse("/portal", status_code=303)
+    _remember_email(resp, email)
+    return resp
 
 
 @app.get("/auth/google/start")
@@ -471,7 +503,9 @@ def auth_google_callback(request: Request, code: str = "", state: str = "", erro
     if reject_reason == "deactivated":
         return templates.TemplateResponse(request, "login.html", {"error": f"{email} is deactivated in checkreq.app_users — contact an admin."})
 
-    return RedirectResponse("/portal", status_code=303)
+    resp = RedirectResponse("/portal", status_code=303)
+    _remember_email(resp, email)
+    return resp
 
 
 @app.get("/logout")

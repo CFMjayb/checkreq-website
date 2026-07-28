@@ -6,7 +6,6 @@
   <div class="login-card">
     <div class="wordmark">Cornerstone Franciscan Ministries</div>
     <h1>Beacon</h1>
-    <p class="tagline">Enter your work email address to sign in.</p>
     {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
     <!--
       Email-first routing (Multi-Provider Authentication Plan.md, Section 3
@@ -15,7 +14,25 @@
       the correct provider's own sign-in page (Microsoft or Google) -- no
       "pick your provider" button, matching Jay's explicit choice over the
       plan's own recommended two-button design.
+
+      "Remember this browser" (2026-07-26): if a prior successful login left
+      beacon_last_email set, skip straight to a one-click "Continue as X"
+      state -- the actual sign-in is already invisible on a domain-joined
+      device (Azure AD's own seamless SSO), so this removes the one
+      remaining manual step. "Not you?" clears it for just this page load
+      (?switch=1) -- the cookie itself gets overwritten naturally the next
+      time someone actually completes a login, so there's nothing to
+      explicitly delete.
     -->
+    {% if remembered_email %}
+    <p class="tagline">Continue as</p>
+    <form method="get" action="/auth/route" class="login-email-form">
+      <input type="hidden" name="email" value="{{ remembered_email }}">
+      <button type="submit" class="btn btn-primary btn-block continue-as-btn" autofocus>{{ remembered_email }}</button>
+    </form>
+    <a href="/login?switch=1" class="switch-account-link">Not you? Sign in with a different email</a>
+    {% else %}
+    <p class="tagline">Enter your work email address to sign in.</p>
     <form method="get" action="/auth/route" class="login-email-form">
       <label for="email" class="sr-only">Work email address</label>
       <input type="email" id="email" name="email" required autofocus
@@ -23,6 +40,7 @@
              class="login-email-input">
       <button type="submit" class="btn btn-primary btn-block">Continue</button>
     </form>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
