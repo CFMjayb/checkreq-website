@@ -130,7 +130,11 @@
 }
 .gl-line {
   display: grid;
-  grid-template-columns: 2fr 1fr 1.5fr auto;
+  /* Account column widened 2fr->3fr (Jay reported the GL Account dropdown
+     "unusable" -- real GL labels run 30-40+ chars and were wrapping into a
+     cramped, hard-to-read multi-line mess in the old 2fr share; Memo trimmed
+     1.5fr->1fr to make room, since memos are short/optional by design). */
+  grid-template-columns: 3fr 1fr 1fr auto;
   gap: var(--space-2);
   align-items: center;
   margin-bottom: var(--space-2);
@@ -206,3 +210,8 @@
 .ts-control input { width: auto !important; min-width: 40px; padding: 0 !important; border: none !important; box-shadow: none !important; }
 .ts-dropdown { font-family: var(--font-body); border-color: var(--color-border) !important; }
 .ts-dropdown .active { background: #f4f0e4 !important; color: var(--color-ink) !important; }
+/* GL Account dropdown: real account labels run 30-40+ chars and, even after
+   widening the column above, still wrap onto 2 lines sometimes -- give
+   wrapped rows breathing room and a slightly smaller face so they stay
+   readable instead of looking like a garbled run-on (Jay: "unusuable"). */
+.gl-line .ts-dropdown [data-selectable] { font-size: 0.78rem; line-height: 1.35; padding-top: 6px; padding-bottom: 6px; }

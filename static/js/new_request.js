@@ -89,7 +89,10 @@ function initGlAccountSelect(selectEl) {
       // the dropdown row) -- the item chip / underlying <select>'s real
       // <option> text (labelField) stays plain, unindented text.
       option: function (data, escape) {
-        const pad = (data.depth || 0) * 16;
+        // 10px/level, not 16 -- the account column is narrow (see new_request.css's
+        // .gl-line grid comment), and indentation was eating into already-tight
+        // width for long real GL labels.
+        const pad = (data.depth || 0) * 10;
         return `<div style="padding-left:${pad}px">${escape(data.label)}</div>`;
       },
     },

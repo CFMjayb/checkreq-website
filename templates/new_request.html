@@ -165,7 +165,7 @@
 {% block extra_js %}
 <script>
 const CURRENT_ORG_ID = {{ current_org.id }};
-const EDIT_DATA = {{ (edit_data | tojson) if edit_data else 'null' }};
+window.EDIT_DATA = {{ (edit_data | tojson) if edit_data else 'null' }};
 </script>
 <script src="/static/vendor/tomselect/tom-select.complete.min.js"></script>
 <script src="/static/js/new_request.js?v={{ asset_version('js/new_request.js') }}"></script>
