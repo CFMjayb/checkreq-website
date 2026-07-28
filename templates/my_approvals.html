@@ -4,7 +4,7 @@
 <div class="page-shell">
 <h1>My Approvals</h1>
 <p class="sub">Requests currently awaiting your approval. Click "View chain" on any row to see who else is
-involved and who has already acted.</p>
+involved and who has already acted. Click a Request # to view the full check request on screen.</p>
 
 {% if approved %}
 <div class="banner banner-success">Approved: {{ approved }}</div>
@@ -27,29 +27,31 @@ involved and who has already acted.</p>
 {% endif %}
 
 <div class="card">
-  <table class="simple-table my-requests-table">
+  <table class="simple-table approvals-table">
     <tr>
-      <th>Request #</th>
-      <th>Type</th>
-      <th>Entity</th>
-      <th>Program Area</th>
-      <th>Vendor</th>
-      {% if show_all %}<th>Submitted By</th>{% endif %}
-      <th>Amount</th>
-      <th>Chain</th>
-      <th>Submitted</th>
-      <th>Actions</th>
+      <th class="col-reqnum">Request #</th>
+      <th class="col-type">Type</th>
+      <th class="col-entity">Entity</th>
+      <th class="col-program">Program Area</th>
+      <th class="col-neededby">Needed By</th>
+      <th class="col-vendor">Vendor</th>
+      {% if show_all %}<th class="col-submitter">Submitted By</th>{% endif %}
+      <th class="col-amount">Amount</th>
+      <th class="col-chain">Chain</th>
+      <th class="col-date">Submitted</th>
+      <th class="col-actions">Actions</th>
     </tr>
     {% for r in rows %}
     <tr>
-      <td>{{ r.request_number }}</td>
-      <td>{{ r.type_abbr }}</td>
-      <td>{{ r.org_code }}</td>
-      <td class="program-area-cell">{{ r.program_area_title }}</td>
-      <td>{{ r.vendor_name }}</td>
-      {% if show_all %}<td>{{ r.submitter_name or r.submitter_email }}</td>{% endif %}
+      <td class="col-reqnum"><a href="/requests/{{ r.request_number }}/view">{{ r.request_number }}</a></td>
+      <td class="col-type">{{ r.type_abbr }}</td>
+      <td class="col-entity">{{ r.org_code }}</td>
+      <td class="col-program program-area-cell">{{ r.program_area_title }}</td>
+      <td class="col-neededby">{{ r.requested_pay_date.strftime("%Y-%m-%d") if r.requested_pay_date else "—" }}</td>
+      <td class="col-vendor">{{ r.vendor_name }}</td>
+      {% if show_all %}<td class="col-submitter">{{ r.submitter_name or r.submitter_email }}</td>{% endif %}
       <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
-      <td class="status-cell">
+      <td class="col-chain status-cell">
         <button type="button" class="status-pill-btn" data-popup="chain-popup-{{ loop.index }}">
           <span class="link-button">View chain</span>
         </button>
@@ -57,13 +59,14 @@ involved and who has already acted.</p>
           <div class="status-popup-title">Approval Chain — {{ r.request_number }}</div>
           {% if r.chain %}
           <table class="status-history-table">
-            <tr><th>Group</th><th>Approver</th><th>Status</th><th>Acted</th></tr>
+            <tr><th>Group</th><th>Approver</th><th>Status</th><th>Acted</th><th>Notes</th></tr>
             {% for c in r.chain %}
             <tr>
               <td>{{ c.serial_group }}</td>
               <td>{{ c.display_name or c.email }}</td>
               <td><span class="badge badge-{{ c.status }}">{{ c.status|capitalize }}</span></td>
               <td>{{ c.acted_at.strftime("%Y-%m-%d %H:%M") if c.acted_at else "—" }}</td>
+              <td>{{ c.comment or "—" }}</td>
             </tr>
             {% endfor %}
           </table>
@@ -72,10 +75,11 @@ involved and who has already acted.</p>
           {% endif %}
         </div>
       </td>
-      <td>{{ r.created_at.strftime("%Y-%m-%d") }}</td>
+      <td class="col-date">{{ r.created_at.strftime("%Y-%m-%d") }}</td>
       <td class="col-actions">
         <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
-        · <form method="post" action="/requests/{{ r.request_number }}/approve" style="display:inline">
+        · <form method="post" action="/requests/{{ r.request_number }}/approve" style="display:inline" onsubmit="return promptApprovalNote(this)">
+            <input type="hidden" name="approval_comment" value="">
             <button type="submit" class="btn btn-primary btn-sm">Approve</button>
           </form>
         · <form method="post" action="/requests/{{ r.request_number }}/reject" style="display:inline" onsubmit="return promptRejectReason(this)">
@@ -85,7 +89,7 @@ involved and who has already acted.</p>
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="{{ 9 if show_all else 8 }}">Nothing waiting on your approval.</td></tr>
+    <tr><td colspan="{{ 10 if show_all else 9 }}">Nothing waiting on your approval.</td></tr>
     {% endfor %}
   </table>
 </div>
@@ -98,6 +102,13 @@ function promptRejectReason(form) {
   const reason = prompt("Reason for rejecting this request (required):", "");
   if (!reason) { alert("A rejection reason is required."); return false; }
   form.querySelector('input[name="rejected_reason"]').value = reason;
+  return true;
+}
+function promptApprovalNote(form) {
+  const note = prompt("Optional note to include with this approval (visible in the approval history, leave blank to skip):", "");
+  if (note !== null) {
+    form.querySelector('input[name="approval_comment"]').value = note;
+  }
   return true;
 }
 </script>

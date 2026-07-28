@@ -248,6 +248,41 @@ table.my-requests-table td.program-area-cell { white-space: normal; }
 
 .type-legend { color: var(--color-text-muted); font-size: 0.82rem; margin-bottom: var(--space-3); }
 
+/* ---- My Approvals table (2026-07-28) ----
+   Jay: "You can't read any of the information on a line -- vendor is
+   truncated, for example." Root cause: this table had been reusing
+   .my-requests-table's fixed column widths, which were tuned for THAT
+   table's own different column set (no Needed By, no Chain column) --
+   with no matching .col-* class on most of these cells, table-layout:fixed
+   fell back to auto-sizing off the (very short) header row text, crushing
+   every column with real content (Vendor names, Program Area titles) down
+   to near nothing. Its own dedicated widths below, mirroring the pattern
+   above but sized for THIS table's actual columns. */
+table.approvals-table { table-layout: fixed; }
+table.approvals-table .col-reqnum { width: 8%; }
+table.approvals-table .col-type { width: 4%; }
+table.approvals-table .col-entity { width: 6%; }
+table.approvals-table .col-program { width: 12%; }
+table.approvals-table .col-neededby { width: 8%; }
+table.approvals-table .col-vendor { width: 17%; }
+table.approvals-table .col-submitter { width: 10%; }
+table.approvals-table .col-amount { width: 7%; }
+table.approvals-table .col-chain { width: 7%; }
+table.approvals-table .col-date { width: 7%; }
+table.approvals-table .col-actions { width: 19%; }
+table.approvals-table td, table.approvals-table th { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+table.approvals-table td.status-cell { overflow: visible; }
+table.approvals-table td.col-actions { overflow: visible; text-overflow: clip; text-align: right; }
+/* Program Area AND Vendor are allowed to wrap onto a 2nd line rather than
+   ellipsis-truncate -- unlike Request#/Type/Entity/Amount/Date, real
+   content here (full vendor names, program-area titles) can run long
+   enough that even a generous column share won't guarantee one line, and
+   an unreadable "Catons Plu…" is worse than a 2-line cell (Jay: "you can't
+   read any of the information on a line -- vendor is truncated"). */
+table.approvals-table td.program-area-cell,
+table.approvals-table td.col-vendor { white-space: normal; }
+table.approvals-table td.col-reqnum a { font-weight: 600; }
+
 /* ---- CFO "My Requests" / "All Requests" toggle (Task 6) ---- */
 .view-toggle { display: flex; gap: var(--space-2); margin-bottom: var(--space-4); }
 .view-toggle-tab {

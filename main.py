@@ -2580,7 +2580,8 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
         rows = db.query(
             """
             SELECT DISTINCT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount,
-                   pr.status, pr.approval_chain_summary, pr.created_at, o.code AS org_code,
+                   pr.status, pr.approval_chain_summary, pr.created_at, pr.requested_pay_date,
+                   o.code AS org_code,
                    pa.title AS program_area_title, u.display_name AS submitter_name,
                    u.email AS submitter_email,
                    v.display_name AS vendor_display_name,
@@ -2605,7 +2606,8 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
         rows = db.query(
             """
             SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
-                   pr.approval_chain_summary, pr.created_at, o.code AS org_code,
+                   pr.approval_chain_summary, pr.created_at, pr.requested_pay_date,
+                   o.code AS org_code,
                    pa.title AS program_area_title,
                    v.display_name AS vendor_display_name,
                    vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
@@ -2666,14 +2668,26 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
 
 
 @app.post("/requests/{request_number}/approve")
-def approve_request(request_number: str, request: Request):
+async def approve_request(request_number: str, request: Request):
     """AP Review Workflow Plan.md, Section 2b. The real gate is
     checkreq.approval_actions, not current_approver_id (display-only) --
     this correctly handles a parallel multi-approver serial_group, which a
-    single scalar FK cannot represent."""
+    single scalar FK cannot represent.
+
+    Jay, 2026-07-28 (My Approvals feedback): "There also needs to be a way
+    to write notes during the approval process. These notes must become
+    part of the documentation of approval." Optional approval_comment form
+    field (unlike Reject's reason, this is optional -- an approval doesn't
+    inherently need justification the way a rejection does) is stamped onto
+    THIS approver's own approval_actions.comment row (already the field the
+    View Chain popup reads) and folded into the audit_log entry, not just
+    passed through and discarded."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
+
+    form = await request.form()
+    note = (form.get("approval_comment") or "").strip() or None
 
     pr = db.query_one(
         "SELECT * FROM checkreq.payment_requests WHERE request_number = %s",
@@ -2699,20 +2713,23 @@ def approve_request(request_number: str, request: Request):
     imp_id = request.session.get("impersonating_user_id")
     impersonated_by = _real_user(request)["id"] if imp_id else None
 
+    audit_comment = f"Approved (serial group {pr['serial_group_current']})."
+    if note:
+        audit_comment += f" Note: {note}"
+
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE checkreq.approval_actions SET status = 'approved', acted_at = NOW(), "
-                "acted_by_user_id = %s WHERE id = %s",
-                (user["id"], my_action["id"]),
+                "acted_by_user_id = %s, comment = %s WHERE id = %s",
+                (user["id"], note, my_action["id"]),
             )
             cur.execute(
                 "INSERT INTO checkreq.audit_log "
                 "(payment_request_id, action_by_user_id, action_type, comment, serial_group, "
                 " previous_status, new_status, impersonated_by_user_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (pr["id"], user["id"], "Approved",
-                 f"Approved (serial group {pr['serial_group_current']}).",
+                (pr["id"], user["id"], "Approved", audit_comment,
                  pr["serial_group_current"], pr["status"], pr["status"], impersonated_by),
             )
 
@@ -3628,3 +3645,48 @@ def request_pdf(request_number: str, request: Request):
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{request_number}.pdf"'},
     )
+
+
+@app.get("/requests/{request_number}/view", response_class=HTMLResponse)
+def request_view(request_number: str, request: Request):
+    """Jay, 2026-07-28 (My Approvals feedback): "There is no way to view the
+    CR on the screen -- PDF isn't sufficient." A real in-app HTML view --
+    same check_voucher.html fragment request_pdf renders to PDF, shown
+    directly instead of a downloaded file, plus the attachment list
+    (approvers need to see the actual invoice, not just the coded amount).
+    Same authorization as request_pdf, PLUS anyone in this request's
+    approval chain (an approver may not otherwise pass
+    _user_can_submit_for -- their own program-area assignment and their
+    approval-routing assignment are two different tables)."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+
+    pr = db.query_one(
+        "SELECT id, submitter_user_id, program_area_id, status FROM checkreq.payment_requests "
+        "WHERE request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+
+    is_approver = db.query_one(
+        "SELECT 1 FROM checkreq.approval_actions WHERE payment_request_id = %s AND approver_user_id = %s",
+        (pr["id"], user["id"]),
+    )
+    allowed = (
+        user["is_cfo"]
+        or pr["submitter_user_id"] == user["id"]
+        or _user_can_submit_for(user, pr["program_area_id"])
+        or bool(is_approver)
+    )
+    if not allowed:
+        return JSONResponse({"error": "Not authorized to view this request"}, status_code=403)
+
+    ctx = _voucher_context(pr["id"]) or {}
+    return _render(request, "request_view.html", user, {
+        **ctx,
+        "request_number": request_number,
+        "pr_status": pr["status"],
+        "attachments": _active_attachments(pr["id"]),
+    })

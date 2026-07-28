@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ request_number }} — View{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/check_voucher.css?v={{ asset_version('css/check_voucher.css') }}">
+<link rel="stylesheet" href="/static/css/request_view.css?v={{ asset_version('css/request_view.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell">
+<div class="view-header-row">
+  <h1>{{ request_number }}</h1>
+  <span class="badge badge-{{ pr_status|lower|replace(' ', '-') }}">{{ pr_status }}</span>
+</div>
+<p class="sub"><a href="/requests/{{ request_number }}/pdf" target="_blank">Open as PDF</a></p>
+
+{% include "check_voucher.html" %}
+
+<div class="card view-attachments">
+  <h2>Attachments</h2>
+  {% if attachments %}
+  <ul class="attachment-list">
+    {% for a in attachments %}
+    <li>
+      <a href="/requests/{{ request_number }}/attachments/{{ a.id }}/view" target="_blank">{{ a.original_filename }}</a>
+      <span class="sub">({{ (a.size_bytes / 1024)|round(1) }} KB)</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="sub">No attachments.</p>
+  {% endif %}
+</div>
+</div>
+{% endblock %}
