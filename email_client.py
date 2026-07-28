@@ -25,12 +25,33 @@ import os
 
 import requests
 
+import app_settings
+
 EMAIL_SERVER_URL = os.environ.get(
     "EMAIL_SERVER_URL", "https://email-mcp-server-xltaug3m6q-ue.a.run.app"
 ).rstrip("/")
 
 _SECRET_PROJECT = os.environ.get("FIRESTORE_PROJECT", "cfm-qbo-mcp")
 _cached_api_key: str | None = None
+
+
+def _apply_test_mode(to: str, subject: str) -> tuple[str, str]:
+    """Test Mode (Jay, 2026-07-28): when on, EVERY outgoing email -- from any
+    call site, present or future -- gets redirected to one designated test
+    address instead of its real recipient, with the subject prefixed to show
+    who it *would* have gone to. Centralized here (the one real send_email()
+    choke point) rather than at each call site in main.py, so a future email
+    feature can never accidentally forget to check this.
+
+    Fails open to "off" (sends to the real recipient unchanged) on any
+    settings-read error -- a DB hiccup must never silently swallow a real
+    email that was never meant to be redirected."""
+    if app_settings.get_setting("email_test_mode", "false") != "true":
+        return to, subject
+    test_address = app_settings.get_setting("email_test_mode_address")
+    if not test_address:
+        return to, subject
+    return test_address, f"[TEST MODE — would have gone to: {to}] {subject}"
 
 
 def _get_api_key() -> str:
@@ -61,6 +82,7 @@ def send_email(
     {"name", "content_type", "content_base64"} dicts, same shape as
     26-122's own send_email MCP tool (3MB/file, 9MB combined cap enforced
     server-side)."""
+    to, subject = _apply_test_mode(to, subject)
     try:
         resp = requests.post(
             f"{EMAIL_SERVER_URL}/api/send-email",

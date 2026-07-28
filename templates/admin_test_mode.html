@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Test Mode{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Test Mode</h1>
+<p class="sub">When on, every outgoing email (W-9 requests, rejection notices, and
+any future email this app sends) is redirected to the single address below
+instead of its real recipient — the subject line still shows who it would
+have gone to.</p>
+
+{% if saved %}
+<div class="banner banner-success">Saved.</div>
+{% endif %}
+{% if error %}
+<div class="banner banner-error">{{ error }}</div>
+{% endif %}
+{% if enabled %}
+<div class="banner banner-error">Test Mode is currently <strong>ON</strong> — real recipients are NOT receiving emails right now.</div>
+{% else %}
+<div class="banner banner-info">Test Mode is currently <strong>OFF</strong> — emails go to their real recipients.</div>
+{% endif %}
+
+<div class="card">
+  <form method="post" action="/admin/test-mode">
+    <div class="field">
+      <label>
+        <input type="checkbox" name="enabled" value="1" {% if enabled %}checked{% endif %}>
+        Enable Test Mode
+      </label>
+    </div>
+    <div class="field">
+      <label for="testModeAddress">Redirect all emails to</label>
+      <input type="email" id="testModeAddress" name="address" value="{{ address }}"
+             placeholder="you@cfmins.org">
+    </div>
+    <button type="submit" class="btn btn-primary">Save</button>
+  </form>
+</div>
+</div>
+{% endblock %}

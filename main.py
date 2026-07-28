@@ -85,6 +85,7 @@ import sharepoint_client
 import document_extract
 import email_client
 import qbo_mcp_client
+import app_settings
 
 ATTACHMENTS_BUCKET = "cfm-checkreq-attachments"
 
@@ -2920,6 +2921,59 @@ def feedback_list(request: Request):
         """
     )
     return _render(request, "admin_feedback.html", user, {"rows": rows})
+
+
+# ── Test Mode (Jay, 2026-07-28) ──────────────────────────────────────────────
+# "I would like you to put the entire system in Test mode whereby any emails
+# that go out can be routed to a designated email for testing." A live,
+# CFO-only in-app toggle (checkreq.app_settings) rather than a Cloud Run env
+# var -- Jay flips this on/off himself while actively testing, and env-var
+# changes on the live service have repeatedly needed his own elevated gcloud
+# login in this project's history (a redeploy-free toggle avoids that entirely
+# going forward). The actual redirect happens once, centrally, in
+# email_client.py's _apply_test_mode() -- every send_email() call site (W-9
+# request, rejection notice, and any future one) is covered automatically.
+
+@app.get("/admin/test-mode", response_class=HTMLResponse)
+def test_mode_form(request: Request, saved: bool = False):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    if not user.get("is_cfo"):
+        return JSONResponse({"error": "CFO access required"}, status_code=403)
+
+    enabled = app_settings.get_setting("email_test_mode", "false") == "true"
+    address = app_settings.get_setting("email_test_mode_address", "") or ""
+    return _render(request, "admin_test_mode.html", user, {"enabled": enabled, "address": address, "saved": saved})
+
+
+@app.post("/admin/test-mode")
+async def test_mode_save(request: Request):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    if not user.get("is_cfo"):
+        return JSONResponse({"error": "CFO access required"}, status_code=403)
+
+    form = await request.form()
+    enabled = form.get("enabled") == "1"
+    address = (form.get("address") or "").strip()
+
+    # An enabled toggle with no address configured would leave
+    # _apply_test_mode() with nothing to redirect to -- it falls back to
+    # sending real emails unchanged in that case (fail-open), but that's a
+    # silent no-op that would confuse whoever just turned this on expecting
+    # it to actually redirect. Refuse instead of silently accepting it.
+    if enabled and not address:
+        return _render(
+            request, "admin_test_mode.html", user,
+            {"enabled": False, "address": address,
+             "error": "Enter a test email address before turning Test Mode on."},
+        )
+
+    app_settings.set_setting("email_test_mode", "true" if enabled else "false", user["id"])
+    app_settings.set_setting("email_test_mode_address", address, user["id"])
+    return RedirectResponse("/admin/test-mode?saved=1", status_code=303)
 
 
 # ── New Vendor Onboarding: vendor-approval queue ─────────────────────────────
