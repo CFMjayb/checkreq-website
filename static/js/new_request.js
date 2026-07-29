@@ -80,6 +80,15 @@ function initGlAccountSelect(selectEl) {
     searchField: ['label'],
     placeholder: 'Search GL accounts...',
     preload: 'focus', // same "full list on click" behavior as the Vendor field
+    // Jay, 2026-07-29: "only one item on the drop down list shows up... it's
+    // underneath of the scroll box." .gl-lines-scroll clips any descendant
+    // that overflows it, including this dropdown's own popup -- no box
+    // height would ever be tall enough to show a real ~14-option list.
+    // dropdownParent:'body' reparents the popup to <body> at construction,
+    // escaping that clipping ancestor entirely (confirmed live: without
+    // this, the dropdown stayed nested under .gl-lines-scroll and was cut
+    // off after ~1 row no matter how much taller the container was made).
+    dropdownParent: 'body',
     load: function (query, callback) {
       const programAreaId = document.getElementById('programAreaSelect').value;
       fetchGlAccountOptions(programAreaId, query).then(callback).catch(() => callback());
@@ -296,7 +305,7 @@ function updateVoucherGlTable() {
     const amt = parseFloat(row.querySelector('.glAmount').value) || 0;
     const memo = row.querySelector('.glMemo').value;
     total += amt;
-    return `<tr><td>${escapeHtml(acctText)}</td><td>${amt.toFixed(2)}</td><td>${escapeHtml(memo)}</td></tr>`;
+    return `<tr><td>${escapeHtml(acctText)}</td><td>${fmtMoney(amt)}</td><td>${escapeHtml(memo)}</td></tr>`;
   }).join('');
   setField('total', fmtMoney(total));
   setField('amount', fmtMoney(total));
@@ -560,6 +569,7 @@ async function handleAttachmentUpload(fileInput) {
   const files = fileInput.files;
   if (!files || !files.length) return;
   const first = files[0]; // used only for prefill -- ALL selected files still submit as attachments
+  showDocumentPreview(first);
   setUploadStatus('Reading document...', '');
   const body = new FormData();
   body.append('file', first);
@@ -572,7 +582,58 @@ async function handleAttachmentUpload(fileInput) {
   }
 }
 
+// Jay, 2026-07-29: "you never get the opportunity to look at the [uploaded]
+// document... it might be nice to be able to toggle between an uploaded
+// document versus the check request itself." Renders client-side via
+// URL.createObjectURL -- the file is already sitting in the <input>, no
+// server round-trip needed just to look at it.
+function showDocumentPreview(file) {
+  const toggleBar = document.getElementById('previewToggle');
+  const voucherWrap = document.getElementById('voucherPreviewWrap');
+  const docWrap = document.getElementById('documentPreviewWrap');
+  const url = URL.createObjectURL(file);
+  docWrap.innerHTML = '';
+  if (file.type === 'application/pdf') {
+    const iframe = document.createElement('iframe');
+    iframe.src = url;
+    iframe.title = 'Uploaded document';
+    iframe.className = 'document-preview-frame';
+    docWrap.appendChild(iframe);
+  } else if (file.type.startsWith('image/')) {
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = 'Uploaded document';
+    img.className = 'document-preview-image';
+    docWrap.appendChild(img);
+  } else {
+    docWrap.textContent = "This file type can't be previewed inline.";
+  }
+  toggleBar.style.display = 'flex';
+  // Default to showing the document itself right after a fresh upload --
+  // that's the whole point of the toggle existing at all.
+  toggleBar.querySelectorAll('.preview-toggle-btn').forEach(b => b.classList.remove('active'));
+  toggleBar.querySelector('[data-view="document"]').classList.add('active');
+  voucherWrap.style.display = 'none';
+  docWrap.style.display = 'block';
+}
+
+function initPreviewToggle() {
+  const toggleBar = document.getElementById('previewToggle');
+  const voucherWrap = document.getElementById('voucherPreviewWrap');
+  const docWrap = document.getElementById('documentPreviewWrap');
+  toggleBar.querySelectorAll('.preview-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      toggleBar.querySelectorAll('.preview-toggle-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const showDoc = btn.dataset.view === 'document';
+      voucherWrap.style.display = showDoc ? 'none' : '';
+      docWrap.style.display = showDoc ? 'block' : 'none';
+    });
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  initPreviewToggle();
   initVendorSelect();
   loadProgramAreas().then(() => {
     if (window.EDIT_DATA) {

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}My Approvals{% endblock %}
 {% block content %}
-<div class="page-shell">
+<div class="page-shell-wide">
 <h1>My Approvals</h1>
 <p class="sub">Requests currently awaiting your approval. Click "View chain" on any row to see who else is
 involved and who has already acted. Click a Request # to view the full check request on screen.</p>
@@ -27,6 +27,7 @@ involved and who has already acted. Click a Request # to view the full check req
 {% endif %}
 
 <div class="card">
+<div class="table-scroll">
   <table class="simple-table approvals-table">
     <tr>
       <th class="col-reqnum">Request #</th>
@@ -92,6 +93,7 @@ involved and who has already acted. Click a Request # to view the full check req
     <tr><td colspan="{{ 10 if show_all else 9 }}">Nothing waiting on your approval.</td></tr>
     {% endfor %}
   </table>
+</div>
 </div>
 </div>
 {% endblock %}

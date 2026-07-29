@@ -15,7 +15,19 @@
   display: flex;
   flex-direction: column;
 }
-.split-form h1 { font-size: 1.3rem; margin-bottom: var(--space-3); }
+.split-form h1 { font-size: 1.3rem; margin: 0; }
+/* Jay, 2026-07-29: moved Submit/Save out of a full-width bottom bar into a
+   compact button in the same row as the title, freeing real vertical
+   space for the GL-coding area below (see .gl-lines-scroll) -- the button
+   itself submits via form="reqForm" despite sitting outside the <form>
+   element in the DOM. */
+.form-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
 /* This page has grown past the "fits in one 1366x768 viewport, no
    body-level scroll" design intent stated above (upload row, vendor
    validation/confirmed messages, new-vendor panel all added after that
@@ -27,10 +39,48 @@
 .split-preview {
   flex: 1;
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: stretch;
   padding-top: 28px; /* roughly aligns the voucher with the form fields, not the h1 */
 }
 .split-preview .voucher { width: 100%; }
+
+/* Toggle between the check-request preview and the uploaded document
+   itself (Jay, 2026-07-29: "you never get the opportunity to look at the
+   document... it might be nice to be able to toggle"). Hidden until a
+   file is actually chosen -- see showDocumentPreview() in new_request.js. */
+.preview-toggle { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); }
+.preview-toggle-btn {
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--color-text-muted);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.preview-toggle-btn.active {
+  background: var(--color-franciscan-green);
+  color: #fff;
+  border-color: var(--color-franciscan-green);
+}
+.document-preview-frame {
+  width: 100%;
+  height: 600px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #fff;
+}
+.document-preview-image {
+  max-width: 100%;
+  max-height: 600px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  display: block;
+}
 
 .upload-row {
   margin-bottom: var(--space-3);
@@ -123,7 +173,13 @@
 .gl-section { margin-bottom: var(--space-2); }
 .gl-section > label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: var(--space-2); }
 .gl-lines-scroll {
-  max-height: 150px;
+  /* 150px -> 200px: modest bump from the vertical space Submit freed up by
+     moving to the header row (2026-07-29). Not the fix for the dropdown
+     clipping bug -- that's dropdownParent:'body' in new_request.js's
+     initGlAccountSelect(), which lets the dropdown popup escape this
+     container's own clipping boundary entirely, since no height here would
+     ever be enough to show a ~14-option list without being cut off. */
+  max-height: 200px;
   overflow-y: auto;
   padding-right: var(--space-2);
   margin-bottom: var(--space-2);
@@ -160,7 +216,10 @@
   margin-top: -2px;
 }
 .gl-budget-status.over-budget { color: var(--color-danger); font-weight: 600; }
-.btn-sm { padding: 4px 12px; font-size: 0.82rem; }
+/* .btn-sm moved to base.css (2026-07-29) -- it's used by every action table
+   (My Approvals/AP Review/Vendor Approvals), none of which load this
+   stylesheet, so it was silently never applying there at all; those pages'
+   buttons had been rendering at full default .btn size the whole time. */
 
 .submit-row { margin-top: auto; padding-top: var(--space-3); }
 
@@ -210,8 +269,17 @@
 .ts-control input { width: auto !important; min-width: 40px; padding: 0 !important; border: none !important; box-shadow: none !important; }
 .ts-dropdown { font-family: var(--font-body); border-color: var(--color-border) !important; }
 .ts-dropdown .active { background: #f4f0e4 !important; color: var(--color-ink) !important; }
-/* GL Account dropdown: real account labels run 30-40+ chars and, even after
-   widening the column above, still wrap onto 2 lines sometimes -- give
-   wrapped rows breathing room and a slightly smaller face so they stay
-   readable instead of looking like a garbled run-on (Jay: "unusuable"). */
-.gl-line .ts-dropdown [data-selectable] { font-size: 0.78rem; line-height: 1.35; padding-top: 6px; padding-bottom: 6px; }
+/* GL Account dropdown: real account labels run 30-40+ chars -- give rows
+   breathing room and a slightly smaller face so they stay readable
+   (Jay: "unusuable"). Not scoped to .gl-line anymore -- dropdownParent:
+   'body' (new_request.js, 2026-07-29) reparents this dropdown to a direct
+   child of <body> so it can escape .gl-lines-scroll's clipping entirely
+   (previously: only ~1 option was ever visible before getting cut off by
+   that small scrolling container's own boundary, no matter how tall the
+   container was made -- an absolutely-positioned popup inside an
+   overflow:auto ancestor is clipped by it regardless of position value). */
+.ts-dropdown [data-selectable] { font-size: 0.78rem; line-height: 1.35; padding-top: 6px; padding-bottom: 6px; }
+/* Tom Select sets the dropdown's width inline to match its (possibly
+   narrow) control -- override with !important so real GL labels get a
+   dropdown wide enough to read, independent of the control's own width. */
+body > .ts-dropdown { min-width: 320px !important; max-width: 480px !important; }

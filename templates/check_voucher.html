@@ -42,7 +42,7 @@ the final PDF are the same document:
     <thead><tr><th>Account</th><th>Amount</th><th>Memo</th></tr></thead>
     <tbody data-field="gl_lines">
       {% for line in voucher_gl_lines %}
-      <tr><td>{{ line.account }}</td><td>{{ "%.2f"|format(line.amount) }}</td><td>{{ line.memo or "" }}</td></tr>
+      <tr><td>{{ line.account }}</td><td>${{ "{:,.2f}".format(line.amount) }}</td><td>{{ line.memo or "" }}</td></tr>
       {% endfor %}
     </tbody>
     {#- 3 separate <td>s, not colspan="2" -- a colspan here pushes the total

@@ -117,6 +117,15 @@ p { margin: 0 0 var(--space-3); }
 }
 .btn-secondary:hover { border-color: var(--color-franciscan-green); }
 .btn-block { width: 100%; }
+/* Compact button for in-table actions (Approve/Reject/Post to QBO/etc.) --
+   moved here from new_request.css (2026-07-29): My Approvals, AP Review,
+   and Vendor Approvals all use class="btn ... btn-sm" but none of them
+   load new_request.css, so this rule was silently never applying on any of
+   them -- every action button on those 3 pages had been rendering at full
+   default .btn padding (12px/24px) crammed into a table row, which is
+   exactly the "buttons look off/way out of whack" bug reported repeatedly
+   across all three pages. */
+.btn-sm { padding: 4px 12px; font-size: 0.82rem; }
 
 /* ---- Cards / forms (shared) ---- */
 .card {
@@ -248,40 +257,38 @@ table.my-requests-table td.program-area-cell { white-space: normal; }
 
 .type-legend { color: var(--color-text-muted); font-size: 0.82rem; margin-bottom: var(--space-3); }
 
-/* ---- My Approvals table (2026-07-28) ----
-   Jay: "You can't read any of the information on a line -- vendor is
-   truncated, for example." Root cause: this table had been reusing
-   .my-requests-table's fixed column widths, which were tuned for THAT
-   table's own different column set (no Needed By, no Chain column) --
-   with no matching .col-* class on most of these cells, table-layout:fixed
-   fell back to auto-sizing off the (very short) header row text, crushing
-   every column with real content (Vendor names, Program Area titles) down
-   to near nothing. Its own dedicated widths below, mirroring the pattern
-   above but sized for THIS table's actual columns. */
-table.approvals-table { table-layout: fixed; }
-table.approvals-table .col-reqnum { width: 8%; }
-table.approvals-table .col-type { width: 4%; }
-table.approvals-table .col-entity { width: 6%; }
-table.approvals-table .col-program { width: 12%; }
-table.approvals-table .col-neededby { width: 8%; }
-table.approvals-table .col-vendor { width: 17%; }
-table.approvals-table .col-submitter { width: 10%; }
-table.approvals-table .col-amount { width: 7%; }
-table.approvals-table .col-chain { width: 7%; }
-table.approvals-table .col-date { width: 7%; }
-table.approvals-table .col-actions { width: 19%; }
-table.approvals-table td, table.approvals-table th { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-table.approvals-table td.status-cell { overflow: visible; }
-table.approvals-table td.col-actions { overflow: visible; text-overflow: clip; text-align: right; }
-/* Program Area AND Vendor are allowed to wrap onto a 2nd line rather than
-   ellipsis-truncate -- unlike Request#/Type/Entity/Amount/Date, real
-   content here (full vendor names, program-area titles) can run long
-   enough that even a generous column share won't guarantee one line, and
-   an unreadable "Catons Plu…" is worse than a 2-line cell (Jay: "you can't
-   read any of the information on a line -- vendor is truncated"). */
-table.approvals-table td.program-area-cell,
-table.approvals-table td.col-vendor { white-space: normal; }
-table.approvals-table td.col-reqnum a { font-weight: 600; }
+/* ---- Admin review tables (My Approvals / AP Review / Vendor Approvals) ----
+   2026-07-28: first attempt at My Approvals (fixed-percentage columns,
+   ellipsis truncation) genuinely made things worse -- Jay's own screenshot
+   showed truncated HEADER TEXT ("REQU...", "SUBMIT...") and the Chain
+   column's "View chain" link text overflowing sideways into the Submitted
+   column, because a too-narrow fixed-width cell with overflow:visible (kept
+   for the chain popup's own positioning) lets its OWN text bleed into the
+   neighbor, not just the popup. Rebuilt 2026-07-29 on a fundamentally
+   different, more robust approach: auto table layout (browser sizes columns
+   to real content, not a guessed percentage), generous min-widths as a
+   floor rather than a hard cap, wrap instead of truncate everywhere, and
+   the whole table wrapped in a horizontally-scrolling container (see
+   .table-scroll below) as the actual safety net for a narrow viewport --
+   instead of fighting to cram 10+ columns into a fixed 1100px page width. */
+.page-shell-wide { max-width: 1500px; margin: 0 auto; padding: var(--space-6) var(--space-5); }
+.table-scroll { overflow-x: auto; }
+table.approvals-table { table-layout: auto; width: 100%; }
+table.approvals-table th, table.approvals-table td { white-space: normal; vertical-align: middle; }
+table.approvals-table .col-reqnum { min-width: 95px; }
+table.approvals-table .col-reqnum a { font-weight: 600; white-space: nowrap; }
+table.approvals-table .col-type, table.approvals-table .col-entity { min-width: 55px; white-space: nowrap; }
+table.approvals-table .col-program { min-width: 150px; }
+table.approvals-table .col-neededby, table.approvals-table .col-date { min-width: 95px; white-space: nowrap; }
+table.approvals-table .col-vendor { min-width: 200px; }
+table.approvals-table .col-submitter { min-width: 130px; }
+table.approvals-table .col-amount { min-width: 85px; white-space: nowrap; }
+table.approvals-table .col-chain { min-width: 90px; white-space: nowrap; }
+table.approvals-table .col-status { min-width: 130px; }
+table.approvals-table .col-actions { min-width: 260px; text-align: right; white-space: nowrap; }
+/* The chain-popup/status-pill cell must never clip -- .status-popup itself
+   is position:absolute and needs to render outside this cell's own bounds. */
+table.approvals-table td.status-cell { overflow: visible; position: relative; }
 
 /* ---- CFO "My Requests" / "All Requests" toggle (Task 6) ---- */
 .view-toggle { display: flex; gap: var(--space-2); margin-bottom: var(--space-4); }

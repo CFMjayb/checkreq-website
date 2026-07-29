@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}AP Review{% endblock %}
 {% block content %}
-<div class="page-shell">
+<div class="page-shell-wide">
 <h1>AP Review</h1>
 <p class="sub">Requests that have cleared every approval step and are ready for final review and posting to
 QuickBooks. Posting here creates the real QBO Vendor (if new) and Bill -- this is the one place in the app
@@ -23,27 +23,30 @@ that writes to QuickBooks.</p>
 {% endif %}
 
 <div class="card">
-  <table class="simple-table">
+<div class="table-scroll">
+  <table class="simple-table approvals-table">
     <tr>
-      <th>Request #</th><th>Type</th><th>Entity</th><th>Program Area</th><th>Vendor</th>
-      <th>Submitted By</th><th>Amount</th><th>Chain Summary</th><th>Status</th><th>Actions</th>
+      <th class="col-reqnum">Request #</th><th class="col-type">Type</th><th class="col-entity">Entity</th>
+      <th class="col-program">Program Area</th><th class="col-vendor">Vendor</th>
+      <th class="col-submitter">Submitted By</th><th class="col-amount">Amount</th>
+      <th class="col-program">Chain Summary</th><th class="col-status">Status</th><th class="col-actions">Actions</th>
     </tr>
     {% for r in rows %}
     <tr>
-      <td>{{ r.request_number }}</td>
-      <td>{{ r.type_abbr }}</td>
-      <td>{{ r.org_code }}</td>
-      <td class="program-area-cell">{{ r.program_area_title }}</td>
-      <td>{{ r.vendor_name }}</td>
-      <td>{{ r.submitter_name or r.submitter_email }}</td>
+      <td class="col-reqnum"><a href="/requests/{{ r.request_number }}/view">{{ r.request_number }}</a></td>
+      <td class="col-type">{{ r.type_abbr }}</td>
+      <td class="col-entity">{{ r.org_code }}</td>
+      <td class="col-program program-area-cell">{{ r.program_area_title }}</td>
+      <td class="col-vendor">{{ r.vendor_name }}</td>
+      <td class="col-submitter">{{ r.submitter_name or r.submitter_email }}</td>
       <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
-      <td>
+      <td class="col-program">
         <span class="sub">{{ r.approval_chain_summary or "—" }}</span>
         {% if r.overspend_flagged %}
         <br><span class="sub overspend-detail">{{ (r.overspend_detail or "") | e | replace("\n", "<br>") | safe }}</span>
         {% endif %}
       </td>
-      <td>
+      <td class="col-status">
         {% if r.vendor_gate_wait %}
         <span class="badge badge-pending">Waiting: {{ r.vendor_gate_wait }}</span>
         {% else %}
@@ -69,6 +72,7 @@ that writes to QuickBooks.</p>
     <tr><td colspan="10">Nothing waiting for AP review.</td></tr>
     {% endfor %}
   </table>
+</div>
 </div>
 </div>
 {% endblock %}

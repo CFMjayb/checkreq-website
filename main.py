@@ -3022,7 +3022,7 @@ def vendor_requests_list(request: Request, email_warning: str = ""):
         SELECT vr.id, vr.entity_type, vr.first_name, vr.last_name, vr.company_name,
                vr.dba_name, vr.contact_name, vr.contact_email, vr.requires_w9,
                vr.w9_email_sent_at, vr.w9_received, vr.status, vr.rejected_reason,
-               vr.created_at, o.name AS org_name, pr.request_number, pr.amount
+               vr.created_at, o.name AS org_name, o.code AS org_code, pr.request_number, pr.amount
         FROM checkreq.vendor_requests vr
         JOIN checkreq.organizations o ON o.id = vr.org_id
         JOIN checkreq.payment_requests pr ON pr.id = vr.payment_request_id
@@ -3657,7 +3657,10 @@ def request_view(request_number: str, request: Request):
     Same authorization as request_pdf, PLUS anyone in this request's
     approval chain (an approver may not otherwise pass
     _user_can_submit_for -- their own program-area assignment and their
-    approval-routing assignment are two different tables)."""
+    approval-routing assignment are two different tables), PLUS any
+    is_ap_reviewer/is_vendor_approver (2026-07-29 -- Request # is now a
+    link from AP Review and Vendor Approvals too, and neither role implies
+    program-area membership on the specific request being reviewed)."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
@@ -3679,6 +3682,8 @@ def request_view(request_number: str, request: Request):
         or pr["submitter_user_id"] == user["id"]
         or _user_can_submit_for(user, pr["program_area_id"])
         or bool(is_approver)
+        or bool(user.get("is_ap_reviewer"))
+        or bool(user.get("is_vendor_approver"))
     )
     if not allowed:
         return JSONResponse({"error": "Not authorized to view this request"}, status_code=403)

@@ -9,7 +9,10 @@
 <div class="split-shell">
 
 <div class="split-pane split-form">
-  <h1>{% if edit_data %}Edit Check Request — {{ edit_data.editing_request_number }}{% else %}New Check Request{% endif %}</h1>
+  <div class="form-header-row">
+    <h1>{% if edit_data %}Edit Check Request — {{ edit_data.editing_request_number }}{% else %}New Check Request{% endif %}</h1>
+    <button type="submit" form="reqForm" class="btn btn-primary btn-sm">{% if edit_data %}Save Changes{% else %}Submit Request{% endif %}</button>
+  </div>
   <form method="post" action="/new-request" id="reqForm" enctype="multipart/form-data">
     <input type="hidden" name="org_id" value="{{ current_org.id }}">
     <input type="hidden" name="request_type" value="check_request">
@@ -150,14 +153,18 @@
     </div>
     {% endif %}
 
-    <div class="submit-row">
-      <button type="submit" class="btn btn-primary btn-block">{% if edit_data %}Save Changes{% else %}Submit Request{% endif %}</button>
-    </div>
   </form>
 </div>
 
 <div class="split-pane split-preview">
-  {% include "check_voucher.html" %}
+  <div class="preview-toggle" id="previewToggle" style="display:none;">
+    <button type="button" class="preview-toggle-btn active" data-view="voucher">Check Request Preview</button>
+    <button type="button" class="preview-toggle-btn" data-view="document">Uploaded Document</button>
+  </div>
+  <div id="voucherPreviewWrap">
+    {% include "check_voucher.html" %}
+  </div>
+  <div id="documentPreviewWrap" style="display:none;"></div>
 </div>
 
 </div>

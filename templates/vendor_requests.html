@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Vendor Approvals{% endblock %}
 {% block content %}
-<div class="page-shell">
+<div class="page-shell-wide">
 <h1>Vendor Approvals</h1>
 <p class="sub">New vendors submitted through Check Request's "Add a new vendor" panel, awaiting
 approval before the linked payment request can move forward. Approving here does not post
@@ -17,21 +17,24 @@ chain) is in.</p>
 {% endif %}
 
 <div class="card">
-  <table class="simple-table">
+<div class="table-scroll">
+  <table class="simple-table approvals-table">
     <tr>
-      <th>Vendor</th><th>Entity</th><th>Request #</th><th>Amount</th><th>Entity Org</th>
-      <th>Contact</th><th>W-9 Required</th><th>W-9 Status</th><th>Status</th><th>Actions</th>
+      <th class="col-vendor">Vendor</th><th class="col-type">Entity</th><th class="col-reqnum">Request #</th>
+      <th class="col-amount">Amount</th><th class="col-entity">Entity Org</th>
+      <th class="col-submitter">Contact</th><th class="col-type">W-9 Required</th>
+      <th class="col-program">W-9 Status</th><th class="col-status">Status</th><th class="col-actions">Actions</th>
     </tr>
     {% for r in rows %}
     <tr>
-      <td>{{ r.display_name }}</td>
-      <td>{{ r.entity_type|capitalize }}</td>
-      <td>{{ r.request_number }}</td>
-      <td>${{ "%.2f"|format(r.amount) }}</td>
-      <td>{{ r.org_name }}</td>
-      <td>{{ r.contact_name }}<br><span class="sub">{{ r.contact_email }}</span></td>
-      <td>{{ "Yes" if r.requires_w9 else "No" }}</td>
-      <td>
+      <td class="col-vendor">{{ r.display_name }}</td>
+      <td class="col-type">{{ r.entity_type|capitalize }}</td>
+      <td class="col-reqnum"><a href="/requests/{{ r.request_number }}/view">{{ r.request_number }}</a></td>
+      <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
+      <td class="col-entity">{{ r.org_code }}</td>
+      <td class="col-submitter">{{ r.contact_name }}<br><span class="sub">{{ r.contact_email }}</span></td>
+      <td class="col-type">{{ "Yes" if r.requires_w9 else "No" }}</td>
+      <td class="col-program">
         {% if not r.requires_w9 %}
           n/a
         {% elif r.w9_received %}
@@ -42,10 +45,10 @@ chain) is in.</p>
           Not yet sent
         {% endif %}
       </td>
-      <td><span class="badge badge-{{ r.status|lower|replace('_', '-') }}">{{ r.status|replace('_', ' ')|capitalize }}</span>
+      <td class="col-status"><span class="badge badge-{{ r.status|lower|replace('_', '-') }}">{{ r.status|replace('_', ' ')|capitalize }}</span>
         {% if r.status == "rejected" and r.rejected_reason %}<br><span class="sub">{{ r.rejected_reason }}</span>{% endif %}
       </td>
-      <td>
+      <td class="col-actions">
         {% if r.status == "pending_approval" %}
           <form method="post" action="/admin/vendor-requests/{{ r.id }}/approve" style="display:inline">
             <button type="submit" class="btn btn-primary btn-sm">Approve</button>
@@ -67,6 +70,7 @@ chain) is in.</p>
     <tr><td colspan="10">No vendor requests yet.</td></tr>
     {% endfor %}
   </table>
+</div>
 </div>
 </div>
 <script>
