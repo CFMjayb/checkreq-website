@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}AP Review — Completed{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>AP Review</h1>
+<p class="sub">Requests already posted to QuickBooks.</p>
+
+<div class="view-toggle" role="tablist" aria-label="AP Review view">
+  <a href="/admin/ap-review" class="view-toggle-tab">Pending</a>
+  <a href="/admin/ap-review?view=completed" class="view-toggle-tab active">Completed</a>
+</div>
+
+<div class="card">
+<div class="table-scroll">
+  <table class="simple-table approvals-table">
+    <tr>
+      <th class="col-reqnum">Request #</th>
+      <th class="col-type">Type</th>
+      <th class="col-entity">Entity</th>
+      <th class="col-program">Program Area</th>
+      <th class="col-vendor">Vendor</th>
+      <th class="col-amount">Amount</th>
+      <th class="col-date">Posted</th>
+      <th class="col-actions">Actions</th>
+    </tr>
+    {% for r in rows %}
+    <tr>
+      <td class="col-reqnum"><a href="/requests/{{ r.request_number }}/view">{{ r.request_number }}</a></td>
+      <td class="col-type">{{ r.type_abbr }}</td>
+      <td class="col-entity">{{ r.org_code }}</td>
+      <td class="col-program">{{ r.program_area_title }}</td>
+      <td class="col-vendor">{{ r.vendor_name }}</td>
+      <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
+      <td class="col-date">{{ r.updated_at.strftime("%Y-%m-%d %H:%M") if r.updated_at else "—" }}</td>
+      <td class="col-actions">
+        <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
+        {% if r.qbo_bill_url %} · <a href="{{ r.qbo_bill_url }}" target="_blank">View in QBO</a>{% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8">Nothing posted yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+</div>
+</div>
+{% endblock %}

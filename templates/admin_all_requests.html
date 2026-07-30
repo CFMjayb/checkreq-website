@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Administrative — All Requests{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Administrative</h1>
+<p class="sub">Every check request, every entity, every status. Click a status pill to see its full history.</p>
+
+<div class="card">
+<div class="table-scroll">
+  <table class="simple-table approvals-table">
+    <tr>
+      <th class="col-reqnum">Request #</th>
+      <th class="col-type">Type</th>
+      <th class="col-entity">Entity</th>
+      <th class="col-program">Program Area</th>
+      <th class="col-vendor">Vendor</th>
+      <th class="col-submitter">Submitted By</th>
+      <th class="col-amount">Amount</th>
+      <th class="col-status">Status</th>
+      <th class="col-date">Submitted</th>
+      <th class="col-date">Updated</th>
+      <th class="col-actions">Actions</th>
+    </tr>
+    {% for r in rows %}
+    <tr>
+      <td class="col-reqnum"><a href="/requests/{{ r.request_number }}/view">{{ r.request_number }}</a></td>
+      <td class="col-type">{{ r.type_abbr }}</td>
+      <td class="col-entity">{{ r.org_code }}</td>
+      <td class="col-program">{{ r.program_area_title }}</td>
+      <td class="col-vendor">{{ r.vendor_name }}</td>
+      <td class="col-submitter">{{ r.submitter_name or r.submitter_email }}</td>
+      <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
+      <td class="col-status status-cell">
+        <button type="button" class="status-pill-btn" data-popup="admin-status-popup-{{ loop.index }}">
+          <span class="badge badge-{{ r.status|lower|replace(' ', '-') }}">{{ r.status }}</span>
+        </button>
+        <div class="status-popup" id="admin-status-popup-{{ loop.index }}" hidden>
+          <div class="status-popup-title">Status History — {{ r.request_number }}</div>
+          {% if r.history %}
+          <table class="status-history-table">
+            <tr><th>Date</th><th>Action</th><th>Status</th><th>Comment</th></tr>
+            {% for h in r.history %}
+            <tr>
+              <td>{{ h.action_date.strftime("%Y-%m-%d %H:%M") }}</td>
+              <td>{{ h.action_type }}</td>
+              <td>{% if h.previous_status %}{{ h.previous_status }} &rarr; {% endif %}{{ h.new_status or "—" }}</td>
+              <td>{{ h.comment or "—" }}</td>
+            </tr>
+            {% endfor %}
+          </table>
+          {% else %}
+          <div class="sub">No history recorded.</div>
+          {% endif %}
+        </div>
+      </td>
+      <td class="col-date">{{ r.created_at.strftime("%Y-%m-%d") }}</td>
+      <td class="col-date">{{ r.updated_at.strftime("%Y-%m-%d") if r.updated_at else "—" }}</td>
+      <td class="col-actions"><a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="11">No requests yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+</div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/my_requests.js?v={{ asset_version('js/my_requests.js') }}"></script>
+{% endblock %}

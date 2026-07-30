@@ -2998,6 +2998,71 @@ async def feedback_submit(request: Request):
     return RedirectResponse("/feedback?submitted=1", status_code=303)
 
 
+# ── Administrative: system-wide request log (Jay, 2026-07-29) ───────────────
+# "some sort of administratives pill on the main menu for people that have
+# administrative access. They're gonna be able to review all the logs, like
+# all the CRs and where they are, what has happened to them." Distinct from
+# My Requests' own "All Requests" toggle -- that one stays scoped to the
+# session's selected entity by Jay's own earlier explicit call (Task 6,
+# 2026-07-26); this view is deliberately NOT entity-scoped, showing every
+# request across every organization and every status in one place.
+
+@app.get("/admin/all-requests", response_class=HTMLResponse)
+def admin_all_requests(request: Request):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    if not user.get("is_cfo"):
+        return JSONResponse({"error": "CFO access required"}, status_code=403)
+
+    rows = db.query(
+        """
+        SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
+               pr.created_at, pr.updated_at, o.code AS org_code,
+               pa.title AS program_area_title, u.display_name AS submitter_name,
+               u.email AS submitter_email,
+               v.display_name AS vendor_display_name,
+               vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
+               vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
+               vr.dba_name AS vr_dba_name
+        FROM checkreq.payment_requests pr
+        JOIN checkreq.organizations o ON o.id = pr.org_id
+        JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+        JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
+        LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+        LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+        ORDER BY pr.created_at DESC
+        """
+    )
+
+    history_by_id: dict[int, list[dict]] = {}
+    pr_ids = [r["pr_id"] for r in rows]
+    if pr_ids:
+        history_rows = db.query(
+            "SELECT payment_request_id, action_type, action_date, comment, "
+            "previous_status, new_status FROM checkreq.audit_log "
+            "WHERE payment_request_id = ANY(%s) ORDER BY action_date",
+            (pr_ids,),
+        )
+        for h in history_rows:
+            history_by_id.setdefault(h["payment_request_id"], []).append(h)
+
+    for r in rows:
+        r["type_abbr"] = _REQUEST_TYPE_ABBR.get(r["request_type"], "??")
+        r["history"] = history_by_id.get(r["pr_id"], [])
+        if r.get("vendor_display_name"):
+            r["vendor_name"] = r["vendor_display_name"]
+        elif r.get("vr_entity_type"):
+            r["vendor_name"] = _vendor_request_row_display_name(
+                r["vr_entity_type"], r["vr_company_name"], r["vr_dba_name"],
+                r["vr_first_name"], r["vr_last_name"],
+            )
+        else:
+            r["vendor_name"] = "—"
+
+    return _render(request, "admin_all_requests.html", user, {"rows": rows})
+
+
 @app.get("/admin/feedback", response_class=HTMLResponse)
 def feedback_list(request: Request):
     """CFO-only listing -- the task's own stated "nice-to-have," not the
@@ -3214,10 +3279,46 @@ def vendor_request_w9_received(vr_id: int, request: Request):
 
 @app.get("/admin/ap-review", response_class=HTMLResponse)
 def ap_review_list(request: Request, posted: str = "", returned: str = "",
-                    post_error: str = "", email_warning: str = ""):
+                    post_error: str = "", email_warning: str = "", view: str = "pending"):
     user, err = _require_ap_reviewer(request)
     if err:
         return err
+
+    # Jay, 2026-07-29: "some sort of need in the AP review to also have a
+    # completed tab as well." A request leaves this queue the moment it's
+    # posted (status flips to 'Posted to QBO') with no way to look back at
+    # it from here -- same gap as My Approvals' own history request.
+    if view == "completed":
+        completed_rows = db.query(
+            """
+            SELECT pr.request_number, pr.request_type, pr.amount, pr.qbo_bill_id,
+                   pr.qbo_bill_url, pr.updated_at, o.code AS org_code,
+                   pa.title AS program_area_title,
+                   v.display_name AS vendor_display_name,
+                   vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
+                   vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
+                   vr.dba_name AS vr_dba_name
+            FROM checkreq.payment_requests pr
+            JOIN checkreq.organizations o ON o.id = pr.org_id
+            JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+            LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+            LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+            WHERE pr.status = 'Posted to QBO'
+            ORDER BY pr.updated_at DESC
+            """
+        )
+        for r in completed_rows:
+            r["type_abbr"] = _REQUEST_TYPE_ABBR.get(r["request_type"], "??")
+            if r.get("vendor_display_name"):
+                r["vendor_name"] = r["vendor_display_name"]
+            elif r.get("vr_entity_type"):
+                r["vendor_name"] = _vendor_request_row_display_name(
+                    r["vr_entity_type"], r["vr_company_name"], r["vr_dba_name"],
+                    r["vr_first_name"], r["vr_last_name"],
+                )
+            else:
+                r["vendor_name"] = "—"
+        return _render(request, "ap_review_completed.html", user, {"rows": completed_rows})
 
     rows = db.query(
         """
