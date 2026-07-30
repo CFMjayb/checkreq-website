@@ -1382,7 +1382,15 @@ def _require_ap_reviewer(request: Request):
     return user, None
 
 
-def _send_rejection_email(pr: dict, new_status: str, reason: str, request: Request) -> dict:
+def _user_display_name(user_id: int | None) -> str | None:
+    if not user_id:
+        return None
+    row = db.query_one("SELECT display_name, email FROM checkreq.app_users WHERE id = %s", (user_id,))
+    return (row.get("display_name") or row.get("email")) if row else None
+
+
+def _send_rejection_email(pr: dict, new_status: str, reason: str, request: Request,
+                            rejected_by_name: str | None = None) -> dict:
     """Decision 2 (AP Review Workflow Plan.md, Section 8): any rejection --
     mid-chain ('Rejected') or AP-stage ('Returned by AP') -- emails the
     submitter, reusing the exact same 26-122/email_client.py path already
@@ -1391,27 +1399,58 @@ def _send_rejection_email(pr: dict, new_status: str, reason: str, request: Reque
     send_email() never raises; the caller surfaces whatever comes back
     ({"status": "sent"} or {"error": "..."}) as a visible-but-non-blocking
     email_warning, matching this app's established archive_warning pattern.
-    pr must include submitter_email/submitter_name/org_name and
-    request_number (the reject/ap_return routes' own SELECT joins these
-    in)."""
+    pr must include submitter_email/submitter_name/org_name/id and
+    request_number (the reject/ap_return/email-action routes' own SELECT
+    joins these in).
+
+    Jay, 2026-07-30 (after seeing the plain original version live): the
+    submitter had no way to tell WHAT was rejected without opening the app --
+    added vendor/amount and who rejected it, and attached the actual
+    check-voucher PDF (same render_check_voucher_pdf() the on-demand
+    GET /requests/{n}/pdf route uses) so the submitter has the full document
+    in hand immediately, not just a bare notice."""
     verb = "returned by the Business Office (AP) for corrections" if new_status == "Returned by AP" else "rejected"
     edit_url = f"{str(request.base_url).rstrip('/')}/requests/{pr['request_number']}/edit"
     subject = f"Check Request {pr['request_number']} was {verb}"
+    vendor_name = _vendor_display_name_for_request(pr["id"]) or "—"
+    amount_str = f"${float(pr['amount']):,.2f}" if pr.get("amount") is not None else "—"
+    rejected_by = rejected_by_name or "—"
     body_html = (
         f"<p>Hello {pr.get('submitter_name') or ''},</p>"
         f"<p>Your check request <strong>{pr['request_number']}</strong> "
         f"({pr['org_name']}) was {verb}.</p>"
+        f"<table style=\"border-collapse:collapse; margin:12px 0;\">"
+        f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">Vendor</td><td style=\"padding:3px 0;\">{vendor_name}</td></tr>"
+        f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">Amount</td><td style=\"padding:3px 0; font-weight:bold;\">{amount_str}</td></tr>"
+        f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">{'Returned by' if new_status == 'Returned by AP' else 'Rejected by'}</td><td style=\"padding:3px 0;\">{rejected_by}</td></tr>"
+        f"</table>"
         f"<p><strong>Reason:</strong> {reason}</p>"
-        f"<p>You can edit and resubmit it here: <a href=\"{edit_url}\">{edit_url}</a></p>"
+        f"<p>The original check request is attached. You can edit and resubmit it here: <a href=\"{edit_url}\">{edit_url}</a></p>"
     )
     body_text = (
         f"Hello {pr.get('submitter_name') or ''},\n\n"
         f"Your check request {pr['request_number']} ({pr['org_name']}) was {verb}.\n\n"
+        f"Vendor: {vendor_name}\nAmount: {amount_str}\n"
+        f"{'Returned by' if new_status == 'Returned by AP' else 'Rejected by'}: {rejected_by}\n\n"
         f"Reason: {reason}\n\nEdit and resubmit here: {edit_url}"
     )
+
+    attachments = None
+    try:
+        pdf_bytes = render_check_voucher_pdf(pr["id"])
+        attachments = [{
+            "name": f"{pr['request_number']}.pdf",
+            "content_type": "application/pdf",
+            "content_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+        }]
+    except Exception as exc:
+        # Fails soft -- a PDF render hiccup must never block the rejection
+        # notice itself from going out.
+        print(f"[rejection-email] PDF render failed for {pr['request_number']}: {exc}")
+
     return email_client.send_email(
         to=pr["submitter_email"], subject=subject, body_html=body_html, body_text=body_text,
-        sender=W9_SENDER_EMAIL,
+        sender=W9_SENDER_EMAIL, attachments=attachments,
     )
 
 
@@ -3262,7 +3301,7 @@ async def reject_request(request_number: str, request: Request):
 
     _perform_rejection(pr, my_action, user["id"], reason, _client_ip(request), "web", impersonated_by)
 
-    email_result = _send_rejection_email(pr, "Rejected", reason, request)
+    email_result = _send_rejection_email(pr, "Rejected", reason, request, user.get("display_name") or user.get("email"))
     redirect_url = f"/my-approvals?rejected={request_number}"
     if email_result.get("status") != "sent":
         from urllib.parse import quote
@@ -3364,7 +3403,8 @@ async def email_action_submit(token: str, request: Request):
 
     if action == "reject":
         _perform_rejection(pr, my_action, tok["approver_user_id"], note_or_reason, ip, "email")
-        _send_rejection_email(pr, "Rejected", note_or_reason, request)
+        _send_rejection_email(pr, "Rejected", note_or_reason, request,
+                               _user_display_name(tok["approver_user_id"]))
         result_state = "done_reject"
     else:
         result = _perform_approval(
@@ -4130,7 +4170,8 @@ async def ap_return_request(request_number: str, request: Request):
                 (pr["id"], user["id"], "AP Rejected", reason, pr["status"], "Returned by AP", impersonated_by),
             )
 
-    email_result = _send_rejection_email(pr, "Returned by AP", reason, request)
+    email_result = _send_rejection_email(pr, "Returned by AP", reason, request,
+                                          user.get("display_name") or user.get("email"))
     from urllib.parse import quote
     redirect_url = f"/admin/ap-review?returned={request_number}"
     if email_result.get("status") != "sent":
