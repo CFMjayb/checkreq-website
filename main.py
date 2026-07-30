@@ -1103,6 +1103,30 @@ def _request_summary_table_html(ctx: dict) -> str:
     """
 
 
+def _email_action_buttons_html(action_url: str, compact: bool = False) -> str:
+    """Approve/Reject as two SEPARATE table rows, not two inline <a> tags
+    side by side -- Jay found live on his iPhone (2026-07-30) that inline
+    buttons wrap onto separate lines on a narrow screen with zero gap
+    between them and visually collide. A tiny one-column table forces each
+    button onto its own row with real padding between them regardless of
+    viewport width or which mail client renders it (this shape -- a table,
+    not flex/inline-block -- is also the most broadly compatible pattern
+    across mail clients, several of which still use very old rendering
+    engines that don't reliably support inline-block margins)."""
+    pad = "5px 12px" if compact else "9px 18px"
+    size = "0.85em" if compact else "1em"
+    return f"""
+    <table cellpadding="0" cellspacing="0" style="margin:{'4px 0' if compact else '16px 0'};">
+      <tr><td style="padding-bottom:6px;">
+        <a href="{action_url}?action=approve" style="display:inline-block; background:#2E75B6; color:#fff; padding:{pad}; text-decoration:none; border-radius:4px; font-weight:bold; font-size:{size};">Approve</a>
+      </td></tr>
+      <tr><td>
+        <a href="{action_url}?action=reject" style="display:inline-block; background:#fff; color:#b3261e; border:1px solid #b3261e; padding:{pad}; text-decoration:none; border-radius:4px; font-weight:bold; font-size:{size};">Reject</a>
+      </td></tr>
+    </table>
+    """
+
+
 def _send_approval_needed_email(ctx: dict, approver_email: str, approver_name: str | None,
                                   token: str, request: Request) -> dict:
     base = str(request.base_url).rstrip("/")
@@ -1113,10 +1137,7 @@ def _send_approval_needed_email(ctx: dict, approver_email: str, approver_name: s
     <p>Hello {approver_name or ''},</p>
     <p>A check request is waiting for your review as an approver in the chain.</p>
     {_request_summary_table_html(ctx)}
-    <p style="margin:20px 0;">
-      <a href="{action_url}?action=approve" style="background:#2E75B6; color:#fff; padding:10px 20px; text-decoration:none; border-radius:4px; font-weight:bold; margin-right:10px;">Approve</a>
-      <a href="{action_url}?action=reject" style="background:#fff; color:#b3261e; border:1px solid #b3261e; padding:9px 19px; text-decoration:none; border-radius:4px; font-weight:bold;">Reject</a>
-    </p>
+    {_email_action_buttons_html(action_url)}
     """
     body_html = _approval_action_email_html(body, sign_in_url)
     body_text = (
@@ -1156,9 +1177,8 @@ def _send_daily_digest_email(approver: dict, rows: list[dict], request: Request)
           <td style="padding:8px; border-bottom:1px solid #eee;">{r['vendor_name']}</td>
           <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">${float(r['amount']):,.2f}</td>
           <td style="padding:8px; border-bottom:1px solid #eee;">{needed_by}</td>
-          <td style="padding:8px; border-bottom:1px solid #eee; white-space:nowrap;">
-            <a href="{action_url}?action=approve" style="background:#2E75B6; color:#fff; padding:6px 12px; text-decoration:none; border-radius:4px; font-size:0.85em;">Approve</a>
-            <a href="{action_url}?action=reject" style="background:#fff; color:#b3261e; border:1px solid #b3261e; padding:5px 11px; text-decoration:none; border-radius:4px; font-size:0.85em; margin-left:4px;">Reject</a>
+          <td style="padding:8px; border-bottom:1px solid #eee;">
+            {_email_action_buttons_html(action_url, compact=True)}
           </td>
         </tr>
         """
