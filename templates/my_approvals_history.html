@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}My Approval History{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>My Approval History</h1>
+<p class="sub">Requests you've already approved or rejected.</p>
+
+<div class="view-toggle" role="tablist" aria-label="Approvals view">
+  <a href="/my-approvals" class="view-toggle-tab">My Approvals</a>
+  <a href="/my-approvals?view=history" class="view-toggle-tab active">History</a>
+</div>
+
+<div class="card">
+<div class="table-scroll">
+  <table class="simple-table approvals-table">
+    <tr>
+      <th class="col-reqnum">Request #</th>
+      <th class="col-type">Type</th>
+      <th class="col-entity">Entity</th>
+      <th class="col-program">Program Area</th>
+      <th class="col-vendor">Vendor</th>
+      <th class="col-amount">Amount</th>
+      <th class="col-status">Action</th>
+      <th class="col-date">When</th>
+      <th class="col-vendor">Note</th>
+      <th class="col-actions">Actions</th>
+    </tr>
+    {% for r in rows %}
+    <tr>
+      <td class="col-reqnum"><a href="/requests/{{ r.request_number }}/view">{{ r.request_number }}</a></td>
+      <td class="col-type">{{ r.type_abbr }}</td>
+      <td class="col-entity">{{ r.org_code }}</td>
+      <td class="col-program">{{ r.program_area_title }}</td>
+      <td class="col-vendor">{{ r.vendor_name }}</td>
+      <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
+      <td class="col-status"><span class="badge badge-{{ r.action_status }}">{{ r.action_status|capitalize }}</span></td>
+      <td class="col-date">{{ r.acted_at.strftime("%Y-%m-%d %H:%M") if r.acted_at else "—" }}</td>
+      <td class="col-vendor">{{ r.comment or "—" }}</td>
+      <td class="col-actions"><a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="10">Nothing here yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+</div>
+</div>
+{% endblock %}

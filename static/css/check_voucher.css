@@ -107,6 +107,34 @@
   border-top: 1px solid var(--color-ink);
 }
 
+/* Real, post-approval record (Jay, 2026-07-29) -- distinct from the
+   pre-approval "chain preview" text above it; only rendered once at least
+   one real approval/rejection has actually happened. */
+.voucher-approval-record {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 0.72rem;
+}
+.voucher-approval-record thead tr:first-child th {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.68rem;
+  color: var(--color-franciscan-green);
+  text-align: left;
+  padding: 4px 6px 2px;
+}
+.voucher-approval-record thead tr:last-child th {
+  text-align: left;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+  padding: 2px 6px 4px;
+}
+.voucher-approval-record td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+
 .voucher-approval {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);

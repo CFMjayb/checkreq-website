@@ -252,6 +252,20 @@ def _current_org(request: Request) -> dict | None:
     )
 
 
+def _client_ip(request: Request) -> str | None:
+    """Real client IP for the approval-chain audit trail (Jay, 2026-07-29:
+    "the exact approvers with their date/time and IP"). Cloud Run terminates
+    TLS at a proxy, so request.client.host would be the proxy's own address,
+    not the real caller -- X-Forwarded-For's first entry is the original
+    client (standard convention, and the header Cloud Run itself sets).
+    Falls back to request.client.host for local dev, where no proxy sits
+    in front."""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
 def _render(request: Request, template: str, user: dict, extra: dict | None = None):
     """Renders a template that extends base.html, always including the
     header's user/entity-switcher context so every page shows it
@@ -1265,6 +1279,25 @@ def _voucher_context(payment_request_id: int) -> dict | None:
         (payment_request_id,),
     )
     amount = float(pr["amount"])
+
+    # Jay, 2026-07-29: "once the approval process is completed, the PDF
+    # should be revised to have a section of the approval chain with the
+    # exact approvers with their date/time and IP." Real, already-acted
+    # records only -- distinct from voucher_chain_summary above, which is
+    # the pre-approval "who is/will be in this chain" preview text and
+    # never reflects who actually acted or when.
+    approval_records = db.query(
+        """
+        SELECT aa.serial_group, aa.status, aa.acted_at, aa.ip_address,
+               u.display_name, u.email
+        FROM checkreq.approval_actions aa
+        JOIN checkreq.app_users u ON u.id = aa.approver_user_id
+        WHERE aa.payment_request_id = %s AND aa.status IN ('approved', 'rejected')
+        ORDER BY aa.acted_at
+        """,
+        (payment_request_id,),
+    )
+
     return {
         "voucher_org_name": pr["org_name"],
         "voucher_request_number": pr["request_number"],
@@ -1281,6 +1314,15 @@ def _voucher_context(payment_request_id: int) -> dict | None:
         "voucher_total": f"${amount:,.2f}",
         "voucher_requested_by": pr["submitter_name"] or pr["submitter_email"],
         "voucher_chain_summary": pr["approval_chain_summary"] or "—",
+        "voucher_approval_records": [
+            {
+                "name": a["display_name"] or a["email"],
+                "status": a["status"],
+                "acted_at": a["acted_at"].strftime("%Y-%m-%d %H:%M:%S UTC") if a["acted_at"] else "—",
+                "ip_address": a["ip_address"] or "—",
+            }
+            for a in approval_records
+        ],
     }
 
 
@@ -1394,7 +1436,7 @@ def _active_attachments(payment_request_id: int) -> list[dict]:
     return db.query(
         """
         SELECT id, source, original_filename, archived_filename, content_type,
-               size_bytes, uploaded_at
+               size_bytes, uploaded_at, sp_file_path
         FROM checkreq.payment_request_attachments
         WHERE payment_request_id = %s AND removed_at IS NULL
         ORDER BY CASE WHEN source = 'generated_pdf' THEN 0 ELSE 1 END, uploaded_at, id
@@ -2469,7 +2511,7 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
         rows = db.query(
             """
             SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
-                   pr.approval_chain_summary, pr.created_at, o.code AS org_code,
+                   pr.approval_chain_summary, pr.created_at, pr.requested_pay_date, o.code AS org_code,
                    pa.title AS program_area_title, u.display_name AS submitter_name,
                    u.email AS submitter_email,
                    v.display_name AS vendor_display_name,
@@ -2483,7 +2525,7 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
             LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
             LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
             WHERE pr.org_id = %s
-            ORDER BY pr.created_at DESC
+            ORDER BY pr.requested_pay_date
             """,
             (org["id"],),
         )
@@ -2491,7 +2533,7 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
         rows = db.query(
             """
             SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
-                   pr.approval_chain_summary, pr.created_at, o.code AS org_code,
+                   pr.approval_chain_summary, pr.created_at, pr.requested_pay_date, o.code AS org_code,
                    pa.title AS program_area_title,
                    v.display_name AS vendor_display_name,
                    vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
@@ -2503,7 +2545,7 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
             LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
             LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
             WHERE pr.submitter_user_id = %s AND pr.org_id = %s
-            ORDER BY pr.created_at DESC
+            ORDER BY pr.requested_pay_date
             """,
             (user["id"], org["id"]),
         )
@@ -2569,6 +2611,46 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
     org = _current_org(request)
     if not org:
         return RedirectResponse("/portal")
+
+    # Jay, 2026-07-29: "how can I see items already taken an action on?"
+    # Once approved/rejected, a request drops off the pending queue entirely
+    # -- this branch shows the requester's OWN past actions instead, sourced
+    # straight from approval_actions (the real per-approver record), not the
+    # pending-queue query below.
+    if view == "history":
+        history_rows = db.query(
+            """
+            SELECT pr.request_number, pr.request_type, pr.amount, o.code AS org_code,
+                   pa.title AS program_area_title,
+                   v.display_name AS vendor_display_name,
+                   vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
+                   vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
+                   vr.dba_name AS vr_dba_name,
+                   aa.status AS action_status, aa.acted_at, aa.comment
+            FROM checkreq.approval_actions aa
+            JOIN checkreq.payment_requests pr ON pr.id = aa.payment_request_id
+            JOIN checkreq.organizations o ON o.id = pr.org_id
+            JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+            LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+            LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+            WHERE aa.approver_user_id = %s AND aa.status IN ('approved', 'rejected')
+              AND pr.org_id = %s
+            ORDER BY aa.acted_at DESC
+            """,
+            (user["id"], org["id"]),
+        )
+        for r in history_rows:
+            r["type_abbr"] = _REQUEST_TYPE_ABBR.get(r["request_type"], "??")
+            if r.get("vendor_display_name"):
+                r["vendor_name"] = r["vendor_display_name"]
+            elif r.get("vr_entity_type"):
+                r["vendor_name"] = _vendor_request_row_display_name(
+                    r["vr_entity_type"], r["vr_company_name"], r["vr_dba_name"],
+                    r["vr_first_name"], r["vr_last_name"],
+                )
+            else:
+                r["vendor_name"] = "—"
+        return _render(request, "my_approvals_history.html", user, {"rows": history_rows})
 
     # Same ?view=all CFO toggle convention Task 6 (2026-07-26) already built
     # for My Requests -- "My Approvals" (default, my own pending items) vs.
@@ -2721,8 +2803,8 @@ async def approve_request(request_number: str, request: Request):
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE checkreq.approval_actions SET status = 'approved', acted_at = NOW(), "
-                "acted_by_user_id = %s, comment = %s WHERE id = %s",
-                (user["id"], note, my_action["id"]),
+                "acted_by_user_id = %s, comment = %s, ip_address = %s WHERE id = %s",
+                (user["id"], note, _client_ip(request), my_action["id"]),
             )
             cur.execute(
                 "INSERT INTO checkreq.audit_log "
@@ -2848,8 +2930,8 @@ async def reject_request(request_number: str, request: Request):
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE checkreq.approval_actions SET status = 'rejected', acted_at = NOW(), "
-                "acted_by_user_id = %s, comment = %s WHERE id = %s",
-                (user["id"], reason, my_action["id"]),
+                "acted_by_user_id = %s, comment = %s, ip_address = %s WHERE id = %s",
+                (user["id"], reason, _client_ip(request), my_action["id"]),
             )
             cur.execute(
                 "UPDATE checkreq.approval_actions SET status = 'skipped' "
@@ -3320,16 +3402,57 @@ def post_to_qbo(request_number: str, request: Request):
         "WHERE gl.payment_request_id = %s ORDER BY gl.id",
         (pr["id"],),
     )
+    # Jay, 2026-07-29, real gaps found on the first live post (CR26-007):
+    # (1) no line item description -- a blank GL-line memo (optional by
+    # design) left the Bill's own line with nothing at all; fall back to
+    # the request's own Description so a line is never blank.
+    # (2) the Bill memo showed "Group 1: mdickson-patrick" -- the internal
+    # approval_chain_summary means nothing to anyone reading the Bill in
+    # QBO. Use the request's own Description instead, matching (1)'s fix.
     bill_lines = [
-        {"account_ref": g["account_number"], "amount": float(g["amount"]), "description": g["memo"] or ""}
+        {"account_ref": g["account_number"], "amount": float(g["amount"]),
+         "description": g["memo"] or pr["description"] or ""}
         for g in gl_lines
     ]
 
+    # Jay, 2026-07-29: "no attachments existed on the document" -- fetch this
+    # request's own already-archived files (SharePoint, the same source
+    # view_attachment reads from) and carry them onto the QBO Bill too.
+    # Best-effort: a download hiccup here must never block the Bill itself
+    # from posting (matches _archive_attachments'/cleanup_gcs_attachment's
+    # own established "storage hiccups are recoverable" philosophy) --
+    # logged server-side, not surfaced as a hard failure.
+    qbo_attachments = []
+    active_atts = _active_attachments(pr["id"])
+    if active_atts:
+        org_sp = db.query_one(
+            "SELECT sp_hostname, sp_site_path FROM checkreq.organizations WHERE id = %s",
+            (pr["org_id"],),
+        )
+        if org_sp and org_sp.get("sp_hostname") and org_sp.get("sp_site_path"):
+            try:
+                sp_token = sharepoint_client.get_access_token()
+                sp_site_id = sharepoint_client.get_site_id(sp_token, org_sp["sp_hostname"], org_sp["sp_site_path"])
+                for att in active_atts:
+                    try:
+                        content = sharepoint_client.download_bytes(sp_token, sp_site_id, att["sp_file_path"])
+                        qbo_attachments.append({
+                            "filename": att["archived_filename"],
+                            "content_base64": base64.b64encode(content).decode("ascii"),
+                        })
+                    except Exception as exc:
+                        print(f"[post_to_qbo] attachment download failed for {request_number} "
+                              f"({att['archived_filename']}): {exc}")
+            except Exception as exc:
+                print(f"[post_to_qbo] SharePoint auth failed for {request_number}: {exc}")
+
     result, bill_error = qbo_mcp_client.create_bill(
         company, qbo_vendor_id,
-        pr["requested_pay_date"].isoformat() if pr["requested_pay_date"] else date.today().isoformat(),
+        date.today().isoformat(),
         bill_lines, doc_number=pr["request_number"],
-        private_note=pr["approval_chain_summary"] or f"Check Request {pr['request_number']}",
+        private_note=pr["description"] or f"Check Request {pr['request_number']}",
+        due_date=pr["requested_pay_date"].isoformat() if pr["requested_pay_date"] else None,
+        attachments=qbo_attachments,
     )
     if bill_error:
         return RedirectResponse(

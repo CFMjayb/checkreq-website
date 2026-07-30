@@ -58,4 +58,27 @@ the final PDF are the same document:
     <span class="label">Approval Chain Preview</span>
     <div data-field="chain_summary">{{ voucher_chain_summary }}</div>
   </div>
+
+  {#- Jay, 2026-07-29: "once the approval process is completed, the PDF
+     should be revised to have a section of the approval chain with the
+     exact approvers with their date/time and IP." Real, already-acted
+     records only -- distinct from the pre-approval preview above, and only
+     rendered once at least one real action exists (never shown, and never
+     needed, on a brand-new not-yet-submitted request's live preview). #}
+  {% if voucher_approval_records %}
+  <table class="voucher-approval-record">
+    <thead><tr><th colspan="3">Approval Record</th></tr>
+      <tr><th>Approver</th><th>Date/Time (UTC)</th><th>IP Address</th></tr>
+    </thead>
+    <tbody>
+      {% for a in voucher_approval_records %}
+      <tr>
+        <td>{{ a.name }} ({{ a.status|capitalize }})</td>
+        <td>{{ a.acted_at }}</td>
+        <td>{{ a.ip_address }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
 </div>

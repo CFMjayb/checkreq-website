@@ -19,12 +19,13 @@ involved and who has already acted. Click a Request # to view the full check req
 </div>
 {% endif %}
 
-{% if user.is_cfo %}
 <div class="view-toggle" role="tablist" aria-label="Approvals view">
   <a href="/my-approvals" class="view-toggle-tab {% if not show_all %}active{% endif %}">My Approvals</a>
+  {% if user.is_cfo %}
   <a href="/my-approvals?view=all" class="view-toggle-tab {% if show_all %}active{% endif %}">All Pending Approvals</a>
+  {% endif %}
+  <a href="/my-approvals?view=history" class="view-toggle-tab">History</a>
 </div>
-{% endif %}
 
 <div class="card">
 <div class="table-scroll">
@@ -79,11 +80,18 @@ involved and who has already acted. Click a Request # to view the full check req
       <td class="col-date">{{ r.created_at.strftime("%Y-%m-%d") }}</td>
       <td class="col-actions">
         <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
-        · <form method="post" action="/requests/{{ r.request_number }}/approve" style="display:inline" onsubmit="return promptApprovalNote(this)">
-            <input type="hidden" name="approval_comment" value="">
+        ·
+        <form method="post" action="/requests/{{ r.request_number }}/approve" class="approve-form" style="display:inline">
+          <input type="hidden" name="approval_comment" value="">
+          <span class="split-btn">
             <button type="submit" class="btn btn-primary btn-sm">Approve</button>
-          </form>
-        · <form method="post" action="/requests/{{ r.request_number }}/reject" style="display:inline" onsubmit="return promptRejectReason(this)">
+            <button type="button" class="btn btn-primary btn-sm btn-caret" aria-label="More approve options">&#9662;</button>
+            <span class="split-btn-menu" hidden>
+              <button type="button" class="approve-with-note-btn">Approve with Note&hellip;</button>
+            </span>
+          </span>
+        </form>
+        · <form method="post" action="/requests/{{ r.request_number }}/reject" class="reject-form" style="display:inline">
             <input type="hidden" name="rejected_reason" value="">
             <button type="submit" class="btn btn-secondary btn-sm">Reject</button>
           </form>
@@ -99,19 +107,57 @@ involved and who has already acted. Click a Request # to view the full check req
 {% endblock %}
 {% block extra_js %}
 <script src="/static/js/my_requests.js?v={{ asset_version('js/my_requests.js') }}"></script>
+<script src="/static/js/action_modal.js?v={{ asset_version('js/action_modal.js') }}"></script>
 <script>
-function promptRejectReason(form) {
-  const reason = prompt("Reason for rejecting this request (required):", "");
-  if (!reason) { alert("A rejection reason is required."); return false; }
-  form.querySelector('input[name="rejected_reason"]').value = reason;
-  return true;
-}
-function promptApprovalNote(form) {
-  const note = prompt("Optional note to include with this approval (visible in the approval history, leave blank to skip):", "");
-  if (note !== null) {
+// Jay, 2026-07-29: "not a Chrome dialogue box... a button that you can
+// click on options to change the button to Approve, Approve with Note,
+// Reject." Reject always opens the modal (required reason); Approve is a
+// split button -- the main button submits immediately with no note, the
+// caret reveals "Approve with Note..." which opens the modal first.
+
+document.querySelectorAll('.reject-form').forEach(form => {
+  form.addEventListener('submit', async (e) => {
+    if (form.dataset.confirmed === '1') return; // already collected the reason, let it submit
+    e.preventDefault();
+    const reason = await showActionModal({
+      title: 'Reject this request',
+      hint: 'Reason for rejecting (required -- the submitter will see this).',
+      placeholder: 'Reason...',
+      required: true,
+      confirmLabel: 'Reject',
+    });
+    if (reason === null) return; // cancelled
+    form.querySelector('input[name="rejected_reason"]').value = reason;
+    form.dataset.confirmed = '1';
+    form.requestSubmit();
+  });
+});
+
+document.querySelectorAll('.split-btn').forEach(splitBtn => {
+  const form = splitBtn.closest('form');
+  const caret = splitBtn.querySelector('.btn-caret');
+  const menu = splitBtn.querySelector('.split-btn-menu');
+  caret.addEventListener('click', (e) => {
+    e.stopPropagation();
+    document.querySelectorAll('.split-btn-menu').forEach(m => { if (m !== menu) m.hidden = true; });
+    menu.hidden = !menu.hidden;
+  });
+  splitBtn.querySelector('.approve-with-note-btn').addEventListener('click', async () => {
+    menu.hidden = true;
+    const note = await showActionModal({
+      title: 'Approve with a note',
+      hint: 'Optional -- visible in the approval history. Leave blank to skip.',
+      placeholder: 'Note...',
+      required: false,
+      confirmLabel: 'Approve',
+    });
+    if (note === null) return; // cancelled
     form.querySelector('input[name="approval_comment"]').value = note;
-  }
-  return true;
-}
+    form.requestSubmit();
+  });
+});
+document.addEventListener('click', () => {
+  document.querySelectorAll('.split-btn-menu').forEach(m => { m.hidden = true; });
+});
 </script>
 {% endblock %}

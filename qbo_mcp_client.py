@@ -151,9 +151,16 @@ def create_bill(
     gl_lines: list,
     doc_number: str = "",
     private_note: str = "",
+    due_date: str | None = None,
+    attachments: list | None = None,
 ) -> tuple[dict | None, str | None]:
     """POST /api/check-request/{company}. gl_lines: list of
     {"account_ref": "5100", "amount": 1500.00, "description": "..."}.
+    due_date (Jay, 2026-07-29): the check request's own Needed By date --
+    distinct from txn_date (the actual bill-entry date, i.e. today), which
+    qbo-mcp-server sets as QBO's DueDate rather than leaving it to whatever
+    the Bill's own Term calculates. Terms itself defaults server-side to
+    "Net Check Run" (also 2026-07-29), not passed from here.
     Returns ({"status": "created", "bill_id", "bill_number", "qbo_url",
     "total"}, None) on success, or (None, "error text") on failure."""
     body = {
@@ -162,5 +169,7 @@ def create_bill(
         "gl_lines": gl_lines,
         "doc_number": doc_number,
         "private_note": private_note,
+        "due_date": due_date,
+        "attachments": attachments or [],
     }
     return _post("/api/check-request/{company}", company, body)

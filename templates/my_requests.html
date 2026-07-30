@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}My Requests{% endblock %}
 {% block content %}
-<div class="page-shell">
+<div class="page-shell-wide">
 <h1>My Requests</h1>
 {% if submitted %}
 <div class="banner banner-success">
@@ -34,44 +34,35 @@
 </div>
 {% endif %}
 
-<div class="type-legend">CR = Check Request &middot; IV = Invoice Payment</div>
-
 <div class="card">
-  <table class="simple-table my-requests-table">
-    <colgroup>
-      <col class="col-reqnum">
-      <col class="col-type">
-      <col class="col-entity">
-      <col class="col-program">
-      <col class="col-vendor">
-      {% if show_all %}<col class="col-submitter">{% endif %}
-      <col class="col-amount">
-      <col class="col-status">
-      <col class="col-date">
-      <col class="col-actions">
-    </colgroup>
+<div class="table-scroll">
+  <table class="simple-table approvals-table">
     <tr>
-      <th>Request #</th>
-      <th>Type</th>
-      <th>Entity</th>
-      <th>Program Area</th>
-      <th>Vendor</th>
-      {% if show_all %}<th>Submitted By</th>{% endif %}
-      <th>Amount</th>
-      <th>Status</th>
-      <th>Submitted</th>
-      <th></th>
+      <th class="col-reqnum">Request #</th>
+      <th class="col-neededby">Needed By</th>
+      <th class="col-entity">Entity</th>
+      <th class="col-vendor">Vendor</th>
+      {% if show_all %}<th class="col-submitter">Submitted By</th>{% endif %}
+      <th class="col-amount">Amount</th>
+      <th class="col-status">Status</th>
+      <th class="col-date">Submitted</th>
+      <th class="col-actions">Actions</th>
     </tr>
     {% for r in rows %}
     <tr>
-      <td>{{ r.request_number }}</td>
-      <td>{{ r.type_abbr }}</td>
-      <td>{{ r.org_code }}</td>
-      <td class="program-area-cell">{{ r.program_area_title }}</td>
-      <td>{{ r.vendor_name }}</td>
-      {% if show_all %}<td>{{ r.submitter_name or r.submitter_email }}</td>{% endif %}
+      <td class="col-reqnum">
+        {% if r.editable %}
+        <a href="/requests/{{ r.request_number }}/edit">{{ r.request_number }}</a>
+        {% else %}
+        <a href="/requests/{{ r.request_number }}/view">{{ r.request_number }}</a>
+        {% endif %}
+      </td>
+      <td class="col-neededby">{{ r.requested_pay_date.strftime("%Y-%m-%d") if r.requested_pay_date else "—" }}</td>
+      <td class="col-entity">{{ r.org_code }}</td>
+      <td class="col-vendor">{{ r.vendor_name }}</td>
+      {% if show_all %}<td class="col-submitter">{{ r.submitter_name or r.submitter_email }}</td>{% endif %}
       <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
-      <td class="status-cell">
+      <td class="col-status status-cell">
         <button type="button" class="status-pill-btn" data-popup="status-popup-{{ loop.index }}">
           <span class="badge badge-{{ r.status|lower|replace(' ', '-') }}">{{ r.status }}</span>
         </button>
@@ -94,11 +85,10 @@
           {% endif %}
         </div>
       </td>
-      <td>{{ r.created_at.strftime("%Y-%m-%d") }}</td>
+      <td class="col-date">{{ r.created_at.strftime("%y-%m-%d") }}</td>
       <td class="col-actions">
         <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
         {% if r.editable %}
-        · <a href="/requests/{{ r.request_number }}/edit">Edit</a>
         · <form method="post" action="/requests/{{ r.request_number }}/cancel" class="cancel-form">
             <button type="submit" class="link-button cancel-btn">Cancel</button>
           </form>
@@ -106,9 +96,10 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="{{ 10 if show_all else 9 }}">No requests yet.</td></tr>
+    <tr><td colspan="{{ 9 if show_all else 8 }}">No requests yet.</td></tr>
     {% endfor %}
   </table>
+</div>
 </div>
 </div>
 {% endblock %}

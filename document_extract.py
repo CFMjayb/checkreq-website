@@ -37,24 +37,49 @@ EXTRACTION_SCHEMA = {
         "amount": {"type": ["number", "null"]},
         "date": {"type": ["string", "null"], "description": "ISO 8601 YYYY-MM-DD"},
         "description": {"type": ["string", "null"], "description": "Invoice/PO number or a brief description of what this is for"},
+        # Vendor address block (Jay, 2026-07-29: "if I decide to add a new
+        # vendor... you should pull that information" -- a "Sold By" /
+        # remit-to block on the invoice). Deliberately separate fields, not
+        # one address string, so they map directly onto the new-vendor
+        # form's own First/Last-or-Company/Address/City/State/Zip/Phone/
+        # Contact Email inputs without any parsing on the client side.
+        # Never a tax ID/SSN/EIN -- this app already has a hard rule against
+        # collecting those anywhere outside the W-9 itself.
+        "vendor_address_line1": {"type": ["string", "null"]},
+        "vendor_address_line2": {"type": ["string", "null"], "description": "Suite/unit number, if present"},
+        "vendor_city": {"type": ["string", "null"]},
+        "vendor_state": {"type": ["string", "null"], "description": "2-letter US state code"},
+        "vendor_zip": {"type": ["string", "null"]},
+        "vendor_phone": {"type": ["string", "null"]},
+        "vendor_contact_email": {"type": ["string", "null"], "description": "The vendor's own contact/support email, not the customer's"},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "caveats": {"type": "array", "items": {"type": "string"}, "description": "Anything ambiguous -- multiple totals found, unclear date format, low image quality, etc."},
     },
-    "required": ["vendor_name", "amount", "date", "description", "confidence", "caveats"],
+    "required": [
+        "vendor_name", "amount", "date", "description",
+        "vendor_address_line1", "vendor_address_line2", "vendor_city",
+        "vendor_state", "vendor_zip", "vendor_phone", "vendor_contact_email",
+        "confidence", "caveats",
+    ],
     "additionalProperties": False,
 }
 
 _PROMPT = (
     "This is a check-request supporting document -- an invoice or receipt from "
     "an arbitrary vendor. Extract the vendor name, the total amount due, the "
-    "document date, and a brief description or invoice/PO number, as JSON. "
-    "Only extract what is legibly present. Return null for anything genuinely "
-    "absent or illegible rather than guessing a plausible-looking value. If "
-    "something is ambiguous (e.g. multiple dollar amounts -- subtotal vs. tax "
-    "vs. total -- or an ambiguous date format), pick your best interpretation "
-    "for the field but set confidence accordingly and explain the ambiguity in "
-    "caveats. This is a financial document -- a confident-looking wrong answer "
-    "is worse than an honest low-confidence one."
+    "document date, a brief description or invoice/PO number, and -- if a "
+    "'Sold By' / 'From' / remit-to address block for the VENDOR itself is "
+    "present (not the customer's own 'Sold To'/'Bill To' address) -- the "
+    "vendor's own mailing address, city, state, zip, phone, and contact "
+    "email, as JSON. Only extract what is legibly present. Return null for "
+    "anything genuinely absent or illegible rather than guessing a "
+    "plausible-looking value. Never extract a tax ID, SSN, or EIN even if "
+    "one is visible -- that is out of scope here regardless. If something is "
+    "ambiguous (e.g. multiple dollar amounts -- subtotal vs. tax vs. total "
+    "-- or an ambiguous date format), pick your best interpretation for the "
+    "field but set confidence accordingly and explain the ambiguity in "
+    "caveats. This is a financial document -- a confident-looking wrong "
+    "answer is worse than an honest low-confidence one."
 )
 
 

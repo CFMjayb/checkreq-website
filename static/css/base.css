@@ -362,6 +362,76 @@ table.status-history-table th:nth-child(2), table.status-history-table td:nth-ch
 table.status-history-table th:nth-child(3), table.status-history-table td:nth-child(3) { width: 205px; white-space: nowrap; }
 table.status-history-table th:nth-child(4), table.status-history-table td:nth-child(4) { white-space: normal; word-break: break-word; }
 
+/* ---- Action modal (2026-07-29) ----
+   Jay: "not a Chrome dialogue box." Replaces window.prompt()/confirm() for
+   Approve-with-Note/Reject/Return-to-Submitter -- a real full-screen
+   overlay + centered dialog, styled to match the rest of the app. Built
+   once here, shared by any page via action_modal.js (approve.confirm()
+   works the same as approve.prompt() did, minus the native chrome). */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 28, 22, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal-box {
+  background: var(--color-card-bg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card-hover);
+  padding: var(--space-5);
+  width: 100%;
+  max-width: 440px;
+  margin: var(--space-4);
+}
+.modal-title { font-weight: 700; font-size: 1.05rem; margin-bottom: var(--space-2); color: var(--color-franciscan-green); }
+.modal-hint { font-size: 0.85rem; color: var(--color-text-muted); margin-bottom: var(--space-3); }
+.modal-box textarea {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+  box-sizing: border-box;
+}
+.modal-error { color: var(--color-danger); font-size: 0.82rem; margin-top: var(--space-2); min-height: 1.2em; }
+.modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-3); }
+
+/* Approve split-button (Approve / Approve with Note options) */
+.split-btn { position: relative; display: inline-flex; }
+.split-btn .btn-caret {
+  padding: 4px 6px;
+  border-left: 1px solid rgba(0,0,0,0.15);
+}
+.split-btn-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 50;
+  margin-top: 2px;
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card-hover);
+  white-space: nowrap;
+}
+.split-btn-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.82rem;
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+.split-btn-menu button:hover { background: #f4f0e4; }
+
 /* ---- Plain link-styled buttons (Cancel, Task 2) -- a <button> inside a
    <form> so the POST can't be triggered by a bare GET link, but styled to
    read exactly like the adjacent PDF/Edit <a> links. ---- */

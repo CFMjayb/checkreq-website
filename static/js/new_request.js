@@ -163,7 +163,18 @@ function showNewVendorPanel(show) {
   setVendorValidationMessage(''); // whichever mode is now active, the prior error no longer applies
   setVendorConfirmedMessage(false); // no existing vendor is selected once the new-vendor panel is active
   if (vendorTomSelect) {
-    if (show) vendorTomSelect.clear();
+    // Real bug (Jay, 2026-07-29): clicking "Use an existing vendor instead"
+    // after an unmatched-vendor extraction left the dropdown completely
+    // unusable -- applyExtractedFields() calls setTextboxValue() to show
+    // the extracted name, which sets the visible search text WITHOUT ever
+    // triggering Tom Select's own load(), so reopening the dropdown showed
+    // ZERO options for that stale text (confirmed live). Always clear()
+    // AND force a fresh load('') here, not just on the show=true branch,
+    // so switching back to "existing vendor" mode always starts from a
+    // real, populated list -- never leftover/empty search state.
+    vendorTomSelect.clear();
+    vendorTomSelect.control_input.value = '';
+    if (!show) vendorTomSelect.load('');
     // Tom Select renders its own wrapper next to the original <select> --
     // hide/show that wrapper so exactly one vendor-picking UI is visible.
     const wrapper = document.getElementById('vendorSelect').closest('.ts-wrapper') ||
@@ -457,12 +468,35 @@ function applyExtractedFields(data, filename) {
     } else if (vendorTomSelect) {
       vendorTomSelect.setTextboxValue(data.vendor_name);
       vendorDisplayText = data.vendor_name;
+      // Jay, 2026-07-29: "if I decide to add a new vendor... you should
+      // already bring over the name... you should be able to read [the
+      // Sold By block] from the upload." No existing-vendor match --
+      // prefill the "Add a new vendor" panel's own fields now (it isn't
+      // open yet; whenever the user clicks "Add a new vendor," these
+      // values are already sitting in the form). Defaults to Entity mode
+      // (Company Name), not Individual -- an invoice's vendor is almost
+      // always a business, and the extraction only ever returns one
+      // combined name string, never separate first/last.
+      const entityRadio = document.querySelector('input[name="new_vendor_entity_type"][value="entity"]');
+      if (entityRadio) { entityRadio.checked = true; updateNewVendorEntityFieldVisibility(); }
+      const setIfEmpty = (id, val) => {
+        const el = document.getElementById(id);
+        if (el && !el.value && val) { el.value = val; markAutoFilled(el); }
+      };
+      setIfEmpty('nvCompanyName', data.vendor_name);
+      setIfEmpty('nvAddr1', data.vendor_address_line1);
+      setIfEmpty('nvAddr2', data.vendor_address_line2);
+      setIfEmpty('nvCity', data.vendor_city);
+      setIfEmpty('nvState', data.vendor_state);
+      setIfEmpty('nvZip', data.vendor_zip);
+      setIfEmpty('nvPhone', data.vendor_phone);
+      setIfEmpty('nvContactEmail', data.vendor_contact_email);
     }
   }
 
   refreshPreview();
 
-  const vendorNote = data.matched_vendor_id ? '' : (data.vendor_name ? ' (no matching vendor found -- please select one)' : '');
+  const vendorNote = data.matched_vendor_id ? '' : (data.vendor_name ? ' (no matching vendor found -- click "Add a new vendor" below, already prefilled from this document -- please review)' : '');
   const confidenceNote = data.confidence && data.confidence !== 'high' ? ` [${data.confidence} confidence]` : '';
   setUploadStatus(`Filled from "${filename}" -- please review before submitting.${confidenceNote}${vendorNote}`, 'success', data.caveats);
 }
