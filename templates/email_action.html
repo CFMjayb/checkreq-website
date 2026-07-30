@@ -1,0 +1,96 @@
+{#
+email_action.html -- the public, unauthenticated landing/confirm page for
+approve-or-reject-by-email (Jay, 2026-07-30). Same extends-base.html pattern
+as vendor_w9_upload.html -- base.html's header is guarded on {% if user %},
+so it renders cleanly with no session at all.
+#}
+{% extends "base.html" %}
+{% block title %}Beacon — {{ ctx.request_number if ctx else "Approval" }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/login.css?v={{ asset_version('css/login.css') }}">{% endblock %}
+{% block content %}
+<div class="login-hero">
+  <div class="login-card" style="max-width:520px;">
+    <div class="wordmark">Beacon</div>
+
+    {% if state == "not_found" %}
+      <h1>Link not recognized</h1>
+      <p class="tagline">This approval link doesn't match anything on file. It may have been copied incorrectly.</p>
+      <a class="btn btn-secondary btn-block" href="/my-approvals">Sign in to Beacon</a>
+
+    {% elif state == "used" %}
+      <h1>Already handled</h1>
+      <p class="tagline">This action was already taken on <strong>{{ ctx.request_number }}</strong> using this link.</p>
+      <a class="btn btn-secondary btn-block" href="/my-approvals">Sign in to Beacon</a>
+
+    {% elif state == "expired" %}
+      <h1>Link expired</h1>
+      <p class="tagline">This approval link for <strong>{{ ctx.request_number }}</strong> has expired.</p>
+      <p>Sign in to Beacon to review and act on it directly.</p>
+      <a class="btn btn-primary btn-block" href="/my-approvals">Sign in to Beacon</a>
+
+    {% elif state == "stale" %}
+      <h1>No longer waiting on you</h1>
+      <p class="tagline">
+        {% if ctx %}<strong>{{ ctx.request_number }}</strong> {% endif %}is no longer waiting on this approval step
+        -- it may have already been acted on, edited and resubmitted, or resolved another way.
+      </p>
+      <a class="btn btn-secondary btn-block" href="/my-approvals">Sign in to Beacon</a>
+
+    {% elif state == "done_approve" %}
+      <h1>Approved</h1>
+      <p class="tagline">Thanks -- <strong>{{ ctx.request_number }}</strong> has been approved.</p>
+      <p>If it needed further approvers, they've now been notified. You can review the full chain any time in Beacon.</p>
+      <a class="btn btn-secondary btn-block" href="/my-approvals">Sign in to Beacon</a>
+
+    {% elif state == "done_reject" %}
+      <h1>Rejected</h1>
+      <p class="tagline">{{ ctx.request_number }} has been rejected and the submitter has been notified.</p>
+      <a class="btn btn-secondary btn-block" href="/my-approvals">Sign in to Beacon</a>
+
+    {% elif state == "active" %}
+      <h1>{{ ctx.request_number }}</h1>
+      <p class="tagline">Waiting on your approval as part of the chain.</p>
+      {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+
+      <table style="width:100%; border-collapse:collapse; margin:16px 0; font-size:0.92rem;">
+        <tr><td style="padding:4px 0; color:var(--color-text-muted); width:130px;">Entity</td><td style="padding:4px 0;">{{ ctx.org_code }}</td></tr>
+        <tr><td style="padding:4px 0; color:var(--color-text-muted);">Vendor</td><td style="padding:4px 0;">{{ ctx.vendor_name }}</td></tr>
+        <tr><td style="padding:4px 0; color:var(--color-text-muted);">Amount</td><td style="padding:4px 0; font-weight:bold;">${{ "%.2f"|format(ctx.amount) }}</td></tr>
+        <tr><td style="padding:4px 0; color:var(--color-text-muted);">Program Area</td><td style="padding:4px 0;">{{ ctx.program_area_title }}</td></tr>
+        <tr><td style="padding:4px 0; color:var(--color-text-muted);">Needed By</td><td style="padding:4px 0;">{{ ctx.requested_pay_date.strftime("%Y-%m-%d") if ctx.requested_pay_date else "—" }}</td></tr>
+        <tr><td style="padding:4px 0; color:var(--color-text-muted);">Submitted By</td><td style="padding:4px 0;">{{ ctx.submitter_name or ctx.submitter_email }}</td></tr>
+        <tr><td style="padding:4px 0; color:var(--color-text-muted); vertical-align:top;">Description</td><td style="padding:4px 0;">{{ ctx.description or "—" }}</td></tr>
+      </table>
+
+      <div style="display:flex; gap:8px; margin-bottom:20px;">
+        <a href="/email-action/{{ token }}?action=approve"
+           class="btn btn-block" style="background: {{ '#2E75B6' if action != 'reject' else 'transparent' }}; color: {{ '#fff' if action != 'reject' else 'var(--color-ink)' }}; border: 1px solid #2E75B6;">Approve</a>
+        <a href="/email-action/{{ token }}?action=reject"
+           class="btn btn-block" style="background: {{ '#b3261e' if action == 'reject' else 'transparent' }}; color: {{ '#fff' if action == 'reject' else 'var(--color-ink)' }}; border: 1px solid #b3261e;">Reject</a>
+      </div>
+
+      {% if action == "reject" %}
+        <form method="post" action="/email-action/{{ token }}">
+          <input type="hidden" name="action" value="reject">
+          <div class="field">
+            <label>Reason (required)</label>
+            <textarea name="note_or_reason" rows="3" required></textarea>
+          </div>
+          <button type="submit" class="btn btn-block" style="background:#b3261e; color:#fff;">Confirm Reject</button>
+        </form>
+      {% else %}
+        <form method="post" action="/email-action/{{ token }}">
+          <input type="hidden" name="action" value="approve">
+          <div class="field">
+            <label>Note (optional)</label>
+            <textarea name="note_or_reason" rows="2"></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Confirm Approve</button>
+        </form>
+      {% endif %}
+
+      <p class="sub" style="margin-top:1rem;"><a href="/my-approvals">Sign in to Beacon</a> for full details or to see the rest of the chain.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

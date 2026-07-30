@@ -102,6 +102,33 @@ VENDOR_W9_AMOUNT_THRESHOLD = 2000
 # sender (used elsewhere in this codebase for AP-related correspondence).
 W9_SENDER_EMAIL = os.environ.get("W9_SENDER_EMAIL", "businessoffice@episcopalmaryland.org")
 
+# Approval-by-email (Jay, 2026-07-30): how long a one-click approve/reject
+# email token stays valid before an approver has to sign in normally instead.
+# Long enough to survive a slow multi-step chain and a weekend; short enough
+# that a very old, unactioned email can't approve something years later.
+APPROVAL_EMAIL_TOKEN_DAYS = 10
+
+# Shared-secret auth for /internal/send-daily-digest -- a machine-to-machine
+# call (Cloud Scheduler, not a signed-in user), same X-API-Key-header
+# convention email_client.py already uses for its own outbound call to
+# 26-122, just inverted (this is an inbound check).
+_INTERNAL_KEY_SECRET_NAME = "checkreq-internal-key"
+_cached_internal_key: str | None = None
+
+
+def _get_internal_key() -> str:
+    global _cached_internal_key
+    env = os.environ.get("CHECKREQ_INTERNAL_KEY", "").strip()
+    if env:
+        return env
+    if _cached_internal_key is None:
+        from google.cloud import secretmanager
+        project = os.environ.get("FIRESTORE_PROJECT", "cfm-qbo-mcp")
+        client = secretmanager.SecretManagerServiceClient()
+        name = f"projects/{project}/secrets/{_INTERNAL_KEY_SECRET_NAME}/versions/latest"
+        _cached_internal_key = client.access_secret_version(name=name).payload.data.decode("utf-8").strip()
+    return _cached_internal_key
+
 app = FastAPI(title="Beacon")
 
 # INSTANCE_CONNECTION_NAME only ever exists in the Cloud Run environment (see
@@ -969,6 +996,358 @@ def _supersede_pending_approval_actions(cur, payment_request_id: int) -> None:
         "comment = 'Superseded by edit' WHERE payment_request_id = %s AND status = 'pending'",
         (payment_request_id,),
     )
+
+
+# ── Approval-by-email (Jay, 2026-07-30) ──────────────────────────────────────
+# "We want an email trigger when a CR requires approval... the ability to
+# approve or reject within the email itself, with the email sending a
+# trigger back to the system to record that. The daily email would show a
+# list of all the items with an approve/reject button on each." Two email
+# types share the same token mechanism below: an immediate "it's your turn"
+# email (fired at submission and at every chain advance) and a daily digest
+# (see /internal/send-daily-digest) listing everything still pending for an
+# approver. Both link to GET /email-action/{token} -- a public, unauthenticated,
+# token-gated confirmation page (same pattern as the existing
+# /vendor-w9-upload/{token} route) rather than a bare one-click GET, so an
+# email client's own link-prescanning/prefetching can never silently trigger
+# a real approval or rejection by itself.
+
+def _mint_approval_email_token(cur, payment_request_id: int, approver_user_id: int,
+                                 serial_group: int) -> str:
+    """One single-use, time-limited token per (request, approver, serial
+    group). Takes an open cursor so it can be minted in the same transaction
+    as the approval_actions rows it corresponds to (submission, edit-reset,
+    and chain-advance all already hold one)."""
+    token = pysecrets.token_urlsafe(32)
+    cur.execute(
+        "INSERT INTO checkreq.approval_email_tokens "
+        "(token, payment_request_id, approver_user_id, serial_group, expires_at) "
+        "VALUES (%s, %s, %s, %s, NOW() + INTERVAL '%s days')",
+        (token, payment_request_id, approver_user_id, serial_group, APPROVAL_EMAIL_TOKEN_DAYS),
+    )
+    return token
+
+
+def _approval_email_context(payment_request_id: int) -> dict | None:
+    """Request-summary fields shared by the trigger email, the daily digest,
+    and the /email-action/{token} landing page -- one query, one place that
+    knows how to resolve a request's vendor display name (mirrors the same
+    v.display_name / vendor_requests fallback used throughout my_approvals)."""
+    row = db.query_one(
+        """
+        SELECT pr.id, pr.request_number, pr.amount, pr.description, pr.requested_pay_date,
+               pr.status, pr.serial_group_current,
+               o.name AS org_name, o.code AS org_code,
+               pa.title AS program_area_title,
+               u.display_name AS submitter_name, u.email AS submitter_email,
+               v.display_name AS vendor_display_name,
+               vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
+               vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
+               vr.dba_name AS vr_dba_name
+        FROM checkreq.payment_requests pr
+        JOIN checkreq.organizations o ON o.id = pr.org_id
+        JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+        JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
+        LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+        LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+        WHERE pr.id = %s
+        """,
+        (payment_request_id,),
+    )
+    if not row:
+        return None
+    if row.get("vendor_display_name"):
+        row["vendor_name"] = row["vendor_display_name"]
+    elif row.get("vr_entity_type"):
+        row["vendor_name"] = _vendor_request_row_display_name(
+            row["vr_entity_type"], row["vr_company_name"], row["vr_dba_name"],
+            row["vr_first_name"], row["vr_last_name"],
+        )
+    else:
+        row["vendor_name"] = "—"
+    return row
+
+
+def _approval_action_email_html(request_body: str, sign_in_url: str) -> str:
+    """Shared HTML chrome (header band + footer sign-in link) both the
+    trigger email and the daily digest wrap their own inner content in --
+    keeps one visual identity across both without duplicating the wrapper."""
+    return f"""
+<div style="font-family: Arial, Helvetica, sans-serif; max-width: 640px; margin: 0 auto;">
+  <div style="background:#1F4E79; color:#fff; padding:16px 24px; border-radius:6px 6px 0 0;">
+    <h2 style="margin:0; font-size:18px;">Beacon — Check Request Approvals</h2>
+  </div>
+  <div style="border:1px solid #ddd; border-top:none; padding:24px; border-radius:0 0 6px 6px;">
+    {request_body}
+    <p style="color:#888; font-size:12px; margin-top:24px; border-top:1px solid #eee; padding-top:12px;">
+      Prefer to review in the app? <a href="{sign_in_url}">Sign in to Beacon</a>.
+    </p>
+  </div>
+</div>
+"""
+
+
+def _request_summary_table_html(ctx: dict) -> str:
+    needed_by = ctx["requested_pay_date"].strftime("%Y-%m-%d") if ctx.get("requested_pay_date") else "—"
+    return f"""
+    <table style="width:100%; border-collapse:collapse; margin:12px 0;">
+      <tr><td style="padding:4px 0; color:#555; width:150px;">Request #</td><td style="padding:4px 0; font-weight:bold;">{ctx['request_number']}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Entity</td><td style="padding:4px 0;">{ctx['org_code']}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Vendor</td><td style="padding:4px 0;">{ctx['vendor_name']}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Amount</td><td style="padding:4px 0; font-weight:bold;">${float(ctx['amount']):,.2f}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Program Area</td><td style="padding:4px 0;">{ctx['program_area_title']}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Needed By</td><td style="padding:4px 0;">{needed_by}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Submitted By</td><td style="padding:4px 0;">{ctx.get('submitter_name') or ctx.get('submitter_email') or '—'}</td></tr>
+      <tr><td style="padding:4px 0; color:#555; vertical-align:top;">Description</td><td style="padding:4px 0;">{ctx.get('description') or '—'}</td></tr>
+    </table>
+    """
+
+
+def _send_approval_needed_email(ctx: dict, approver_email: str, approver_name: str | None,
+                                  token: str, request: Request) -> dict:
+    base = str(request.base_url).rstrip("/")
+    action_url = f"{base}/email-action/{token}"
+    sign_in_url = f"{base}/my-approvals"
+    subject = f"Approval needed: {ctx['request_number']} ({ctx['vendor_name']}) — ${float(ctx['amount']):,.2f}"
+    body = f"""
+    <p>Hello {approver_name or ''},</p>
+    <p>A check request is waiting for your review as an approver in the chain.</p>
+    {_request_summary_table_html(ctx)}
+    <p style="margin:20px 0;">
+      <a href="{action_url}?action=approve" style="background:#2E75B6; color:#fff; padding:10px 20px; text-decoration:none; border-radius:4px; font-weight:bold; margin-right:10px;">Approve</a>
+      <a href="{action_url}?action=reject" style="background:#fff; color:#b3261e; border:1px solid #b3261e; padding:9px 19px; text-decoration:none; border-radius:4px; font-weight:bold;">Reject</a>
+    </p>
+    """
+    body_html = _approval_action_email_html(body, sign_in_url)
+    body_text = (
+        f"Beacon — Approval needed\n\n"
+        f"Request #: {ctx['request_number']}\nEntity: {ctx['org_code']}\nVendor: {ctx['vendor_name']}\n"
+        f"Amount: ${float(ctx['amount']):,.2f}\nProgram Area: {ctx['program_area_title']}\n"
+        f"Submitted By: {ctx.get('submitter_name') or ctx.get('submitter_email') or '—'}\n"
+        f"Description: {ctx.get('description') or '—'}\n\n"
+        f"Approve: {action_url}?action=approve\nReject: {action_url}?action=reject\n\n"
+        f"Sign in: {sign_in_url}"
+    )
+    return email_client.send_email(
+        to=approver_email, subject=subject, body_html=body_html, body_text=body_text,
+        sender=W9_SENDER_EMAIL,
+    )
+
+
+def _send_daily_digest_email(approver: dict, rows: list[dict], request: Request) -> dict:
+    """One email per approver per day (see /internal/send-daily-digest),
+    listing everything currently pending for them with its own
+    Approve/Reject buttons -- each row mints its own fresh token rather than
+    reusing whatever the original trigger email sent, so a digest link never
+    goes stale just because it's a few days newer than the original notice."""
+    base = str(request.base_url).rstrip("/")
+    sign_in_url = f"{base}/my-approvals"
+    items_html = ""
+    text_lines = []
+    for r in rows:
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                token = _mint_approval_email_token(cur, r["pr_id"], approver["id"], r["serial_group"])
+        action_url = f"{base}/email-action/{token}"
+        needed_by = r["requested_pay_date"].strftime("%Y-%m-%d") if r.get("requested_pay_date") else "—"
+        items_html += f"""
+        <tr>
+          <td style="padding:8px; border-bottom:1px solid #eee;"><strong>{r['request_number']}</strong><br><span style="color:#888; font-size:0.85em;">{r['org_code']}</span></td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{r['vendor_name']}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">${float(r['amount']):,.2f}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{needed_by}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee; white-space:nowrap;">
+            <a href="{action_url}?action=approve" style="background:#2E75B6; color:#fff; padding:6px 12px; text-decoration:none; border-radius:4px; font-size:0.85em;">Approve</a>
+            <a href="{action_url}?action=reject" style="background:#fff; color:#b3261e; border:1px solid #b3261e; padding:5px 11px; text-decoration:none; border-radius:4px; font-size:0.85em; margin-left:4px;">Reject</a>
+          </td>
+        </tr>
+        """
+        text_lines.append(
+            f"- {r['request_number']} ({r['org_code']}) {r['vendor_name']} ${float(r['amount']):,.2f} "
+            f"-- Approve: {action_url}?action=approve  Reject: {action_url}?action=reject"
+        )
+
+    plural = "s" if len(rows) != 1 else ""
+    body = f"""
+    <p>Hello {approver.get('display_name') or ''},</p>
+    <p>You have <strong>{len(rows)}</strong> check request{plural} waiting for your approval:</p>
+    <table style="width:100%; border-collapse:collapse; margin:16px 0; font-size:0.92rem;">
+      <tr style="background:#f5f5f5;">
+        <th style="padding:8px; text-align:left;">Request</th>
+        <th style="padding:8px; text-align:left;">Vendor</th>
+        <th style="padding:8px; text-align:right;">Amount</th>
+        <th style="padding:8px; text-align:left;">Needed By</th>
+        <th style="padding:8px; text-align:left;">Action</th>
+      </tr>
+      {items_html}
+    </table>
+    """
+    body_html = _approval_action_email_html(body, sign_in_url)
+    body_text = (
+        f"Beacon -- {len(rows)} check request{plural} waiting for your approval:\n\n"
+        + "\n".join(text_lines) + f"\n\nSign in: {sign_in_url}"
+    )
+    subject = f"Beacon: {len(rows)} check request{plural} awaiting your approval"
+    return email_client.send_email(
+        to=approver["email"], subject=subject, body_html=body_html, body_text=body_text,
+        sender=W9_SENDER_EMAIL,
+    )
+
+
+def _notify_approvers_for_group(payment_request_id: int, serial_group: int | None,
+                                  request: Request) -> None:
+    """Fires the 'it's your turn' email to every approver in the given
+    serial_group (more than one for a parallel global-approvers step) --
+    called right after that group's approval_actions rows are committed, at
+    submission, at an edit-triggered chain reset, and whenever
+    _perform_approval() clears a group and advances to the next one.
+    A None serial_group (no approval rule configured for this program area)
+    or an empty chain is a silent no-op -- nothing to notify anyone about."""
+    if serial_group is None:
+        return
+    ctx = _approval_email_context(payment_request_id)
+    if not ctx:
+        return
+    approvers = db.query(
+        "SELECT aa.id AS action_id, u.id AS user_id, u.email, u.display_name "
+        "FROM checkreq.approval_actions aa "
+        "JOIN checkreq.app_users u ON u.id = aa.approver_user_id "
+        "WHERE aa.payment_request_id = %s AND aa.serial_group = %s AND aa.status = 'pending'",
+        (payment_request_id, serial_group),
+    )
+    for a in approvers:
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                token = _mint_approval_email_token(cur, payment_request_id, a["user_id"], serial_group)
+        try:
+            _send_approval_needed_email(ctx, a["email"], a["display_name"], token, request)
+        except Exception as exc:
+            # Fails soft, matching this app's established philosophy for
+            # every other email call site -- a notification failure must
+            # never block or roll back the approval action that triggered
+            # it. The approver can always still act via /my-approvals.
+            print(f"[approval-email] notify failed for user {a['user_id']} on "
+                  f"{ctx['request_number']}: {exc}")
+
+
+def _perform_approval(pr: dict, my_action: dict, actor_user_id: int, note: str | None,
+                        ip: str | None, source: str, impersonated_by: int | None = None) -> dict:
+    """Shared approval-recording + chain-advance core, used by both the
+    authenticated web route (/requests/{n}/approve) and the token-based
+    email route (/email-action/{token}). Identical logic to the pre-existing
+    approve_request() body, extracted verbatim (down to the same-cursor
+    re-read gotcha noted below) except for the added action_source column
+    and the new return value used to know whether to fire a chain-advance
+    notification. `source` is 'web' or 'email' for the audit trail."""
+    audit_comment = f"Approved (serial group {pr['serial_group_current']})."
+    if note:
+        audit_comment += f" Note: {note}"
+
+    new_group_started = None
+    fully_approved = False
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.approval_actions SET status = 'approved', acted_at = NOW(), "
+                "acted_by_user_id = %s, comment = %s, ip_address = %s, action_source = %s WHERE id = %s",
+                (actor_user_id, note, ip, source, my_action["id"]),
+            )
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, serial_group, "
+                " previous_status, new_status, impersonated_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (pr["id"], actor_user_id, "Approved", audit_comment,
+                 pr["serial_group_current"], pr["status"], pr["status"], impersonated_by),
+            )
+
+            # Same-cursor re-read gotcha (found live during the original
+            # build): must use `cur`, not db.query_one/db.query -- those open
+            # a separate connection/transaction that cannot see the
+            # just-committed-within-THIS-transaction 'approved' row above,
+            # so the group would never appear to clear.
+            cur.execute(
+                "SELECT COUNT(*) AS c FROM checkreq.approval_actions "
+                "WHERE payment_request_id = %s AND serial_group = %s AND status = 'pending'",
+                (pr["id"], pr["serial_group_current"]),
+            )
+            remaining = cur.fetchone()["c"]
+
+            if remaining == 0:
+                cur.execute(
+                    "SELECT DISTINCT serial_group FROM checkreq.approval_actions "
+                    "WHERE payment_request_id = %s AND serial_group > %s ORDER BY serial_group",
+                    (pr["id"], pr["serial_group_current"]),
+                )
+                later_groups = cur.fetchall()
+                if later_groups:
+                    next_group = later_groups[0]["serial_group"]
+                    cur.execute(
+                        "SELECT approver_user_id FROM checkreq.approval_actions "
+                        "WHERE payment_request_id = %s AND serial_group = %s",
+                        (pr["id"], next_group),
+                    )
+                    next_approvers = cur.fetchall()
+                    next_display_approver = (
+                        next_approvers[0]["approver_user_id"] if len(next_approvers) == 1 else None
+                    )
+                    cur.execute(
+                        "UPDATE checkreq.payment_requests SET serial_group_current = %s, "
+                        "current_approver_id = %s, updated_at = NOW() WHERE id = %s",
+                        (next_group, next_display_approver, pr["id"]),
+                    )
+                    new_group_started = next_group
+                else:
+                    cur.execute(
+                        "UPDATE checkreq.payment_requests SET status = 'Approved', "
+                        "current_approver_id = NULL, updated_at = NOW() WHERE id = %s",
+                        (pr["id"],),
+                    )
+                    cur.execute(
+                        "INSERT INTO checkreq.audit_log "
+                        "(payment_request_id, action_by_user_id, action_type, comment, "
+                        " previous_status, new_status, impersonated_by_user_id) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (pr["id"], actor_user_id, "Fully Approved",
+                         "All approval steps complete -- ready for AP review.",
+                         pr["status"], "Approved", impersonated_by),
+                    )
+                    fully_approved = True
+
+    return {"new_group_started": new_group_started, "fully_approved": fully_approved}
+
+
+def _perform_rejection(pr: dict, my_action: dict, actor_user_id: int, reason: str,
+                         ip: str | None, source: str, impersonated_by: int | None = None) -> None:
+    """Shared rejection-recording core (identical to the pre-existing
+    reject_request() body, extracted verbatim except for action_source)."""
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.approval_actions SET status = 'rejected', acted_at = NOW(), "
+                "acted_by_user_id = %s, comment = %s, ip_address = %s, action_source = %s WHERE id = %s",
+                (actor_user_id, reason, ip, source, my_action["id"]),
+            )
+            cur.execute(
+                "UPDATE checkreq.approval_actions SET status = 'skipped' "
+                "WHERE payment_request_id = %s AND status = 'pending'",
+                (pr["id"],),
+            )
+            cur.execute(
+                "UPDATE checkreq.payment_requests SET status = 'Rejected', "
+                "current_approver_id = NULL, serial_group_current = NULL, updated_at = NOW() "
+                "WHERE id = %s",
+                (pr["id"],),
+            )
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, serial_group, "
+                " previous_status, new_status, impersonated_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (pr["id"], actor_user_id, "Rejected", reason, pr["serial_group_current"],
+                 pr["status"], "Rejected", impersonated_by),
+            )
 
 
 def _require_ap_reviewer(request: Request):
@@ -2050,6 +2429,8 @@ async def new_request_submit(request: Request):
         # an edit, per this task's own spec). GET /requests/{request_number}/pdf
         # always regenerates fresh from the live DB on every hit, so it
         # already reflects this edit with zero extra work.
+        if reset_approval and first_serial_group is not None:
+            _notify_approvers_for_group(payment_request_id, first_serial_group, request)
         return RedirectResponse(f"/my-requests?edited={request_number}", status_code=303)
 
     # ── NEW SUBMISSION branch (unchanged from before this session) ────────
@@ -2133,6 +2514,13 @@ async def new_request_submit(request: Request):
                     "UPDATE checkreq.payment_requests SET vendor_request_id = %s WHERE id = %s",
                     (vendor_request_id, payment_request_id),
                 )
+
+    # Fire the "it's your turn" email to whoever is first in the chain --
+    # after the transaction above has committed (the query inside reads
+    # approval_actions on its own separate connection). No-ops cleanly if
+    # first_serial_group is None (no approval rule configured for this
+    # program area).
+    _notify_approvers_for_group(payment_request_id, first_serial_group, request)
 
     # Archive the generated check-voucher PDF (always) + any optional
     # user-uploaded supporting attachments -- to GCS staging then the
@@ -2795,85 +3183,11 @@ async def approve_request(request_number: str, request: Request):
     imp_id = request.session.get("impersonating_user_id")
     impersonated_by = _real_user(request)["id"] if imp_id else None
 
-    audit_comment = f"Approved (serial group {pr['serial_group_current']})."
-    if note:
-        audit_comment += f" Note: {note}"
-
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE checkreq.approval_actions SET status = 'approved', acted_at = NOW(), "
-                "acted_by_user_id = %s, comment = %s, ip_address = %s WHERE id = %s",
-                (user["id"], note, _client_ip(request), my_action["id"]),
-            )
-            cur.execute(
-                "INSERT INTO checkreq.audit_log "
-                "(payment_request_id, action_by_user_id, action_type, comment, serial_group, "
-                " previous_status, new_status, impersonated_by_user_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (pr["id"], user["id"], "Approved", audit_comment,
-                 pr["serial_group_current"], pr["status"], pr["status"], impersonated_by),
-            )
-
-            # Is every OTHER row in this same serial_group also approved now?
-            # (the parallel-group gate Section 1a exists for -- e.g. a
-            # global_approvers step with 2 rows can't advance until both
-            # are in.) Real bug caught live during verification: this MUST
-            # use the same open cursor `cur`, not db.query_one/db.query --
-            # those open a brand-new connection/transaction and would read
-            # the pre-UPDATE state (the just-committed-within-this-
-            # transaction 'approved' row is invisible to a separate
-            # connection until this transaction commits), so the group
-            # would never appear to clear and the request would never
-            # advance past its first serial group.
-            cur.execute(
-                "SELECT COUNT(*) AS c FROM checkreq.approval_actions "
-                "WHERE payment_request_id = %s AND serial_group = %s AND status = 'pending'",
-                (pr["id"], pr["serial_group_current"]),
-            )
-            remaining = cur.fetchone()["c"]
-
-            if remaining == 0:
-                # Whole group cleared -- look for a later serial group.
-                cur.execute(
-                    "SELECT DISTINCT serial_group FROM checkreq.approval_actions "
-                    "WHERE payment_request_id = %s AND serial_group > %s ORDER BY serial_group",
-                    (pr["id"], pr["serial_group_current"]),
-                )
-                later_groups = cur.fetchall()
-                if later_groups:
-                    next_group = later_groups[0]["serial_group"]
-                    cur.execute(
-                        "SELECT approver_user_id FROM checkreq.approval_actions "
-                        "WHERE payment_request_id = %s AND serial_group = %s",
-                        (pr["id"], next_group),
-                    )
-                    next_approvers = cur.fetchall()
-                    next_display_approver = (
-                        next_approvers[0]["approver_user_id"] if len(next_approvers) == 1 else None
-                    )
-                    cur.execute(
-                        "UPDATE checkreq.payment_requests SET serial_group_current = %s, "
-                        "current_approver_id = %s, updated_at = NOW() WHERE id = %s",
-                        (next_group, next_display_approver, pr["id"]),
-                    )
-                else:
-                    # Last step -- fully approved, now appears on the AP
-                    # Review screen (Section 3).
-                    cur.execute(
-                        "UPDATE checkreq.payment_requests SET status = 'Approved', "
-                        "current_approver_id = NULL, updated_at = NOW() WHERE id = %s",
-                        (pr["id"],),
-                    )
-                    cur.execute(
-                        "INSERT INTO checkreq.audit_log "
-                        "(payment_request_id, action_by_user_id, action_type, comment, "
-                        " previous_status, new_status, impersonated_by_user_id) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                        (pr["id"], user["id"], "Fully Approved",
-                         "All approval steps complete -- ready for AP review.",
-                         pr["status"], "Approved", impersonated_by),
-                    )
+    result = _perform_approval(
+        pr, my_action, user["id"], note, _client_ip(request), "web", impersonated_by,
+    )
+    if result["new_group_started"] is not None:
+        _notify_approvers_for_group(pr["id"], result["new_group_started"], request)
 
     return RedirectResponse(f"/my-approvals?approved={request_number}", status_code=303)
 
@@ -2926,32 +3240,7 @@ async def reject_request(request_number: str, request: Request):
     imp_id = request.session.get("impersonating_user_id")
     impersonated_by = _real_user(request)["id"] if imp_id else None
 
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE checkreq.approval_actions SET status = 'rejected', acted_at = NOW(), "
-                "acted_by_user_id = %s, comment = %s, ip_address = %s WHERE id = %s",
-                (user["id"], reason, _client_ip(request), my_action["id"]),
-            )
-            cur.execute(
-                "UPDATE checkreq.approval_actions SET status = 'skipped' "
-                "WHERE payment_request_id = %s AND status = 'pending'",
-                (pr["id"],),
-            )
-            cur.execute(
-                "UPDATE checkreq.payment_requests SET status = 'Rejected', "
-                "current_approver_id = NULL, serial_group_current = NULL, updated_at = NOW() "
-                "WHERE id = %s",
-                (pr["id"],),
-            )
-            cur.execute(
-                "INSERT INTO checkreq.audit_log "
-                "(payment_request_id, action_by_user_id, action_type, comment, serial_group, "
-                " previous_status, new_status, impersonated_by_user_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (pr["id"], user["id"], "Rejected", reason, pr["serial_group_current"],
-                 pr["status"], "Rejected", impersonated_by),
-            )
+    _perform_rejection(pr, my_action, user["id"], reason, _client_ip(request), "web", impersonated_by)
 
     email_result = _send_rejection_email(pr, "Rejected", reason, request)
     redirect_url = f"/my-approvals?rejected={request_number}"
@@ -2959,6 +3248,183 @@ async def reject_request(request_number: str, request: Request):
         from urllib.parse import quote
         redirect_url += f"&email_warning={quote(email_result.get('error') or 'unknown error sending rejection email')}"
     return RedirectResponse(redirect_url, status_code=303)
+
+
+# ── Approval-by-email landing page (Jay, 2026-07-30) ─────────────────────────
+# Public, unauthenticated, token-gated -- same pattern as the existing
+# /vendor-w9-upload/{token} route. GET shows a confirmation page (never
+# mutates state on its own, so email-client link-prescanning can't trigger a
+# real action); POST is the only thing that actually approves/rejects.
+
+def _approval_email_token_lookup(token: str) -> dict | None:
+    """Computes is_used/is_expired in SQL (NOW() at the DB, not this
+    process's clock) rather than comparing datetimes in Python -- simpler
+    and avoids any tzinfo mismatch between what psycopg hands back and
+    what this process's own clock thinks 'now' is."""
+    return db.query_one(
+        "SELECT *, (used_at IS NOT NULL) AS is_used, (NOW() > expires_at) AS is_expired "
+        "FROM checkreq.approval_email_tokens WHERE token = %s",
+        (token,),
+    )
+
+
+def _approval_email_token_state(tok: dict | None, ctx: dict | None, my_action: dict | None) -> str:
+    """One shared 'what should this page show' resolver for both GET and
+    POST -- 'active' is the only state where an action is actually still
+    possible."""
+    if not tok:
+        return "not_found"
+    if tok["is_used"]:
+        return "used"
+    if tok["is_expired"]:
+        return "expired"
+    if not ctx or ctx["status"] != "UnderReview" or not my_action:
+        # Covers every other way this step could have stopped being live:
+        # already acted on via the web UI, the request was edited (which
+        # resets and re-chains), cancelled, or rejected by someone else in
+        # a parallel serial_group.
+        return "stale"
+    return "active"
+
+
+@app.get("/email-action/{token}", response_class=HTMLResponse)
+def email_action_form(token: str, request: Request, action: str = "approve"):
+    tok = _approval_email_token_lookup(token)
+    ctx = _approval_email_context(tok["payment_request_id"]) if tok else None
+    my_action = None
+    if tok and ctx:
+        my_action = db.query_one(
+            "SELECT * FROM checkreq.approval_actions WHERE payment_request_id = %s "
+            "AND approver_user_id = %s AND serial_group = %s AND status = 'pending'",
+            (tok["payment_request_id"], tok["approver_user_id"], tok["serial_group"]),
+        )
+    state = _approval_email_token_state(tok, ctx, my_action)
+    return templates.TemplateResponse(request, "email_action.html", {
+        "state": state, "ctx": ctx, "token": token,
+        "action": action if action in ("approve", "reject") else "approve", "error": "",
+    })
+
+
+@app.post("/email-action/{token}", response_class=HTMLResponse)
+async def email_action_submit(token: str, request: Request):
+    form = await request.form()
+    action = form.get("action", "approve")
+    note_or_reason = (form.get("note_or_reason") or "").strip()
+
+    tok = _approval_email_token_lookup(token)
+    ctx = _approval_email_context(tok["payment_request_id"]) if tok else None
+    my_action = None
+    if tok and ctx:
+        my_action = db.query_one(
+            "SELECT * FROM checkreq.approval_actions WHERE payment_request_id = %s "
+            "AND approver_user_id = %s AND serial_group = %s AND status = 'pending'",
+            (tok["payment_request_id"], tok["approver_user_id"], tok["serial_group"]),
+        )
+    state = _approval_email_token_state(tok, ctx, my_action)
+
+    if state == "active" and action == "reject" and not note_or_reason:
+        return templates.TemplateResponse(request, "email_action.html", {
+            "state": "active", "ctx": ctx, "token": token, "action": "reject",
+            "error": "A rejection reason is required.",
+        })
+
+    if state != "active":
+        return templates.TemplateResponse(request, "email_action.html", {
+            "state": state, "ctx": ctx, "token": token, "action": action, "error": "",
+        })
+
+    pr = db.query_one(
+        "SELECT pr.*, u.email AS submitter_email, u.display_name AS submitter_name, "
+        "o.name AS org_name FROM checkreq.payment_requests pr "
+        "JOIN checkreq.app_users u ON u.id = pr.submitter_user_id "
+        "JOIN checkreq.organizations o ON o.id = pr.org_id WHERE pr.id = %s",
+        (tok["payment_request_id"],),
+    )
+    ip = _client_ip(request)
+
+    if action == "reject":
+        _perform_rejection(pr, my_action, tok["approver_user_id"], note_or_reason, ip, "email")
+        _send_rejection_email(pr, "Rejected", note_or_reason, request)
+        result_state = "done_reject"
+    else:
+        result = _perform_approval(
+            pr, my_action, tok["approver_user_id"], note_or_reason or None, ip, "email",
+        )
+        if result["new_group_started"] is not None:
+            _notify_approvers_for_group(pr["id"], result["new_group_started"], request)
+        result_state = "done_approve"
+
+    # Marked used AFTER the action succeeds, not before -- if _perform_approval/
+    # _perform_rejection ever raised, the token should stay valid for a retry
+    # rather than being burned on a failed attempt.
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.approval_email_tokens SET used_at = NOW() WHERE id = %s",
+                (tok["id"],),
+            )
+
+    return templates.TemplateResponse(request, "email_action.html", {
+        "state": result_state, "ctx": ctx, "token": token, "action": action, "error": "",
+    })
+
+
+@app.post("/internal/send-daily-digest")
+async def send_daily_digest(request: Request):
+    """Cloud Scheduler -> this endpoint, once daily (Jay, 2026-07-30: "a
+    daily email that summarizes all the different things they need to
+    do"). Machine-to-machine, gated by a shared-secret header rather than
+    session auth -- there is no signed-in user driving this call. One email
+    per approver, covering every request currently waiting on them across
+    every org/entity, not scoped to whichever entity a human happened to
+    have selected in their session."""
+    supplied = request.headers.get("x-internal-key", "")
+    if not supplied or supplied != _get_internal_key():
+        return JSONResponse({"error": "unauthorized"}, status_code=403)
+
+    approvers = db.query(
+        "SELECT DISTINCT u.id, u.email, u.display_name "
+        "FROM checkreq.approval_actions aa "
+        "JOIN checkreq.app_users u ON u.id = aa.approver_user_id "
+        "JOIN checkreq.payment_requests pr ON pr.id = aa.payment_request_id "
+        "WHERE aa.status = 'pending' AND aa.serial_group = pr.serial_group_current "
+        "AND pr.status = 'UnderReview'"
+    )
+
+    sent = 0
+    skipped_empty = 0
+    errors = []
+    for a in approvers:
+        pending = db.query(
+            "SELECT DISTINCT aa.payment_request_id AS pr_id, aa.serial_group "
+            "FROM checkreq.approval_actions aa "
+            "JOIN checkreq.payment_requests pr ON pr.id = aa.payment_request_id "
+            "WHERE aa.approver_user_id = %s AND aa.status = 'pending' "
+            "AND aa.serial_group = pr.serial_group_current AND pr.status = 'UnderReview'",
+            (a["id"],),
+        )
+        rows = []
+        for p in pending:
+            ctx = _approval_email_context(p["pr_id"])
+            if not ctx:
+                continue
+            ctx["pr_id"] = p["pr_id"]
+            ctx["serial_group"] = p["serial_group"]
+            rows.append(ctx)
+        if not rows:
+            skipped_empty += 1
+            continue
+        try:
+            result = _send_daily_digest_email(a, rows, request)
+        except Exception as exc:
+            errors.append({"approver": a["email"], "error": str(exc)})
+            continue
+        if result.get("status") == "sent":
+            sent += 1
+        else:
+            errors.append({"approver": a["email"], "error": result.get("error")})
+
+    return JSONResponse({"approvers_notified": sent, "skipped_empty": skipped_empty, "errors": errors})
 
 
 # ── Feedback (Task 10, UI/UX batch, 2026-07-26) ──────────────────────────────
