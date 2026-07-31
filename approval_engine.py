@@ -3,22 +3,25 @@ approval_engine.py — builds the approval chain for a payment_request.
 
 Replaces Power Automate Flow 1's chain-construction logic (Plan.md). Pure
 functions, no side effects — callers persist the result and drive the actual
-approve/reject/escalate state machine (not built yet, see Plan.md addendum
-Phase 5).
+approve/reject/escalate state machine.
 
-Chain rule (per Plan.md, unchanged from the original design):
+Chain rule (per Plan.md, updated 2026-07-31 by the Approval Workflow
+Corrections plan):
   1. Active approval_rules for the request's program_area, ordered by serial_group.
-  2. If amount >= any active global_approvers row's threshold_amount, those
-     approvers are appended as one additional serial group after the program
-     area's own rules (global approvers act in parallel with each other, per
-     the 2026-06-17 addendum's "Parallel — both must approve" decision).
-"""
+  2. If amount >= the REQUESTING ORG's own global_approval_threshold (Jay's
+     correction: this used to be a per-approver-row threshold_amount that
+     could drift inconsistently within one entity -- now a single, clearly-
+     owned value per organization), every active global_approvers row for
+     THAT org is appended as one additional serial group after the program
+     area's own rules. Only one of them needs to actually approve to clear
+     the group (see main.py's _perform_approval -- this module only builds
+     the chain, it doesn't decide how many sign-offs a group needs)."""
 from __future__ import annotations
 
 import db
 
 
-def build_approval_chain(program_area_id: int, amount: float) -> list[dict]:
+def build_approval_chain(program_area_id: int, org_id: int, amount: float) -> list[dict]:
     """Return an ordered list of {serial_group, approver_user_id, approver_email,
     approver_name, must_approve, backup_approver_id} steps. Empty list means
     no approval rule is configured for this program area — caller must not
@@ -53,16 +56,24 @@ def build_approval_chain(program_area_id: int, amount: float) -> list[dict]:
                 "backup_approver_id": r["backup_approver_id"],
             })
 
-    global_rows = db.query(
-        """
-        SELECT ga.approver_user_id, ga.backup_approver_id, ga.threshold_amount, ga.serial_group,
-               u.email, u.display_name
-        FROM checkreq.global_approvers ga
-        JOIN checkreq.app_users u ON u.id = ga.approver_user_id
-        WHERE ga.is_active = TRUE AND ga.threshold_amount <= %s
-        """,
-        (amount,),
+    org_row = db.query_one(
+        "SELECT global_approval_threshold FROM checkreq.organizations WHERE id = %s",
+        (org_id,),
     )
+    threshold = float(org_row["global_approval_threshold"]) if org_row else 5000.0
+
+    global_rows = []
+    if amount >= threshold:
+        global_rows = db.query(
+            """
+            SELECT ga.approver_user_id, ga.backup_approver_id, ga.serial_group,
+                   u.email, u.display_name
+            FROM checkreq.global_approvers ga
+            JOIN checkreq.app_users u ON u.id = ga.approver_user_id
+            WHERE ga.is_active = TRUE AND ga.org_id = %s
+            """,
+            (org_id,),
+        )
     if global_rows:
         next_group = (max((c["serial_group"] for c in chain), default=0)) + 1
         for r in global_rows:
@@ -72,6 +83,14 @@ def build_approval_chain(program_area_id: int, amount: float) -> list[dict]:
                 "approver_email": r["email"],
                 "approver_name": r["display_name"],
                 "backup_approver_id": r["backup_approver_id"],
+                # Only one Global Approver needs to actually approve to clear
+                # this group -- see main.py's _perform_approval short-circuit.
+                # Found missing here by task #83's own end-to-end test (a
+                # 2-approver EDOM group materialized with any_one_suffices
+                # False on both rows despite task #80's main.py-side work
+                # being complete) -- the flag was never actually set on this
+                # chain step to begin with.
+                "any_one_suffices": True,
             })
 
     return chain

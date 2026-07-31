@@ -382,7 +382,7 @@ async function updateAllBudgetChecks() {
     const amount = parseFloat(row.querySelector('.glAmount').value) || 0;
     if (!programAreaId || !glAccountId || amount <= 0) {
       statusEl.textContent = '';
-      statusEl.classList.remove('over-budget');
+      statusEl.className = 'gl-budget-status';
       statusEl.title = '';
       return;
     }
@@ -391,22 +391,29 @@ async function updateAllBudgetChecks() {
       const d = await r.json();
       if (!d.budget_found) {
         statusEl.textContent = '';
-        statusEl.classList.remove('over-budget');
+        statusEl.className = 'gl-budget-status';
         statusEl.title = '';
         return;
       }
-      statusEl.textContent = `Budget: ${fmtMoney(d.annual_budget)} · Spent: ${fmtMoney(d.projected)}`;
-      statusEl.classList.toggle('over-budget', d.is_over);
-      if (!d.is_over) {
-        statusEl.title = '';
-      } else if (d.blocked) {
-        statusEl.title = 'Over budget -- overspend is not allowed for this account. This line will block submission.';
+      // Three-tier design (Approval Workflow Corrections, 2026-07-31): a
+      // green check for "checked, within budget" is Jay's own direct
+      // request -- distinct from the amber/red warning treatment for the
+      // two over-budget tiers, since those genuinely aren't "OK" the same
+      // way tier 1 is.
+      statusEl.className = `gl-budget-status tier-${d.tier}`;
+      if (d.tier === 'ok') {
+        statusEl.textContent = `✓ Budget: ${fmtMoney(d.annual_budget)} · Spent: ${fmtMoney(d.projected)}`;
+        statusEl.title = 'Budget checked -- within budget.';
+      } else if (d.tier === 'buffer_notice') {
+        statusEl.textContent = `⚠ Budget: ${fmtMoney(d.annual_budget)} · Spent: ${fmtMoney(d.projected)}`;
+        statusEl.title = 'Over budget, but within this account\'s allowed buffer -- will proceed, CFO notified (FYI only).';
       } else {
-        statusEl.title = 'Over budget -- allowed (Allow Overspend = Yes). Will be flagged for CFO review on submission.';
+        statusEl.textContent = `⚠ Budget: ${fmtMoney(d.annual_budget)} · Spent: ${fmtMoney(d.projected)}`;
+        statusEl.title = 'Over budget beyond this account\'s allowed buffer -- submitting will ask you to confirm and will require CFO approval.';
       }
     } catch {
       statusEl.textContent = '';
-      statusEl.classList.remove('over-budget');
+      statusEl.className = 'gl-budget-status';
     }
   }));
 }
@@ -678,12 +685,58 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.querySelectorAll('.glAccount').forEach(sel => initGlAccountSelect(sel));
 
-  document.getElementById('reqForm').addEventListener('submit', (e) => {
+  document.getElementById('reqForm').addEventListener('submit', async (e) => {
     if (!vendorSelectionIsValid()) {
       e.preventDefault();
       setVendorValidationMessage('Please select a vendor from the list, or click "Add a new one" below.');
       document.getElementById('vendorSelect').closest('.field').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
     }
+
+    // Three-tier budget design (Approval Workflow Corrections, 2026-07-31):
+    // pre-flight check for tier-3 (over budget beyond the account's
+    // buffer) BEFORE the real submission -- Jay's direct request: "the
+    // user can be asked if they want to submit this." The real,
+    // authoritative check still happens server-side in
+    // new_request_submit regardless of what this pre-flight call finds --
+    // this is purely so the confirmation is a real dialog, not a raw
+    // error page on the actual submit attempt.
+    const form = e.target;
+    const already = form.querySelector('input[name="confirmed_overbudget"]');
+    if (already && already.value === '1') return; // already confirmed -- let this one through
+
+    e.preventDefault();
+    let cfoRequired = [];
+    try {
+      const resp = await fetch('/api/budget-check-submission', { method: 'POST', body: new FormData(form) });
+      const data = await resp.json();
+      cfoRequired = data.cfo_required || [];
+    } catch {
+      // A failed pre-flight check isn't fatal -- fall through to the real
+      // submission below, which re-runs the identical check server-side.
+    }
+
+    if (cfoRequired.length) {
+      const result = await showActionModal({
+        title: 'Over Budget — Confirm Submission',
+        // cfoRequired's own detail strings (main.py's _evaluate_gl_line_budgets)
+        // already end with "Submitting will require CFO sign-off..." -- do
+        // not append a second, near-duplicate sentence here.
+        hint: cfoRequired.join(' '),
+        confirmLabel: 'Submit Anyway',
+      });
+      if (result === null) return; // cancelled -- back to editing
+    }
+
+    let hidden = form.querySelector('input[name="confirmed_overbudget"]');
+    if (!hidden) {
+      hidden = document.createElement('input');
+      hidden.type = 'hidden';
+      hidden.name = 'confirmed_overbudget';
+      form.appendChild(hidden);
+    }
+    hidden.value = '1';
+    form.submit();
   });
 
   document.getElementById('payDateInput').addEventListener('input', refreshPreview);

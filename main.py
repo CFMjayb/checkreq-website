@@ -854,63 +854,64 @@ def _user_can_submit_for(user: dict, program_area_id: int) -> bool:
     return row is not None
 
 
-# ── Budget/Overspend Tracking (Budget Overspend Tracking Plan.md, 2026-07-26) ──
-# Jay's decisions, applied literally, no re-litigating:
-#   1. allow_overspend=False + over budget => HARD BLOCK submission entirely
-#      (not just an auto-approve bypass).
-#   2. Fiscal year = calendar year for both EDOM and Claggett -- no FY-offset
+# ── Budget/Overspend Tracking (rewritten 2026-07-31 -- Approval Workflow
+# Corrections Plan.md) ──
+# Original 2026-07-26 decisions still in force:
+#   1. Fiscal year = calendar year for both EDOM and Claggett -- no FY-offset
 #      logic anywhere in this feature.
-#   3. Program Area + GL Account is the budget-scoping key -- no QBO Class
+#   2. Program Area + GL Account is the budget-scoping key -- no QBO Class
 #      disambiguation needed.
-#   4. "Actual spend" = the account's REAL QBO GL balance for the calendar
+#   3. "Actual spend" = the account's REAL QBO GL balance for the calendar
 #      year to date (qbo_mcp_client.get_budget_status()'s actual_spend,
 #      itself qbo-mcp-server's fetch_gl() net_change -- a true QBO-computed
 #      running-balance difference, inherently net of credits/refunds, never
 #      a manual sum of individual debit/credit lines) PLUS this GL line's
 #      own amount, compared against the account's QBO-native annual budget.
 #
-# A live one-time diagnostic query (2026-07-26) confirmed QBO already has a
-# real, usable native Budget entity for both companies -- no new
-# program_area_gl_account_budgets table was needed; see
-# qbo-mcp-server's new GET /api/checkreq/budget-status/{company} endpoint.
+# Superseded 2026-07-31 (Jay's direct correction): allow_overspend is no
+# longer a hard block/no-block Yes-No switch -- it's now
+# overspend_buffer_amount, a dollar buffer, and there is no longer a state
+# that blocks submission outright. Three tiers instead:
+#   Tier 1 (within budget) -- proceeds normally.
+#   Tier 2 (over budget, within the account's buffer) -- proceeds
+#     automatically, but the CFO is notified (email + in-app, once the
+#     notification bell exists) and it's logged for reporting.
+#   Tier 3 (over budget beyond the buffer) -- the submitter must explicitly
+#     confirm before the request is created; confirming adds a real CFO
+#     approval step to the chain (on top of whatever else already applies).
 
 def _evaluate_gl_line_budgets(
     org: dict, program_area_id: int, gl_lines: list[tuple[int, float, str]]
-) -> tuple[list[str], list[str]]:
+) -> dict:
     """Per-GL-line budget check. Each line is evaluated INDEPENDENTLY against
     (this account's real QBO year-to-date spend + that line's own amount)
     vs. its QBO-native annual budget -- matches the live-preview UI's own
-    per-line framing (Section 4 of the plan: "actual_spend + this_line's_
-    amount"). Deliberately does NOT sum multiple lines on the SAME
+    per-line framing. Deliberately does NOT sum multiple lines on the SAME
     submission that happen to code to the same GL account -- a documented
     simplification, not something Jay was asked about; see CLAUDE.md.
 
     A GL account with no QBO Budget data at all (budget_found=False) is
-    silently skipped for both blocking and flagging -- there's nothing to
-    compare against. Likewise a GL line with no program_area_gl_accounts
-    mapping row at all (shouldn't normally happen -- the picker only ever
-    offers mapped accounts -- but guarded rather than assumed).
+    silently skipped -- there's nothing to compare against. Likewise a GL
+    line with no program_area_gl_accounts mapping row at all (shouldn't
+    normally happen -- the picker only ever offers mapped accounts -- but
+    guarded rather than assumed).
 
-    Returns (block_messages, flag_details):
-      block_messages: non-empty => the caller MUST reject the submission
-        with a 400 BEFORE writing anything to the database.
-      flag_details: one human-readable string per line that exceeded budget
-        but was allowed through (allow_overspend=true) -- stored verbatim on
-        payment_requests.overspend_detail for /admin/ap-review to surface,
-        per the plan's Section 6 resolution (slot into the AP review screen
-        that already exists for this, not a second competing queue).
-    """
+    Returns {"ok": [...], "buffer_notice": [...], "cfo_required": [...]} --
+    each non-"ok" entry is a dict with gl_account_id, account_number,
+    account_name, annual_budget, projected, buffer_amount, line_amount, and
+    a human-readable `detail` string. Callers: new_request_submit (the
+    authoritative, server-side gate) and the /api/budget-check-submission
+    pre-flight endpoint the UI calls before showing a tier-3 confirmation."""
+    result = {"ok": [], "buffer_notice": [], "cfo_required": []}
     if not gl_lines:
-        return [], []
+        return result
     company = (org.get("code") or "").lower()
     fiscal_year = date.today().year
-    block_messages: list[str] = []
-    flag_details: list[str] = []
 
     for acct_id, amt, _memo in gl_lines:
         row = db.query_one(
             """
-            SELECT ga.account_number, ga.account_name, pga.allow_overspend
+            SELECT ga.account_number, ga.account_name, pga.overspend_buffer_amount
             FROM checkreq.gl_accounts ga
             JOIN checkreq.program_area_gl_accounts pga
                 ON pga.gl_account_id = ga.id AND pga.program_area_id = %s
@@ -926,26 +927,69 @@ def _evaluate_gl_line_budgets(
             continue  # no QBO budget data for this account -- can't enforce
 
         projected = round(status["actual_spend"] + amt, 2)
-        if projected <= status["annual_budget"]:
+        annual_budget = float(status["annual_budget"])
+        buffer_amount = float(row["overspend_buffer_amount"])
+        label = row["account_name"] or row["account_number"]
+
+        if projected <= annual_budget:
+            result["ok"].append({"gl_account_id": acct_id, "account_number": row["account_number"]})
             continue
 
-        label = row["account_name"] or row["account_number"]
-        if row["allow_overspend"]:
-            flag_details.append(
-                f"GL {row['account_number']} ({label}): annual budget "
-                f"${status['annual_budget']:,.2f}, projected spend "
-                f"${projected:,.2f} after this request (${amt:,.2f} this line)."
+        entry = {
+            "gl_account_id": acct_id,
+            "account_number": row["account_number"],
+            "account_name": row["account_name"],
+            "annual_budget": annual_budget,
+            "projected": projected,
+            "buffer_amount": buffer_amount,
+            "line_amount": amt,
+        }
+        if projected <= annual_budget + buffer_amount:
+            entry["detail"] = (
+                f"GL {row['account_number']} ({label}): annual budget ${annual_budget:,.2f}, "
+                f"projected spend ${projected:,.2f} after this request (${amt:,.2f} this line) -- "
+                f"within the account's ${buffer_amount:,.2f} allowed buffer. Proceeding; the CFO "
+                f"will be notified."
             )
+            result["buffer_notice"].append(entry)
         else:
-            block_messages.append(
-                f"GL {row['account_number']} ({label}): this line would bring the "
-                f"account's year-to-date spend to ${projected:,.2f} against a "
-                f"${status['annual_budget']:,.2f} annual budget, and overspend is "
-                f"not allowed for this Program Area/GL Account combination. Reduce "
-                f"the amount, choose a different GL account, or ask an admin to "
-                f"enable Allow Overspend for this mapping."
+            entry["detail"] = (
+                f"GL {row['account_number']} ({label}): this line would bring the account's "
+                f"year-to-date spend to ${projected:,.2f} against a ${annual_budget:,.2f} annual "
+                f"budget plus a ${buffer_amount:,.2f} buffer -- beyond what's allowed without CFO "
+                f"approval. Submitting will require CFO sign-off before this can proceed."
             )
-    return block_messages, flag_details
+            result["cfo_required"].append(entry)
+    return result
+
+
+def _send_budget_buffer_notice_email(request_number: str, org_name: str, details: list[str]) -> None:
+    """Tier 2 (over budget, within the account's allowed buffer) -- FYI
+    only, no action needed, sent to every is_cfo user (Jay's plan: "the CFO
+    is notified... no approval needed"). Fails soft, matching every other
+    notification in this app -- one CFO's bad email address must never
+    crash the submission that already succeeded by the time this runs."""
+    cfos = db.query("SELECT email, display_name FROM checkreq.app_users WHERE is_cfo = TRUE")
+    if not cfos:
+        return
+    subject = f"Budget notice: {request_number} is over budget (within buffer)"
+    body_html = (
+        f"<p>FYI — <strong>{request_number}</strong> ({org_name}) was submitted over budget on "
+        f"one or more GL lines, but within that account's allowed buffer. No action is needed.</p>"
+        f"<ul>" + "".join(f"<li>{d}</li>" for d in details) + "</ul>"
+    )
+    body_text = (
+        f"FYI -- {request_number} ({org_name}) was over budget, within buffer:\n\n"
+        + "\n".join(details)
+    )
+    for c in cfos:
+        try:
+            email_client.send_email(
+                to=c["email"], subject=subject, body_html=body_html, body_text=body_text,
+                sender=W9_SENDER_EMAIL,
+            )
+        except Exception as exc:
+            print(f"[budget-buffer-notice] failed for {c['email']}: {exc}")
 
 
 # ── Approval Action Workflow helpers (AP Review Workflow Plan.md, Section 1a/2b) ──
@@ -974,13 +1018,22 @@ def _materialize_approval_actions(cur, payment_request_id: int, chain: list[dict
     only a per-row table, not a scalar field, can correctly gate "every
     approver in this group must act before it advances." Called at the
     same two moments main.py already computes a chain: the original
-    submission INSERT and the edit-triggered approval-reset UPDATE."""
+    submission INSERT and the edit-triggered approval-reset UPDATE.
+
+    any_one_suffices (Approval Workflow Corrections, 2026-07-31): each
+    chain step dict may carry "any_one_suffices": True (set by
+    approval_engine.py for the entity global-approver group, and by
+    _self_payment_cfo_chain() for the self-payment CFO group) -- stored
+    per-row since a step's origin isn't otherwise recoverable once
+    materialized, and _perform_approval's group-clear check reads it back
+    from here rather than re-deriving the chain."""
     for step in chain:
         cur.execute(
             "INSERT INTO checkreq.approval_actions "
-            "(payment_request_id, serial_group, approver_user_id, status) "
-            "VALUES (%s, %s, %s, 'pending')",
-            (payment_request_id, step["serial_group"], step["approver_user_id"]),
+            "(payment_request_id, serial_group, approver_user_id, status, any_one_suffices) "
+            "VALUES (%s, %s, %s, 'pending', %s)",
+            (payment_request_id, step["serial_group"], step["approver_user_id"],
+             bool(step.get("any_one_suffices", False))),
         )
 
 
@@ -1282,6 +1335,23 @@ def _perform_approval(pr: dict, my_action: dict, actor_user_id: int, note: str |
                  pr["serial_group_current"], pr["status"], pr["status"], impersonated_by),
             )
 
+            # One-sign-off-suffices (Approval Workflow Corrections, 2026-07-31):
+            # for a group materialized with any_one_suffices=True (the entity
+            # Global Approvers step, or the self-payment CFO step), the FIRST
+            # approval clears the whole group immediately -- every other
+            # still-pending row in it is skipped right here, the same way a
+            # rejection already cascades skips elsewhere, rather than waiting
+            # for every approver to act. Ordinary Program-Area approval_rules
+            # groups (any_one_suffices=False, the default) are unaffected --
+            # they still wait for every pending row to clear naturally via the
+            # remaining-count check below.
+            if my_action.get("any_one_suffices"):
+                cur.execute(
+                    "UPDATE checkreq.approval_actions SET status = 'skipped' "
+                    "WHERE payment_request_id = %s AND serial_group = %s AND status = 'pending'",
+                    (pr["id"], pr["serial_group_current"]),
+                )
+
             # Same-cursor re-read gotcha (found live during the original
             # build): must use `cur`, not db.query_one/db.query -- those open
             # a separate connection/transaction that cannot see the
@@ -1368,6 +1438,98 @@ def _perform_rejection(pr: dict, my_action: dict, actor_user_id: int, reason: st
                 (pr["id"], actor_user_id, "Rejected", reason, pr["serial_group_current"],
                  pr["status"], "Rejected", impersonated_by),
             )
+
+
+# ── Approval Workflow Corrections (Jay, 2026-07-31) ──────────────────────────
+# Four live corrections, all confirmed against the real code before being
+# designed, then approved through several rounds of live refinement -- see
+# Approval Workflow Corrections Plan.md for the full write-up. This section
+# covers the two submission-time pieces (self-payment override, self-
+# approval shortcut); the three-tier budget check lives in
+# _evaluate_gl_line_budgets below, and the entity-scoped Global Approvers
+# change is in approval_engine.py.
+
+def _is_self_payment(vendor_id: int | None, submitter_user_id: int) -> bool:
+    """True only when an EXISTING vendor is selected and that vendor row is
+    linked (checkreq.vendors.linked_user_id) to the submitter's own login --
+    e.g. an employee reimbursement where the vendor record represents the
+    employee. A brand-new vendor (using_new_vendor) has no linked_user_id
+    concept at all -- self-payment detection is deliberately scoped to
+    existing, already-linked vendor rows only, per the plan's own stated
+    limitation, not silently extended to guess at new-vendor submissions."""
+    if not vendor_id:
+        return False
+    row = db.query_one("SELECT linked_user_id FROM checkreq.vendors WHERE id = %s", (vendor_id,))
+    return bool(row and row["linked_user_id"] == submitter_user_id)
+
+
+def _cfo_approver_rows(exclude_user_id: int) -> list[dict]:
+    """Every is_cfo user except the given one -- shared by the self-payment
+    chain and the tier-3 budget-overage CFO step. Excluding the acting
+    submitter even if they happen to hold the is_cfo flag is deliberate in
+    both call sites: letting someone approve a step whose entire purpose is
+    a check on their OWN submission would defeat the point of the rule; a
+    genuinely separate person must act."""
+    return db.query(
+        "SELECT id, email, display_name FROM checkreq.app_users "
+        "WHERE is_cfo = TRUE AND id != %s",
+        (exclude_user_id,),
+    )
+
+
+def _self_payment_cfo_chain(submitter_user_id: int) -> list[dict]:
+    """Self-payment always requires CFO approval, any ONE of them, regardless
+    of amount or the submitter's own authorization -- bypasses the normal
+    Program-Area chain and the entity global-approver step entirely (Jay:
+    "that always requires the CFO's approval, regardless of their
+    authorization level or the dollar amount")."""
+    return [
+        {"serial_group": 1, "approver_user_id": u["id"], "approver_email": u["email"],
+         "approver_name": u["display_name"], "backup_approver_id": None,
+         "any_one_suffices": True}
+        for u in _cfo_approver_rows(submitter_user_id)
+    ]
+
+
+def _maybe_auto_approve_self(payment_request_id: int, first_serial_group: int | None,
+                               user_id: int, ip: str | None, request: Request) -> int | None:
+    """Self-approval shortcut: if the submitter is themselves an authorized
+    approver for the first step of the chain their own request just
+    entered (i.e. they appear in checkreq.approval_rules for this Program
+    Area, within their own approval_limit), that satisfies the step
+    automatically -- no separate person needs to also sign off. Never
+    called for the self-payment CFO chain (see new_request_submit) --
+    _self_payment_cfo_chain() already excludes the submitter from its own
+    approver list, so this function would simply find no matching pending
+    row for them there anyway, but the caller doesn't even attempt it in
+    that case.
+
+    Runs strictly AFTER the submission transaction has committed, so
+    _perform_approval's own separate connection can see the just-inserted
+    approval_actions rows (the same same-cursor-visibility rule this
+    codebase already learned once). Returns the newly-started serial_group
+    if this auto-approval advanced the chain, else None -- matching
+    _perform_approval's own 'new_group_started' contract, so the caller can
+    chain straight into _notify_approvers_for_group for whichever group is
+    actually now current."""
+    if first_serial_group is None:
+        return None
+    pr = db.query_one("SELECT * FROM checkreq.payment_requests WHERE id = %s", (payment_request_id,))
+    if not pr or pr["status"] != "UnderReview" or pr["serial_group_current"] != first_serial_group:
+        return None
+    my_action = db.query_one(
+        "SELECT * FROM checkreq.approval_actions WHERE payment_request_id = %s "
+        "AND approver_user_id = %s AND serial_group = %s AND status = 'pending'",
+        (payment_request_id, user_id, first_serial_group),
+    )
+    if not my_action:
+        return None
+    result = _perform_approval(
+        pr, my_action, user_id,
+        "Auto-satisfied -- submitter is already an authorized approver for this budget area.",
+        ip, "web",
+    )
+    return result["new_group_started"]
 
 
 def _require_ap_reviewer(request: Request):
@@ -1524,22 +1686,29 @@ def api_approval_chain_preview(program_area_id: int, amount: float, request: Req
     user = _current_user(request)
     if not user:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
-    chain = approval_engine.build_approval_chain(program_area_id, amount)
+    org = _current_org(request)
+    if not org:
+        return JSONResponse({"error": "No entity selected"}, status_code=400)
+    chain = approval_engine.build_approval_chain(program_area_id, org["id"], amount)
     return {"summary": approval_engine.describe_chain(chain)}
 
 
 @app.get("/api/budget-status")
 def api_budget_status(request: Request, program_area_id: int, gl_account_id: int, amount: float = 0):
-    """Budget/Overspend Tracking Plan.md (2026-07-26) live-preview endpoint --
-    same "just exposes what new_request_submit already computes" pattern as
-    /api/approval-chain-preview above. `amount` is THIS GL LINE's own typed
-    amount only (not summed across other lines on the same submission that
-    might share the same GL account -- see _evaluate_gl_line_budgets'
-    docstring for why). Returns a soft {"budget_found": false} rather than an
-    error for "nothing to show" cases (no mapping row, no QBO budget data,
-    qbo-mcp-server unreachable) -- the UI simply shows nothing rather than
-    breaking, matching this codebase's established soft-error convention
-    (e.g. /api/extract-document)."""
+    """Live-preview endpoint -- same "just exposes what new_request_submit
+    already computes" pattern as /api/approval-chain-preview above.
+    `amount` is THIS GL LINE's own typed amount only (not summed across
+    other lines on the same submission that might share the same GL
+    account -- see _evaluate_gl_line_budgets' docstring for why). Returns a
+    soft {"budget_found": false} rather than an error for "nothing to show"
+    cases (no mapping row, no QBO budget data, qbo-mcp-server unreachable)
+    -- the UI simply shows nothing rather than breaking, matching this
+    codebase's established soft-error convention (e.g. /api/extract-document).
+
+    Rewritten 2026-07-31 for the three-tier design -- `tier` is
+    'ok' | 'buffer_notice' | 'cfo_required', driving the green-check vs.
+    warning-badge treatment on the GL Coding screen (Jay's direct request
+    for a visible budget-checked confirmation)."""
     user = _current_user(request)
     if not user:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
@@ -1549,7 +1718,7 @@ def api_budget_status(request: Request, program_area_id: int, gl_account_id: int
 
     row = db.query_one(
         """
-        SELECT ga.account_number, pga.allow_overspend
+        SELECT ga.account_number, pga.overspend_buffer_amount
         FROM checkreq.gl_accounts ga
         JOIN checkreq.program_area_gl_accounts pga
             ON pga.gl_account_id = ga.id AND pga.program_area_id = %s
@@ -1567,16 +1736,57 @@ def api_budget_status(request: Request, program_area_id: int, gl_account_id: int
         return {"budget_found": False}
 
     projected = round(status["actual_spend"] + amount, 2)
-    is_over = projected > status["annual_budget"]
+    annual_budget = float(status["annual_budget"])
+    buffer_amount = float(row["overspend_buffer_amount"])
+    if projected <= annual_budget:
+        tier = "ok"
+    elif projected <= annual_budget + buffer_amount:
+        tier = "buffer_notice"
+    else:
+        tier = "cfo_required"
     return {
         "budget_found":    True,
-        "annual_budget":   status["annual_budget"],
+        "annual_budget":   annual_budget,
         "actual_spend":    status["actual_spend"],
         "amount":          amount,
         "projected":       projected,
-        "is_over":         is_over,
-        "allow_overspend": bool(row["allow_overspend"]),
-        "blocked":         is_over and not row["allow_overspend"],
+        "buffer_amount":   buffer_amount,
+        "tier":            tier,
+    }
+
+
+@app.post("/api/budget-check-submission")
+async def api_budget_check_submission(request: Request):
+    """Pre-flight check the GL Coding screen calls right before actually
+    submitting, so a tier-3 (over budget beyond the account's buffer) line
+    can show a real confirmation dialog BEFORE the request is created --
+    Jay's direct request: "the user can be asked if they want to submit
+    this." Accepts the same program_area_id/gl_account_id[]/gl_amount[]
+    shape the real submission form posts, and just runs
+    _evaluate_gl_line_budgets against them -- new_request_submit re-runs
+    the exact same check server-side as the authoritative gate regardless
+    of what this pre-flight call found, so there's no way to bypass it by
+    skipping or spoofing this endpoint."""
+    user = _current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not signed in"}, status_code=401)
+    org = _current_org(request)
+    if not org:
+        return JSONResponse({"error": "No entity selected"}, status_code=400)
+
+    form = await request.form()
+    program_area_id = int(form["program_area_id"])
+    gl_account_ids = form.getlist("gl_account_id")
+    gl_amounts = form.getlist("gl_amount")
+    gl_lines = [
+        (int(a), float(amt), "")
+        for a, amt in zip(gl_account_ids, gl_amounts)
+        if a and amt
+    ]
+    result = _evaluate_gl_line_budgets(org, program_area_id, gl_lines)
+    return {
+        "buffer_notice": [e["detail"] for e in result["buffer_notice"]],
+        "cfo_required": [e["detail"] for e in result["cfo_required"]],
     }
 
 
@@ -1752,6 +1962,9 @@ def _voucher_context(payment_request_id: int) -> dict | None:
         "voucher_total": f"${amount:,.2f}",
         "voucher_requested_by": pr["submitter_name"] or pr["submitter_email"],
         "voucher_chain_summary": pr["approval_chain_summary"] or "—",
+        "voucher_budget_checked_at": (
+            pr["budget_checked_at"].strftime("%Y-%m-%d %H:%M:%S UTC") if pr.get("budget_checked_at") else None
+        ),
         "voucher_approval_records": [
             {
                 "name": a["display_name"] or a["email"],
@@ -2243,23 +2456,28 @@ async def new_request_submit(request: Request):
     ]
     total_amount = round(sum(amt for _, amt, _ in gl_lines), 2)
 
-    # Budget/Overspend Tracking Plan.md (2026-07-26), decision 1: HARD BLOCK
-    # the entire submission (never just an auto-approve bypass) if any GL
-    # line would push its account over its QBO-native annual budget while
-    # allow_overspend is False for that Program Area/GL Account mapping.
-    # Runs BEFORE any database write, for both the new-submission and edit
-    # branches below (this check sits above the branch split). A line that
-    # IS allowed over budget (allow_overspend=True) is not blocked, but
-    # overspend_flagged/overspend_detail (written into both branches below)
-    # flag it for /admin/ap-review per the plan's Section 6 resolution.
-    block_messages, flag_details = _evaluate_gl_line_budgets(org, program_area_id, gl_lines)
-    if block_messages:
+    # Approval Workflow Corrections (2026-07-31): three-tier budget check,
+    # runs BEFORE any database write, for both the new-submission and edit
+    # branches below (this check sits above the branch split). Tier 3 (over
+    # budget beyond the account's buffer) never blocks outright anymore --
+    # instead the submitter must explicitly confirm (confirmed_overbudget=1,
+    # set by the UI's confirmation dialog after a first attempt without it)
+    # before the request is created; confirming still requires real CFO
+    # approval, added to the chain below.
+    budget_result = _evaluate_gl_line_budgets(org, program_area_id, gl_lines)
+    confirmed_overbudget = form.get("confirmed_overbudget") == "1"
+    if budget_result["cfo_required"] and not confirmed_overbudget:
         return JSONResponse(
-            {"error": "Cannot submit -- over budget:\n" + "\n".join(block_messages)},
-            status_code=400,
+            {
+                "needs_overbudget_confirmation": True,
+                "cfo_required": [e["detail"] for e in budget_result["cfo_required"]],
+            },
+            status_code=409,
         )
-    overspend_flagged = bool(flag_details)
-    overspend_detail = "\n".join(flag_details) if flag_details else None
+    overspend_flagged = bool(budget_result["buffer_notice"] or budget_result["cfo_required"])
+    overspend_detail = "\n".join(
+        e["detail"] for e in budget_result["buffer_notice"] + budget_result["cfo_required"]
+    ) or None
 
     # Optional user attachments (not required -- see form). Read all bytes
     # now, while we still have the async UploadFile objects; everything
@@ -2271,8 +2489,44 @@ async def new_request_submit(request: Request):
             if content:
                 uploaded_attachments.append((f.filename, f.content_type or "application/octet-stream", content))
 
-    chain = approval_engine.build_approval_chain(program_area_id, total_amount)
-    chain_summary = approval_engine.describe_chain(chain)
+    # Approval Workflow Corrections (Jay, 2026-07-31): a self-payment --
+    # this vendor row is linked to the submitter's own login -- always
+    # requires CFO approval, bypassing the normal Program-Area chain and
+    # the entity global-approver step entirely, regardless of amount or the
+    # submitter's own authorization. Only meaningful for an EXISTING vendor
+    # (using_new_vendor has no linked_user_id concept -- see
+    # _is_self_payment's own docstring).
+    is_self_payment = (not using_new_vendor) and _is_self_payment(vendor_id, user["id"])
+    if is_self_payment:
+        chain = _self_payment_cfo_chain(user["id"])
+        chain_summary = (
+            "Self-payment -- requires CFO approval (any one), regardless of amount "
+            "or the submitter's own authorization."
+            if chain else
+            "Self-payment -- no CFO configured to approve this. Needs setup."
+        )
+    else:
+        chain = approval_engine.build_approval_chain(program_area_id, org_id, total_amount)
+        chain_summary = approval_engine.describe_chain(chain)
+
+    # Tier 3 budget overage: append a real CFO approval step on top of
+    # whatever chain was already computed above. Skipped when this is
+    # already a self-payment chain -- that chain is ALREADY CFO-only, and
+    # a second, redundant CFO group would add nothing (the same sign-off
+    # already covers both reasons a CFO needed to look at this).
+    if budget_result["cfo_required"] and not is_self_payment:
+        next_group = (max((c["serial_group"] for c in chain), default=0)) + 1
+        cfo_budget_group = [
+            {"serial_group": next_group, "approver_user_id": u["id"], "approver_email": u["email"],
+             "approver_name": u["display_name"], "backup_approver_id": None, "any_one_suffices": True}
+            for u in _cfo_approver_rows(user["id"])
+        ]
+        chain = chain + cfo_budget_group
+        chain_summary += "\n" + (
+            f"Group {next_group}: CFO approval required -- over budget beyond the account's allowed buffer."
+            if cfo_budget_group else
+            "Over budget beyond buffer -- no CFO configured to approve. Needs setup."
+        )
     first_step = chain[0] if chain else None
     # current_approver_id/serial_group_current are display-only fields (see
     # _serial_group_display_approver's own docstring) -- the real gate is
@@ -2404,7 +2658,8 @@ async def new_request_submit(request: Request):
                             special_instructions = %s, status = %s, current_approver_id = %s,
                             serial_group_current = %s, approval_chain_summary = %s,
                             cfo_override = FALSE, cfo_override_date = NULL,
-                            overspend_flagged = %s, overspend_detail = %s, updated_at = NOW()
+                            overspend_flagged = %s, overspend_detail = %s, budget_checked_at = NOW(),
+                            updated_at = NOW()
                         WHERE id = %s
                         """,
                         (program_area_id, vendor_id, new_vendor_request_id, total_amount,
@@ -2425,7 +2680,8 @@ async def new_request_submit(request: Request):
                             program_area_id = %s, vendor_id = %s, vendor_request_id = %s,
                             requested_pay_date = %s, description = %s,
                             special_instructions = %s,
-                            overspend_flagged = %s, overspend_detail = %s, updated_at = NOW()
+                            overspend_flagged = %s, overspend_detail = %s, budget_checked_at = NOW(),
+                            updated_at = NOW()
                         WHERE id = %s
                         """,
                         (program_area_id, vendor_id, new_vendor_request_id,
@@ -2447,6 +2703,21 @@ async def new_request_submit(request: Request):
                         "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
                         (payment_request_id, acct_id, amt, memo),
                     )
+
+                # Approval Workflow Corrections (2026-07-31): same
+                # budget_overage_log bookkeeping as a new submission -- an
+                # edit can just as easily re-trigger tier-2/tier-3 on
+                # different GL lines.
+                for tier, entries in (("buffer_notice", budget_result["buffer_notice"]),
+                                       ("cfo_required", budget_result["cfo_required"])):
+                    for e in entries:
+                        cur.execute(
+                            "INSERT INTO checkreq.budget_overage_log "
+                            "(payment_request_id, gl_account_id, tier, annual_budget, projected_spend, buffer_amount) "
+                            "VALUES (%s, %s, %s, %s, %s, %s)",
+                            (payment_request_id, e["gl_account_id"], tier,
+                             e["annual_budget"], e["projected"], e["buffer_amount"]),
+                        )
 
                 if reset_approval:
                     if vendor_changed or amount_changed:
@@ -2488,8 +2759,19 @@ async def new_request_submit(request: Request):
         # an edit, per this task's own spec). GET /requests/{request_number}/pdf
         # always regenerates fresh from the live DB on every hit, so it
         # already reflects this edit with zero extra work.
+        if budget_result["buffer_notice"]:
+            _send_budget_buffer_notice_email(
+                request_number, org["name"], [e["detail"] for e in budget_result["buffer_notice"]],
+            )
         if reset_approval and first_serial_group is not None:
-            _notify_approvers_for_group(payment_request_id, first_serial_group, request)
+            notify_group = first_serial_group
+            if not is_self_payment:
+                advanced = _maybe_auto_approve_self(
+                    payment_request_id, first_serial_group, user["id"], _client_ip(request), request,
+                )
+                if advanced is not None:
+                    notify_group = advanced
+            _notify_approvers_for_group(payment_request_id, notify_group, request)
         return RedirectResponse(f"/my-requests?edited={request_number}", status_code=303)
 
     # ── NEW SUBMISSION branch (unchanged from before this session) ────────
@@ -2502,8 +2784,8 @@ async def new_request_submit(request: Request):
                     (request_number, request_type, org_id, program_area_id, submitter_user_id,
                      vendor_id, amount, requested_pay_date, description, special_instructions,
                      status, current_approver_id, serial_group_current, approval_chain_summary,
-                     overspend_flagged, overspend_detail)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     overspend_flagged, overspend_detail, budget_checked_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 RETURNING id
                 """,
                 (request_number, request_type, org_id, program_area_id, user["id"],
@@ -2520,6 +2802,23 @@ async def new_request_submit(request: Request):
                     "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
                     (payment_request_id, acct_id, amt, memo),
                 )
+
+            # Approval Workflow Corrections (Jay, 2026-07-31): one
+            # budget_overage_log row per tier-2/tier-3 GL line, for CFO
+            # reporting (how often, how much, which accounts) -- not just a
+            # one-off comment on the request. Written in the same
+            # transaction as everything else, since it's plain bookkeeping,
+            # not an external side effect (unlike the tier-2 email below).
+            for tier, entries in (("buffer_notice", budget_result["buffer_notice"]),
+                                   ("cfo_required", budget_result["cfo_required"])):
+                for e in entries:
+                    cur.execute(
+                        "INSERT INTO checkreq.budget_overage_log "
+                        "(payment_request_id, gl_account_id, tier, annual_budget, projected_spend, buffer_amount) "
+                        "VALUES (%s, %s, %s, %s, %s, %s)",
+                        (payment_request_id, e["gl_account_id"], tier,
+                         e["annual_budget"], e["projected"], e["buffer_amount"]),
+                    )
 
             # AP Review Workflow Plan.md, Section 1a: materialize the whole
             # computed chain as its own set of 'pending' approval_actions
@@ -2574,12 +2873,35 @@ async def new_request_submit(request: Request):
                     (vendor_request_id, payment_request_id),
                 )
 
-    # Fire the "it's your turn" email to whoever is first in the chain --
+    # Tier-2 budget overage: FYI-only CFO notification, after commit (a real
+    # external email send, matching every other notification's post-commit
+    # placement in this route).
+    if budget_result["buffer_notice"]:
+        _send_budget_buffer_notice_email(
+            request_number, org["name"], [e["detail"] for e in budget_result["buffer_notice"]],
+        )
+
+    # Approval Workflow Corrections (Jay, 2026-07-31): if the submitter is
+    # themselves an authorized approver for the first step, that step is
+    # auto-satisfied here -- runs AFTER the transaction above has committed
+    # (same same-cursor-visibility rule as the notify call below). Never
+    # attempted for a self-payment chain -- _self_payment_cfo_chain() already
+    # excludes the submitter from its own approver list, so there would be
+    # nothing for them to auto-approve anyway.
+    notify_group = first_serial_group
+    if not is_self_payment:
+        advanced = _maybe_auto_approve_self(
+            payment_request_id, first_serial_group, user["id"], _client_ip(request), request,
+        )
+        if advanced is not None:
+            notify_group = advanced
+
+    # Fire the "it's your turn" email to whoever is now first in the chain --
     # after the transaction above has committed (the query inside reads
     # approval_actions on its own separate connection). No-ops cleanly if
-    # first_serial_group is None (no approval rule configured for this
-    # program area).
-    _notify_approvers_for_group(payment_request_id, first_serial_group, request)
+    # notify_group is None (no approval rule configured for this program
+    # area, or a self-payment chain with no CFO configured).
+    _notify_approvers_for_group(payment_request_id, notify_group, request)
 
     # Archive the generated check-voucher PDF (always) + any optional
     # user-uploaded supporting attachments -- to GCS staging then the

@@ -216,6 +216,14 @@
   margin-top: -2px;
 }
 .gl-budget-status.over-budget { color: var(--color-danger); font-weight: 600; }
+/* Three-tier budget design (Approval Workflow Corrections, 2026-07-31):
+   tier-ok gets a quiet green check (Jay's direct request for a visible
+   "budget was checked and is fine" confirmation); the two over-budget
+   tiers get distinct amber/red warning treatments, since neither is truly
+   "OK" the way tier-ok is. */
+.gl-budget-status.tier-ok { color: var(--color-success); }
+.gl-budget-status.tier-buffer_notice { color: #a8722e; font-weight: 600; }
+.gl-budget-status.tier-cfo_required { color: var(--color-danger); font-weight: 600; }
 /* .btn-sm moved to base.css (2026-07-29) -- it's used by every action table
    (My Approvals/AP Review/Vendor Approvals), none of which load this
    stylesheet, so it was silently never applying there at all; those pages'
