@@ -54,6 +54,9 @@
   </header>
   {% endif %}
   {% block content %}{% endblock %}
+  <footer style="margin-top:48px;padding:16px 24px;border-top:1px solid #d9d9d9;text-align:center;font-family:Arial,sans-serif;font-size:13px;color:#666;">
+    <a href="/static/docs/Beacon%20-%20Overview.docx" target="_blank" rel="noopener" style="color:#1F4E79;text-decoration:none;font-weight:600;">About Beacon — How Beacon Works</a>
+  </footer>
   {% if user and current_org %}<script src="/static/js/entity_switcher.js?v={{ asset_version('js/entity_switcher.js') }}"></script>{% endif %}
   {% block extra_js %}{% endblock %}
 </body>
