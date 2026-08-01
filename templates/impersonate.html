@@ -10,14 +10,16 @@
 <div class="card">
   <table class="simple-table">
     <thead>
-      <tr><th>Name</th><th>Email</th><th>CFO</th><th></th></tr>
+      <tr><th>Name</th><th>Email</th><th>Roles</th><th></th></tr>
     </thead>
     <tbody>
       {% for u in users %}
       <tr>
         <td>{{ u.display_name or "—" }}</td>
         <td>{{ u.email }}</td>
-        <td>{% if u.is_cfo %}<span class="badge badge-approved">CFO</span>{% endif %}</td>
+        <td>
+          {% for r in u.roles %}<span class="badge badge-approved">{{ r.role_label }} ({{ r.org_code|upper }})</span>{% endfor %}
+        </td>
         <td>
           <form method="post" action="/admin/impersonate/{{ u.id }}">
             <button type="submit" class="btn btn-secondary">Become this user</button>

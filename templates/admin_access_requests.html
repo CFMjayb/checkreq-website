@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Access Requests — Beacon{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+
+<h1>Access Requests</h1>
+<p class="sub">Pending self-service requests from users who signed in with no role yet.</p>
+
+{% if request.query_params.get('approved') %}<div class="banner banner-success">Access granted.</div>{% endif %}
+{% if request.query_params.get('rejected') %}<div class="banner banner-info">Request rejected.</div>{% endif %}
+
+<div class="card">
+  <table class="simple-table">
+    <thead>
+      <tr><th>Requested</th><th>User</th><th>Entity</th><th>Role requested</th><th>Note</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for r in requests %}
+      <tr>
+        <td>{{ r.requested_at }}</td>
+        <td>{{ r.display_name or r.email }}<br><span class="muted">{{ r.email }}</span></td>
+        <td>{{ r.org_name }}</td>
+        <td>{{ r.role_label }}<br><span class="muted">{{ r.role_description }}</span></td>
+        <td>{{ r.note or "—" }}</td>
+        <td class="actions-cell">
+          <form method="post" action="/admin/access-requests/{{ r.id }}/approve" style="display:inline">
+            <button type="submit" class="btn btn-primary">Approve</button>
+          </form>
+          <form method="post" action="/admin/access-requests/{{ r.id }}/reject" style="display:inline">
+            <button type="submit" class="btn btn-secondary">Reject</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6">No pending requests.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+</div>
+{% endblock %}

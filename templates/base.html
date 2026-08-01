@@ -25,18 +25,35 @@
       <a href="/my-requests">Requests</a>
       <a href="/my-approvals">My Approvals</a>
       <a href="/feedback">Feedback</a>
-      {% if user and user.is_vendor_approver %}
+      {# RBAC (2026-08-01): was user.is_vendor_approver/is_ap_reviewer/is_cfo
+         -- now reads `any_org_roles` (cross-entity -- matches every route
+         guard below, which is deliberately cross-entity "for now", Plan
+         §5.1/§8 q2/q3) and `real_roles` (also cross-entity, REAL identity
+         only, for the impersonation link -- same distinction the original
+         real_user.is_cfo check made). Setup Tables/Test Mode move to
+         setup_admin; a new beacon_admin-gated Users & Roles + Access
+         Requests link is added alongside them -- NOT YET reachable, those
+         routes aren't registered until access_requests.py/admin_users.py
+         are wired in (Plan §7 Stage 7), so these links 404 until then. #}
+      {% if 'vendor_approver' in any_org_roles %}
       <a href="/admin/vendor-requests">Vendor Approvals</a>
       {% endif %}
-      {% if user and user.is_ap_reviewer %}
+      {% if 'ap_reviewer' in any_org_roles %}
       <a href="/admin/ap-review">AP Review</a>
       {% endif %}
-      {% if user and user.is_cfo %}
+      {% if 'cfo' in any_org_roles %}
       <a href="/admin/all-requests">Administrative</a>
       <a href="/admin/feedback">Feedback Log</a>
+      {% endif %}
+      {% if 'setup_admin' in any_org_roles %}
+      <a href="/admin/setup">Setup Tables</a>
       <a href="/admin/test-mode">Test Mode</a>
       {% endif %}
-      {% if real_user and real_user.is_cfo and not impersonating %}
+      {% if 'beacon_admin' in any_org_roles %}
+      <a href="/admin/setup/users">Users &amp; Roles</a>
+      <a href="/admin/access-requests">Access Requests</a>
+      {% endif %}
+      {% if 'cfo' in real_roles and not impersonating %}
       <a href="/admin/impersonate">Impersonate a User</a>
       {% endif %}
       {% if current_org %}

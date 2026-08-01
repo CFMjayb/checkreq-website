@@ -27,7 +27,7 @@
 </div>
 {% endif %}
 
-{% if user.is_cfo %}
+{% if 'cfo' in roles %}
 <div class="view-toggle" role="tablist" aria-label="Requests view">
   <a href="/my-requests" class="view-toggle-tab {% if not show_all %}active{% endif %}">My Requests</a>
   <a href="/my-requests?view=all" class="view-toggle-tab {% if show_all %}active{% endif %}">All Requests</a>

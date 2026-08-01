@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Setup Tables{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+
+<h1>Setup Tables</h1>
+<p class="sub">
+  The eight tabs of <code>26-129 Check Request Setup Tables.xlsm</code>, in Beacon.
+  Entity-scoped tables follow the <strong>{{ current_org.code if current_org else '—' }}</strong>
+  selector in the header — switch entity up there and these screens follow, no separate
+  Working Entity cell and no manual Refresh.
+</p>
+
+<div class="banner banner-info">
+  <strong>Prototype.</strong> Two screens are built and live against real data. The rest are
+  mapped out in <em>Admin Module Plan.md</em> but still belong to the workbook for now — keep
+  using it for those.
+</div>
+
+<div class="setup-grid">
+  {% for t in tabs %}
+  <div class="setup-tile {% if t.built %}is-built{% else %}is-planned{% endif %}">
+    <h2>
+      {% if t.built %}<a href="{{ t.url }}">{{ t.title }}</a>{% else %}{{ t.title }}{% endif %}
+    </h2>
+    <div class="desc">{{ t.desc }}</div>
+    <div class="meta">
+      <span>
+        {% if t.count is not none %}
+          {{ t.count }} row{{ '' if t.count == 1 else 's' }}{% if t.entity_scoped %} in {{ current_org.code if current_org else 'this entity' }}{% endif %}
+        {% else %}
+          —
+        {% endif %}
+      </span>
+      {% if t.built %}
+        <span class="badge badge-approved">Built</span>
+      {% else %}
+        <span class="badge badge-draft">In the workbook</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<p class="setup-note">
+  Every screen here reads and writes the same <code>checkreq</code> Postgres tables the workbook
+  does, so the two stay in step while both are in use — refresh the workbook to pick up a change
+  made here, and vice versa.
+</p>
+
+</div>
+{% endblock %}

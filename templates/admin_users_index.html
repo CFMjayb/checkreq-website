@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Users & Roles — Beacon{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+
+<h1>Users & Roles</h1>
+<p class="sub">Who can sign in, and what each person may do in each entity.</p>
+
+{% if unreachable_count %}
+<div class="banner banner-error">
+  <strong>{{ unreachable_count }} user{{ '' if unreachable_count == 1 else 's' }}</strong> —
+  each is a named approver or backup on a live approval rule, but has never signed in and holds
+  no role. Requests routed to them will never be seen. Repoint the approval rule to their real
+  login identity, or confirm they'll sign in soon.
+</div>
+{% endif %}
+
+<div class="card">
+  <table class="simple-table">
+    <thead>
+      <tr><th>Email</th><th>Display Name</th><th>Active</th><th>Last Sign-in</th><th>Roles</th><th>Program Areas</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for u in rows %}
+      <tr>
+        <td>{{ u.email }}</td>
+        <td>{{ u.display_name or "—" }}</td>
+        <td>{% if not u.is_active %}<span class="badge badge-draft">Deactivated</span>{% else %}Yes{% endif %}</td>
+        <td>
+          {% if u.last_login_at %}{{ u.last_login_at }} ({{ u.last_login_provider }}){% else %}Never{% endif %}
+          {% if u.is_unreachable_approver %}<br><span class="badge badge-draft">Required approver, never signed in</span>{% endif %}
+        </td>
+        <td>
+          {% if u.has_any_role %}
+            {% for r in u.roles %}
+            <span class="badge badge-approved">{{ r.role_label }} ({{ r.org_code|upper }})</span>
+            {% endfor %}
+          {% else %}
+            <span class="badge badge-draft">No roles</span>
+          {% endif %}
+        </td>
+        <td>{{ u.pa_count }}</td>
+        <td><a class="btn btn-secondary" href="/admin/setup/users/{{ u.id }}">Manage</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7">No users found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Add User</h2>
+  <form method="post" action="/admin/setup/users/add">
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email" required>
+    <label for="display_name">Display Name</label>
+    <input type="text" id="display_name" name="display_name">
+    <button type="submit" class="btn btn-primary">Add User</button>
+  </form>
+  <p class="setup-note">
+    Creates a roleless account — the person can sign in but sees the Request Access screen until
+    a role is granted here, or they submit their own request.
+  </p>
+</div>
+
+</div>
+{% endblock %}

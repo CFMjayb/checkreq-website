@@ -21,7 +21,7 @@ involved and who has already acted. Click a Request # to view the full check req
 
 <div class="view-toggle" role="tablist" aria-label="Approvals view">
   <a href="/my-approvals" class="view-toggle-tab {% if not show_all %}active{% endif %}">My Approvals</a>
-  {% if user.is_cfo %}
+  {% if 'cfo' in roles %}
   <a href="/my-approvals?view=all" class="view-toggle-tab {% if show_all %}active{% endif %}">All Pending Approvals</a>
   {% endif %}
   <a href="/my-approvals?view=history" class="view-toggle-tab">History</a>

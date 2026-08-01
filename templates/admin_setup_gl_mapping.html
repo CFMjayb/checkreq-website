@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Program Area / GL Account Map{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/vendor/tomselect/tom-select.default.min.css">
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+
+<div class="setup-toolbar">
+  <div>
+    <h1 style="margin:0;">Program Area / GL Account Map</h1>
+    <p class="sub" style="margin:4px 0 0;">
+      <a href="/admin/setup">Setup Tables</a> &rsaquo; {{ current_org.code }} &mdash;
+      which GL accounts each program area may code to, and how they appear on the request form.
+    </p>
+  </div>
+  <div class="spacer"></div>
+  <span id="saveState" class="save-state">No changes</span>
+  <button type="button" id="saveBtn" class="btn btn-primary btn-sm" disabled>Save Changes</button>
+</div>
+
+{% if request.query_params.get('deleted') %}
+<div class="banner banner-success">Mapping removed.</div>
+{% endif %}
+
+<div class="add-panel">
+  <h3>Add a mapping</h3>
+  <div class="add-grid">
+    <div class="fld">
+      <label for="addArea">Program Area</label>
+      <select id="addArea">
+        <option value="">Choose...</option>
+        {% for pa in program_areas %}
+        <option value="{{ pa.id }}">{{ pa.title }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="fld">
+      <label for="addAccount">GL Account</label>
+      <select id="addAccount"><option value="">Pick a program area first...</option></select>
+    </div>
+    <div class="fld">
+      <label for="addDisplay">Display Text <span class="sub">(optional)</span></label>
+      <input type="text" id="addDisplay" placeholder="Defaults to the account name">
+    </div>
+    <div class="fld">
+      <label for="addSort">Sort Order</label>
+      <input type="text" id="addSort" placeholder="1.2.3">
+    </div>
+    <div class="fld">
+      <label for="addBuffer">Buffer ($)</label>
+      <input type="number" id="addBuffer" step="0.01" min="0" value="0">
+    </div>
+    <div class="fld">
+      <button type="button" id="addBtn" class="btn btn-secondary btn-sm">Add</button>
+    </div>
+  </div>
+  <div id="addMsg" class="row-msg" style="margin-top:8px;"></div>
+</div>
+
+<div class="card">
+  <div class="table-scroll">
+    <table class="setup-table" id="mapTable">
+      <thead>
+        <tr>
+          <th class="col-display">Display Text <span style="text-transform:none;font-weight:400;">(blank = account name)</span></th>
+          <th class="col-account">GL Account</th>
+          <th class="col-sort">Sort Order</th>
+          <th class="col-allow">Postable</th>
+          <th class="col-buffer">Buffer ($)</th>
+          <th class="col-budget">Annual Budget</th>
+          <th class="col-actions"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in groups %}
+        <tr class="area-header">
+          <td colspan="7">{{ g.title }} <span class="area-count">&mdash; {{ g.rows|length }} account{{ '' if g.rows|length == 1 else 's' }}</span></td>
+        </tr>
+          {% for r in g.rows %}
+          <tr data-row-id="{{ r.id }}"
+              data-area-id="{{ r.program_area_id }}"
+              data-account-id="{{ r.gl_account_id }}">
+            <td class="col-display">
+              <div class="depth-{{ r.depth if r.depth < 5 else 4 }}">
+                <input type="text" data-field="display_text"
+                       value="{{ r.display_text or '' }}"
+                       placeholder="{{ r.account_name }}">
+              </div>
+            </td>
+            <td class="col-account">
+              <div class="acct-cell">
+                <span class="acct-num">{{ r.account_number }}</span>
+                <span class="acct-name">{{ r.account_name }}</span>
+              </div>
+            </td>
+            <td class="col-sort"><input type="text" class="num" data-field="sort_order" value="{{ r.sort_order or '' }}"></td>
+            <td class="col-allow">
+              <input type="checkbox" data-field="allow_post" {% if r.allow_post %}checked{% endif %}>
+              {% if not r.allow_post %}<div class="pill-header">header</div>{% endif %}
+            </td>
+            <td class="col-buffer">
+              <input type="number" class="num" data-field="overspend_buffer_amount"
+                     step="0.01" min="0" value="{{ '%.2f'|format(r.overspend_buffer_amount) }}">
+            </td>
+            <td class="col-budget">
+              <button type="button" class="btn btn-secondary btn-sm budget-btn">Check</button>
+              <span class="budget-cell"></span>
+            </td>
+            <td class="col-actions">
+              <form method="post" action="/admin/setup/gl-mapping/{{ r.id }}/delete" style="display:inline;"
+                    onsubmit="return confirm('Remove {{ r.account_number }} from {{ g.title }}?\n\nThis only withdraws it from that program area’s picker. Requests already coded to it are untouched.');">
+                <button type="submit" class="icon-btn" title="Remove this mapping">&times;</button>
+              </form>
+            </td>
+          </tr>
+          <tr class="msg-row" data-msg-for="{{ r.id }}" hidden><td colspan="7"><div class="row-msg"></div></td></tr>
+          {% endfor %}
+        {% else %}
+        <tr><td colspan="7">No GL accounts are mapped for {{ current_org.code }} yet. Add the first one above.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="setup-note">
+  <strong>Sort Order</strong> is dot notation &mdash; <code>1</code> sits flush left, <code>1.1</code>
+  indents one level, <code>1.1.1</code> two. The indentation shown here is the exact rule the
+  submitter&rsquo;s own GL picker applies. <strong>Postable</strong> off makes a row a heading:
+  it still shows in the picker for structure but can&rsquo;t be selected.
+  <strong>Buffer</strong> is how far past this pairing&rsquo;s QBO annual budget a request may run
+  before it needs CFO sign-off; <code>0.00</code> means none.
+</p>
+
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/vendor/tomselect/tom-select.complete.min.js"></script>
+<script>
+  window.SETUP_ORG_ID = {{ current_org.id }};
+</script>
+<script src="/static/js/admin_setup.js?v={{ asset_version('js/admin_setup.js') }}"></script>
+{% endblock %}

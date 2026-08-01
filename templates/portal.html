@@ -21,8 +21,13 @@
 
   <h1>Welcome{% if current_org %}, working in {{ current_org.name }}{% endif %}</h1>
   <div class="module-grid">
+    {# RBAC (2026-08-01): was `m.gate == 'ap_reviewer' and user.is_ap_reviewer`
+       -- MODULES' own gate field already holds the exact role_key string
+       (main.py), so this is now a direct set membership test against
+       any_org_roles (cross-entity, matching /admin/ap-review's own guard).
+       Any future tile can gate on any role with no template change. #}
     {% for m in modules %}
-      {% if not m.gate or (m.gate == 'ap_reviewer' and user.is_ap_reviewer) %}
+      {% if not m.gate or m.gate in any_org_roles %}
         {% if m.enabled and current_org %}
         <a class="module-tile" href="{{ m.url }}">
           <h3>{{ m.title }}</h3>

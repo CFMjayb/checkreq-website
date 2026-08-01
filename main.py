@@ -77,6 +77,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 import db
+import rbac
 import approval_engine
 import auth_azure
 import auth_google
@@ -251,7 +252,9 @@ def _current_user(request: Request) -> dict | None:
     if not real:
         return None
     imp_id = request.session.get("impersonating_user_id")
-    if imp_id and real["is_cfo"]:
+    # RBAC (2026-08-01): was `real["is_cfo"]`. Same cross-entity semantics
+    # (org_id=None) -- an EDOM-only CFO could impersonate before RBAC too.
+    if imp_id and rbac.user_has_role(real["id"], "cfo", org_id=None):
         imp = db.query_one(
             "SELECT * FROM checkreq.app_users WHERE id = %s AND is_active", (imp_id,)
         )
@@ -293,19 +296,52 @@ def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+def _roles(request: Request, user: dict | None, org_id: int | None) -> set[str]:
+    """Per-request-cached role set (Role-Based Access Control Plan.md §3.1)
+    -- resolved once and stashed on request.state, since _render() and
+    several guards can all ask for the same (user, org) pair within one
+    request. Cache key includes org_id so `roles` (current org) and
+    `real_roles` (cross-entity, org_id=None) never collide."""
+    if not user:
+        return set()
+    key = f"_roles_{user['id']}_{org_id}"
+    if not hasattr(request.state, key):
+        setattr(request.state, key, rbac.get_role_keys(user["id"], org_id))
+    return getattr(request.state, key)
+
+
 def _render(request: Request, template: str, user: dict, extra: dict | None = None):
     """Renders a template that extends base.html, always including the
     header's user/entity-switcher context so every page shows it
     consistently -- not just /portal. Also always includes real_user +
     impersonating, since the impersonation banner/nav-link must gate on the
-    REAL identity, not whichever identity `user` currently resolves to."""
+    REAL identity, not whichever identity `user` currently resolves to.
+
+    RBAC (2026-08-01): also injects `roles` (the CURRENT/impersonated
+    identity's role keys, scoped to the current entity -- for any
+    future entity-scoped UI decision), `any_org_roles` (the same identity's
+    role keys across ALL entities, org_id=None), and `real_roles` (the REAL
+    identity's, also cross-entity -- matches base.html's impersonation link,
+    which must gate on the real user regardless of entity). base.html's nav
+    uses `any_org_roles`, not `roles`: every route guard converted so far
+    (cfo/setup_admin/ap_reviewer/vendor_approver/beacon_admin) is
+    deliberately cross-entity "for now" (Plan §5.1/§8 q2/q3), so a nav link
+    scoped to the current entity only would hide a link the route itself
+    would still allow through -- not a security hole, but a confusing UX
+    bug. Templates should prefer these over reading user.is_cfo directly."""
     real = _real_user(request)
+    org = _current_org(request)
+    org_id = org["id"] if org else None
     ctx = {
         "user": user,
         "real_user": real,
-        "impersonating": bool(request.session.get("impersonating_user_id")) and bool(real and real["is_cfo"]),
-        "current_org": _current_org(request),
+        "impersonating": bool(request.session.get("impersonating_user_id"))
+                          and bool(real and rbac.user_has_role(real["id"], "cfo", org_id=None)),
+        "current_org": org,
         "all_orgs": db.query("SELECT id, code, name FROM checkreq.organizations WHERE is_active ORDER BY name"),
+        "roles": _roles(request, user, org_id),
+        "any_org_roles": _roles(request, user, None),
+        "real_roles": _roles(request, real, None),
     }
     if extra:
         ctx.update(extra)
@@ -569,6 +605,15 @@ def portal(request: Request):
     if not user:
         return RedirectResponse("/login")
 
+    # RBAC (2026-08-01, Plan §9): a user who authenticated successfully but
+    # holds no live role anywhere, and has no user_program_areas assignment
+    # either, does not get an (empty) portal -- they get the blank
+    # Request Access screen instead.
+    if not rbac.user_has_any_role(user["id"]) and not db.query_one(
+        "SELECT 1 FROM checkreq.user_program_areas WHERE user_id = %s", (user["id"],)
+    ):
+        return RedirectResponse("/access-request")
+
     return _render(request, "portal.html", user, {"modules": MODULES})
 
 
@@ -599,14 +644,18 @@ def impersonate_picker(request: Request):
     real = _real_user(request)
     if not real:
         return RedirectResponse("/login")
-    if not real["is_cfo"]:
+    # RBAC (2026-08-01): cross-entity by design, same as today -- an
+    # EDOM-only CFO could impersonate before RBAC too (is_cfo was global).
+    if not rbac.user_has_role(real["id"], "cfo", org_id=None):
         return JSONResponse({"error": "CFO access required"}, status_code=403)
 
     users = db.query(
-        "SELECT id, email, display_name, is_cfo FROM checkreq.app_users "
+        "SELECT id, email, display_name FROM checkreq.app_users "
         "WHERE is_active AND id != %s ORDER BY display_name",
         (real["id"],),
     )
+    for u in users:
+        u["roles"] = rbac.get_roles_for_user(u["id"])
     return _render(request, "impersonate.html", _current_user(request), {"users": users})
 
 
@@ -625,7 +674,7 @@ def impersonate_start(user_id: int, request: Request):
     real = _real_user(request)
     if not real:
         return RedirectResponse("/login")
-    if not real["is_cfo"]:
+    if not rbac.user_has_role(real["id"], "cfo", org_id=None):
         return JSONResponse({"error": "CFO access required"}, status_code=403)
 
     target = db.query_one(
@@ -809,7 +858,7 @@ def api_program_areas(org_id: int, request: Request):
     if not user:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
 
-    if user["is_cfo"]:
+    if rbac.user_has_role(user["id"], "cfo", org_id):
         # CFO oversees everything — bypasses per-user assignment.
         return db.query(
             "SELECT id, title FROM checkreq.program_areas WHERE org_id = %s AND is_active ORDER BY sort_order",
@@ -841,11 +890,16 @@ def _request_is_editable(status: str) -> bool:
     return status not in ("Posted to QBO", "Cancelled")
 
 
-def _user_can_submit_for(user: dict, program_area_id: int) -> bool:
+def _user_can_submit_for(user: dict, program_area_id: int, org_id: int) -> bool:
     """Access-control gate: CFO bypasses; everyone else needs an explicit
     checkreq.user_program_areas assignment. No silent fallback — an
-    unassigned user gets a clear rejection, not quiet access."""
-    if user["is_cfo"]:
+    unassigned user gets a clear rejection, not quiet access.
+
+    RBAC (2026-08-01): org_id is now required -- was `user["is_cfo"]` with
+    no entity scoping at all, meaning an EDOM-only CFO silently bypassed
+    Claggett's program-area scoping too. Every real caller already has
+    org_id in hand (see Role-Based Access Control Plan.md §5.3 #13)."""
+    if rbac.user_has_role(user["id"], "cfo", org_id):
         return True
     row = db.query_one(
         "SELECT 1 FROM checkreq.user_program_areas WHERE user_id = %s AND program_area_id = %s",
@@ -963,13 +1017,19 @@ def _evaluate_gl_line_budgets(
     return result
 
 
-def _send_budget_buffer_notice_email(request_number: str, org_name: str, details: list[str]) -> None:
+def _send_budget_buffer_notice_email(request_number: str, org_name: str, org_id: int, details: list[str]) -> None:
     """Tier 2 (over budget, within the account's allowed buffer) -- FYI
-    only, no action needed, sent to every is_cfo user (Jay's plan: "the CFO
-    is notified... no approval needed"). Fails soft, matching every other
-    notification in this app -- one CFO's bad email address must never
-    crash the submission that already succeeded by the time this runs."""
-    cfos = db.query("SELECT email, display_name FROM checkreq.app_users WHERE is_cfo = TRUE")
+    only, no action needed, sent to every CFO of THIS request's own entity
+    (Jay's plan: "the CFO is notified... no approval needed"). Fails soft,
+    matching every other notification in this app -- one CFO's bad email
+    address must never crash the submission that already succeeded by the
+    time this runs.
+
+    RBAC (2026-08-01): was `SELECT ... WHERE is_cfo = TRUE`, no org filter --
+    a real bug (Role-Based Access Control Plan.md §1.2/§5.4 #16): a Claggett
+    tier-2 overage was emailing EDOM's CFO too. org_id scopes this to the
+    request's own entity."""
+    cfos = rbac.get_users_with_role("cfo", org_id)
     if not cfos:
         return
     subject = f"Budget notice: {request_number} is over budget (within buffer)"
@@ -1463,21 +1523,23 @@ def _is_self_payment(vendor_id: int | None, submitter_user_id: int) -> bool:
     return bool(row and row["linked_user_id"] == submitter_user_id)
 
 
-def _cfo_approver_rows(exclude_user_id: int) -> list[dict]:
-    """Every is_cfo user except the given one -- shared by the self-payment
-    chain and the tier-3 budget-overage CFO step. Excluding the acting
-    submitter even if they happen to hold the is_cfo flag is deliberate in
-    both call sites: letting someone approve a step whose entire purpose is
-    a check on their OWN submission would defeat the point of the rule; a
-    genuinely separate person must act."""
-    return db.query(
-        "SELECT id, email, display_name FROM checkreq.app_users "
-        "WHERE is_cfo = TRUE AND id != %s",
-        (exclude_user_id,),
-    )
+def _cfo_approver_rows(exclude_user_id: int, org_id: int) -> list[dict]:
+    """Every CFO of THIS entity except the given one -- shared by the
+    self-payment chain and the tier-3 budget-overage CFO step. Excluding the
+    acting submitter even if they happen to hold the cfo role is deliberate
+    in both call sites: letting someone approve a step whose entire purpose
+    is a check on their OWN submission would defeat the point of the rule; a
+    genuinely separate person must act.
+
+    RBAC (2026-08-01): was `SELECT ... WHERE is_cfo = TRUE`, no org filter --
+    a real bug (Role-Based Access Control Plan.md §1.2/§5.4 #17): a Claggett
+    self-payment was appending EDOM's CFO to a real approval chain. org_id
+    scopes this to the request's own entity -- the highest-impact single fix
+    in that plan."""
+    return [u for u in rbac.get_users_with_role("cfo", org_id) if u["id"] != exclude_user_id]
 
 
-def _self_payment_cfo_chain(submitter_user_id: int) -> list[dict]:
+def _self_payment_cfo_chain(submitter_user_id: int, org_id: int) -> list[dict]:
     """Self-payment always requires CFO approval, any ONE of them, regardless
     of amount or the submitter's own authorization -- bypasses the normal
     Program-Area chain and the entity global-approver step entirely (Jay:
@@ -1487,7 +1549,7 @@ def _self_payment_cfo_chain(submitter_user_id: int) -> list[dict]:
         {"serial_group": 1, "approver_user_id": u["id"], "approver_email": u["email"],
          "approver_name": u["display_name"], "backup_approver_id": None,
          "any_one_suffices": True}
-        for u in _cfo_approver_rows(submitter_user_id)
+        for u in _cfo_approver_rows(submitter_user_id, org_id)
     ]
 
 
@@ -1539,7 +1601,11 @@ def _require_ap_reviewer(request: Request):
     user = _current_user(request)
     if not user:
         return None, RedirectResponse("/login")
-    if not user.get("is_ap_reviewer"):
+    # RBAC (2026-08-01): cross-entity for now, matching today's behavior
+    # exactly (is_ap_reviewer was a flat global flag) -- Role-Based Access
+    # Control Plan.md §8 q2 flags entity-scoping this as a real, deliberately
+    # deferred follow-up once Claggett has its own AP clerk.
+    if not rbac.user_has_role(user["id"], "ap_reviewer", org_id=None):
         return None, JSONResponse({"error": "AP-reviewer access required"}, status_code=403)
     return user, None
 
@@ -2334,10 +2400,11 @@ async def new_request_submit(request: Request):
     form = await request.form()
     program_area_id = int(form["program_area_id"])
 
-    if not _user_can_submit_for(user, program_area_id):
+    if not _user_can_submit_for(user, program_area_id, org_id):
         return JSONResponse(
             {"error": "You are not assigned to this program area. "
-                      "Ask an admin to add you in checkreq.user_program_areas."},
+                      "Ask an admin to add you in checkreq.user_program_areas, "
+                      "or use Request Access to ask for it."},
             status_code=403,
         )
 
@@ -2498,7 +2565,7 @@ async def new_request_submit(request: Request):
     # _is_self_payment's own docstring).
     is_self_payment = (not using_new_vendor) and _is_self_payment(vendor_id, user["id"])
     if is_self_payment:
-        chain = _self_payment_cfo_chain(user["id"])
+        chain = _self_payment_cfo_chain(user["id"], org_id)
         chain_summary = (
             "Self-payment -- requires CFO approval (any one), regardless of amount "
             "or the submitter's own authorization."
@@ -2519,7 +2586,7 @@ async def new_request_submit(request: Request):
         cfo_budget_group = [
             {"serial_group": next_group, "approver_user_id": u["id"], "approver_email": u["email"],
              "approver_name": u["display_name"], "backup_approver_id": None, "any_one_suffices": True}
-            for u in _cfo_approver_rows(user["id"])
+            for u in _cfo_approver_rows(user["id"], org_id)
         ]
         chain = chain + cfo_budget_group
         chain_summary += "\n" + (
@@ -2761,7 +2828,7 @@ async def new_request_submit(request: Request):
         # already reflects this edit with zero extra work.
         if budget_result["buffer_notice"]:
             _send_budget_buffer_notice_email(
-                request_number, org["name"], [e["detail"] for e in budget_result["buffer_notice"]],
+                request_number, org["name"], org["id"], [e["detail"] for e in budget_result["buffer_notice"]],
             )
         if reset_approval and first_serial_group is not None:
             notify_group = first_serial_group
@@ -2878,7 +2945,7 @@ async def new_request_submit(request: Request):
     # placement in this route).
     if budget_result["buffer_notice"]:
         _send_budget_buffer_notice_email(
-            request_number, org["name"], [e["detail"] for e in budget_result["buffer_notice"]],
+            request_number, org["name"], org["id"], [e["detail"] for e in budget_result["buffer_notice"]],
         )
 
     # Approval Workflow Corrections (Jay, 2026-07-31): if the submitter is
@@ -3014,9 +3081,9 @@ def view_attachment(request_number: str, attachment_id: int, request: Request):
         return JSONResponse({"error": "Request not found"}, status_code=404)
 
     allowed = (
-        user["is_cfo"]
+        rbac.user_has_role(user["id"], "cfo", pr["org_id"])
         or pr["submitter_user_id"] == user["id"]
-        or _user_can_submit_for(user, pr["program_area_id"])
+        or _user_can_submit_for(user, pr["program_area_id"], pr["org_id"])
     )
     if not allowed:
         return JSONResponse({"error": "Not authorized to view this attachment"}, status_code=403)
@@ -3249,15 +3316,6 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
     if not user:
         return RedirectResponse("/login")
 
-    # Task 6 (2026-07-26): CFO-only "My Requests" vs "All Requests" toggle.
-    # "All Requests" deliberately stays scoped to the currently selected
-    # entity (org_id = current_org_id), NOT a global cross-entity view --
-    # Jay's explicit call. A non-CFO passing ?view=all gets silently treated
-    # as "mine" rather than an error -- same "no silent broadening of access"
-    # posture as _user_can_submit_for, just expressed as a quiet fallback
-    # since this is a read-only list view, not a submission.
-    show_all = (view == "all") and bool(user["is_cfo"])
-
     # Task 3 (2026-07-26 batch): Vendor column -- resolve from either an
     # onboarded checkreq.vendors row OR a not-yet-onboarded vendor_requests
     # row, same "exactly one of the two is ever set" design new_request_submit
@@ -3275,6 +3333,17 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
     org = _current_org(request)
     if not org:
         return RedirectResponse("/portal")
+
+    # Task 6 (2026-07-26): CFO-only "My Requests" vs "All Requests" toggle.
+    # "All Requests" deliberately stays scoped to the currently selected
+    # entity (org_id = current_org_id), NOT a global cross-entity view --
+    # Jay's explicit call. A non-CFO passing ?view=all gets silently treated
+    # as "mine" rather than an error -- same "no silent broadening of access"
+    # posture as _user_can_submit_for, just expressed as a quiet fallback
+    # since this is a read-only list view, not a submission.
+    # RBAC (2026-08-01): entity-scoped, matching where this view already
+    # scopes everything else -- Role-Based Access Control Plan.md §5.7.
+    show_all = (view == "all") and rbac.user_has_role(user["id"], "cfo", org["id"])
 
     if show_all:
         rows = db.query(
@@ -3425,7 +3494,8 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
     # for My Requests -- "My Approvals" (default, my own pending items) vs.
     # "All Pending Approvals" (every request currently awaiting anyone's
     # action, scoped to the session's selected entity, same precedent).
-    show_all = (view == "all") and bool(user["is_cfo"])
+    # RBAC (2026-08-01): entity-scoped -- Role-Based Access Control Plan.md §5.7.
+    show_all = (view == "all") and rbac.user_has_role(user["id"], "cfo", org["id"])
 
     if show_all:
         rows = db.query(
@@ -3860,7 +3930,9 @@ def admin_all_requests(request: Request):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
-    if not user.get("is_cfo"):
+    # RBAC (2026-08-01): cross-entity by design -- the genuinely cross-entity
+    # audit view Jay asked for. See Role-Based Access Control Plan.md §2.2.
+    if not rbac.user_has_role(user["id"], "cfo", org_id=None):
         return JSONResponse({"error": "CFO access required"}, status_code=403)
 
     rows = db.query(
@@ -3919,7 +3991,8 @@ def feedback_list(request: Request):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
-    if not user.get("is_cfo"):
+    # RBAC (2026-08-01): cross-entity -- feedback is app-wide, not per entity.
+    if not rbac.user_has_role(user["id"], "cfo", org_id=None):
         return JSONResponse({"error": "CFO access required"}, status_code=403)
 
     rows = db.query(
@@ -3951,8 +4024,10 @@ def test_mode_form(request: Request, saved: bool = False):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
-    if not user.get("is_cfo"):
-        return JSONResponse({"error": "CFO access required"}, status_code=403)
+    # RBAC (2026-08-01): setup_admin, not cfo -- this is an app-wide setting,
+    # not a CFO-specific power, per Role-Based Access Control Plan.md §5.1 #6.
+    if not rbac.user_has_role(user["id"], "setup_admin", org_id=None):
+        return JSONResponse({"error": "Setup Administrator access required"}, status_code=403)
 
     enabled = app_settings.get_setting("email_test_mode", "false") == "true"
     address = app_settings.get_setting("email_test_mode_address", "") or ""
@@ -3964,8 +4039,8 @@ async def test_mode_save(request: Request):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
-    if not user.get("is_cfo"):
-        return JSONResponse({"error": "CFO access required"}, status_code=403)
+    if not rbac.user_has_role(user["id"], "setup_admin", org_id=None):
+        return JSONResponse({"error": "Setup Administrator access required"}, status_code=403)
 
     form = await request.form()
     enabled = form.get("enabled") == "1"
@@ -4001,7 +4076,10 @@ def _require_vendor_approver(request: Request):
     user = _current_user(request)
     if not user:
         return None, RedirectResponse("/login")
-    if not user.get("is_vendor_approver"):
+    # RBAC (2026-08-01): cross-entity for now, matching today's behavior --
+    # see Role-Based Access Control Plan.md §8 q2 (same deferred question as
+    # _require_ap_reviewer above).
+    if not rbac.user_has_role(user["id"], "vendor_approver", org_id=None):
         return None, JSONResponse({"error": "Vendor-approver access required"}, status_code=403)
     return user, None
 
@@ -4698,16 +4776,16 @@ def request_pdf(request_number: str, request: Request):
         return RedirectResponse("/login")
 
     pr = db.query_one(
-        "SELECT id, submitter_user_id, program_area_id FROM checkreq.payment_requests WHERE request_number = %s",
+        "SELECT id, submitter_user_id, program_area_id, org_id FROM checkreq.payment_requests WHERE request_number = %s",
         (request_number,),
     )
     if not pr:
         return JSONResponse({"error": "Request not found"}, status_code=404)
 
     allowed = (
-        user["is_cfo"]
+        rbac.user_has_role(user["id"], "cfo", pr["org_id"])
         or pr["submitter_user_id"] == user["id"]
-        or _user_can_submit_for(user, pr["program_area_id"])
+        or _user_can_submit_for(user, pr["program_area_id"], pr["org_id"])
     )
     if not allowed:
         return JSONResponse({"error": "Not authorized to view this request"}, status_code=403)
@@ -4739,7 +4817,7 @@ def request_view(request_number: str, request: Request):
         return RedirectResponse("/login")
 
     pr = db.query_one(
-        "SELECT id, submitter_user_id, program_area_id, status FROM checkreq.payment_requests "
+        "SELECT id, submitter_user_id, program_area_id, status, org_id FROM checkreq.payment_requests "
         "WHERE request_number = %s",
         (request_number,),
     )
@@ -4750,13 +4828,16 @@ def request_view(request_number: str, request: Request):
         "SELECT 1 FROM checkreq.approval_actions WHERE payment_request_id = %s AND approver_user_id = %s",
         (pr["id"], user["id"]),
     )
+    # RBAC (2026-08-01): cfo scoped to this request's own org; ap_reviewer/
+    # vendor_approver stay cross-entity (org_id=None) to match #2/#3 above --
+    # see Role-Based Access Control Plan.md §5.2 #11.
     allowed = (
-        user["is_cfo"]
+        rbac.user_has_role(user["id"], "cfo", pr["org_id"])
         or pr["submitter_user_id"] == user["id"]
-        or _user_can_submit_for(user, pr["program_area_id"])
+        or _user_can_submit_for(user, pr["program_area_id"], pr["org_id"])
         or bool(is_approver)
-        or bool(user.get("is_ap_reviewer"))
-        or bool(user.get("is_vendor_approver"))
+        or rbac.user_has_role(user["id"], "ap_reviewer", org_id=None)
+        or rbac.user_has_role(user["id"], "vendor_approver", org_id=None)
     )
     if not allowed:
         return JSONResponse({"error": "Not authorized to view this request"}, status_code=403)
@@ -4768,3 +4849,39 @@ def request_view(request_number: str, request: Request):
         "pr_status": pr["status"],
         "attachments": _active_attachments(pr["id"]),
     })
+
+
+# ── Admin > Setup Tables (prototype, 2026-08-01) ─────────────────────────────
+# The Excel Setup Tables workbook ported into Beacon -- see admin_setup.py's
+# own docstring and Admin Module Plan.md. Kept in its own module rather than
+# appended here: this file is already ~4,700 lines, the new screens share no
+# helpers with anything above, and a self-contained module is far easier to
+# review, back out, or hand to a future session.
+#
+# register() (rather than a plain `app.include_router` at import time) is
+# what keeps the dependency one-way -- admin_setup.py never imports main, it
+# receives the three helpers it needs. Called last, after every helper it
+# takes has actually been defined.
+import admin_setup  # noqa: E402  (deliberately last -- see comment above)
+
+admin_setup.register(
+    app,
+    current_user=_current_user,
+    current_org=_current_org,
+    render=_render,
+)
+
+# RBAC (2026-08-01, Role-Based Access Control Plan.md §9/§6). Same
+# register()-injection pattern as admin_setup.py -- each module owns one
+# concern (self-service access requests vs. the Users & Roles admin screen)
+# and stays under ~250 lines instead of growing this file further.
+#
+# Migration 019_rbac.sql applied to production 2026-08-01; Stages 2-6
+# (rbac.py, route guards, row-level checks, program-area bypass, recipient
+# queries, identity path) verified against real data via run_dev.py before
+# wiring these two modules in -- see Role-Based Access Control Plan.md §7.
+import access_requests
+import admin_users
+
+access_requests.register(app, current_user=_current_user, render=_render)
+admin_users.register(app, current_user=_current_user, render=_render)

@@ -1,0 +1,153 @@
+/* admin_setup.css — Beacon Admin > Setup Tables (prototype, 2026-08-01).
+   Uses only tokens.css variables + base.css primitives (.page-shell-wide,
+   .card, .btn, .btn-sm, .banner, .badge, .table-scroll) so these screens
+   read as the same product as the rest of Beacon, not a bolted-on admin skin. */
+
+/* ---- Module index ---- */
+.setup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-4);
+}
+.setup-tile {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.setup-tile.is-planned { background: #faf8f3; box-shadow: none; }
+.setup-tile h2 { font-size: 1.02rem; margin: 0; }
+.setup-tile h2 a { color: var(--color-franciscan-green); text-decoration: none; }
+.setup-tile h2 a:hover { text-decoration: underline; }
+.setup-tile .desc { font-size: 0.86rem; color: var(--color-text-muted); flex: 1; }
+.setup-tile .meta {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-2); font-size: 0.8rem; color: var(--color-text-muted);
+}
+.setup-tile.is-built { border-left: 4px solid var(--color-gold); }
+
+/* ---- Shared editor chrome ---- */
+.setup-toolbar {
+  display: flex; align-items: center; gap: var(--space-3);
+  flex-wrap: wrap; margin-bottom: var(--space-4);
+}
+.setup-toolbar .spacer { flex: 1; }
+.save-state { font-size: 0.85rem; color: var(--color-text-muted); }
+.save-state.dirty { color: var(--color-warning); font-weight: 600; }
+.save-state.ok { color: var(--color-success); font-weight: 600; }
+.save-state.err { color: var(--color-danger); font-weight: 600; }
+
+table.setup-table { width: 100%; border-collapse: collapse; table-layout: auto; }
+table.setup-table th {
+  text-align: left; font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.03em; color: var(--color-text-muted);
+  border-bottom: 2px solid var(--color-border);
+  padding: var(--space-2) var(--space-2); white-space: nowrap;
+}
+table.setup-table td {
+  padding: 6px var(--space-2); border-bottom: 1px solid var(--color-border);
+  font-size: 0.88rem; vertical-align: middle;
+}
+table.setup-table tbody tr:hover { background: #fcfaf5; }
+table.setup-table tr.area-header td {
+  background: var(--color-franciscan-green); color: #fff;
+  font-family: var(--font-display); font-size: 0.9rem; font-weight: 700;
+  padding: var(--space-2) var(--space-3);
+}
+table.setup-table tr.area-header td .area-count { font-weight: 400; opacity: 0.8; font-size: 0.8rem; }
+
+/* Dirty/saved/failed row states. Deliberately a left border rather than a
+   full row tint, so it reads at a glance down a 47-row table without
+   fighting the hover state. */
+tr.row-dirty  { box-shadow: inset 3px 0 0 var(--color-warning-bg); }
+tr.row-saved  { box-shadow: inset 3px 0 0 var(--color-success); }
+tr.row-failed { box-shadow: inset 3px 0 0 var(--color-danger); }
+
+.row-msg { font-size: 0.78rem; margin-top: 2px; }
+.row-msg.err { color: var(--color-danger); }
+.row-msg.ok  { color: var(--color-success); }
+
+/* ---- Cell inputs ---- */
+.setup-table input[type="text"],
+.setup-table input[type="number"],
+.setup-table input[type="email"],
+.setup-table select {
+  width: 100%; box-sizing: border-box;
+  padding: 4px 6px; font-family: var(--font-body); font-size: 0.85rem;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: transparent; color: var(--color-ink);
+}
+.setup-table input:hover, .setup-table select:hover { border-color: var(--color-border); }
+.setup-table input:focus, .setup-table select:focus {
+  outline: none; border-color: var(--color-franciscan-green);
+  background: #fff; box-shadow: 0 0 0 2px rgba(31,61,46,0.10);
+}
+.setup-table input.num { text-align: right; }
+
+.col-display   { min-width: 220px; }
+.col-account   { min-width: 260px; }
+.col-sort      { width: 90px; }
+.col-buffer    { width: 110px; }
+.col-allow     { width: 84px; text-align: center; }
+.col-budget    { width: 190px; }
+.col-actions   { width: 70px; text-align: right; white-space: nowrap; }
+.col-email     { min-width: 240px; }
+.col-entity    { width: 130px; }
+.col-serial    { width: 80px; }
+
+/* GL account cell: the number is reference (not editable), the label is the
+   editable Display Text override sitting right beside it. */
+.acct-cell { display: flex; align-items: baseline; gap: var(--space-2); }
+.acct-num {
+  font-variant-numeric: tabular-nums; font-size: 0.82rem;
+  color: var(--color-text-muted); white-space: nowrap;
+}
+.acct-name { font-size: 0.82rem; color: var(--color-text-muted); }
+
+/* Hierarchy indent from SortOrder dot-depth — same rule as the submitter's
+   own GL picker (new_request.js glAccountDepth), so this screen previews
+   exactly what they'll see. */
+.depth-0 { padding-left: 0; }
+.depth-1 { padding-left: 18px; }
+.depth-2 { padding-left: 36px; }
+.depth-3 { padding-left: 54px; }
+.depth-4 { padding-left: 72px; }
+
+.pill-header {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.03em; background: #ece7da; color: var(--color-text-muted);
+}
+
+.budget-cell { font-size: 0.8rem; color: var(--color-text-muted); white-space: nowrap; }
+.budget-cell.over { color: var(--color-danger); font-weight: 600; }
+
+/* ---- Add-row panel ---- */
+.add-panel { border: 1px dashed var(--color-border); border-radius: var(--radius-md);
+             padding: var(--space-4); margin-bottom: var(--space-5); background: #fcfaf5; }
+.add-panel h3 { margin: 0 0 var(--space-3); font-size: 0.95rem; }
+.add-grid { display: grid; grid-template-columns: 1.2fr 2fr 1.2fr 0.7fr 0.8fr auto; gap: var(--space-3); align-items: end; }
+.add-grid .fld label { display: block; font-size: 0.75rem; font-weight: 600; margin-bottom: 2px; }
+.add-grid .fld input, .add-grid .fld select {
+  width: 100%; box-sizing: border-box; padding: 6px 8px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  font-family: var(--font-body); font-size: 0.85rem;
+}
+@media (max-width: 1100px) { .add-grid { grid-template-columns: 1fr 1fr; } }
+
+.icon-btn {
+  background: none; border: none; cursor: pointer; color: var(--color-text-muted);
+  font-size: 1rem; line-height: 1; padding: 2px 6px; border-radius: var(--radius-sm);
+}
+.icon-btn:hover { color: var(--color-danger); background: #fbe6e6; }
+
+.setup-note { font-size: 0.82rem; color: var(--color-text-muted); margin-top: var(--space-3); }
+.setup-note code { background: #f0ece2; padding: 1px 5px; border-radius: 3px; }
+
+/* Tom Select needs a real width in the add-panel grid cell. */
+.add-grid .ts-wrapper { font-size: 0.85rem; }
+.add-grid .ts-control { border-color: var(--color-border); border-radius: var(--radius-sm); }

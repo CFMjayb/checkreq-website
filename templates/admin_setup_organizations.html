@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Entities & Global Approvers{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+
+<h1>Entities &amp; Global Approvers</h1>
+<p class="sub">
+  <a href="/admin/setup">Setup Tables</a> &rsaquo; Not entity-scoped &mdash; this screen always shows
+  every entity, whichever one is selected in the header, because the whole point is comparing them.
+</p>
+
+{% if request.query_params.get('deleted') %}
+<div class="banner banner-success">Approver removed.</div>
+{% endif %}
+
+{% if unassigned_count %}
+<div class="banner banner-error">
+  <strong>{{ unassigned_count }} approver row{{ '' if unassigned_count == 1 else 's' }} with no entity.</strong>
+  A global approver with no entity assigned is never added to any approval chain, for any amount —
+  so that entity&rsquo;s over-threshold step effectively fires for nobody. Set the Entity below.
+</div>
+{% endif %}
+
+<!-- ── Entities ─────────────────────────────────────────────────────────── -->
+<div class="setup-toolbar" style="margin-top:24px;">
+  <h2 style="margin:0;font-size:1.1rem;">Entities</h2>
+  <div class="spacer"></div>
+  <span id="orgSaveState" class="save-state">No changes</span>
+  <button type="button" id="orgSaveBtn" class="btn btn-primary btn-sm" disabled>Save Entities</button>
+</div>
+
+<div class="card">
+  <table class="setup-table" id="orgTable">
+    <thead>
+      <tr>
+        <th class="col-entity">Code</th>
+        <th>Name</th>
+        <th class="col-buffer">Global Approval Threshold ($)</th>
+        <th>Effect</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for o in orgs %}
+      <tr data-row-id="{{ o.id }}">
+        <td><strong>{{ o.code }}</strong></td>
+        <td>{{ o.name }}</td>
+        <td class="col-buffer">
+          <input type="number" class="num" data-field="global_approval_threshold"
+                 step="0.01" min="0" value="{{ '%.2f'|format(o.global_approval_threshold) }}">
+        </td>
+        <td class="sub">
+          Requests of this amount or more pick up {{ o.code }}&rsquo;s global approvers below.
+        </td>
+      </tr>
+      <tr class="msg-row" data-msg-for="{{ o.id }}" hidden><td colspan="4"><div class="row-msg"></div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="setup-note">
+    Code and Name are reference data, set when an entity is onboarded — the threshold is the only
+    field editable here, same as the workbook&rsquo;s Organizations tab.
+  </p>
+</div>
+
+<!-- ── Global approvers ─────────────────────────────────────────────────── -->
+<div class="setup-toolbar" style="margin-top:32px;">
+  <h2 style="margin:0;font-size:1.1rem;">Global Approvers</h2>
+  <div class="spacer"></div>
+  <span id="apprSaveState" class="save-state">No changes</span>
+  <button type="button" id="apprAddBtn" class="btn btn-secondary btn-sm">Add Approver</button>
+  <button type="button" id="apprSaveBtn" class="btn btn-primary btn-sm" disabled>Save Approvers</button>
+</div>
+
+<div class="card">
+  <div class="table-scroll">
+    <table class="setup-table" id="apprTable">
+      <thead>
+        <tr>
+          <th class="col-email">Approver</th>
+          <th class="col-entity">Entity</th>
+          <th class="col-serial">Serial Group</th>
+          <th class="col-email">Backup Approver</th>
+          <th class="col-allow">Active</th>
+          <th class="col-actions"></th>
+        </tr>
+      </thead>
+      <tbody id="apprBody">
+        {% for a in approvers %}
+        <tr data-row-id="{{ a.id }}">
+          <td class="col-email">
+            <input type="email" data-field="approver_email" list="knownEmails" value="{{ a.approver_email }}">
+          </td>
+          <td class="col-entity">
+            <select data-field="org_id">
+              <option value="" {% if not a.org_id %}selected{% endif %}>— none —</option>
+              {% for o in orgs %}
+              <option value="{{ o.id }}" {% if a.org_id == o.id %}selected{% endif %}>{{ o.code }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td class="col-serial"><input type="number" class="num" data-field="serial_group" min="1" value="{{ a.serial_group }}"></td>
+          <td class="col-email">
+            <input type="email" data-field="backup_approver_email" list="knownEmails" value="{{ a.backup_approver_email or '' }}">
+          </td>
+          <td class="col-allow"><input type="checkbox" data-field="is_active" {% if a.is_active %}checked{% endif %}></td>
+          <td class="col-actions">
+            <form method="post" action="/admin/setup/global-approvers/{{ a.id }}/delete" style="display:inline;"
+                  onsubmit="return confirm('Remove {{ a.approver_email }} as a global approver for {{ a.org_code or 'no entity' }}?');">
+              <button type="submit" class="icon-btn" title="Remove this approver">&times;</button>
+            </form>
+          </td>
+        </tr>
+        <tr class="msg-row" data-msg-for="{{ a.id }}" hidden><td colspan="6"><div class="row-msg"></div></td></tr>
+        {% else %}
+        <tr id="apprEmpty"><td colspan="6">No global approvers configured.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="setup-note">
+    One row per approver <em>per entity</em> — someone who signs off for both EDOM and Claggett needs
+    a row for each. Approvers in the same Serial Group act in parallel and any one of them is enough;
+    a higher group only opens once the group before it clears.
+  </p>
+</div>
+
+<datalist id="knownEmails">
+  {% for e in known_emails %}<option value="{{ e }}"></option>{% endfor %}
+</datalist>
+
+<!-- Template row for "Add Approver". Kept in the DOM (not built as a JS
+     string) so the markup above stays the single source of truth for it. -->
+<template id="apprRowTemplate">
+  <tr data-row-id="">
+    <td class="col-email"><input type="email" data-field="approver_email" list="knownEmails" value=""></td>
+    <td class="col-entity">
+      <select data-field="org_id">
+        <option value="" selected>— none —</option>
+        {% for o in orgs %}<option value="{{ o.id }}">{{ o.code }}</option>{% endfor %}
+      </select>
+    </td>
+    <td class="col-serial"><input type="number" class="num" data-field="serial_group" min="1" value="1"></td>
+    <td class="col-email"><input type="email" data-field="backup_approver_email" list="knownEmails" value=""></td>
+    <td class="col-allow"><input type="checkbox" data-field="is_active" checked></td>
+    <td class="col-actions"><button type="button" class="icon-btn" data-drop-new title="Discard this new row">&times;</button></td>
+  </tr>
+</template>
+
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/admin_setup.js?v={{ asset_version('js/admin_setup.js') }}"></script>
+{% endblock %}
