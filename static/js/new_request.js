@@ -693,6 +693,24 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    // Pre-Approved Submission Designation (2026-08-01): client-side check
+    // only -- new_request_submit re-validates this server-side regardless
+    // (never trust a checkbox alone), same posture as every other gate in
+    // this app. Attachments already on the request (edit mode) count too,
+    // not just a file freshly picked in this exact submit.
+    const preApprovedBox = document.getElementById('preApprovedCheckbox');
+    if (preApprovedBox && preApprovedBox.checked) {
+      const newlyAttached = document.getElementById('attachmentsInput').files.length;
+      const alreadyAttached = window.EXISTING_ATTACHMENT_COUNT || 0;
+      if (newlyAttached === 0 && alreadyAttached === 0) {
+        e.preventDefault();
+        document.getElementById('preApprovedWarning').style.display = 'block';
+        document.getElementById('preApprovedRow').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      document.getElementById('preApprovedWarning').style.display = 'none';
+    }
+
     // Three-tier budget design (Approval Workflow Corrections, 2026-07-31):
     // pre-flight check for tier-3 (over budget beyond the account's
     // buffer) BEFORE the real submission -- Jay's direct request: "the

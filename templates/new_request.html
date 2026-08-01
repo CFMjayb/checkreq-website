@@ -27,6 +27,20 @@
       <div id="uploadStatus" class="upload-status"></div>
     </div>
 
+    {% if 'pre_approved_submitter' in any_org_roles %}
+    <div class="field-disclosure" id="preApprovedRow">
+      <label>
+        <input type="checkbox" name="pre_approved" id="preApprovedCheckbox" value="1"
+               {% if voucher_pre_approved %}checked{% endif %}>
+        This request has already been approved outside Beacon — attach the approval
+        documentation above (or below, if editing).
+      </label>
+      <div id="preApprovedWarning" class="upload-status error" style="display:none;">
+        Attach at least one file showing the approval before submitting this way.
+      </div>
+    </div>
+    {% endif %}
+
     <div class="field-row">
       <div class="field">
         <label>Program Area</label>
@@ -173,6 +187,7 @@
 <script>
 const CURRENT_ORG_ID = {{ current_org.id }};
 window.EDIT_DATA = {{ (edit_data | tojson) if edit_data else 'null' }};
+window.EXISTING_ATTACHMENT_COUNT = {{ (attachments | length) if attachments else 0 }};
 </script>
 <script src="/static/vendor/tomselect/tom-select.complete.min.js"></script>
 <script src="/static/js/action_modal.js?v={{ asset_version('js/action_modal.js') }}"></script>

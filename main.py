@@ -2031,6 +2031,7 @@ def _voucher_context(payment_request_id: int) -> dict | None:
         "voucher_budget_checked_at": (
             pr["budget_checked_at"].strftime("%Y-%m-%d %H:%M:%S UTC") if pr.get("budget_checked_at") else None
         ),
+        "voucher_pre_approved": bool(pr.get("pre_approved")),
         "voucher_approval_records": [
             {
                 "name": a["display_name"] or a["email"],
@@ -2556,6 +2557,26 @@ async def new_request_submit(request: Request):
             if content:
                 uploaded_attachments.append((f.filename, f.content_type or "application/octet-stream", content))
 
+    # Pre-Approved Submission Designation (Pre-Approved Submission Plan.md,
+    # 2026-08-01): "certain submitters are allowed to designate that the
+    # approvals for this CR have already been obtained and are on the
+    # uploaded document(s)" -- only trusted server-side, never from the
+    # client checkbox alone, same posture as every other gate in this app.
+    pre_approved_requested = form.get("pre_approved") == "1"
+    pre_approved = pre_approved_requested and rbac.user_has_role(
+        user["id"], "pre_approved_submitter", org_id=None
+    )
+    if pre_approved:
+        has_attachment = bool(uploaded_attachments) or (
+            existing_pr is not None and bool(_active_attachments(existing_pr["id"]))
+        )
+        if not has_attachment:
+            return JSONResponse(
+                {"error": "Pre-approval documentation is required -- attach at least one file "
+                          "showing the approval before submitting this way."},
+                status_code=400,
+            )
+
     # Approval Workflow Corrections (Jay, 2026-07-31): a self-payment --
     # this vendor row is linked to the submitter's own login -- always
     # requires CFO approval, bypassing the normal Program-Area chain and
@@ -2572,6 +2593,22 @@ async def new_request_submit(request: Request):
             if chain else
             "Self-payment -- no CFO configured to approve this. Needs setup."
         )
+        # Pre-Approved Submission Designation: confirmed with Jay -- self-
+        # payment protection is NOT bypassable by this designation, so the
+        # attestation is only noted alongside it, never replaces it.
+        if pre_approved:
+            chain_summary = (
+                "Submitter designates this request as previously approved outside Beacon; "
+                "see attached documentation. Self-payment rules still require independent "
+                "CFO approval below.\n" + chain_summary
+            )
+    elif pre_approved:
+        # Skips the ordinary Program-Area/Global-Approver chain entirely --
+        # the tier-3 budget block below still applies on top of this if
+        # triggered (also confirmed non-bypassable).
+        chain = []
+        chain_summary = ("Submitter designates this request as previously approved outside "
+                          "Beacon; see attached documentation.")
     else:
         chain = approval_engine.build_approval_chain(program_area_id, org_id, total_amount)
         chain_summary = approval_engine.describe_chain(chain)
@@ -2601,6 +2638,15 @@ async def new_request_submit(request: Request):
     # submission and edit-reset call sites.
     first_serial_group = first_step["serial_group"] if first_step else None
     first_display_approver = _serial_group_display_approver(chain, first_serial_group)
+
+    # Pre-Approved Submission Designation: reaches 'Approved' immediately
+    # ONLY when the designation actually left nothing else to satisfy (no
+    # self-payment override, no tier-3 budget group) -- otherwise this
+    # follows the normal UnderReview path like any other chain. Gated on
+    # pre_approved specifically, not on "chain is empty" in general, so this
+    # doesn't change behavior for the (separate, pre-existing) case of a
+    # program area with no approval_rules configured at all.
+    initial_status = "Approved" if (pre_approved and not chain) else "UnderReview"
 
     imp_id = request.session.get("impersonating_user_id")
     impersonated_by = _real_user(request)["id"] if imp_id else None
@@ -2726,14 +2772,14 @@ async def new_request_submit(request: Request):
                             serial_group_current = %s, approval_chain_summary = %s,
                             cfo_override = FALSE, cfo_override_date = NULL,
                             overspend_flagged = %s, overspend_detail = %s, budget_checked_at = NOW(),
-                            updated_at = NOW()
+                            pre_approved = %s, updated_at = NOW()
                         WHERE id = %s
                         """,
                         (program_area_id, vendor_id, new_vendor_request_id, total_amount,
                          requested_pay_date, description, special_instructions,
-                         "UnderReview",
+                         initial_status,
                          first_display_approver, first_serial_group,
-                         chain_summary, overspend_flagged, overspend_detail, payment_request_id),
+                         chain_summary, overspend_flagged, overspend_detail, pre_approved, payment_request_id),
                     )
                     # AP Review Workflow Plan.md, Section 1a: mark any still-
                     # pending rows from the OLD chain skipped, then
@@ -2807,7 +2853,7 @@ async def new_request_submit(request: Request):
                         " previous_status, new_status, impersonated_by_user_id) "
                         "VALUES (%s, %s, %s, %s, %s, %s, %s)",
                         (payment_request_id, user["id"], "Edited — Approval Reset", audit_comment,
-                         existing_pr["status"], "UnderReview", impersonated_by),
+                         existing_pr["status"], initial_status, impersonated_by),
                     )
                 else:
                     cur.execute(
@@ -2851,15 +2897,15 @@ async def new_request_submit(request: Request):
                     (request_number, request_type, org_id, program_area_id, submitter_user_id,
                      vendor_id, amount, requested_pay_date, description, special_instructions,
                      status, current_approver_id, serial_group_current, approval_chain_summary,
-                     overspend_flagged, overspend_detail, budget_checked_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                     overspend_flagged, overspend_detail, pre_approved, budget_checked_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 RETURNING id
                 """,
                 (request_number, request_type, org_id, program_area_id, user["id"],
                  vendor_id, total_amount, requested_pay_date, description, special_instructions,
-                 "UnderReview",
+                 initial_status,
                  first_display_approver, first_serial_group,
-                 chain_summary, overspend_flagged, overspend_detail),
+                 chain_summary, overspend_flagged, overspend_detail, pre_approved),
             )
             payment_request_id = cur.fetchone()["id"]
 
@@ -2904,7 +2950,7 @@ async def new_request_submit(request: Request):
                 "INSERT INTO checkreq.audit_log "
                 "(payment_request_id, action_by_user_id, action_type, comment, new_status, impersonated_by_user_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s)",
-                (payment_request_id, user["id"], "Submitted", chain_summary, "UnderReview", impersonated_by),
+                (payment_request_id, user["id"], "Submitted", chain_summary, initial_status, impersonated_by),
             )
 
             # New Vendor Onboarding (Section 1/2): the vendor_requests row
