@@ -17,6 +17,27 @@
     <form method="post" action="/admin/impersonate/stop"><button type="submit">Exit Impersonation</button></form>
   </div>
   {% endif %}
+  {# Full-screen toggle (2026-08-02): rendered unconditionally, on every
+     page including /login -- not gated on `user` like the header is,
+     since Jay asked for it on "all screens". Fixed-positioned just under
+     where the green header bar sits (see .fullscreen-toggle-btn in
+     base.css); fullscreen.js hides it entirely if the browser reports
+     document.fullscreenEnabled === false (e.g. inside an iframe that
+     disallows it) rather than showing a button that would just error. #}
+  <button type="button" id="fullscreenToggleBtn" class="fullscreen-toggle-btn" aria-label="Toggle full screen" title="Toggle full screen" hidden>
+    <svg id="fsIconEnter" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 3H5a2 2 0 0 0-2 2v3"></path>
+      <path d="M16 3h3a2 2 0 0 1 2 2v3"></path>
+      <path d="M8 21H5a2 2 0 0 1-2-2v-3"></path>
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3"></path>
+    </svg>
+    <svg id="fsIconExit" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+      <path d="M9 3v3a2 2 0 0 1-2 2H4"></path>
+      <path d="M15 3v3a2 2 0 0 0 2 2h3"></path>
+      <path d="M9 21v-3a2 2 0 0 0-2-2H4"></path>
+      <path d="M15 21v-3a2 2 0 0 1 2-2h3"></path>
+    </svg>
+  </button>
   {% if user %}
   <header class="site-header">
     <a href="/portal" class="brand">Beacon</a>
@@ -71,6 +92,7 @@
   </footer>
   {% if user and current_org %}<script src="/static/js/entity_switcher.js?v={{ asset_version('js/entity_switcher.js') }}"></script>{% endif %}
   {% if user %}<script src="/static/js/notifications.js?v={{ asset_version('js/notifications.js') }}"></script>{% endif %}
+  <script src="/static/js/fullscreen.js?v={{ asset_version('js/fullscreen.js') }}"></script>
   {% block extra_js %}{% endblock %}
 </body>
 </html>

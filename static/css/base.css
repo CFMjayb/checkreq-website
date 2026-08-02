@@ -123,6 +123,34 @@ p { margin: 0 0 var(--space-3); }
 .notif-item .notif-message { font-size: 0.85rem; color: var(--color-ink); }
 .notif-item .notif-time { font-size: 0.72rem; color: var(--color-text-muted); margin-top: 2px; }
 
+/* ---- Full-screen toggle (2026-08-02) -- fixed-positioned just under the
+   green header bar, on EVERY page including /login (Jay: "for all
+   screens"), so it can't be gated inside `.site-header`'s own
+   `{% if user %}` block. See static/js/fullscreen.js for the toggle/icon-
+   swap/fullscreenchange-listener behavior; the button starts `hidden` in
+   the markup and JS only reveals it once document.fullscreenEnabled is
+   confirmed true, so a context that disallows fullscreen (e.g. an
+   embedding iframe) never shows a button that would just error. ---- */
+.fullscreen-toggle-btn {
+  position: fixed;
+  top: 66px;
+  right: var(--space-5);
+  z-index: 400;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: var(--color-card-bg);
+  color: var(--color-franciscan-green);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.fullscreen-toggle-btn:hover { box-shadow: var(--shadow-card-hover); color: var(--color-gold); }
+
 /* ---- Impersonation bar -- deliberately NOT gold/green, must read as a
    distinct, unmissable "you are not really you right now" state. ---- */
 .impersonation-bar {
