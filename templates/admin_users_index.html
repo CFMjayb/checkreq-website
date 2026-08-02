@@ -1,10 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Users & Roles — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
 
-<h1>Users & Roles</h1>
-<p class="sub">Who can sign in, and what each person may do in each entity.</p>
+<h1>Users &amp; Roles</h1>
+<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+<p class="sub">Who can sign in, and what each person may do in each entity — every user, every entity.</p>
 
 {% if unreachable_count %}
 <div class="banner banner-error">
@@ -15,54 +19,129 @@
 </div>
 {% endif %}
 
+<!-- 2026-08-02 feedback batch, Item 13-continued: "Add User" moved to the
+     top of the screen. Still a single-step form -- the "guided" part of
+     the flow is what happens next, on the detail page (a highlighted
+     next-steps prompt via ?new=1), not a multi-page wizard here. -->
 <div class="card">
-  <table class="simple-table">
+  <h2>Add User</h2>
+  <form method="post" action="/admin/setup/users/add" class="filter-bar" style="align-items:flex-end;">
+    <div class="field">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" required>
+    </div>
+    <div class="field">
+      <label for="first_name">First Name</label>
+      <input type="text" id="first_name" name="first_name" placeholder="Joe">
+    </div>
+    <div class="field">
+      <label for="display_name">Display Name</label>
+      <input type="text" id="display_name" name="display_name" placeholder="Joe Smith">
+    </div>
+    <div class="field">
+      <button type="submit" class="btn btn-primary">Add User &amp; Continue</button>
+    </div>
+  </form>
+  <p class="setup-note">
+    Creates a roleless account — the person can sign in but sees the Request Access screen until
+    a role is granted. Submitting takes you straight to their page to grant a role (and, if needed,
+    program-area access) next.
+  </p>
+</div>
+
+<div class="card">
+  <table class="simple-table" id="usersTable">
     <thead>
-      <tr><th>Email</th><th>Display Name</th><th>Active</th><th>Last Sign-in</th><th>Roles</th><th>Program Areas</th><th></th></tr>
+      <tr>
+        <th data-sort="display_name" class="sortable">Display Name</th>
+        <th data-sort="first_name" class="sortable">First Name</th>
+        <th data-sort="email" class="sortable">Email</th>
+        <th data-sort="active" class="sortable">Active</th>
+        <th data-sort="last_sign_in" class="sortable">Last Sign-in</th>
+        <th>Program Areas</th>
+        <th>Entities</th>
+        <th>Roles</th>
+        <th></th>
+      </tr>
     </thead>
     <tbody>
       {% for u in rows %}
-      <tr>
-        <td>{{ u.email }}</td>
-        <td>{{ u.display_name or "—" }}</td>
-        <td>{% if not u.is_active %}<span class="badge badge-draft">Deactivated</span>{% else %}Yes{% endif %}</td>
-        <td>
-          {% if u.last_login_at %}{{ u.last_login_at }} ({{ u.last_login_provider }}){% else %}Never{% endif %}
+      <tr data-row="1">
+        <td data-sort-value="display_name">{{ u.display_name or "—" }}</td>
+        <td data-sort-value="first_name">{{ u.first_name or "—" }}</td>
+        <td data-sort-value="email">{{ u.email }}</td>
+        <td data-sort-value="active" data-value="{{ '0' if not u.is_active else '1' }}">
+          {% if not u.is_active %}<span class="badge badge-draft">Deactivated</span>{% else %}Yes{% endif %}
+        </td>
+        <td data-sort-value="last_sign_in" data-value="{{ u.last_login_at or '' }}">
+          {% if u.last_login_at %}{{ u.last_login_at }}{% else %}Never{% endif %}
           {% if u.is_unreachable_approver %}<br><span class="badge badge-draft">Required approver, never signed in</span>{% endif %}
         </td>
-        <td>
-          {% if u.has_any_role %}
-            {% for r in u.roles %}
-            <span class="badge badge-approved">{{ r.role_label }} ({{ r.org_code|upper }})</span>
-            {% endfor %}
-          {% else %}
-            <span class="badge badge-draft">No roles</span>
-          {% endif %}
+        <td class="status-cell">
+          <button type="button" class="status-pill-btn" data-popup="pa-popup-{{ u.id }}">
+            {{ u.pa_count }} {{ "area" if u.pa_count == 1 else "areas" }}
+          </button>
+          <div class="status-popup compact" id="pa-popup-{{ u.id }}" hidden>
+            <div class="status-popup-title">Program Areas — {{ u.display_name or u.email }}</div>
+            {% if u.program_areas %}
+            <ul class="popup-list">
+              {% for pa in u.program_areas %}<li>{{ pa.org_code|upper }} &mdash; {{ pa.program_area_title }}</li>{% endfor %}
+            </ul>
+            {% else %}
+            <div class="sub">No program-area assignments.</div>
+            {% endif %}
+          </div>
         </td>
-        <td>{{ u.pa_count }}</td>
+        <td class="status-cell">
+          <button type="button" class="status-pill-btn" data-popup="ent-popup-{{ u.id }}">
+            {% if u.entity_codes %}{{ u.entity_codes|join(', ') }}{% else %}—{% endif %}
+          </button>
+          <div class="status-popup compact" id="ent-popup-{{ u.id }}" hidden>
+            <div class="status-popup-title">Entities — {{ u.display_name or u.email }}</div>
+            {% if u.entity_codes %}
+            <div class="sub">Has a role or program-area assignment in: {{ u.entity_codes|join(', ') }}.</div>
+            {% else %}
+            <div class="sub">No entity access yet.</div>
+            {% endif %}
+          </div>
+        </td>
+        <td class="status-cell">
+          <!-- 2026-08-02 feedback batch, Item 13: Roles moved OUT of the
+               visible row -- a user with many role x entity combinations
+               (Jay's own account) would make every row scroll endlessly.
+               Popup instead, same click-to-reveal pattern as Program
+               Areas/Entities above. -->
+          {% if u.has_any_role %}
+          <button type="button" class="status-pill-btn" data-popup="roles-popup-{{ u.id }}">
+            <span class="badge badge-approved">{{ u.roles|length }} role{{ '' if u.roles|length == 1 else 's' }}</span>
+          </button>
+          {% else %}
+          <button type="button" class="status-pill-btn" data-popup="roles-popup-{{ u.id }}">
+            <span class="badge badge-draft">No roles</span>
+          </button>
+          {% endif %}
+          <div class="status-popup compact" id="roles-popup-{{ u.id }}" hidden>
+            <div class="status-popup-title">Roles — {{ u.display_name or u.email }}</div>
+            {% if u.roles %}
+            <ul class="popup-list">
+              {% for r in u.roles %}<li>{{ r.role_label }} ({{ r.org_code|upper }})</li>{% endfor %}
+            </ul>
+            {% else %}
+            <div class="sub">No live role grants.</div>
+            {% endif %}
+          </div>
+        </td>
         <td><a class="btn btn-secondary" href="/admin/setup/users/{{ u.id }}">Manage</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="7">No users found.</td></tr>
+      <tr><td colspan="9">No users found.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
 
-<div class="card">
-  <h2>Add User</h2>
-  <form method="post" action="/admin/setup/users/add">
-    <label for="email">Email</label>
-    <input type="email" id="email" name="email" required>
-    <label for="display_name">Display Name</label>
-    <input type="text" id="display_name" name="display_name">
-    <button type="submit" class="btn btn-primary">Add User</button>
-  </form>
-  <p class="setup-note">
-    Creates a roleless account — the person can sign in but sees the Request Access screen until
-    a role is granted here, or they submit their own request.
-  </p>
 </div>
-
-</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/admin_users.js?v={{ asset_version('js/admin_users.js') }}"></script>
 {% endblock %}

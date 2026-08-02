@@ -3,13 +3,14 @@
 {% block content %}
 <div class="page-shell">
 <h1>Feedback</h1>
+<p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
 
 {% if submitted %}
 <div class="banner banner-success">Thanks! Your feedback was submitted.</div>
 {% endif %}
 
 <div class="card feedback-card">
-  <div class="feedback-gift-line">Feedback is a Gift! Thank you for taking the time to give us some.</div>
+  <div class="feedback-gift-line">Feedback is a Gift!<br>Thank you for taking the time to give us some.</div>
   <form method="post" action="/feedback">
     <div class="field">
       <label for="feedbackComment">Your feedback</label>

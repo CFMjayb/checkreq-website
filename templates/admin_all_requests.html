@@ -1,9 +1,43 @@
 {% extends "base.html" %}
-{% block title %}Administrative — All Requests{% endblock %}
+{% block title %}All Requests — Beacon{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
-<h1>Administrative</h1>
+<h1>All Requests</h1>
+<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
 <p class="sub">Every check request, every entity, every status. Click a status pill to see its full history.</p>
+
+<form method="get" action="/admin/all-requests" class="filter-bar">
+  <div class="field">
+    <label>Entity</label>
+    <select name="entity">
+      <option value="">All</option>
+      {% for o in all_orgs_list %}
+      <option value="{{ o.code }}" {% if filter_entity == o.code %}selected{% endif %}>{{ o.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label>Vendor</label>
+    <input type="text" name="vendor" value="{{ filter_vendor }}" placeholder="Search vendor...">
+  </div>
+  <div class="field">
+    <label>Submitted By</label>
+    <input type="text" name="submitted_by" value="{{ filter_submitted_by }}" placeholder="Search submitter...">
+  </div>
+  <div class="field">
+    <label>Status</label>
+    <select name="status">
+      <option value="">All</option>
+      {% for s in all_statuses %}
+      <option value="{{ s }}" {% if filter_status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button type="submit" class="btn btn-secondary btn-sm">Filter</button>
+  {% if filter_entity or filter_vendor or filter_submitted_by or filter_status %}
+  <a href="/admin/all-requests" class="btn btn-secondary btn-sm">Clear</a>
+  {% endif %}
+</form>
 
 <div class="card">
 <div class="table-scroll">

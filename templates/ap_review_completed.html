@@ -3,12 +3,26 @@
 {% block content %}
 <div class="page-shell-wide">
 <h1>AP Review</h1>
+<p class="back-link"><a href="/admin/ap-review">&larr; Back to AP Review</a></p>
 <p class="sub">Requests already posted to QuickBooks.</p>
 
 <div class="view-toggle" role="tablist" aria-label="AP Review view">
-  <a href="/admin/ap-review" class="view-toggle-tab">Pending</a>
-  <a href="/admin/ap-review?view=completed" class="view-toggle-tab active">Completed</a>
+  <a href="/admin/ap-review{{ '?entity=' + filter_entity if filter_entity else '' }}" class="view-toggle-tab">Pending</a>
+  <a href="/admin/ap-review?view=completed{{ '&entity=' + filter_entity if filter_entity else '' }}" class="view-toggle-tab active">Completed</a>
 </div>
+
+<form method="get" action="/admin/ap-review" class="filter-bar">
+  <input type="hidden" name="view" value="completed">
+  <div class="field">
+    <label>Entity</label>
+    <select name="entity" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for o in all_orgs_list %}
+      <option value="{{ o.code }}" {% if filter_entity == o.code %}selected{% endif %}>{{ o.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</form>
 
 <div class="card">
 <div class="table-scroll">

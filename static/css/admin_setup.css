@@ -59,13 +59,29 @@ table.setup-table tr.area-header td {
   padding: var(--space-2) var(--space-3);
 }
 table.setup-table tr.area-header td .area-count { font-weight: 400; opacity: 0.8; font-size: 0.8rem; }
+table.setup-table tr.area-header { cursor: pointer; user-select: none; }
+table.setup-table tr.area-header:hover td { background: #2a4d3a; }
+.area-chevron { display: inline-block; width: 0.9em; transition: transform 0.15s ease; }
+tr.area-header.is-collapsed .area-chevron { transform: rotate(-90deg); }
 
-/* Dirty/saved/failed row states. Deliberately a left border rather than a
-   full row tint, so it reads at a glance down a 47-row table without
-   fighting the hover state. */
-tr.row-dirty  { box-shadow: inset 3px 0 0 var(--color-warning-bg); }
+/* Dirty/saved/failed row states. 2026-08-02 feedback batch, Item 8/10: Jay
+   asked directly for a full light-blue row tint on anything unsaved ("I
+   would highlight it in like a light blue... so we can designate that that
+   row is actually waiting to be updated") -- a left-border accent alone
+   wasn't visible enough. Saved/failed keep the quieter left-border accent
+   since those weren't flagged as a problem. */
+tr.row-dirty  { background: #eaf1fb !important; box-shadow: inset 3px 0 0 var(--color-gold); }
 tr.row-saved  { box-shadow: inset 3px 0 0 var(--color-success); }
 tr.row-failed { box-shadow: inset 3px 0 0 var(--color-danger); }
+
+/* A row marked for removal (Item 8.4): still just "dirty" -- same blue,
+   same one Save Changes gate -- but struck through so it's visually
+   obvious what the pending change actually IS. Fields are disabled while
+   marked (editing a row you're about to delete isn't meaningful). */
+tr.row-pending-delete td:not(.col-actions) { opacity: 0.55; text-decoration: line-through; }
+tr.row-pending-delete input, tr.row-pending-delete select { pointer-events: none; }
+.delete-toggle.is-marked { color: var(--color-franciscan-green); text-decoration: none; font-size: 0.72rem; font-weight: 600; }
+.delete-toggle.is-marked:hover { color: var(--color-franciscan-green); background: #e3ede7; }
 
 .row-msg { font-size: 0.78rem; margin-top: 2px; }
 .row-msg.err { color: var(--color-danger); }
@@ -78,7 +94,12 @@ tr.row-failed { box-shadow: inset 3px 0 0 var(--color-danger); }
 .setup-table select {
   width: 100%; box-sizing: border-box;
   padding: 4px 6px; font-family: var(--font-body); font-size: 0.85rem;
-  border: 1px solid transparent; border-radius: var(--radius-sm);
+  /* 2026-08-02 feedback batch, Item 12.2: Jay couldn't tell which fields
+     were editable "until you actually [hover] over them" -- a border only
+     on :hover/:focus is invisible at rest. A faint border all the time
+     reads as "this is a field" without the heavier :focus treatment
+     competing for attention. */
+  border: 1px solid #e4ddd0; border-radius: var(--radius-sm);
   background: transparent; color: var(--color-ink);
 }
 .setup-table input:hover, .setup-table select:hover { border-color: var(--color-border); }
@@ -108,6 +129,17 @@ tr.row-failed { box-shadow: inset 3px 0 0 var(--color-danger); }
 }
 .acct-name { font-size: 0.82rem; color: var(--color-text-muted); }
 
+/* 2026-08-02 feedback batch, Item 8.2: Jay flagged the muted Display Text
+   placeholder text as confusing ("I don't fully understand why some lines
+   are showing... a grayed out font color"). It's not a bug -- a blank
+   Display Text falls back to showing the account's own name as a
+   placeholder, so rows with no override look lighter than rows someone
+   has typed a real override into. Making it visibly a placeholder (italic,
+   on top of the browser's own dimmer placeholder color) plus the setup-note
+   below spelling this out replaces "unexplained inconsistency" with "a
+   convention you can see the moment you look for it". */
+.setup-table input[type="text"]::placeholder { font-style: italic; }
+
 /* Hierarchy indent from SortOrder dot-depth — same rule as the submitter's
    own GL picker (new_request.js glAccountDepth), so this screen previews
    exactly what they'll see. */
@@ -126,18 +158,44 @@ tr.row-failed { box-shadow: inset 3px 0 0 var(--color-danger); }
 .budget-cell { font-size: 0.8rem; color: var(--color-text-muted); white-space: nowrap; }
 .budget-cell.over { color: var(--color-danger); font-weight: 600; }
 
-/* ---- Add-row panel ---- */
+/* ---- Add-row panel ----
+   2026-08-02 feedback batch, Item 11.3: now a <details> so it's collapsible
+   ("if you're just working on the individual accounts, you don't
+   necessarily need to see [this] all the time") -- open by default since an
+   empty table's very first action is adding a row. */
 .add-panel { border: 1px dashed var(--color-border); border-radius: var(--radius-md);
              padding: var(--space-4); margin-bottom: var(--space-5); background: #fcfaf5; }
-.add-panel h3 { margin: 0 0 var(--space-3); font-size: 0.95rem; }
-.add-grid { display: grid; grid-template-columns: 1.2fr 2fr 1.2fr 0.7fr 0.8fr auto; gap: var(--space-3); align-items: end; }
+.add-panel > summary { cursor: pointer; font-size: 0.95rem; font-weight: 700; list-style: none; }
+.add-panel > summary::-webkit-details-marker { display: none; }
+.add-panel > summary::before { content: '\25be  '; }
+/* Same UA-vs-author cascade trap as .setup-section below: `.add-grid{display:
+   grid}` is an author rule on a child of this <details>, and author rules
+   always beat the UA stylesheet's free `details:not([open]) > * {display:
+   none}`, regardless of specificity -- so without this, collapsing did
+   nothing. */
+.add-panel:not([open]) > *:not(summary) { display: none !important; }
+.add-panel[open] > summary { margin-bottom: var(--space-3); }
+.add-grid { display: grid; grid-template-columns: 1.1fr 1.8fr 1.1fr 0.6fr 0.75fr 0.6fr auto; gap: var(--space-3); align-items: end; margin-top: var(--space-3); }
 .add-grid .fld label { display: block; font-size: 0.75rem; font-weight: 600; margin-bottom: 2px; }
 .add-grid .fld input, .add-grid .fld select {
   width: 100%; box-sizing: border-box; padding: 6px 8px;
   border: 1px solid var(--color-border); border-radius: var(--radius-sm);
   font-family: var(--font-body); font-size: 0.85rem;
 }
+.add-grid .fld.fld-check { display: flex; align-items: center; gap: 6px; padding-bottom: 6px; }
+.add-grid .fld.fld-check label { margin: 0; font-size: 0.78rem; }
 @media (max-width: 1100px) { .add-grid { grid-template-columns: 1fr 1fr; } }
+
+/* Same bug class new_request.css already fixed 2026-07-25 (Jay: "why is a
+   line added?") reintroduced here when this page's own Tom Select picker
+   was built: `.add-grid .fld input` above gives Tom Select's internal
+   search <input> width:100%, so once an item chip is selected the two can
+   no longer share one row and the control wraps -- reading as "selecting
+   an account adds a second line" (2026-08-02 feedback batch, Item 9.2). */
+.add-grid .ts-wrapper .ts-control input {
+  width: auto !important; min-width: 40px; padding: 0 !important;
+  border: none !important; box-shadow: none !important;
+}
 
 .icon-btn {
   background: none; border: none; cursor: pointer; color: var(--color-text-muted);
@@ -151,3 +209,56 @@ tr.row-failed { box-shadow: inset 3px 0 0 var(--color-danger); }
 /* Tom Select needs a real width in the add-panel grid cell. */
 .add-grid .ts-wrapper { font-size: 0.85rem; }
 .add-grid .ts-control { border-color: var(--color-border); border-radius: var(--radius-sm); }
+
+/* ---- Page chrome: 2026-08-02 feedback batch, Item 11 ---- */
+/* Smaller title -- Jay: "you are using a lot of real estate with... the
+   name of the screen". */
+.setup-toolbar h1.setup-h1-compact { font-size: 1.15rem; }
+
+/* Scroll inside the account list itself, not the whole page ("I don't
+   necessarily like screens that scroll where you lose all of the top
+   area... I prefer to actually have the scroll occur in the actual list").
+   The column header row stays visible (sticky) as you scroll the rows. */
+.setup-scroll { max-height: calc(100vh - 300px); min-height: 260px; overflow-y: auto; }
+.setup-scroll table.setup-table thead th {
+  position: sticky; top: 0; z-index: 1; background: var(--color-card-bg, #fff);
+}
+
+/* ---- Collapsible page sections (Entities / Global Approvers, Item 12.1's
+   "expand/collapse" correction -- Jay's misspoken "checkboxes" ask). Each
+   section is its own <details> so a screen with several tables lets you
+   collapse the ones you're not working on, same idea as the GL Mapping
+   page's collapsible Add-a-mapping panel. */
+.setup-section { margin-top: var(--space-5); }
+.setup-section > summary {
+  display: flex; align-items: center; gap: var(--space-2); cursor: pointer;
+  list-style: none; padding: var(--space-2) 0;
+}
+.setup-section > summary::-webkit-details-marker { display: none; }
+.setup-section > summary::before { content: '\25be'; display: inline-block; transition: transform 0.15s ease; }
+.setup-section:not([open]) > summary::before { transform: rotate(-90deg); }
+/* The browser's own UA stylesheet hides every non-<summary> child of a
+   closed <details> for free -- but that's a UA-origin rule, and ANY author
+   rule setting `display` on a child (e.g. `.setup-toolbar{display:flex}`)
+   always wins over UA styles regardless of specificity, silently breaking
+   the collapse. Caught live testing this page: closing a section left its
+   table fully visible. Re-asserting `display:none` here, as an author rule
+   of our own, is what actually makes collapse work. */
+.setup-section:not([open]) > *:not(summary) { display: none !important; }
+.setup-section > summary h2 { margin: 0; font-size: 1.1rem; }
+.setup-hint { font-size: 0.82rem; color: var(--color-text-muted); margin: 0 0 var(--space-3); }
+
+/* ---- Users & Roles (2026-08-02 feedback batch, Item 13/14) ---- */
+/* Reuses base.css's .status-pill-btn/.status-popup (built for My
+   Requests' status-history popup) -- same click-to-reveal mechanism for
+   Program Areas/Entities/Roles, just a much narrower popup than that one's
+   800px table since these are short bullet lists, not a 4-column table. */
+.status-popup.compact { min-width: 220px; max-width: 360px; }
+.popup-list { margin: 0; padding-left: 1.1em; font-size: 0.85rem; }
+.popup-list li { margin-bottom: 2px; }
+
+table.simple-table th.sortable { cursor: pointer; user-select: none; }
+table.simple-table th.sortable:hover { color: var(--color-ink); }
+table.simple-table th.sortable::after { content: '\2195'; opacity: 0.35; margin-left: 4px; font-size: 0.75em; }
+table.simple-table th.sort-asc::after { content: '\2191'; opacity: 1; }
+table.simple-table th.sort-desc::after { content: '\2193'; opacity: 1; }

@@ -73,20 +73,36 @@ def _require_beacon_admin(request: Request):
 
 
 def _user_list_rows() -> list[dict]:
-    """One row per app_users row, with role chips and the three inline
-       flags described in Plan §6.2. Two extra queries (approver-somewhere,
-       program-area count) per user is fine at this table's real size
-       (tens of rows, not thousands)."""
+    """One row per app_users row, with role/program-area/entity DETAIL (not
+       just a count -- 2026-08-02 feedback batch, Item 13: "if you click on
+       that and you show me what the program area is, that's great") plus
+       the three inline flags described in Plan §6.2. A handful of extra
+       queries per user is fine at this table's real size (tens of rows,
+       not thousands)."""
     users = db.query(
-        "SELECT id, email, display_name, is_active, last_login_at, last_login_provider "
+        "SELECT id, email, display_name, first_name, is_active, last_login_at, last_login_provider "
         "FROM checkreq.app_users ORDER BY email"
     )
     for u in users:
         u["roles"] = rbac.get_roles_for_user(u["id"])
         u["has_any_role"] = len(u["roles"]) > 0
-        u["pa_count"] = db.query_one(
-            "SELECT COUNT(*) AS n FROM checkreq.user_program_areas WHERE user_id = %s", (u["id"],)
-        )["n"]
+        u["program_areas"] = db.query(
+            """
+            SELECT pa.title AS program_area_title, o.code AS org_code
+              FROM checkreq.user_program_areas upa
+              JOIN checkreq.program_areas pa ON pa.id = upa.program_area_id
+              JOIN checkreq.organizations o ON o.id = pa.org_id
+             WHERE upa.user_id = %s
+             ORDER BY o.code, pa.title
+            """,
+            (u["id"],),
+        )
+        u["pa_count"] = len(u["program_areas"])
+        # Every entity this person has a live footprint in, role OR
+        # program-area -- Item 13's "Entities" column.
+        entity_codes = sorted({r["org_code"] for r in u["roles"]} |
+                               {r["org_code"] for r in u["program_areas"]})
+        u["entity_codes"] = entity_codes
         u["is_unreachable_approver"] = (u["last_login_at"] is None) and bool(db.query_one(
             """
             SELECT 1 FROM (
@@ -116,11 +132,17 @@ def users_list_page(request: Request):
 
 @router.post("/admin/setup/users/add")
 async def users_add(request: Request):
+    """Step 1 of the guided setup flow (2026-08-02 feedback batch, Item
+       13-continued). Still a plain roleless-account INSERT -- the "guided"
+       part is the `?new=1` redirect below, which the detail page renders
+       as an explicit "now grant a role" prompt rather than leaving that as
+       an undiscoverable next step."""
     user, err = _require_beacon_admin(request)
     if err:
         return err
     form = await request.form()
     email = (form.get("email") or "").strip().lower()
+    first_name = (form.get("first_name") or "").strip() or None
     display_name = (form.get("display_name") or "").strip() or None
     if not email:
         return JSONResponse({"error": "Email is required."}, status_code=400)
@@ -132,12 +154,29 @@ async def users_add(request: Request):
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO checkreq.app_users (email, display_name, is_active) "
-                "VALUES (%s, %s, TRUE) RETURNING id",
-                (email, display_name or email.split("@")[0]),
+                "INSERT INTO checkreq.app_users (email, display_name, first_name, is_active) "
+                "VALUES (%s, %s, %s, TRUE) RETURNING id",
+                (email, display_name or email.split("@")[0], first_name),
             )
             new_id = cur.fetchone()["id"]
-    return RedirectResponse(f"/admin/setup/users/{new_id}", status_code=303)
+    return RedirectResponse(f"/admin/setup/users/{new_id}?new=1", status_code=303)
+
+
+def _guess_provider(email: str) -> str | None:
+    """2026-08-02 feedback batch, Item 14.1: predict the sign-in provider
+       from the email domain (same checkreq.identity_provider_domains table
+       main.py's own /auth/route uses) so a never-signed-in user doesn't
+       show a bare, unexplained "—". Duplicated rather than imported from
+       main.py -- this module deliberately never imports main (main imports
+       it), same reasoning as every other admin module's docstring."""
+    domain = email.split("@")[-1].lower() if "@" in email else ""
+    if not domain:
+        return None
+    row = db.query_one(
+        "SELECT provider FROM checkreq.identity_provider_domains WHERE domain = %s AND is_active",
+        (domain,),
+    )
+    return row["provider"] if row else None
 
 
 @router.get("/admin/setup/users/{user_id}", response_class=HTMLResponse)
@@ -149,9 +188,11 @@ def user_detail_page(user_id: int, request: Request):
     if not target:
         return RedirectResponse("/admin/setup/users")
 
+    roles = rbac.get_roles_for_user(user_id)
     program_areas = db.query(
         """
-        SELECT pa.title AS program_area_title, o.code AS org_code
+        SELECT upa.id AS upa_id, pa.id AS program_area_id,
+               pa.title AS program_area_title, o.id AS org_id, o.code AS org_code
           FROM checkreq.user_program_areas upa
           JOIN checkreq.program_areas pa ON pa.id = upa.program_area_id
           JOIN checkreq.organizations o ON o.id = pa.org_id
@@ -160,12 +201,36 @@ def user_detail_page(user_id: int, request: Request):
         """,
         (user_id,),
     )
+    orgs = db.query("SELECT id, code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
+
+    # 2026-08-02 feedback batch, Item 14.2: which entities does this person
+    # actually have SOMETHING in -- drives the dropdown's "multiple
+    # entities" indicator (a plain count/list is enough; no separate flag
+    # column needed since the template can just check membership).
+    entities_with_access = sorted({r["org_id"] for r in roles} | {r["org_id"] for r in program_areas})
+
+    # Grant-Program-Area picker: every active program area, grouped by
+    # entity via <optgroup> so no dependent-dropdown JS/AJAX is needed --
+    # program area counts here are small enough (dozens, not thousands) that
+    # a single flat list grouped client-side-for-free by <optgroup> is
+    # simpler and more robust than the GL Mapping page's async picker.
+    all_program_areas = db.query(
+        "SELECT pa.id, pa.title, o.code AS org_code "
+        "FROM checkreq.program_areas pa JOIN checkreq.organizations o ON o.id = pa.org_id "
+        "WHERE o.is_active ORDER BY o.code, pa.title"
+    )
+    already_granted_pa_ids = {p["program_area_id"] for p in program_areas}
+
     return _render(request, "admin_users_detail.html", user, {
         "target": target,
-        "roles": rbac.get_roles_for_user(user_id),
+        "provider_guess": None if target["last_login_provider"] else _guess_provider(target["email"]),
+        "roles": roles,
         "all_roles": rbac.all_roles(),
-        "orgs": db.query("SELECT id, code, name FROM checkreq.organizations WHERE is_active ORDER BY name"),
+        "orgs": orgs,
+        "entities_with_access": entities_with_access,
         "program_areas": program_areas,
+        "all_program_areas": all_program_areas,
+        "already_granted_pa_ids": already_granted_pa_ids,
     })
 
 
@@ -176,6 +241,7 @@ async def user_update(user_id: int, request: Request):
         return err
     form = await request.form()
     email = (form.get("email") or "").strip().lower()
+    first_name = (form.get("first_name") or "").strip() or None
     display_name = (form.get("display_name") or "").strip() or None
     is_active = form.get("is_active") == "on"
     if not email:
@@ -184,10 +250,62 @@ async def user_update(user_id: int, request: Request):
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE checkreq.app_users SET email = %s, display_name = %s, is_active = %s WHERE id = %s",
-                (email, display_name, is_active, user_id),
+                "UPDATE checkreq.app_users SET email = %s, display_name = %s, first_name = %s, "
+                "is_active = %s WHERE id = %s",
+                (email, display_name, first_name, is_active, user_id),
             )
     return RedirectResponse(f"/admin/setup/users/{user_id}?saved=1", status_code=303)
+
+
+@router.post("/admin/setup/users/{user_id}/grant-pa")
+async def user_grant_program_area(user_id: int, request: Request):
+    """2026-08-02 feedback batch, Item 14.4: this screen could only ever
+       VIEW program-area assignments -- a real gap Jay asked to close, not
+       just a display tweak. Immediate single-row action, no dirty/batch
+       tracking, same convention this screen's own Roles Grant/Revoke
+       already uses (unlike the dense multi-field GL Mapping/Global
+       Approvers grids, which needed batching)."""
+    user, err = _require_beacon_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        program_area_id = int(form.get("program_area_id") or 0)
+    except (TypeError, ValueError):
+        program_area_id = 0
+    if not program_area_id:
+        return RedirectResponse(f"/admin/setup/users/{user_id}?error=Pick+a+program+area.", status_code=303)
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM checkreq.program_areas WHERE id = %s", (program_area_id,))
+            if not cur.fetchone():
+                return RedirectResponse(f"/admin/setup/users/{user_id}?error=Unknown+program+area.", status_code=303)
+            cur.execute(
+                "INSERT INTO checkreq.user_program_areas (user_id, program_area_id) "
+                "VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (user_id, program_area_id),
+            )
+    return RedirectResponse(f"/admin/setup/users/{user_id}?pa_granted=1", status_code=303)
+
+
+@router.post("/admin/setup/users/{user_id}/revoke-pa")
+async def user_revoke_program_area(user_id: int, request: Request):
+    user, err = _require_beacon_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        upa_id = int(form.get("upa_id") or 0)
+    except (TypeError, ValueError):
+        upa_id = 0
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM checkreq.user_program_areas WHERE id = %s AND user_id = %s",
+                (upa_id, user_id),
+            )
+    return RedirectResponse(f"/admin/setup/users/{user_id}?pa_revoked=1", status_code=303)
 
 
 @router.post("/admin/setup/users/{user_id}/grant")

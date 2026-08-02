@@ -211,7 +211,14 @@ MODULES = [
     {"key": "check_request", "title": "Check Request", "desc": "Submit a classic check request.", "url": "/new-request", "enabled": True, "gate": None},
     {"key": "my_requests", "title": "My Requests", "desc": "Track requests you've submitted.", "url": "/my-requests", "enabled": True, "gate": None},
     {"key": "invoice_payment", "title": "Invoice for Payment", "desc": "Upload and match an invoice.", "url": None, "enabled": False, "gate": None},
-    {"key": "vendor_requests", "title": "Vendor Requests", "desc": "Request a new vendor be added.", "url": None, "enabled": False, "gate": None},
+    # Replaced 2026-08-02 (feedback batch, Item 1) -- was a disabled "Vendor
+    # Requests" placeholder; this is now the single consolidated entry point
+    # for every admin-ish screen, gated on a synthetic pseudo-role
+    # (_render() adds "administrative_tasks" to any_org_roles whenever the
+    # real role set intersects ADMIN_TASK_ROLE_KEYS) so this tile uses the
+    # exact same generic `m.gate in any_org_roles` check as every other tile
+    # -- no template special-casing needed.
+    {"key": "administrative_tasks", "title": "Administrative Tasks", "desc": "Setup tables, user roles, vendor approvals, and system administration.", "url": "/admin", "enabled": True, "gate": "administrative_tasks"},
     # Flipped enabled 2026-07-26 (was a disabled "Coming Soon" placeholder) --
     # AP Review Workflow Plan.md Section 2a: visible to every logged-in user,
     # same as My Requests -- an empty queue is a harmless empty state, not
@@ -219,6 +226,11 @@ MODULES = [
     {"key": "approval_queue", "title": "Approval Queue", "desc": "Review requests awaiting your approval.", "url": "/my-approvals", "enabled": True, "gate": None},
     {"key": "ap_review", "title": "AP Review", "desc": "Final review and QBO posting for fully-approved requests.", "url": "/admin/ap-review", "enabled": True, "gate": "ap_reviewer"},
 ]
+
+# The union of roles that unlock the "Administrative Tasks" tile/hub (2026-08-02
+# feedback batch, Item 1) -- deliberately excludes ap_reviewer, which keeps its
+# own separate portal tile and was never part of the consolidated 8.
+ADMIN_TASK_ROLE_KEYS = {"cfo", "setup_admin", "beacon_admin", "vendor_approver"}
 
 
 def _real_user(request: Request) -> dict | None:
@@ -332,6 +344,13 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     real = _real_user(request)
     org = _current_org(request)
     org_id = org["id"] if org else None
+    any_org_roles = _roles(request, user, None)
+    # 2026-08-02 feedback batch, Item 1: synthetic pseudo-role so the
+    # Administrative Tasks tile uses the same generic `m.gate in
+    # any_org_roles` check every other portal tile already uses, instead of
+    # a one-off template special-case.
+    if any_org_roles & ADMIN_TASK_ROLE_KEYS:
+        any_org_roles = any_org_roles | {"administrative_tasks"}
     ctx = {
         "user": user,
         "real_user": real,
@@ -340,7 +359,7 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
         "current_org": org,
         "all_orgs": db.query("SELECT id, code, name FROM checkreq.organizations WHERE is_active ORDER BY name"),
         "roles": _roles(request, user, org_id),
-        "any_org_roles": _roles(request, user, None),
+        "any_org_roles": any_org_roles,
         "real_roles": _roles(request, real, None),
     }
     if extra:
@@ -3972,7 +3991,14 @@ async def feedback_submit(request: Request):
 # request across every organization and every status in one place.
 
 @app.get("/admin/all-requests", response_class=HTMLResponse)
-def admin_all_requests(request: Request):
+def admin_all_requests(request: Request, entity: str = "", vendor: str = "",
+                        submitted_by: str = "", status: str = ""):
+    """2026-08-02 feedback batch, Item 7: renamed "Administrative" -> "All
+    Requests" in the template; added entity/vendor/submitted-by/status
+    filters, all confirmed necessary for this screen to be effective at
+    real scale. Filters are plain query params (GET, bookmarkable/
+    shareable) rather than a POST+session state -- matches this screen's
+    existing read-only, no-state-to-preserve character."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
@@ -3981,8 +4007,29 @@ def admin_all_requests(request: Request):
     if not rbac.user_has_role(user["id"], "cfo", org_id=None):
         return JSONResponse({"error": "CFO access required"}, status_code=403)
 
+    where = []
+    params: list = []
+    if entity:
+        where.append("o.code = %s")
+        params.append(entity)
+    if status:
+        where.append("pr.status = %s")
+        params.append(status)
+    if vendor:
+        where.append(
+            "(v.display_name ILIKE %s OR vr.company_name ILIKE %s OR vr.dba_name ILIKE %s "
+            " OR vr.first_name ILIKE %s OR vr.last_name ILIKE %s)"
+        )
+        like = f"%{vendor}%"
+        params.extend([like, like, like, like, like])
+    if submitted_by:
+        where.append("(u.display_name ILIKE %s OR u.email ILIKE %s)")
+        like = f"%{submitted_by}%"
+        params.extend([like, like])
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
     rows = db.query(
-        """
+        f"""
         SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
                pr.created_at, pr.updated_at, o.code AS org_code,
                pa.title AS program_area_title, u.display_name AS submitter_name,
@@ -3997,8 +4044,10 @@ def admin_all_requests(request: Request):
         JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
         LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
         LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+        {where_sql}
         ORDER BY pr.created_at DESC
-        """
+        """,
+        tuple(params),
     )
 
     history_by_id: dict[int, list[dict]] = {}
@@ -4026,7 +4075,14 @@ def admin_all_requests(request: Request):
         else:
             r["vendor_name"] = "—"
 
-    return _render(request, "admin_all_requests.html", user, {"rows": rows})
+    all_orgs_list = db.query("SELECT code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
+    all_statuses = ["UnderReview", "Approved", "Posted to QBO", "Rejected", "Returned by AP", "Cancelled"]
+    return _render(request, "admin_all_requests.html", user, {
+        "rows": rows,
+        "filter_entity": entity, "filter_vendor": vendor,
+        "filter_submitted_by": submitted_by, "filter_status": status,
+        "all_orgs_list": all_orgs_list, "all_statuses": all_statuses,
+    })
 
 
 @app.get("/admin/feedback", response_class=HTMLResponse)
@@ -4251,18 +4307,36 @@ def vendor_request_w9_received(vr_id: int, request: Request):
 
 @app.get("/admin/ap-review", response_class=HTMLResponse)
 def ap_review_list(request: Request, posted: str = "", returned: str = "",
-                    post_error: str = "", email_warning: str = "", view: str = "pending"):
+                    post_error: str = "", email_warning: str = "", view: str = "pending",
+                    entity: str = ""):
+    """2026-08-02 feedback batch, Item 6: Jay assumed this screen was
+    already scoped to a single entity and asked to drop its redundant
+    Entity column -- checked the actual query and it is NOT: `_require_
+    ap_reviewer` is deliberately cross-entity (org_id=None, "an AP reviewer
+    sees every org's fully-chain-approved requests, org-wide") and neither
+    the pending nor completed query below filters by org_id at all. The
+    correct fix per the STANDING rule (Item 5, not Item 6) is an entity
+    FILTER, keeping the column -- not removing it, which would make rows
+    from different entities indistinguishable on a screen that genuinely
+    spans all of them."""
     user, err = _require_ap_reviewer(request)
     if err:
         return err
+
+    all_orgs_list = db.query("SELECT code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
 
     # Jay, 2026-07-29: "some sort of need in the AP review to also have a
     # completed tab as well." A request leaves this queue the moment it's
     # posted (status flips to 'Posted to QBO') with no way to look back at
     # it from here -- same gap as My Approvals' own history request.
     if view == "completed":
+        where_sql = "WHERE pr.status = 'Posted to QBO'"
+        params: tuple = ()
+        if entity:
+            where_sql += " AND o.code = %s"
+            params = (entity,)
         completed_rows = db.query(
-            """
+            f"""
             SELECT pr.request_number, pr.request_type, pr.amount, pr.qbo_bill_id,
                    pr.qbo_bill_url, pr.updated_at, o.code AS org_code,
                    pa.title AS program_area_title,
@@ -4275,9 +4349,10 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
             JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
             LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
             LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
-            WHERE pr.status = 'Posted to QBO'
+            {where_sql}
             ORDER BY pr.updated_at DESC
-            """
+            """,
+            params,
         )
         for r in completed_rows:
             r["type_abbr"] = _REQUEST_TYPE_ABBR.get(r["request_type"], "??")
@@ -4290,10 +4365,18 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
                 )
             else:
                 r["vendor_name"] = "—"
-        return _render(request, "ap_review_completed.html", user, {"rows": completed_rows})
+        return _render(request, "ap_review_completed.html", user, {
+            "rows": completed_rows, "all_orgs_list": all_orgs_list, "filter_entity": entity,
+        })
+
+    pending_where = "WHERE pr.status = 'Approved'"
+    pending_params: tuple = ()
+    if entity:
+        pending_where += " AND o.code = %s"
+        pending_params = (entity,)
 
     rows = db.query(
-        """
+        f"""
         SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount,
                pr.approval_chain_summary, pr.created_at, pr.vendor_request_id,
                pr.overspend_flagged, pr.overspend_detail,
@@ -4311,9 +4394,10 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
         JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
         LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
         LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
-        WHERE pr.status = 'Approved'
+        {pending_where}
         ORDER BY pr.created_at
-        """
+        """,
+        pending_params,
     )
     for r in rows:
         r["type_abbr"] = _REQUEST_TYPE_ABBR.get(r["request_type"], "??")
@@ -4348,6 +4432,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
     return _render(request, "ap_review.html", user, {
         "rows": rows, "posted": posted, "returned": returned,
         "post_error": post_error, "email_warning": email_warning,
+        "all_orgs_list": all_orgs_list, "filter_entity": entity,
     })
 
 
@@ -4928,6 +5013,8 @@ admin_setup.register(
 # wiring these two modules in -- see Role-Based Access Control Plan.md §7.
 import access_requests
 import admin_users
+import admin_hub
 
 access_requests.register(app, current_user=_current_user, render=_render)
 admin_users.register(app, current_user=_current_user, render=_render)
+admin_hub.register(app, current_user=_current_user, render=_render)

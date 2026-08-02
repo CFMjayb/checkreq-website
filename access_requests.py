@@ -114,12 +114,19 @@ async def access_request_submit(request: Request):
 
 
 @router.get("/admin/access-requests", response_class=HTMLResponse)
-def admin_access_requests_page(request: Request):
+def admin_access_requests_page(request: Request, entity: str = ""):
+    """2026-08-02 feedback batch, Item 5 (standing rule): this queue is
+    cross-entity by design (any beacon_admin reviews any entity's requests)
+    -- gets the same entity-filter treatment as All Requests/AP Review."""
     user, err = _require_beacon_admin(request)
     if err:
         return err
+    requests_ = rbac.list_pending_access_requests()
+    if entity:
+        requests_ = [r for r in requests_ if r["org_code"] == entity]
+    all_orgs_list = db.query("SELECT code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
     return _render(request, "admin_access_requests.html", user, {
-        "requests": rbac.list_pending_access_requests(),
+        "requests": requests_, "all_orgs_list": all_orgs_list, "filter_entity": entity,
     })
 
 

@@ -21,40 +21,18 @@
   <header class="site-header">
     <a href="/portal" class="brand">Beacon</a>
     <nav>
-      <a href="/new-request">New Request</a>
-      <a href="/my-requests">Requests</a>
-      <a href="/my-approvals">My Approvals</a>
+      {# 2026-08-02 feedback batch, Items 1 & 2: the top nav had gotten too
+         busy -- New Request/Requests/My Approvals are removed here since
+         they already exist as portal tiles (Check Request/My Requests/
+         Approval Queue), and every admin-ish link (Vendor Approvals,
+         Administrative, Feedback Log, Setup Tables, Test Mode, Users &
+         Roles, Access Requests, Impersonate a User) moved into the single
+         "Administrative Tasks" portal tile -> /admin hub (admin_hub.py).
+         AP Review deliberately keeps its own nav link + portal tile,
+         unaffected by this consolidation. #}
       <a href="/feedback">Feedback</a>
-      {# RBAC (2026-08-01): was user.is_vendor_approver/is_ap_reviewer/is_cfo
-         -- now reads `any_org_roles` (cross-entity -- matches every route
-         guard below, which is deliberately cross-entity "for now", Plan
-         §5.1/§8 q2/q3) and `real_roles` (also cross-entity, REAL identity
-         only, for the impersonation link -- same distinction the original
-         real_user.is_cfo check made). Setup Tables/Test Mode move to
-         setup_admin; a new beacon_admin-gated Users & Roles + Access
-         Requests link is added alongside them -- NOT YET reachable, those
-         routes aren't registered until access_requests.py/admin_users.py
-         are wired in (Plan §7 Stage 7), so these links 404 until then. #}
-      {% if 'vendor_approver' in any_org_roles %}
-      <a href="/admin/vendor-requests">Vendor Approvals</a>
-      {% endif %}
       {% if 'ap_reviewer' in any_org_roles %}
       <a href="/admin/ap-review">AP Review</a>
-      {% endif %}
-      {% if 'cfo' in any_org_roles %}
-      <a href="/admin/all-requests">Administrative</a>
-      <a href="/admin/feedback">Feedback Log</a>
-      {% endif %}
-      {% if 'setup_admin' in any_org_roles %}
-      <a href="/admin/setup">Setup Tables</a>
-      <a href="/admin/test-mode">Test Mode</a>
-      {% endif %}
-      {% if 'beacon_admin' in any_org_roles %}
-      <a href="/admin/setup/users">Users &amp; Roles</a>
-      <a href="/admin/access-requests">Access Requests</a>
-      {% endif %}
-      {% if 'cfo' in real_roles and not impersonating %}
-      <a href="/admin/impersonate">Impersonate a User</a>
       {% endif %}
       {% if current_org %}
       <div class="entity-badge">

@@ -3,6 +3,7 @@
 {% block content %}
 <div class="page-shell-wide">
 <h1>AP Review</h1>
+<p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
 <p class="sub">Requests that have cleared every approval step and are ready for final review and posting to
 QuickBooks. Posting here creates the real QBO Vendor (if new) and Bill -- this is the one place in the app
 that writes to QuickBooks.</p>
@@ -23,9 +24,24 @@ that writes to QuickBooks.</p>
 {% endif %}
 
 <div class="view-toggle" role="tablist" aria-label="AP Review view">
-  <a href="/admin/ap-review" class="view-toggle-tab active">Pending</a>
-  <a href="/admin/ap-review?view=completed" class="view-toggle-tab">Completed</a>
+  <a href="/admin/ap-review{{ '?entity=' + filter_entity if filter_entity else '' }}" class="view-toggle-tab active">Pending</a>
+  <a href="/admin/ap-review?view=completed{{ '&entity=' + filter_entity if filter_entity else '' }}" class="view-toggle-tab">Completed</a>
 </div>
+
+{# 2026-08-02 feedback batch: AP Review is actually cross-entity (see
+   main.py's ap_review_list docstring) -- gets the standing Item 5 entity
+   filter, keeps its Entity column (Item 6 doesn't apply here). #}
+<form method="get" action="/admin/ap-review" class="filter-bar">
+  <div class="field">
+    <label>Entity</label>
+    <select name="entity" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for o in all_orgs_list %}
+      <option value="{{ o.code }}" {% if filter_entity == o.code %}selected{% endif %}>{{ o.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</form>
 
 <div class="card">
 <div class="table-scroll">

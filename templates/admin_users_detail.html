@@ -1,14 +1,25 @@
 {% extends "base.html" %}
 {% block title %}{{ target.email }} — Users & Roles{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+{% endblock %}
 {% block content %}
 <div class="page-shell">
 
-<p><a href="/admin/setup/users">&larr; Back to Users &amp; Roles</a></p>
 <h1>{{ target.display_name or target.email }}</h1>
+<p class="back-link"><a href="/admin/setup/users">&larr; Back to Users &amp; Roles</a></p>
 
+{% if request.query_params.get('new') %}
+<div class="banner banner-success">
+  <strong>User created.</strong> Next: grant at least one role below — and, if this person needs
+  to submit or approve for a specific program area, grant that too.
+</div>
+{% endif %}
 {% if request.query_params.get('saved') %}<div class="banner banner-success">Saved.</div>{% endif %}
 {% if request.query_params.get('granted') %}<div class="banner banner-success">Role granted.</div>{% endif %}
 {% if request.query_params.get('revoked') %}<div class="banner banner-success">Role revoked.</div>{% endif %}
+{% if request.query_params.get('pa_granted') %}<div class="banner banner-success">Program area granted.</div>{% endif %}
+{% if request.query_params.get('pa_revoked') %}<div class="banner banner-success">Program area removed.</div>{% endif %}
 {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
 
 <div class="card">
@@ -16,16 +27,48 @@
   <form method="post" action="/admin/setup/users/{{ target.id }}/update">
     <label for="email">Email</label>
     <input type="email" id="email" name="email" value="{{ target.email }}" required>
+    <label for="first_name">First Name</label>
+    <input type="text" id="first_name" name="first_name" value="{{ target.first_name or '' }}" placeholder="Joe">
     <label for="display_name">Display Name</label>
     <input type="text" id="display_name" name="display_name" value="{{ target.display_name or '' }}">
     <label><input type="checkbox" name="is_active" {% if target.is_active %}checked{% endif %}> Active (unchecked = deactivated; cannot sign in)</label>
     <p class="muted">
-      Provider: {{ target.last_login_provider or "—" }} &nbsp;·&nbsp;
+      {# 2026-08-02 feedback batch, Item 14.1: a bare "—" for a never-signed-in
+         user read as broken/unknown. If we can predict the provider from the
+         email domain (checkreq.identity_provider_domains), say so plainly;
+         otherwise say "Not yet signed in" instead of a dash. #}
+      Provider:
+      {% if target.last_login_provider %}{{ target.last_login_provider }}
+      {% elif provider_guess %}{{ provider_guess|capitalize }} (predicted from email domain — not yet signed in)
+      {% else %}Not yet signed in
+      {% endif %}
+      &nbsp;·&nbsp;
       Last sign-in: {{ target.last_login_at or "Never" }}
     </p>
     <button type="submit" class="btn btn-primary">Save Identity</button>
   </form>
 </div>
+
+{% if orgs|length > 1 %}
+<div class="setup-toolbar" style="margin-top:24px;">
+  <div class="field" style="min-width:220px;">
+    <label for="entityFilter">Show Roles &amp; Program Areas for</label>
+    <select id="entityFilter">
+      <option value="">All entities</option>
+      {% for o in orgs %}
+      <option value="{{ o.id }}">
+        {{ o.name }}{% if o.id in entities_with_access %} &mdash; has access{% endif %}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+  {% if entities_with_access|length > 1 %}
+  <span class="badge badge-approved" title="This person has a role or program-area assignment in more than one entity.">
+    Multiple entities
+  </span>
+  {% endif %}
+</div>
+{% endif %}
 
 <div class="card">
   <h2>Roles</h2>
@@ -33,7 +76,7 @@
     <thead><tr><th>Role</th><th>Entity</th><th>Granted</th><th>By</th><th></th></tr></thead>
     <tbody>
       {% for r in roles %}
-      <tr>
+      <tr data-org-row data-org-id="{{ r.org_id }}" data-scope="roles">
         <td>{{ r.role_label }}</td>
         <td>{{ r.org_code|upper }}</td>
         <td>{{ r.granted_at }}</td>
@@ -49,6 +92,7 @@
       {% else %}
       <tr><td colspan="5">No live role grants.</td></tr>
       {% endfor %}
+      <tr data-org-empty="roles" hidden><td colspan="5">No roles in the selected entity.</td></tr>
     </tbody>
   </table>
 
@@ -74,18 +118,55 @@
 <div class="card">
   <h2>Program Areas</h2>
   <p class="muted">Which budgets this person's spending is drawn against — a finer grain than
-    entity, managed separately from roles (its own setup tab is not yet built in Beacon).</p>
+    entity.</p>
   <table class="simple-table">
-    <thead><tr><th>Entity</th><th>Program Area</th></tr></thead>
+    <thead><tr><th>Entity</th><th>Program Area</th><th></th></tr></thead>
     <tbody>
       {% for pa in program_areas %}
-      <tr><td>{{ pa.org_code|upper }}</td><td>{{ pa.program_area_title }}</td></tr>
+      <tr data-org-row data-org-id="{{ pa.org_id }}" data-scope="pa">
+        <td>{{ pa.org_code|upper }}</td>
+        <td>{{ pa.program_area_title }}</td>
+        <td>
+          <form method="post" action="/admin/setup/users/{{ target.id }}/revoke-pa"
+                onsubmit="return confirm('Remove {{ pa.program_area_title }} ({{ pa.org_code|upper }}) from this person?');">
+            <input type="hidden" name="upa_id" value="{{ pa.upa_id }}">
+            <button type="submit" class="btn btn-secondary">Remove</button>
+          </form>
+        </td>
+      </tr>
       {% else %}
-      <tr><td colspan="2">No program-area assignments.</td></tr>
+      <tr><td colspan="3">No program-area assignments.</td></tr>
       {% endfor %}
+      <tr data-org-empty="pa" hidden><td colspan="3">No program areas in the selected entity.</td></tr>
     </tbody>
   </table>
+
+  <!-- 2026-08-02 feedback batch, Item 14.4: this screen could only ever
+       VIEW program areas before -- a real gap, not just a display tweak. -->
+  <h3>Grant a Program Area</h3>
+  <form method="post" action="/admin/setup/users/{{ target.id }}/grant-pa">
+    <label for="program_area_id">Program Area</label>
+    <select id="program_area_id" name="program_area_id" required>
+      <option value="">Choose...</option>
+      {% set ns = namespace(current_org='') %}
+      {% for pa in all_program_areas %}
+        {% if pa.org_code != ns.current_org %}
+          {% if ns.current_org %}</optgroup>{% endif %}
+          <optgroup label="{{ pa.org_code|upper }}">
+          {% set ns.current_org = pa.org_code %}
+        {% endif %}
+        <option value="{{ pa.id }}" {% if pa.id in already_granted_pa_ids %}disabled{% endif %}>
+          {{ pa.title }}{% if pa.id in already_granted_pa_ids %} (already granted){% endif %}
+        </option>
+      {% endfor %}
+      {% if ns.current_org %}</optgroup>{% endif %}
+    </select>
+    <button type="submit" class="btn btn-primary">Grant</button>
+  </form>
 </div>
 
 </div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/admin_users.js?v={{ asset_version('js/admin_users.js') }}"></script>
 {% endblock %}

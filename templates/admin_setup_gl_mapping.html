@@ -9,7 +9,8 @@
 
 <div class="setup-toolbar">
   <div>
-    <h1 style="margin:0;">Program Area / GL Account Map</h1>
+    <h1 class="setup-h1-compact" style="margin:0;">Program Area / GL Account Map</h1>
+    <p class="back-link" style="margin:4px 0 0;"><a href="/admin/setup">&larr; Back to Setup Tables</a></p>
     <p class="sub" style="margin:4px 0 0;">
       <a href="/admin/setup">Setup Tables</a> &rsaquo; {{ current_org.code }} &mdash;
       which GL accounts each program area may code to, and how they appear on the request form.
@@ -20,12 +21,12 @@
   <button type="button" id="saveBtn" class="btn btn-primary btn-sm" disabled>Save Changes</button>
 </div>
 
-{% if request.query_params.get('deleted') %}
-<div class="banner banner-success">Mapping removed.</div>
+{% if request.query_params.get('saved') %}
+<div class="banner banner-success">Changes have been saved.</div>
 {% endif %}
 
-<div class="add-panel">
-  <h3>Add a mapping</h3>
+<details class="add-panel" open>
+  <summary>Add a mapping</summary>
   <div class="add-grid">
     <div class="fld">
       <label for="addArea">Program Area</label>
@@ -52,15 +53,19 @@
       <label for="addBuffer">Buffer ($)</label>
       <input type="number" id="addBuffer" step="0.01" min="0" value="0">
     </div>
+    <div class="fld fld-check">
+      <input type="checkbox" id="addAllowPost" checked>
+      <label for="addAllowPost">Postable</label>
+    </div>
     <div class="fld">
       <button type="button" id="addBtn" class="btn btn-secondary btn-sm">Add</button>
     </div>
   </div>
   <div id="addMsg" class="row-msg" style="margin-top:8px;"></div>
-</div>
+</details>
 
 <div class="card">
-  <div class="table-scroll">
+  <div class="table-scroll setup-scroll">
     <table class="setup-table" id="mapTable">
       <thead>
         <tr>
@@ -75,13 +80,15 @@
       </thead>
       <tbody>
         {% for g in groups %}
-        <tr class="area-header">
-          <td colspan="7">{{ g.title }} <span class="area-count">&mdash; {{ g.rows|length }} account{{ '' if g.rows|length == 1 else 's' }}</span></td>
+        {% set gi = loop.index0 %}
+        <tr class="area-header" data-group="group-{{ gi }}">
+          <td colspan="7"><span class="area-chevron">&#9662;</span> {{ g.title }} <span class="area-count">&mdash; {{ g.rows|length }} account{{ '' if g.rows|length == 1 else 's' }}</span></td>
         </tr>
           {% for r in g.rows %}
           <tr data-row-id="{{ r.id }}"
               data-area-id="{{ r.program_area_id }}"
-              data-account-id="{{ r.gl_account_id }}">
+              data-account-id="{{ r.gl_account_id }}"
+              data-group-of="group-{{ gi }}">
             <td class="col-display">
               <div class="depth-{{ r.depth if r.depth < 5 else 4 }}">
                 <input type="text" data-field="display_text"
@@ -109,13 +116,10 @@
               <span class="budget-cell"></span>
             </td>
             <td class="col-actions">
-              <form method="post" action="/admin/setup/gl-mapping/{{ r.id }}/delete" style="display:inline;"
-                    onsubmit="return confirm('Remove {{ r.account_number }} from {{ g.title }}?\n\nThis only withdraws it from that program area’s picker. Requests already coded to it are untouched.');">
-                <button type="submit" class="icon-btn" title="Remove this mapping">&times;</button>
-              </form>
+              <button type="button" class="icon-btn delete-toggle" title="Mark this mapping for removal">&times;</button>
             </td>
           </tr>
-          <tr class="msg-row" data-msg-for="{{ r.id }}" hidden><td colspan="7"><div class="row-msg"></div></td></tr>
+          <tr class="msg-row" data-msg-for="{{ r.id }}" data-group-of="group-{{ gi }}" hidden><td colspan="7"><div class="row-msg"></div></td></tr>
           {% endfor %}
         {% else %}
         <tr><td colspan="7">No GL accounts are mapped for {{ current_org.code }} yet. Add the first one above.</td></tr>
@@ -132,6 +136,11 @@
   it still shows in the picker for structure but can&rsquo;t be selected.
   <strong>Buffer</strong> is how far past this pairing&rsquo;s QBO annual budget a request may run
   before it needs CFO sign-off; <code>0.00</code> means none.
+  <strong>Display Text</strong> shown in <em>italic gray</em> is a placeholder &mdash; that row has
+  no override yet and is just showing the account&rsquo;s own name; type in the box to set one.
+  Clicking a green group header collapses/expands its rows. Clicking &times; marks a mapping for
+  removal (shown struck through in blue) &mdash; nothing is actually deleted until you click
+  <strong>Save Changes</strong>.
 </p>
 
 </div>

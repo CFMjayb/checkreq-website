@@ -32,6 +32,10 @@
   }
 
   function rowIsDirty(tr) {
+    // Marked-for-removal (2026-08-02 feedback batch, Item 8.4) is dirty
+    // regardless of what any individual field says -- the pending change
+    // IS the row, not a field on it.
+    if (tr.dataset.pendingDelete === '1') return true;
     if (tr.dataset.isNew === '1') return true;
     return Array.prototype.some.call(tr.querySelectorAll('[data-field]'), function (el) {
       return String(fieldValue(el)) !== el.dataset.baseline;
@@ -40,10 +44,42 @@
 
   function rowPayload(tr) {
     var out = { id: tr.dataset.rowId ? Number(tr.dataset.rowId) : null };
+    if (tr.dataset.pendingDelete === '1') {
+      out._delete = true;
+      return out;
+    }
     tr.querySelectorAll('[data-field]').forEach(function (el) {
       out[el.dataset.field] = fieldValue(el);
     });
     return out;
+  }
+
+  /** Toggle (or un-toggle) a row's pending-delete mark. Nothing hits the
+   *  server here -- the actual DELETE only happens inside the batched Save
+   *  (see gl_mapping_save's `_delete: true` handling), the direct fix for
+   *  Jay hitting the old immediate-delete button by mistake ("I just
+   *  deleted one that I didn't wanna delete"). */
+  function toggleRowDelete(tr, btn, refreshState) {
+    var marking = tr.dataset.pendingDelete !== '1';
+    if (marking) {
+      if (!confirm('Mark this mapping for removal?\n\nIt only withdraws it from this program area’s picker -- requests already coded to it are untouched. Nothing is deleted until you click Save Changes.')) {
+        return;
+      }
+      tr.dataset.pendingDelete = '1';
+      tr.classList.add('row-pending-delete');
+      tr.querySelectorAll('input, select').forEach(function (el) { el.disabled = true; });
+      btn.textContent = '↩';
+      btn.title = 'Undo -- keep this mapping';
+      btn.classList.add('is-marked');
+    } else {
+      delete tr.dataset.pendingDelete;
+      tr.classList.remove('row-pending-delete');
+      tr.querySelectorAll('input, select').forEach(function (el) { el.disabled = false; });
+      btn.textContent = '×';
+      btn.title = 'Mark this mapping for removal';
+      btn.classList.remove('is-marked');
+    }
+    refreshState();
   }
 
   function msgRowFor(tr) {
@@ -103,6 +139,15 @@
     });
     table.addEventListener('change', function (e) {
       if (e.target.dataset && e.target.dataset.field) refreshState();
+    });
+
+    // Mark-for-removal toggle (2026-08-02 feedback batch, Item 8.4) -- a
+    // delegated listener so it works for both the GL Mapping table's rows
+    // and any future table wired through this same function.
+    table.addEventListener('click', function (e) {
+      var delBtn = e.target.closest('.delete-toggle');
+      if (!delBtn) return;
+      toggleRowDelete(delBtn.closest('tr'), delBtn, refreshState);
     });
 
     // Leaving with unsaved edits is the single easiest way to lose work on a
@@ -166,6 +211,19 @@
             ? data.saved + ' saved, ' + failed + ' failed'
             : 'Saved ' + data.saved;
           refreshState();
+
+          // 2026-08-02 feedback batch, Item 10: once every dirty row saved
+          // cleanly, reload so the table reflects the just-saved state (a
+          // deleted row actually disappears, a new row lands in its real
+          // sorted position, group counts update) and the top banner shows
+          // "Changes have been saved." A partial failure deliberately does
+          // NOT reload -- the per-row error messages need to stay visible
+          // so the user can fix and retry.
+          if (!failed && opts.reloadOnSave !== false) {
+            var url = new URL(window.location.href);
+            url.searchParams.set('saved', '1');
+            window.location.href = url.toString();
+          }
         })
         .catch(function (err) {
           state.className = 'save-state err';
@@ -188,6 +246,29 @@
       saveBtnId: 'saveBtn',
       stateId: 'saveState',
       saveUrl: '/admin/setup/gl-mapping/save',
+    });
+
+    // --- expand/collapse group headers (2026-08-02 feedback batch, Item 8.1) ---
+    // Each group's own rows carry data-group-of="group-N" pointing back at
+    // its header's data-group="group-N" -- toggled by attribute match, not
+    // DOM position, so it stays correct even once row order/backdrop
+    // changes (e.g. a future in-place row removal).
+    table.addEventListener('click', function (e) {
+      var header = e.target.closest('tr.area-header');
+      if (!header) return;
+      var groupId = header.dataset.group;
+      var collapsed = header.classList.toggle('is-collapsed');
+      table.querySelectorAll('tr[data-group-of="' + groupId + '"]').forEach(function (tr) {
+        // A msg-row stays hidden unless it actually has an error to show --
+        // never force it visible just because the group expanded.
+        if (tr.classList.contains('msg-row')) {
+          if (collapsed) tr.hidden = true;
+          else if (!tr.querySelector('.row-msg').textContent) tr.hidden = true;
+          else tr.hidden = false;
+        } else {
+          tr.style.display = collapsed ? 'none' : '';
+        }
+      });
     });
 
     // --- on-demand budget lookup ---
@@ -269,7 +350,7 @@
         display_text: document.getElementById('addDisplay').value,
         sort_order: document.getElementById('addSort').value,
         overspend_buffer_amount: document.getElementById('addBuffer').value,
-        allow_post: true,
+        allow_post: document.getElementById('addAllowPost').checked,
       };
       if (!body.program_area_id || !body.gl_account_id) {
         addMsg.className = 'row-msg err';

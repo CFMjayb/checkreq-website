@@ -8,14 +8,15 @@ page-by-page mapping of the tabs NOT built here, and the open questions.
 Built so far (real, working, wired to live checkreq Postgres):
   GET  /admin/setup                              — module index (all 8 tabs, status + row counts)
   GET  /admin/setup/gl-mapping                   — Program Area <-> GL Account map (workbook tab: ProgramAreaGLAccounts)
-  POST /admin/setup/gl-mapping/save              — bulk save of edited rows (JSON)
+  POST /admin/setup/gl-mapping/save              — bulk save of edited rows (JSON); a row's
+                                                    `_delete: true` flag deletes it here too
+                                                    (no separate delete route -- 2026-08-02)
   POST /admin/setup/gl-mapping/add               — create one mapping (JSON)
-  POST /admin/setup/gl-mapping/{row_id}/delete   — delete one mapping
   GET  /admin/setup/api/unmapped-gl-accounts     — dependent GL picker feed (Tom Select)
   GET  /admin/setup/organizations                — Organizations + GlobalApprovers (workbook tabs: Organizations, GlobalApprovers)
   POST /admin/setup/organizations/save-orgs      — per-entity Global Approval Threshold (JSON)
-  POST /admin/setup/organizations/save-approvers — global approver rows (JSON)
-  POST /admin/setup/global-approvers/{row_id}/delete
+  POST /admin/setup/organizations/save-approvers — global approver rows (JSON); a row's
+                                                    `_delete: true` flag deletes it here too
 
 ARCHITECTURE — why this talks to Postgres directly instead of calling
 qbo-mcp-server's /api/checkreq/* endpoints (which the workbook uses):
@@ -292,7 +293,17 @@ async def gl_mapping_save(request: Request):
     not one aggregate message — this is the web equivalent of the workbook's
     hard-won per-row "Last Save Error" column (added 2026-07-25 after a
     single status cell hid 17 distinct real failures behind the last one),
-    except the result lands on the row itself instead of in column K."""
+    except the result lands on the row itself instead of in column K.
+
+    2026-08-02 feedback batch, Item 8: a row can also carry `_delete: true`
+    -- the "x" button no longer deletes immediately (Jay hit this directly:
+    "I just deleted one that I didn't wanna delete"). It now only marks the
+    row dirty client-side; the actual DELETE happens here, in the same
+    batched, entity-ownership-checked, savepoint-isolated save as every
+    other edit, only once Save Changes is clicked. The standalone
+    `POST /admin/setup/gl-mapping/{row_id}/delete` route this replaced is
+    removed entirely, not just unused, so that old immediate-delete
+    behavior can never be hit again by accident."""
     user, err = _require_cfo(request)
     if err:
         return err
@@ -320,6 +331,14 @@ async def gl_mapping_save(request: Request):
                         )
                         if not cur.fetchone():
                             raise ValueError("This mapping isn't part of the selected entity.")
+
+                        if r.get("_delete"):
+                            cur.execute(
+                                "DELETE FROM checkreq.program_area_gl_accounts WHERE id = %s",
+                                (row_id,),
+                            )
+                            results.append({"id": row_id, "ok": True, "deleted": True})
+                            continue
 
                         sort_order = (r.get("sort_order") or "").strip() or None
                         display_text = (r.get("display_text") or "").strip() or None
@@ -408,28 +427,13 @@ async def gl_mapping_add(request: Request):
     return {"id": created["id"]}
 
 
-@router.post("/admin/setup/gl-mapping/{row_id}/delete")
-def gl_mapping_delete(row_id: int, request: Request):
-    """Removing a mapping only withdraws the account from that program
-    area's future picker — posted requests reference gl_account_id directly
-    and are untouched. The workbook has no delete at all (clearing the cells
-    is a silent no-op, since Save only ever iterates rows that are present)."""
-    user, err = _require_cfo(request)
-    if err:
-        return err
-    org = _current_org(request)
-    if not org:
-        return RedirectResponse("/portal")
-
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM checkreq.program_area_gl_accounts pga "
-                "USING checkreq.program_areas pa "
-                "WHERE pa.id = pga.program_area_id AND pga.id = %s AND pa.org_id = %s",
-                (row_id, org["id"]),
-            )
-    return RedirectResponse("/admin/setup/gl-mapping?deleted=1", status_code=303)
+# The standalone POST /admin/setup/gl-mapping/{row_id}/delete route (an
+# immediate, un-confirmed-until-too-late real DELETE) was removed entirely
+# 2026-08-02 -- Jay hit its exact failure mode live ("I just deleted one
+# that I didn't wanna delete") and asked for delete to behave like every
+# other edit: mark dirty, don't touch the database until Save Changes.
+# That's now handled inside gl_mapping_save() above via a per-row
+# `_delete: true` flag -- see its own docstring.
 
 
 # ── Entities & Global Approvers ──────────────────────────────────────────────
@@ -544,6 +548,10 @@ def _get_or_create_user(cur, email: str) -> int:
 
 @router.post("/admin/setup/organizations/save-approvers")
 async def organizations_save_approvers(request: Request):
+    """2026-08-02 feedback batch, Item 12.1: the same mark-for-removal-until-
+    Save-Changes rule as gl_mapping_save -- a row's `_delete: true` deletes it
+    here too, batched with everything else. Standalone
+    POST /admin/setup/global-approvers/{row_id}/delete removed entirely."""
     user, err = _require_cfo(request)
     if err:
         return err
@@ -557,6 +565,15 @@ async def organizations_save_approvers(request: Request):
                 new_id = None
                 try:
                     with _RowSavepoint(cur, f"sp_appr_{i}"):
+                        if r.get("_delete"):
+                            if row_id:
+                                cur.execute(
+                                    "DELETE FROM checkreq.global_approvers WHERE id = %s",
+                                    (row_id,),
+                                )
+                            results.append({"id": row_id, "ok": True, "deleted": True})
+                            continue
+
                         approver_id = _get_or_create_user(cur, r.get("approver_email"))
                         backup_email = (r.get("backup_approver_email") or "").strip()
                         backup_id = _get_or_create_user(cur, backup_email) if backup_email else None
@@ -604,12 +621,7 @@ async def organizations_save_approvers(request: Request):
     return {"saved": saved, "failed": len(results) - saved, "results": results}
 
 
-@router.post("/admin/setup/global-approvers/{row_id}/delete")
-def global_approver_delete(row_id: int, request: Request):
-    user, err = _require_cfo(request)
-    if err:
-        return err
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM checkreq.global_approvers WHERE id = %s", (row_id,))
-    return RedirectResponse("/admin/setup/organizations?deleted=1", status_code=303)
+# The standalone POST /admin/setup/global-approvers/{row_id}/delete route
+# was removed 2026-08-02, same reasoning and same session as the GL Mapping
+# delete route above -- a row's `_delete: true` flag now handles it inside
+# organizations_save_approvers(), batched with every other edit.

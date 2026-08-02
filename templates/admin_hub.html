@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Administrative Tasks — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+
+<h1>Administrative Tasks</h1>
+<p><a href="/portal">&larr; Back to Portal</a></p>
+<p class="sub">Setup tables, user roles, approvals, and system administration — only the sections you have access to are shown below.</p>
+
+<div class="setup-grid">
+  {% for c in cards %}
+  <div class="setup-tile is-built">
+    <h2><a href="{{ c.url }}">{{ c.title }}</a></h2>
+    <div class="desc">{{ c.desc }}</div>
+  </div>
+  {% else %}
+  <div class="setup-tile">
+    <div class="desc">Nothing here yet for your current role.</div>
+  </div>
+  {% endfor %}
+</div>
+
+</div>
+{% endblock %}
