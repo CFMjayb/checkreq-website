@@ -3962,41 +3962,14 @@ async def send_daily_digest(request: Request):
     return JSONResponse({"approvers_notified": sent, "skipped_empty": skipped_empty, "errors": errors})
 
 
-# ── Feedback (Task 10, UI/UX batch, 2026-07-26) ──────────────────────────────
-# Jay: "We need a feedback section on the main row to gather people's
-# feedback." Deliberately simple -- a comment box, no workflow/status, just a
-# durable place for comments to land for later staff review. No admin-only
-# gate on submission (any signed-in user); a light CFO-only listing page is
-# included as the nice-to-have the task called out, not the core ask.
-
-@app.get("/feedback", response_class=HTMLResponse)
-def feedback_form(request: Request, submitted: bool = False):
-    user = _current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-    return _render(request, "feedback.html", user, {"submitted": submitted})
-
-
-@app.post("/feedback")
-async def feedback_submit(request: Request):
-    user = _current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-
-    form = await request.form()
-    comment = (form.get("comment") or "").strip()
-    if not comment:
-        return RedirectResponse("/feedback", status_code=303)
-
-    org = _current_org(request)  # nullable -- feedback can be given before any entity is picked
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO checkreq.app_feedback (org_id, submitted_by_user_id, comment) "
-                "VALUES (%s, %s, %s)",
-                (org["id"] if org else None, user["id"], comment),
-            )
-    return RedirectResponse("/feedback?submitted=1", status_code=303)
+# ── Feedback (Task 10, UI/UX batch, 2026-07-26; rebuilt into a real
+# conversation, 2026-08-02, see feedback_chat.py) ────────────────────────────
+# GET/POST /feedback and the whole conversational flow now live in
+# feedback_chat.py (register()'d near the bottom of this file, same
+# injection pattern as admin_setup.py/access_requests.py) -- kept out of
+# this already-~4,700-line file per the project's modular-file-organization
+# standard, and because the Claude API call logic is a genuinely distinct
+# concern from everything else in here.
 
 
 # ── Administrative: system-wide request log (Jay, 2026-07-29) ───────────────
@@ -4118,10 +4091,12 @@ def feedback_list(request: Request):
     rows = db.query(
         """
         SELECT f.id, f.comment, f.created_at, o.code AS org_code,
-               u.display_name AS submitter_name, u.email AS submitter_email
+               u.display_name AS submitter_name, u.email AS submitter_email,
+               c.id AS conversation_id
         FROM checkreq.app_feedback f
         LEFT JOIN checkreq.organizations o ON o.id = f.org_id
         JOIN checkreq.app_users u ON u.id = f.submitted_by_user_id
+        LEFT JOIN checkreq.feedback_conversations c ON c.feedback_id = f.id
         ORDER BY f.created_at DESC
         """
     )
@@ -5042,3 +5017,11 @@ admin_hub.register(app, current_user=_current_user, render=_render)
 # module was imported near the top, alongside db/rbac) -- this call only
 # wires in the two HTTP routes the bell's own dropdown JS calls.
 notifications.register(app, current_user=_current_user)
+
+# Conversational Feedback intake (2026-08-02) -- see feedback_chat.py's own
+# docstring for the full design/hard-boundary rationale. Registered last
+# among the feature modules for the same reason as the others: it needs
+# _current_user/_current_org/_render already defined above.
+import feedback_chat
+
+feedback_chat.register(app, current_user=_current_user, current_org=_current_org, render=_render)

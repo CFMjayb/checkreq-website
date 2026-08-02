@@ -540,3 +540,34 @@ table.status-history-table th:nth-child(4), table.status-history-table td:nth-ch
   margin-bottom: var(--space-4);
 }
 .feedback-card textarea { width: 100%; }
+
+/* ---- Conversational Feedback (2026-08-02) -- replaced the one-shot
+   textarea with a real back-and-forth. Simple bubble list, no framework. ---- */
+.chat-messages {
+  max-height: 420px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  margin-bottom: var(--space-3);
+  background: #faf8f2;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.chat-msg { display: flex; }
+.chat-msg-assistant { justify-content: flex-start; }
+.chat-msg-user { justify-content: flex-end; }
+.chat-bubble {
+  max-width: 78%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.chat-msg-assistant .chat-bubble { background: #eaf1ec; color: var(--color-ink); border: 1px solid #c9dccf; }
+.chat-msg-user .chat-bubble { background: var(--color-franciscan-green); color: #f4f1e8; }
+.chat-input-row { display: flex; gap: var(--space-2); align-items: flex-end; margin-bottom: var(--space-3); }
+.chat-input-row textarea { flex: 1; resize: vertical; }
+.chat-actions { display: flex; align-items: center; gap: var(--space-3); }

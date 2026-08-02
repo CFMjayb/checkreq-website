@@ -6,19 +6,40 @@
 <p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
 
 {% if submitted %}
-<div class="banner banner-success">Thanks! Your feedback was submitted.</div>
+<div class="banner banner-success">Thanks! Your feedback was submitted and summarized for the team to review.</div>
 {% endif %}
 
 <div class="card feedback-card">
-  <div class="feedback-gift-line">Feedback is a Gift!<br>Thank you for taking the time to give us some.</div>
-  <form method="post" action="/feedback">
-    <div class="field">
-      <label for="feedbackComment">Your feedback</label>
-      <textarea name="comment" id="feedbackComment" rows="6" required
-                placeholder="What's working, what's not, what would help..."></textarea>
+  <div class="feedback-gift-line">Feedback is a Gift!<br>Have a real conversation with us about it -- we'll ask a few questions, then turn it into a clear summary for the team.</div>
+
+  <div id="chatMessages" class="chat-messages">
+    {% if not messages %}
+    <div class="chat-msg chat-msg-assistant">
+      <div class="chat-bubble">Hi! Tell me what's on your mind -- something not working, an idea for Beacon, anything at all. I'll ask a few follow-up questions to help make sure it's useful when it lands with the team.</div>
     </div>
-    <button type="submit" class="btn btn-primary">Submit Feedback</button>
+    {% endif %}
+    {% for m in messages %}
+    <div class="chat-msg chat-msg-{{ m.role }}">
+      <div class="chat-bubble">{{ m.content }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div id="chatError" class="banner banner-error" hidden></div>
+
+  <form id="chatForm" class="chat-input-row">
+    <textarea id="chatInput" rows="2" placeholder="Type your message..." required></textarea>
+    <button type="submit" id="chatSendBtn" class="btn btn-secondary">Send</button>
   </form>
+
+  <div class="chat-actions">
+    <button type="button" id="chatSubmitBtn" class="btn btn-primary" disabled>Submit my feedback</button>
+    <span id="chatSubmitHint" class="sub">Send at least one message first.</span>
+  </div>
 </div>
 </div>
+
+<input type="hidden" id="chatConversationId" value="{{ conversation_id or '' }}">
+<script>window.FEEDBACK_MAX_USER_TURNS = {{ max_user_turns }};</script>
+<script src="/static/js/feedback_chat.js?v={{ asset_version('js/feedback_chat.js') }}"></script>
 {% endblock %}

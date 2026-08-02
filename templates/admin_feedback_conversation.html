@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Feedback Conversation{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Full Conversation</h1>
+<p class="back-link"><a href="/admin/feedback">&larr; Back to Feedback Log</a></p>
+<p class="sub">Submitted by {{ convo.submitter_name or convo.submitter_email }} &middot; started {{ convo.created_at.strftime("%Y-%m-%d %H:%M") }}{% if convo.closed_at %} &middot; submitted {{ convo.closed_at.strftime("%Y-%m-%d %H:%M") }}{% endif %}</p>
+
+<div class="card">
+  <div class="chat-messages" style="max-height:none;">
+    {% for m in messages %}
+    <div class="chat-msg chat-msg-{{ m.role }}">
+      <div class="chat-bubble">{{ m.content }}</div>
+    </div>
+    {% else %}
+    <p>No messages recorded for this conversation.</p>
+    {% endfor %}
+  </div>
+</div>
+</div>
+{% endblock %}

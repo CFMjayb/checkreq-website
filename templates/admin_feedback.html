@@ -13,6 +13,7 @@
       <th>Entity</th>
       <th>Submitted By</th>
       <th>Comment</th>
+      <th>Conversation</th>
     </tr>
     {% for r in rows %}
     <tr>
@@ -20,9 +21,10 @@
       <td>{{ r.org_code or "—" }}</td>
       <td>{{ r.submitter_name or r.submitter_email }}</td>
       <td style="white-space:normal;">{{ r.comment }}</td>
+      <td>{% if r.conversation_id %}<a href="/admin/feedback/conversation/{{ r.conversation_id }}">View full conversation</a>{% else %}—{% endif %}</td>
     </tr>
     {% else %}
-    <tr><td colspan="4">No feedback submitted yet.</td></tr>
+    <tr><td colspan="5">No feedback submitted yet.</td></tr>
     {% endfor %}
   </table>
 </div>
