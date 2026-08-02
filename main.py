@@ -87,6 +87,7 @@ import document_extract
 import email_client
 import qbo_mcp_client
 import app_settings
+import notifications
 
 ATTACHMENTS_BUCKET = "cfm-checkreq-attachments"
 
@@ -361,6 +362,10 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
         "roles": _roles(request, user, org_id),
         "any_org_roles": any_org_roles,
         "real_roles": _roles(request, real, None),
+        # In-App Notifications (2026-08-02): live-as-of-this-page-load
+        # unread count for the header bell -- no push/websocket, just
+        # recomputed on every render, per the plan's own design.
+        "unread_notification_count": notifications.get_unread_count(user["id"]),
     }
     if extra:
         ctx.update(extra)
@@ -1061,6 +1066,18 @@ def _send_budget_buffer_notice_email(request_number: str, org_name: str, org_id:
         f"FYI -- {request_number} ({org_name}) was over budget, within buffer:\n\n"
         + "\n".join(details)
     )
+    # In-App Notifications Plan.md: "whatever code path fires the CFO
+    # budget-overage email also inserts one notifications row per is_cfo
+    # user at the same time -- one shared helper function, not two
+    # separate places to keep in sync." This function IS that shared call
+    # site (both the new-submission and edit-triggered-reset branches of
+    # new_request_submit call it) -- the notification is created right
+    # alongside the email, not from a second, parallel code path.
+    notif_message = (
+        f"{request_number} ({org_name}) was submitted over budget, within the "
+        f"account's allowed buffer. No action needed."
+    )
+    notif_link = f"/requests/{request_number}/view"
     for c in cfos:
         try:
             email_client.send_email(
@@ -1069,6 +1086,7 @@ def _send_budget_buffer_notice_email(request_number: str, org_name: str, org_id:
             )
         except Exception as exc:
             print(f"[budget-buffer-notice] failed for {c['email']}: {exc}")
+        notifications.create_notification(c["id"], "budget_overage", notif_message, notif_link)
 
 
 # ── Approval Action Workflow helpers (AP Review Workflow Plan.md, Section 1a/2b) ──
@@ -5018,3 +5036,9 @@ import admin_hub
 access_requests.register(app, current_user=_current_user, render=_render)
 admin_users.register(app, current_user=_current_user, render=_render)
 admin_hub.register(app, current_user=_current_user, render=_render)
+
+# In-App Notifications (2026-08-02, In-App Notifications Plan.md).
+# create_notification()/get_unread_count() are already in use above (this
+# module was imported near the top, alongside db/rbac) -- this call only
+# wires in the two HTTP routes the bell's own dropdown JS calls.
+notifications.register(app, current_user=_current_user)

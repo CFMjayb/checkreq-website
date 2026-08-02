@@ -44,6 +44,24 @@
         </select>
       </div>
       {% endif %}
+      {# In-App Notifications (2026-08-02): bell + unread badge, next to
+         Log out, on every page -- NOT scoped to the currently-selected
+         entity, per the plan's own recommendation (see notifications.py).
+         Dropdown content is fetched fresh on click (GET /api/notifications),
+         not server-rendered here -- querying it on every page load for
+         data that's usually never opened isn't worth it; only the unread
+         COUNT above is computed on every render. #}
+      <div class="notif-bell-wrap">
+        <button type="button" id="notifBellBtn" class="notif-bell-btn" aria-label="Notifications">
+          &#128276;{% if unread_notification_count %}<span class="notif-badge">{{ unread_notification_count if unread_notification_count < 100 else '99+' }}</span>{% endif %}
+        </button>
+        <div id="notifPopup" class="notif-popup" hidden>
+          <div class="notif-popup-title">Notifications</div>
+          <div id="notifList" class="notif-list">
+            <div class="notif-empty">Loading…</div>
+          </div>
+        </div>
+      </div>
       <a href="/logout">Log out ({{ user.display_name or user.email }})</a>
     </nav>
   </header>
@@ -53,6 +71,7 @@
     <a href="/static/docs/Beacon%20-%20Overview.docx" target="_blank" rel="noopener" style="color:#1F4E79;text-decoration:none;font-weight:600;">About Beacon — How Beacon Works</a>
   </footer>
   {% if user and current_org %}<script src="/static/js/entity_switcher.js?v={{ asset_version('js/entity_switcher.js') }}"></script>{% endif %}
+  {% if user %}<script src="/static/js/notifications.js?v={{ asset_version('js/notifications.js') }}"></script>{% endif %}
   {% block extra_js %}{% endblock %}
 </body>
 </html>
