@@ -534,10 +534,206 @@
     });
   }
 
+  // ---- ART List page (2026-08-02, Invoice Processing Intake Plan.md Tier 1) ----
+
+  function initArtListPage() {
+    var table = document.getElementById('artTable');
+    if (!table) return;
+
+    wireTable({
+      tableId: 'artTable',
+      saveBtnId: 'saveBtn',
+      stateId: 'saveState',
+      saveUrl: '/admin/setup/art/save',
+    });
+
+    // Group collapse/expand -- identical attribute-matching mechanism to
+    // the GL Mapping page's own area-header handler (data-group /
+    // data-group-of), reused verbatim since this is the same UI idea.
+    table.addEventListener('click', function (e) {
+      var header = e.target.closest('tr.area-header');
+      if (!header) return;
+      var groupId = header.dataset.group;
+      var collapsed = header.classList.toggle('is-collapsed');
+      table.querySelectorAll('tr[data-group-of="' + groupId + '"]').forEach(function (tr) {
+        if (tr.classList.contains('msg-row')) {
+          if (collapsed) tr.hidden = true;
+          else if (!tr.querySelector('.row-msg').textContent) tr.hidden = true;
+          else tr.hidden = false;
+        } else {
+          tr.style.display = collapsed ? 'none' : '';
+        }
+      });
+    });
+
+    // --- Add-an-ART-entry panel: vendor Tom Select ---
+    var vendorSel = document.getElementById('artAddVendor');
+    var addBtn = document.getElementById('artAddBtn');
+    var addMsg = document.getElementById('artAddMsg');
+    var vendorTs = new TomSelect(vendorSel, {
+      valueField: 'id',
+      labelField: 'display_name',
+      searchField: ['display_name'],
+      placeholder: 'Search this entity\'s vendors...',
+      preload: 'focus',
+      load: function (query, callback) {
+        fetch('/admin/setup/art/api/vendors?q=' + encodeURIComponent(query || ''))
+          .then(function (r) { return r.json(); })
+          .then(function (rows) { callback(rows); })
+          .catch(function () { callback(); });
+      },
+    });
+
+    addBtn.addEventListener('click', function () {
+      addMsg.className = 'row-msg';
+      var body = {
+        vendor_id: vendorTs.getValue(),
+        group_label: document.getElementById('artAddGroup').value,
+        art_type: document.getElementById('artAddType').value,
+        is_active: document.getElementById('artAddActive').checked,
+      };
+      if (!body.vendor_id) {
+        addMsg.className = 'row-msg err';
+        addMsg.textContent = 'Pick a vendor.';
+        return;
+      }
+      addBtn.disabled = true;
+      addMsg.textContent = 'Adding...';
+      fetch('/admin/setup/art/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+        .then(function (res) {
+          addBtn.disabled = false;
+          if (!res.ok || res.d.error) {
+            addMsg.className = 'row-msg err';
+            addMsg.textContent = res.d.error || 'Could not add that ART entry.';
+            return;
+          }
+          // Same reasoning as every other Add panel here -- reload so the
+          // new row lands in its real grouped/sorted position.
+          window.location.href = '/admin/setup/art/' + res.d.id;
+        })
+        .catch(function (err) {
+          addBtn.disabled = false;
+          addMsg.className = 'row-msg err';
+          addMsg.textContent = 'Could not add that ART entry: ' + err.message;
+        });
+    });
+
+    // --- Check Completeness (All) ---
+    var checkAllBtn = document.getElementById('checkAllBtn');
+    var checkAllMsg = document.getElementById('checkAllMsg');
+    if (checkAllBtn) {
+      checkAllBtn.addEventListener('click', function () {
+        checkAllBtn.disabled = true;
+        checkAllMsg.textContent = 'Checking every active entry against live QuickBooks -- this can take a moment...';
+        fetch('/admin/setup/art/check-all', { method: 'POST' })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            checkAllBtn.disabled = false;
+            if (d.error) { checkAllMsg.textContent = 'Failed: ' + d.error; return; }
+            checkAllMsg.textContent = d.checked + ' checked, ' + d.skipped + ' skipped, ' +
+              d.failed + ' failed -- ' + d.posted + ' posted, ' + d.overdue + ' overdue.';
+            window.location.reload();
+          })
+          .catch(function (err) {
+            checkAllBtn.disabled = false;
+            checkAllMsg.textContent = 'Failed: ' + err.message;
+          });
+      });
+    }
+  }
+
+  // ---- ART Entry detail page ------------------------------------------
+
+  function initArtDetailPage() {
+    var form = document.getElementById('artForm');
+    if (!form) return;
+
+    // Amount-mode conditional fields -- only show the inputs relevant to
+    // whichever check mode is selected (mirrors the plan's own
+    // amount_check_mode design: exact/range use numeric fields, seasonal/
+    // variable use free-text notes instead).
+    var modeSel = document.getElementById('amount_check_mode');
+    function refreshModeFields() {
+      var mode = modeSel.value;
+      form.querySelectorAll('[data-mode-field]').forEach(function (el) {
+        var modes = el.dataset.modeField.split(' ');
+        el.style.display = modes.indexOf(mode) === -1 ? 'none' : '';
+      });
+    }
+    modeSel.addEventListener('change', refreshModeFields);
+    refreshModeFields();
+
+    // Preapproval-scope conditional field (dollar cap amount only shown
+    // when Scope = dollar_cap).
+    var scopeSel = document.getElementById('preapproval_scope');
+    function refreshScopeFields() {
+      var scope = scopeSel.value;
+      form.querySelectorAll('[data-preapproval-field]').forEach(function (el) {
+        el.style.display = el.dataset.preapprovalField === scope ? '' : 'none';
+      });
+    }
+    scopeSel.addEventListener('change', refreshScopeFields);
+    refreshScopeFields();
+
+    // GL Account Tom Select -- same dependent-picker shape as GL Mapping's
+    // own addAccount control, just without the "already mapped" exclusion
+    // (an ART entry's gl_account_id has no uniqueness constraint to respect).
+    var acctSel = document.getElementById('gl_account_select');
+    if (acctSel) {
+      var acctTs = new TomSelect(acctSel, {
+        valueField: 'id',
+        labelField: 'label',
+        searchField: ['label'],
+        placeholder: 'Search this entity\'s chart of accounts...',
+        preload: 'focus',
+        load: function (query, callback) {
+          fetch('/admin/setup/art/api/gl-accounts?q=' + encodeURIComponent(query || ''))
+            .then(function (r) { return r.json(); })
+            .then(function (rows) {
+              callback(rows.map(function (a) {
+                return { id: a.id, label: a.account_number + ' · ' + a.account_name };
+              }));
+            })
+            .catch(function () { callback(); });
+        },
+      });
+    }
+
+    // Check Completeness Now -- single-entry Tier 2 check, reload to show
+    // the freshly-written period row rather than trying to reconstruct the
+    // new table row's HTML client-side.
+    var checkBtn = document.getElementById('artCheckBtn');
+    var checkMsg = document.getElementById('artCheckMsg');
+    if (checkBtn) {
+      checkBtn.addEventListener('click', function () {
+        checkBtn.disabled = true;
+        checkMsg.textContent = 'Checking against live QuickBooks...';
+        fetch(checkBtn.dataset.checkUrl, { method: 'POST' })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d.error) { checkMsg.textContent = 'Failed: ' + d.error; checkBtn.disabled = false; return; }
+            if (d.skipped) { checkMsg.textContent = 'Not checked: ' + d.reason; checkBtn.disabled = false; return; }
+            window.location.reload();
+          })
+          .catch(function (err) {
+            checkMsg.textContent = 'Failed: ' + err.message;
+            checkBtn.disabled = false;
+          });
+      });
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     initGlMappingPage();
     initOrganizationsPage();
     initProgramAreasPage();
     initProgramAreaDetailPage();
+    initArtListPage();
+    initArtDetailPage();
   });
 })();

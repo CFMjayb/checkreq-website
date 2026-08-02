@@ -75,9 +75,12 @@ only qbo-mcp-server holds the QBO OAuth tokens.
 """
 from __future__ import annotations
 
+from datetime import date, datetime
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
+import art_completeness
 import db
 
 router = APIRouter()
@@ -123,6 +126,17 @@ SETUP_TABS = [
      "url": "/admin/setup/program-areas", "built": True, "entity_scoped": True,
      "count_sql": "SELECT COUNT(*) AS n FROM checkreq.user_program_areas upa "
                   "JOIN checkreq.program_areas pa ON pa.id = upa.program_area_id WHERE pa.org_id = %s"},
+    # Added 2026-08-02 — Invoice Processing Intake Plan.md, "The ART /
+    # Preapproved screen" + "ART completeness tracking" sections. Ports the
+    # real CFM AP Recurring Bills spreadsheet's per-vendor ART settings, and
+    # a manual on-demand version of the "did this period's bill actually
+    # post to QBO" check (the nightly-automated version is deliberately not
+    # built yet -- see art_completeness.py's own module docstring).
+    {"key": "art_list", "title": "ART List (Recurring Bills)",
+     "desc": "Vendors pre-approved for recurring payment: their expected amount/frequency, "
+             "GL coding, and whether each period's bill has actually posted to QBO.",
+     "url": "/admin/setup/art", "built": True, "entity_scoped": True,
+     "count_sql": "SELECT COUNT(*) AS n FROM checkreq.art_list WHERE org_id = %s"},
     {"key": "organizations", "title": "Entities & Global Approvers",
      "desc": "Per-entity global approval threshold, and who signs off above it.",
      "url": "/admin/setup/organizations", "built": True, "entity_scoped": False,
@@ -1021,3 +1035,583 @@ async def program_area_approval_rules_save(program_area_id: int, request: Reques
 
     saved = sum(1 for x in results if x["ok"])
     return {"saved": saved, "failed": len(results) - saved, "results": results}
+
+
+# ── ART List (Authorized Recurring Transactions) ─────────────────────────────
+# Invoice Processing Intake Plan.md, "The ART / Preapproved screen" section --
+# ports CFM AP Recurring Bills 2026.xlsx (the Services Team's real, hand-kept
+# spreadsheet) into a real table. Two screens, matching the plan's own
+# Tier 1 scope:
+#   GET  /admin/setup/art                    -- list, grouped by group_label
+#                                                (same collapsible-header
+#                                                pattern as GL Mapping), a
+#                                                dense grid of the fields
+#                                                worth bulk-editing, with the
+#                                                same batched dirty-save +
+#                                                delete-as-dirty pattern
+#   POST /admin/setup/art/save               -- batched save for the grid
+#                                                above (group_label, art_type,
+#                                                frequency, is_active,
+#                                                grace_days; `_delete: true`
+#                                                deletes the row, cascading
+#                                                to its art_period_status
+#                                                rows per the migration's own
+#                                                ON DELETE CASCADE)
+#   POST /admin/setup/art/add                -- create one entry (vendor +
+#                                                a minimal starting field
+#                                                set, matching every other
+#                                                Add panel's own "small
+#                                                subset now, full detail
+#                                                later" convention)
+#   GET  /admin/setup/art/api/vendors        -- Add-panel vendor picker feed
+#                                                (org-scoped, excludes
+#                                                vendors that already have an
+#                                                ART entry for this org --
+#                                                the real UNIQUE(vendor_id,
+#                                                org_id) constraint)
+#   GET  /admin/setup/art/{id}               -- detail: every real ART
+#                                                field as an editable form
+#                                                (identity-panel-at-top,
+#                                                same shape as Program Area's
+#                                                own detail page), plus the
+#                                                Tier 2 completeness panel
+#   POST /admin/setup/art/{id}/update        -- the detail form's single-POST
+#                                                save (not batched -- one
+#                                                record, same convention as
+#                                                Program Area's own top form)
+#   POST /admin/setup/art/{id}/delete        -- immediate, confirmed,
+#                                                single-row delete from the
+#                                                detail page. NOT the same
+#                                                thing the 2026-08-02 standing
+#                                                rule forbids -- that rule is
+#                                                about a dense multi-row GRID
+#                                                where an accidental click is
+#                                                the real risk (Jay's actual
+#                                                incident); a lone confirmed
+#                                                action on one record's own
+#                                                detail page is the same
+#                                                shape as Cancel-a-Check-
+#                                                Request's confirm()+POST,
+#                                                already an established
+#                                                pattern in this codebase.
+#   GET  /admin/setup/art/api/gl-accounts    -- detail-page GL account picker
+#                                                feed (org-scoped, no
+#                                                exclusion -- unlike GL
+#                                                Mapping's picker, an ART
+#                                                entry's gl_account_id isn't
+#                                                unique, so nothing to
+#                                                exclude)
+#   POST /admin/setup/art/{id}/check-completeness -- Tier 2: run the manual,
+#                                                on-demand reconciliation for
+#                                                ONE entry's current period
+#                                                (art_completeness.check_one)
+#   POST /admin/setup/art/check-all          -- Tier 2: same, for every
+#                                                active entry in the current
+#                                                entity (art_completeness.
+#                                                check_org)
+#   POST /admin/setup/art/{id}/periods/{period_id}/resolve -- mark one period
+#                                                'manually_resolved' with a
+#                                                note (a real, human-confirmed
+#                                                exception -- e.g. a vendor
+#                                                was cancelled mid-year --
+#                                                per the plan's own design)
+
+_ART_LIST_SQL = """
+    SELECT al.id, al.group_label, al.art_type, al.frequency, al.is_active, al.grace_days,
+           al.amount_check_mode, al.amount_exact, al.amount_min, al.amount_max, al.amount_notes,
+           al.vendor_id, v.display_name AS vendor_display_name,
+           al.gl_account_id, ga.account_number, ga.account_name, al.gl_account_name_override,
+           lp.period_label AS latest_period_label, lp.status AS latest_status,
+           lp.checked_at AS latest_checked_at
+    FROM checkreq.art_list al
+    JOIN checkreq.vendors v ON v.id = al.vendor_id
+    LEFT JOIN checkreq.gl_accounts ga ON ga.id = al.gl_account_id
+    LEFT JOIN LATERAL (
+        SELECT period_label, status, checked_at
+        FROM checkreq.art_period_status
+        WHERE art_list_id = al.id
+        ORDER BY checked_at DESC NULLS LAST, id DESC
+        LIMIT 1
+    ) lp ON TRUE
+    WHERE al.org_id = %s
+    ORDER BY COALESCE(al.group_label, '~'), v.display_name
+"""
+
+
+def _art_amount_display(row: dict) -> str:
+    mode = row.get("amount_check_mode")
+    if mode == "exact" and row.get("amount_exact") is not None:
+        return f"${_money(row['amount_exact']):,.2f}"
+    if mode == "range" and row.get("amount_min") is not None and row.get("amount_max") is not None:
+        return f"${_money(row['amount_min']):,.2f}–${_money(row['amount_max']):,.2f}"
+    return (row.get("amount_notes") or "").strip() or ("Seasonal" if mode == "seasonal" else "Varies")
+
+
+def _art_gl_display(row: dict) -> str:
+    if row.get("account_number"):
+        return f"{row['account_number']} · {row.get('account_name') or ''}".strip(" ·")
+    return row.get("gl_account_name_override") or "(multi-line)"
+
+
+def _art_list_groups(org_id: int) -> list[dict]:
+    rows = db.query(_ART_LIST_SQL, (org_id,))
+    groups: list[dict] = []
+    by_label: dict[str, dict] = {}
+    for r in rows:
+        label = r["group_label"] or "(Ungrouped)"
+        g = by_label.get(label)
+        if g is None:
+            g = {"label": label, "rows": []}
+            by_label[label] = g
+            groups.append(g)
+        g["rows"].append({
+            **r,
+            "amount_display": _art_amount_display(r),
+            "gl_display": _art_gl_display(r),
+        })
+    return groups
+
+
+@router.get("/admin/setup/art", response_class=HTMLResponse)
+def art_list_page(request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org:
+        return RedirectResponse("/portal")
+
+    return _render(request, "admin_setup_art.html", user, {
+        "groups": _art_list_groups(org["id"]),
+    })
+
+
+@router.get("/admin/setup/art/api/vendors")
+def api_art_vendors(request: Request, q: str = ""):
+    """Add-panel vendor picker feed -- org-scoped, excludes any vendor that
+    already has an ART entry for this org (the real UNIQUE(vendor_id,
+    org_id) constraint would just bounce a duplicate back as an error
+    otherwise -- excluding it up front is the same "can't even pick a
+    duplicate" precedent as GL Mapping's own unmapped-gl-accounts feed)."""
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org:
+        return JSONResponse({"error": "No entity selected"}, status_code=400)
+
+    sql = """
+        SELECT v.id, v.display_name
+        FROM checkreq.vendors v
+        WHERE v.org_id = %s AND v.is_active
+          AND NOT EXISTS (
+              SELECT 1 FROM checkreq.art_list al
+              WHERE al.vendor_id = v.id AND al.org_id = %s
+          )
+    """
+    params: tuple = (org["id"], org["id"])
+    if q:
+        sql += " AND v.display_name ILIKE %s"
+        params += (f"%{q}%",)
+    sql += " ORDER BY v.display_name LIMIT 100"
+    return db.query(sql, params)
+
+
+@router.get("/admin/setup/art/api/gl-accounts")
+def api_art_gl_accounts(request: Request, q: str = ""):
+    """Detail-page GL account picker feed -- org-scoped, no exclusion
+    (unlike GL Mapping's picker, an ART entry's gl_account_id has no
+    uniqueness constraint to respect -- more than one ART entry can
+    reasonably code to the same account)."""
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org:
+        return JSONResponse({"error": "No entity selected"}, status_code=400)
+
+    sql = "SELECT id, account_number, account_name FROM checkreq.gl_accounts WHERE org_id = %s AND is_active"
+    params: tuple = (org["id"],)
+    if q:
+        sql += " AND (account_number ILIKE %s OR account_name ILIKE %s)"
+        params += (f"%{q}%", f"%{q}%")
+    sql += " ORDER BY account_number LIMIT 100"
+    return db.query(sql, params)
+
+
+@router.post("/admin/setup/art/add")
+async def art_add(request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org:
+        return JSONResponse({"error": "No entity selected"}, status_code=400)
+
+    body = await request.json()
+    try:
+        vendor_id = int(body.get("vendor_id") or 0)
+    except (TypeError, ValueError):
+        vendor_id = 0
+    if not vendor_id:
+        return JSONResponse({"error": "Pick a vendor."}, status_code=400)
+
+    group_label = (body.get("group_label") or "").strip() or None
+    art_type = (body.get("art_type") or "").strip() or None
+    is_active = bool(body.get("is_active", True))
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM checkreq.vendors WHERE id = %s AND org_id = %s",
+                        (vendor_id, org["id"]))
+            if not cur.fetchone():
+                return JSONResponse({"error": "That vendor isn't part of the selected entity."},
+                                    status_code=400)
+            cur.execute(
+                "INSERT INTO checkreq.art_list (vendor_id, org_id, group_label, art_type, "
+                "is_active, created_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (vendor_id, org_id) DO NOTHING RETURNING id",
+                (vendor_id, org["id"], group_label, art_type, is_active, user["id"]),
+            )
+            created = cur.fetchone()
+
+    if not created:
+        return JSONResponse(
+            {"error": "This vendor already has an ART entry for this entity."}, status_code=400
+        )
+    return {"id": created["id"]}
+
+
+@router.post("/admin/setup/art/save")
+async def art_save(request: Request):
+    """Batched save for the list-page grid -- same _RowSavepoint +
+    `_delete: true` pattern as gl_mapping_save()/organizations_save_
+    approvers(). Only the grid's own editable subset (group_label,
+    art_type, frequency, is_active, grace_days) is written here; every
+    other real ART field is edited on the detail page's own single-POST
+    form, not this grid -- there are simply too many fields (~20) to
+    reasonably show inline per row."""
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org:
+        return JSONResponse({"error": "No entity selected"}, status_code=400)
+
+    body = await request.json()
+    rows = body.get("rows") or []
+    results = []
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            for i, r in enumerate(rows):
+                row_id = r.get("id")
+                try:
+                    with _RowSavepoint(cur, f"sp_art_{i}"):
+                        cur.execute(
+                            "SELECT 1 FROM checkreq.art_list WHERE id = %s AND org_id = %s",
+                            (row_id, org["id"]),
+                        )
+                        if not cur.fetchone():
+                            raise ValueError("This ART entry isn't part of the selected entity.")
+
+                        if r.get("_delete"):
+                            cur.execute("DELETE FROM checkreq.art_list WHERE id = %s", (row_id,))
+                            results.append({"id": row_id, "ok": True, "deleted": True})
+                            continue
+
+                        group_label = (r.get("group_label") or "").strip() or None
+                        art_type = (r.get("art_type") or "").strip() or None
+                        frequency = (r.get("frequency") or "").strip() or None
+                        try:
+                            grace_days = int(r.get("grace_days") or 0)
+                        except (TypeError, ValueError):
+                            raise ValueError("Grace days must be a whole number.")
+                        if grace_days < 0:
+                            raise ValueError("Grace days can't be negative.")
+
+                        cur.execute(
+                            "UPDATE checkreq.art_list SET group_label = %s, art_type = %s, "
+                            "frequency = %s, is_active = %s, grace_days = %s, "
+                            "updated_by_user_id = %s, updated_at = NOW() WHERE id = %s",
+                            (group_label, art_type, frequency, bool(r.get("is_active")),
+                             grace_days, user["id"], row_id),
+                        )
+                    results.append({"id": row_id, "ok": True})
+                except Exception as exc:
+                    results.append({"id": row_id, "ok": False, "error": str(exc)})
+
+    saved = sum(1 for x in results if x["ok"])
+    return {"saved": saved, "failed": len(results) - saved, "results": results}
+
+
+def _art_for_org(art_id: int, org_id: int) -> dict | None:
+    return db.query_one(
+        """
+        SELECT al.*, v.display_name AS vendor_display_name, v.qbo_vendor_id,
+               ga.account_number, ga.account_name,
+               au.email AS approved_by_email
+        FROM checkreq.art_list al
+        JOIN checkreq.vendors v ON v.id = al.vendor_id
+        LEFT JOIN checkreq.gl_accounts ga ON ga.id = al.gl_account_id
+        LEFT JOIN checkreq.app_users au ON au.id = al.approved_by_user_id
+        WHERE al.id = %s AND al.org_id = %s
+        """,
+        (art_id, org_id),
+    )
+
+
+@router.get("/admin/setup/art/{art_id}", response_class=HTMLResponse)
+def art_detail_page(art_id: int, request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org:
+        return RedirectResponse("/portal")
+
+    art = _art_for_org(art_id, org["id"])
+    if not art:
+        return RedirectResponse(
+            "/admin/setup/art?error=That+ART+entry+isn%27t+part+of+the+selected+entity.",
+            status_code=303,
+        )
+    for f in ("amount_exact", "amount_min", "amount_max", "preapproval_max_amount"):
+        art[f] = _money(art[f]) if art.get(f) is not None else None
+
+    periods = db.query(
+        "SELECT * FROM checkreq.art_period_status WHERE art_list_id = %s "
+        "ORDER BY period_label DESC LIMIT 12",
+        (art_id,),
+    )
+    known_emails = db.query("SELECT email FROM checkreq.app_users WHERE is_active ORDER BY email")
+
+    return _render(request, "admin_setup_art_detail.html", user, {
+        "art": art,
+        "periods": periods,
+        "known_emails": [e["email"] for e in known_emails],
+    })
+
+
+def _f(form, key, default=""):
+    v = form.get(key)
+    return v if v is not None else default
+
+
+def _parse_money(form, key):
+    v = (form.get(key) or "").strip()
+    if not v:
+        return None
+    try:
+        return float(v)
+    except ValueError:
+        raise ValueError(f"'{key}' must be a number.")
+
+
+def _parse_date(form, key):
+    v = (form.get(key) or "").strip()
+    if not v:
+        return None
+    try:
+        return datetime.strptime(v, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError(f"'{key}' must be a valid date (YYYY-MM-DD).")
+
+
+@router.post("/admin/setup/art/{art_id}/update")
+async def art_update(art_id: int, request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org or not _art_for_org(art_id, org["id"]):
+        return RedirectResponse("/admin/setup/art", status_code=303)
+
+    form = await request.form()
+
+    def back(msg: str):
+        from urllib.parse import quote
+        return RedirectResponse(f"/admin/setup/art/{art_id}?error={quote(msg)}", status_code=303)
+
+    try:
+        authorized_from = _parse_date(form, "authorized_from")
+        authorized_through = _parse_date(form, "authorized_through")
+        approved_at = _parse_date(form, "approved_at")
+        amount_exact = _parse_money(form, "amount_exact")
+        amount_min = _parse_money(form, "amount_min")
+        amount_max = _parse_money(form, "amount_max")
+        preapproval_max_amount = _parse_money(form, "preapproval_max_amount")
+        try:
+            grace_days = int(_f(form, "grace_days", "3") or 3)
+        except ValueError:
+            raise ValueError("Grace Days must be a whole number.")
+        if grace_days < 0:
+            raise ValueError("Grace Days can't be negative.")
+    except ValueError as exc:
+        return back(str(exc))
+
+    amount_check_mode = _f(form, "amount_check_mode", "range")
+    if amount_check_mode not in ("exact", "range", "seasonal", "variable"):
+        return back("Invalid amount check mode.")
+    preapproval_scope = _f(form, "preapproval_scope", "one_step_confirmation")
+    if preapproval_scope not in ("full_skip", "dollar_cap", "one_step_confirmation"):
+        return back("Invalid preapproval scope.")
+
+    gl_account_id = form.get("gl_account_id") or None
+    if gl_account_id:
+        try:
+            gl_account_id = int(gl_account_id)
+        except ValueError:
+            return back("Invalid GL account.")
+
+    approved_by_email = (form.get("approved_by_email") or "").strip()
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            if gl_account_id:
+                cur.execute("SELECT 1 FROM checkreq.gl_accounts WHERE id = %s AND org_id = %s",
+                            (gl_account_id, org["id"]))
+                if not cur.fetchone():
+                    return back("That GL account isn't part of the selected entity.")
+
+            approved_by_user_id = None
+            if approved_by_email:
+                try:
+                    approved_by_user_id = _get_or_create_user(cur, approved_by_email)
+                except ValueError as exc:
+                    return back(str(exc))
+
+            cur.execute(
+                """
+                UPDATE checkreq.art_list SET
+                    group_label = %s, art_type = %s, is_active = %s,
+                    approved_by_user_id = %s, approved_at = %s,
+                    authorized_from = %s, authorized_through = %s,
+                    frequency = %s, expected_day_of_month = %s,
+                    amount_check_mode = %s, amount_exact = %s, amount_min = %s, amount_max = %s,
+                    amount_notes = %s,
+                    invoice_setup = %s, invoice_source = %s, update_ap_bill = %s,
+                    has_login_credential = %s, pay_method = %s,
+                    gl_account_id = %s, gl_account_name_override = %s,
+                    preapproval_scope = %s, preapproval_max_amount = %s,
+                    is_monkey_see_monkey_do = %s, special_handling_notes = %s,
+                    notes = %s, cfm_notes = %s, grace_days = %s,
+                    updated_by_user_id = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (
+                    (form.get("group_label") or "").strip() or None,
+                    (form.get("art_type") or "").strip() or None,
+                    form.get("is_active") == "on",
+                    approved_by_user_id, approved_at,
+                    authorized_from, authorized_through,
+                    (form.get("frequency") or "").strip() or None,
+                    (form.get("expected_day_of_month") or "").strip() or None,
+                    amount_check_mode, amount_exact, amount_min, amount_max,
+                    (form.get("amount_notes") or "").strip() or None,
+                    (form.get("invoice_setup") or "").strip() or None,
+                    (form.get("invoice_source") or "").strip() or None,
+                    (form.get("update_ap_bill") or "").strip() or None,
+                    (form.get("has_login_credential") or "").strip() or None,
+                    (form.get("pay_method") or "").strip() or None,
+                    gl_account_id,
+                    (form.get("gl_account_name_override") or "").strip() or None,
+                    preapproval_scope, preapproval_max_amount,
+                    form.get("is_monkey_see_monkey_do") == "on",
+                    (form.get("special_handling_notes") or "").strip() or None,
+                    (form.get("notes") or "").strip() or None,
+                    (form.get("cfm_notes") or "").strip() or None,
+                    grace_days,
+                    user["id"], art_id,
+                ),
+            )
+
+    return RedirectResponse(f"/admin/setup/art/{art_id}?saved=1", status_code=303)
+
+
+@router.post("/admin/setup/art/{art_id}/delete")
+async def art_delete(art_id: int, request: Request):
+    """Immediate, confirmed, single-row delete -- see this section's own
+    header comment for why this is exempt from the 2026-08-02 delete-as-
+    dirty rule (that rule targets a dense multi-row grid's accidental-click
+    risk; this is one confirmed action on one record's own detail page,
+    the same shape as Cancel-a-Check-Request)."""
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org or not _art_for_org(art_id, org["id"]):
+        return RedirectResponse("/admin/setup/art", status_code=303)
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM checkreq.art_list WHERE id = %s", (art_id,))
+
+    return RedirectResponse("/admin/setup/art?deleted=1", status_code=303)
+
+
+# ── Tier 2: ART completeness tracking (manual, on-demand only) ──────────────
+# See art_completeness.py's own module docstring for what this is and,
+# explicitly, what it is NOT (the nightly automated job is a deliberate
+# future step, not attempted here).
+
+@router.post("/admin/setup/art/{art_id}/check-completeness")
+def art_check_one(art_id: int, request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org or not _art_for_org(art_id, org["id"]):
+        return JSONResponse({"error": "That ART entry isn't part of the selected entity."},
+                            status_code=400)
+    return art_completeness.check_one(art_id)
+
+
+@router.post("/admin/setup/art/check-all")
+def art_check_all(request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org:
+        return JSONResponse({"error": "No entity selected"}, status_code=400)
+    return art_completeness.check_org(org["id"])
+
+
+@router.post("/admin/setup/art/{art_id}/periods/{period_id}/resolve")
+async def art_period_resolve(art_id: int, period_id: int, request: Request):
+    """A real, human-confirmed exception (e.g. a vendor was cancelled
+    mid-year, or the bill legitimately posted under a different vendor
+    name the fuzzy matcher couldn't recognize) -- per the plan's own
+    design, this is the only way a period's status becomes
+    'manually_resolved', and check_one()'s own upsert deliberately never
+    overwrites that status on a later automated re-check."""
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org or not _art_for_org(art_id, org["id"]):
+        return RedirectResponse("/admin/setup/art", status_code=303)
+
+    form = await request.form()
+    note = (form.get("resolved_note") or "").strip()
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM checkreq.art_period_status WHERE id = %s AND art_list_id = %s",
+                (period_id, art_id),
+            )
+            if not cur.fetchone():
+                return RedirectResponse(
+                    f"/admin/setup/art/{art_id}?error=That+period+isn%27t+part+of+this+entry.",
+                    status_code=303,
+                )
+            cur.execute(
+                "UPDATE checkreq.art_period_status SET status = 'manually_resolved', "
+                "resolved_by_user_id = %s, resolved_note = %s, checked_at = NOW() WHERE id = %s",
+                (user["id"], note or None, period_id),
+            )
+
+    return RedirectResponse(f"/admin/setup/art/{art_id}?resolved=1", status_code=303)

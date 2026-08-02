@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}ART List (Recurring Bills){% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/vendor/tomselect/tom-select.default.min.css">
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+
+<div class="setup-toolbar">
+  <div>
+    <h1 class="setup-h1-compact" style="margin:0;">ART List (Recurring Bills)</h1>
+    <p class="back-link" style="margin:4px 0 0;"><a href="/admin/setup">&larr; Back to Setup Tables</a></p>
+    <p class="sub" style="margin:4px 0 0;">
+      <a href="/admin/setup">Setup Tables</a> &rsaquo; {{ current_org.code }} &mdash;
+      vendors pre-approved for recurring payment (Authorized Recurring Transactions), and whether
+      each period's bill has actually posted to QBO.
+    </p>
+  </div>
+  <div class="spacer"></div>
+  <span id="checkAllMsg" class="save-state"></span>
+  <button type="button" id="checkAllBtn" class="btn btn-secondary btn-sm">Check Completeness (All)</button>
+  <span id="saveState" class="save-state">No changes</span>
+  <button type="button" id="saveBtn" class="btn btn-primary btn-sm" disabled>Save Changes</button>
+</div>
+
+{% if request.query_params.get('saved') %}<div class="banner banner-success">Changes have been saved.</div>{% endif %}
+{% if request.query_params.get('deleted') %}<div class="banner banner-success">ART entry deleted.</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
+
+<details class="add-panel" open>
+  <summary>Add an ART entry</summary>
+  <div class="add-grid" style="grid-template-columns: 2fr 1.2fr 1.1fr 0.7fr auto;">
+    <div class="fld">
+      <label for="artAddVendor">Vendor</label>
+      <select id="artAddVendor"><option value="">Search vendors...</option></select>
+    </div>
+    <div class="fld">
+      <label for="artAddGroup">Group Label <span class="sub">(optional)</span></label>
+      <input type="text" id="artAddGroup" placeholder="e.g. B&amp;G - Evans 1002 1st St">
+    </div>
+    <div class="fld">
+      <label for="artAddType">Type</label>
+      <input type="text" id="artAddType" placeholder="AP / HR / Monthly Allocation / Stipend">
+    </div>
+    <div class="fld fld-check">
+      <input type="checkbox" id="artAddActive" checked>
+      <label for="artAddActive">Approved</label>
+    </div>
+    <div class="fld">
+      <button type="button" id="artAddBtn" class="btn btn-primary btn-sm">Add</button>
+    </div>
+  </div>
+  <div id="artAddMsg" class="row-msg" style="margin-top:8px;"></div>
+  <p class="setup-note" style="margin-top:8px;">
+    Every other ART field (frequency, expected amount, GL coding, pay method, preapproval scope,
+    Monkey-See-Monkey-Do, notes, etc.) is set on the entry's own <strong>Manage</strong> page after
+    it's created here.
+  </p>
+</details>
+
+<div class="card">
+  <div class="table-scroll setup-scroll">
+    <table class="setup-table" id="artTable">
+      <thead>
+        <tr>
+          <th class="col-display">Group Label</th>
+          <th class="col-email">Vendor</th>
+          <th>Type</th>
+          <th>Frequency</th>
+          <th class="col-budget">Expected Amount</th>
+          <th class="col-account">GL Account</th>
+          <th class="col-allow">Approved</th>
+          <th class="col-sort">Grace Days</th>
+          <th class="col-budget">Completeness</th>
+          <th class="col-actions"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in groups %}
+        {% set gi = loop.index0 %}
+        <tr class="area-header" data-group="art-group-{{ gi }}">
+          <td colspan="10"><span class="area-chevron">&#9662;</span> {{ g.label }} <span class="area-count">&mdash; {{ g.rows|length }} vendor{{ '' if g.rows|length == 1 else 's' }}</span></td>
+        </tr>
+          {% for r in g.rows %}
+          <tr data-row-id="{{ r.id }}" data-group-of="art-group-{{ gi }}">
+            <td class="col-display"><input type="text" data-field="group_label" value="{{ r.group_label or '' }}"></td>
+            <td class="col-email">{{ r.vendor_display_name }}</td>
+            <td><input type="text" data-field="art_type" value="{{ r.art_type or '' }}"></td>
+            <td><input type="text" data-field="frequency" list="artFrequencies" value="{{ r.frequency or '' }}"></td>
+            <td class="col-budget sub">{{ r.amount_display }}</td>
+            <td class="col-account sub">{{ r.gl_display }}</td>
+            <td class="col-allow"><input type="checkbox" data-field="is_active" {% if r.is_active %}checked{% endif %}></td>
+            <td class="col-sort"><input type="number" class="num" data-field="grace_days" min="0" value="{{ r.grace_days }}"></td>
+            <td class="col-budget">
+              {% if r.latest_status %}
+              <span class="badge {{ 'badge-approved' if r.latest_status == 'posted' else ('badge-rejected' if r.latest_status == 'overdue' else ('badge-cancelled' if r.latest_status == 'manually_resolved' else 'badge-pending')) }}">
+                {{ r.latest_period_label }} &middot; {{ r.latest_status }}
+              </span>
+              {% else %}
+              <span class="sub">Not yet checked</span>
+              {% endif %}
+            </td>
+            <td class="col-actions">
+              <a class="btn btn-secondary btn-sm" href="/admin/setup/art/{{ r.id }}">Manage</a>
+              <button type="button" class="icon-btn delete-toggle" title="Mark this ART entry for removal">&times;</button>
+            </td>
+          </tr>
+          <tr class="msg-row" data-msg-for="{{ r.id }}" data-group-of="art-group-{{ gi }}" hidden><td colspan="10"><div class="row-msg"></div></td></tr>
+          {% endfor %}
+        {% else %}
+        <tr><td colspan="10">No ART entries yet for {{ current_org.code }}. Add the first one above.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<datalist id="artFrequencies">
+  <option value="Monthly">
+  <option value="Quarterly">
+  <option value="Annual">
+  <option value="Bi-Monthly">
+  <option value="seasonal">
+  <option value="as needed">
+</datalist>
+
+<p class="setup-note">
+  Grouped the same way the real spreadsheet groups vendors under a property/purpose header. Clicking
+  a green group header collapses/expands its rows. <strong>Completeness</strong> shows the result of
+  the most recent on-demand check for that entry's current period &mdash; click <strong>Manage</strong>
+  to check one entry, or <strong>Check Completeness (All)</strong> above to run every active entry in
+  this entity now (each is a live QuickBooks lookup, so this can take a little while for a large list).
+  Every other field &mdash; frequency detail, expected amount, GL coding, pay method, preapproval
+  scope, Monkey-See-Monkey-Do, notes &mdash; is set on each entry's own <strong>Manage</strong> page.
+  Clicking &times; marks an entry for removal (shown struck through in blue) &mdash; nothing is
+  actually deleted until you click <strong>Save Changes</strong>.
+</p>
+
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/vendor/tomselect/tom-select.complete.min.js"></script>
+<script>
+  window.SETUP_ORG_ID = {{ current_org.id }};
+</script>
+<script src="/static/js/admin_setup.js?v={{ asset_version('js/admin_setup.js') }}"></script>
+{% endblock %}

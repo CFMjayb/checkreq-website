@@ -115,6 +115,38 @@ def get_budget_status(company: str, account_number: str, fiscal_year: int) -> tu
     )
 
 
+def get_gl_detail(
+    company: str, account_number: str, start_date: str, end_date: str,
+) -> tuple[dict | None, str | None]:
+    """GET /api/gl-detail/{company}?accounts=<account_number>&format=json.
+
+    Reused verbatim, not a new endpoint -- this is the same canonical GL
+    fetch qbo-mcp-server already exposes for the QBO Excel Tools GL Detail
+    tab and 26-124's clearing-account reconciliation work (see gl_fetch.py's
+    own docstring). First caller here: art_completeness.py's on-demand ART
+    completeness check (Invoice Processing Intake Plan.md, Tier 2) --
+    matches a period's expected vendor/GL/amount against real transactions
+    already posted to QBO for that account, regardless of whether the bill
+    went through Beacon or was entered directly by someone else.
+
+    Returns ({"company", "period": {"start","end"}, "accounts": [{"account_id",
+    "acct_num", "name", "transactions": [{"date","txn_type","num","name",
+    "memo","amount","txn_id",...}]}]}, None) on success, or (None, "error
+    text") on failure -- including a clean, non-error result when the
+    account had zero activity in the window (an empty "accounts" list, not
+    a failure)."""
+    return _get(
+        "/api/gl-detail/{company}", company,
+        {
+            "accounts": account_number,
+            "start_date": start_date,
+            "end_date": end_date,
+            "format": "json",
+        },
+        timeout=30,
+    )
+
+
 def create_vendor(
     company: str,
     display_name: str,
