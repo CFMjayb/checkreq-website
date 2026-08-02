@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}How Beacon Works{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Beacon &middot; Project 26-129</div>
+  <h1>How Beacon Works</h1>
+  <p class="tagline">A plain-language overview of the online check &amp; payment request system for EDOM and Claggett Center.</p>
+</div>
+
+<div class="howitworks">
+
+  <div class="status-callout">
+    <div class="label">A Note on Where Things Stand</div>
+    <p>Beacon is actively being built and refined. New features are added and adjusted frequently based on real staff feedback, and the system currently runs in a development environment while it matures toward a full production release. This overview describes what Beacon does today; it will be updated as the system evolves.</p>
+  </div>
+
+  <nav class="howitworks-toc" aria-label="Sections on this page">
+    <div class="toc-title">On This Page</div>
+    <ol>
+      <li><a href="#what-is-beacon">1. What Is Beacon?</a></li>
+      <li><a href="#who-uses-beacon">2. Who Uses Beacon, and How</a></li>
+      <li><a href="#life-of-a-request">3. The Life of a Request, Start to Finish</a></li>
+      <li><a href="#submitting-a-request">4. Submitting a Request</a></li>
+      <li><a href="#vendors">5. Vendors &mdash; Existing and Brand-New</a></li>
+      <li><a href="#approval-chain">6. The Approval Chain</a></li>
+      <li><a href="#ap-review">7. AP Review and Posting to QuickBooks</a></li>
+      <li><a href="#attachments">8. Attachments and Recordkeeping</a></li>
+      <li><a href="#admin-oversight">9. Administrative Oversight</a></li>
+      <li><a href="#questions">10. Questions or Feedback</a></li>
+    </ol>
+  </nav>
+
+  <section class="hiw-section" id="what-is-beacon">
+    <h2>1. What Is Beacon?</h2>
+    <p>Beacon is a web application that lets staff at the Episcopal Diocese of Maryland (EDOM) and Claggett Center submit, route, and pay check and payment requests entirely online &mdash; no paper forms, no routing an envelope from desk to desk, no separate spreadsheet to track where a request stands. It replaces the old manual check-request process with a single system that walks a request from the moment someone submits it all the way through to the bill being created in QuickBooks Online (QBO).</p>
+    <p class="also-known-as">You may also hear this project referred to internally by its project number, 26-129, or its working name, &ldquo;Check Request.&rdquo; Beacon is the name staff see on the site itself.</p>
+  </section>
+
+  <section class="hiw-section" id="who-uses-beacon">
+    <h2>2. Who Uses Beacon, and How</h2>
+    <p>Beacon is built around a handful of everyday roles. Most staff will only ever occupy one or two of these:</p>
+    <div class="hiw-roles">
+      <div class="hiw-role-card">
+        <div class="role-name">Requesters</div>
+        <p>Anyone who needs a check or payment issued submits a request through Beacon. This is the starting point for every request.</p>
+      </div>
+      <div class="hiw-role-card">
+        <div class="role-name">Approvers</div>
+        <p>Staff assigned to a Program Area (or designated as a Global Approver for larger amounts) review and approve or reject requests that fall in their area.</p>
+      </div>
+      <div class="hiw-role-card">
+        <div class="role-name">Vendor Approvers</div>
+        <p>Review and approve requests to add a brand-new vendor before that vendor can be paid.</p>
+      </div>
+      <div class="hiw-role-card">
+        <div class="role-name">AP Reviewers</div>
+        <p>Give the final look at a fully-approved request and are the ones who actually post it to QuickBooks.</p>
+      </div>
+      <div class="hiw-role-card">
+        <div class="role-name">The CFO</div>
+        <p>Has visibility into every request across both organizations, can impersonate another user for troubleshooting, and administers a few organization-wide settings.</p>
+      </div>
+    </div>
+    <p>Everyone signs in with their existing Cornerstone (cfmins.org) Microsoft 365 account &mdash; there is no separate Beacon password to remember. After signing in, a user picks which organization they are working in (EDOM or Claggett) using a switcher in the page header, and can change it at any time.</p>
+  </section>
+
+  <section class="hiw-section" id="life-of-a-request">
+    <h2>3. The Life of a Request, Start to Finish</h2>
+    <p>Every request in Beacon follows the same overall path, whether it is a routine utility bill or a one-time vendor payment. The steps below are the short version; the sections that follow go into more detail on each stage.</p>
+    <ol class="hiw-steps">
+      <li class="hiw-step">
+        <div class="who">Requester</div>
+        <div class="stage-title">Submit</div>
+        <p>Fill out the request &mdash; vendor, amount, needed-by date, and a description &mdash; either by hand or by uploading an invoice/document that Beacon reads and pre-fills for you.</p>
+      </li>
+      <li class="hiw-step">
+        <div class="who">Requester</div>
+        <div class="stage-title">Code to the Ledger</div>
+        <p>Assign the amount to the correct Program Area and GL (General Ledger) account(s), the same coding that will eventually appear on the QuickBooks entry.</p>
+      </li>
+      <li class="hiw-step">
+        <div class="who">Approver(s)</div>
+        <div class="stage-title">Approval Chain</div>
+        <p>The request routes automatically to the right approver(s) based on Program Area and dollar amount. Larger amounts add additional required approvers.</p>
+      </li>
+      <li class="hiw-step">
+        <div class="who">AP Reviewer</div>
+        <div class="stage-title">AP Review</div>
+        <p>Once fully approved, an AP Reviewer gives it a final look &mdash; confirming any new vendor has cleared its own approval and, if required, that a W-9 has been received.</p>
+      </li>
+      <li class="hiw-step">
+        <div class="who">AP Reviewer</div>
+        <div class="stage-title">Post to QBO</div>
+        <p>A single click creates the actual Bill (and, if needed, the new Vendor record) directly in QuickBooks Online &mdash; no re-keying.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="hiw-section" id="submitting-a-request">
+    <h2>4. Submitting a Request</h2>
+    <p>Starting a new request is a single, guided form. A requester enters the vendor (searchable by name), the amount, when payment is needed, and a description of what it's for.</p>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard">
+        <h3>Upload-and-Prefill</h3>
+        <p>Rather than typing everything by hand, a requester can upload the invoice or supporting document first. Beacon reads the document and automatically fills in the vendor, amount, date, and description for review &mdash; the requester simply confirms or corrects the fields before submitting. GL coding is never guessed at this step; that stays a deliberate, human decision.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>A Live Preview</h3>
+        <p>As the form is filled out, a preview of the actual check-request document updates in real time, so a requester can see exactly what will be produced and routed for approval before they submit anything.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>Budget Awareness</h3>
+        <p>Where a Program Area / GL account combination has a QuickBooks-maintained annual budget, Beacon shows the current spending against that budget right on the request form. If a submission would push spending over budget, Beacon either blocks it outright or &mdash; where the account is specifically flagged to allow it &mdash; lets it through but clearly flags it as an over-budget item for the approvers and AP Reviewer to see.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="hiw-section" id="vendors">
+    <h2>5. Vendors &mdash; Existing and Brand-New</h2>
+    <p>Most requests are for a vendor Beacon already knows about &mdash; the vendor list is kept in sync with QuickBooks automatically, so a requester simply searches and selects.</p>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard">
+        <h3>Onboarding a New Vendor</h3>
+        <p>If the vendor doesn't exist yet, a requester can add it right from the request form &mdash; as an individual or a business &mdash; without leaving the page. That new-vendor request and the check request it's attached to move forward together, but the new vendor must clear its own separate approval from a designated Vendor Approver before AP can post anything to QuickBooks.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>W-9 Collection, Done Safely</h3>
+        <p>When a new vendor's W-9 is needed, Beacon emails the vendor a secure, one-time upload link &mdash; no sign-in required on their end. Beacon deliberately never collects a Social Security Number or EIN directly on any of its own forms; the W-9 itself is uploaded as a document and never processed by Beacon's automatic document-reading feature, precisely because it can contain sensitive tax ID information.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="hiw-section" id="approval-chain">
+    <h2>6. The Approval Chain</h2>
+    <p>Beacon works out who needs to approve a request automatically, based on the Program Area it's coded to and its dollar amount &mdash; no one has to know or remember the routing rules.</p>
+    <ul>
+      <li>Requests can require more than one approver, in a set order (a smaller area-specific approval first, for example, before a larger organization-wide approval is required).</li>
+      <li>Above a set dollar threshold, designated Global Approvers are automatically added to the chain, regardless of Program Area.</li>
+      <li>An approver can approve with an optional note, or reject with a required reason &mdash; both are kept permanently as part of the request's record.</li>
+      <li>Anyone in the chain can see the request itself on screen (not just a PDF), along with any attached documents, before deciding.</li>
+    </ul>
+    <h3>Approving Straight From Email</h3>
+    <p>Approvers don't have to log in to act. Whenever a request reaches them, Beacon sends an email with one-click Approve and Reject buttons right in the message &mdash; along with a plain sign-in link for anyone who wants to see the full request first. A daily digest email also summarizes everything currently waiting on a given approver's action across both organizations, so nothing needed sits unnoticed.</p>
+  </section>
+
+  <section class="hiw-section" id="ap-review">
+    <h2>7. AP Review and Posting to QuickBooks</h2>
+    <p>Once a request has cleared its entire approval chain, it lands on the AP Reviewer's queue for one final check &mdash; confirming a new vendor (if any) has been separately approved and, where required, that its W-9 has actually been received.</p>
+    <p>From there, a single &ldquo;Post to QBO&rdquo; action does the rest: if it's a brand-new vendor, Beacon creates that Vendor record in QuickBooks first, then creates the Bill itself &mdash; with the correct vendor, GL coding, amount, due date, description, and even the supporting documents attached &mdash; automatically. Nothing about the request needs to be re-typed into QuickBooks by hand.</p>
+    <p>If a request is instead sent back at this stage, the submitter is notified by email and can revise and resubmit it, which sends it through the approval chain again.</p>
+  </section>
+
+  <section class="hiw-section" id="attachments">
+    <h2>8. Attachments and Recordkeeping</h2>
+    <p>Every submitted request automatically generates its own check-voucher document, and any invoice or supporting file a requester uploads is kept right alongside it. These are archived permanently to the organization's SharePoint files (not just left sitting in Beacon), so there is always a durable, findable copy outside the application itself.</p>
+    <p>From the &ldquo;Requests&rdquo; page, anyone can look back at every request they've submitted &mdash; its current status, its full approval history with timestamps, and its attachments &mdash; at any time.</p>
+  </section>
+
+  <section class="hiw-section" id="admin-oversight">
+    <h2>9. Administrative Oversight</h2>
+    <p>The CFO has an organization-wide Administrative view showing every request across both EDOM and Claggett, regardless of status &mdash; useful for audits, spot-checks, or simply seeing the whole picture at once. A small set of other administrative tools exist as well: a way to temporarily view Beacon as another user for troubleshooting, and a simple in-app Feedback form staff can use to report problems or suggest improvements directly, which the CFO can review in one place.</p>
+  </section>
+
+  <section class="hiw-section" id="questions">
+    <h2>10. Questions or Feedback</h2>
+    <p>Beacon includes a built-in <a href="/feedback">Feedback</a> link in the navigation menu of every page &mdash; the fastest way to flag something confusing, report a problem, or suggest an improvement. For anything more urgent, or for questions this overview doesn't answer, contact the CFM Business Office.</p>
+  </section>
+
+  <div class="doc-download">
+    Prefer a printable copy? <a href="/static/docs/Beacon%20-%20Overview.docx" target="_blank" rel="noopener">Download the Word document</a>.
+  </div>
+
+</div>
+{% endblock %}

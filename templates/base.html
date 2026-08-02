@@ -28,12 +28,11 @@
          Administrative, Feedback Log, Setup Tables, Test Mode, Users &
          Roles, Access Requests, Impersonate a User) moved into the single
          "Administrative Tasks" portal tile -> /admin hub (admin_hub.py).
-         AP Review deliberately keeps its own nav link + portal tile,
-         unaffected by this consolidation. #}
+         AP Review's own nav link removed same day (Jay, direct follow-up):
+         redundant with its own portal tile, same reasoning as the other
+         three links above -- no functional difference, one fewer thing in
+         the bar. #}
       <a href="/feedback">Feedback</a>
-      {% if 'ap_reviewer' in any_org_roles %}
-      <a href="/admin/ap-review">AP Review</a>
-      {% endif %}
       {% if current_org %}
       <div class="entity-badge">
         <span class="label">Entity</span>
@@ -68,7 +67,7 @@
   {% endif %}
   {% block content %}{% endblock %}
   <footer style="margin-top:48px;padding:16px 24px;border-top:1px solid #d9d9d9;text-align:center;font-family:Arial,sans-serif;font-size:13px;color:#666;">
-    <a href="/static/docs/Beacon%20-%20Overview.docx" target="_blank" rel="noopener" style="color:#1F4E79;text-decoration:none;font-weight:600;">About Beacon — How Beacon Works</a>
+    <a href="/how-it-works" style="color:#1F4E79;text-decoration:none;font-weight:600;">About Beacon — How Beacon Works</a>
   </footer>
   {% if user and current_org %}<script src="/static/js/entity_switcher.js?v={{ asset_version('js/entity_switcher.js') }}"></script>{% endif %}
   {% if user %}<script src="/static/js/notifications.js?v={{ asset_version('js/notifications.js') }}"></script>{% endif %}

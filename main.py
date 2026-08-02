@@ -482,6 +482,18 @@ def _complete_login(request: Request, email: str, display_name: str, provider: s
     return row["id"], None
 
 
+@app.get("/how-it-works", response_class=HTMLResponse)
+def how_it_works_page(request: Request):
+    """Rendered replacement for the old docx-only "About Beacon" footer link
+    (2026-08-02) -- rebuilt from Beacon - Overview.docx's own content so
+    staff get a page that actually renders in a browser, with the docx still
+    linked at the bottom for anyone who wants a printable copy. Public, no
+    login required -- matches the footer link's own placement outside the
+    `{% if user %}` header block in base.html, and login.html itself follows
+    the identical no-`user`-in-context render pattern just below."""
+    return templates.TemplateResponse(request, "how_it_works.html", {})
+
+
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, error: str = "", email: str = "", switch: str = ""):
     """Renders the styled sign-in card -- now email-first (Multi-Provider
