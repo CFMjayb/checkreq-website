@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}{{ pa.title }} — Program Area{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+
+<h1 class="setup-h1-compact">{{ pa.title }}</h1>
+<p class="back-link"><a href="/admin/setup/program-areas">&larr; Back to Program Areas</a></p>
+
+{% if request.query_params.get('saved') %}<div class="banner banner-success">Saved.</div>{% endif %}
+{% if request.query_params.get('granted') %}<div class="banner banner-success">Added.</div>{% endif %}
+{% if request.query_params.get('revoked') %}<div class="banner banner-success">Removed.</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
+
+<div class="card">
+  <h2>Program Area</h2>
+  <form method="post" action="/admin/setup/program-areas/{{ pa.id }}/update">
+    <label for="title">Title</label>
+    <input type="text" id="title" name="title" value="{{ pa.title }}" required>
+    <label for="description">Description</label>
+    <input type="text" id="description" name="description" value="{{ pa.description or '' }}">
+    <label for="sort_order">Sort Order</label>
+    <input type="number" id="sort_order" name="sort_order" value="{{ pa.sort_order }}">
+    <label><input type="checkbox" name="is_active" {% if pa.is_active %}checked{% endif %}> Active</label>
+    <button type="submit" class="btn btn-primary">Save Program Area</button>
+  </form>
+</div>
+
+<!-- ── Who Can Submit (checkreq.user_program_areas) ─────────────────────── -->
+<div class="card">
+  <h2>Who Can Submit</h2>
+  <p class="muted">Users allowed to submit a check request coded against this program area.</p>
+  <table class="simple-table">
+    <thead><tr><th>Email</th><th>Display Name</th><th></th></tr></thead>
+    <tbody>
+      {% for s in submitters %}
+      <tr>
+        <td>{{ s.email }}</td>
+        <td>{{ s.display_name or "—" }}</td>
+        <td>
+          <form method="post" action="/admin/setup/program-areas/{{ pa.id }}/submitters/revoke"
+                onsubmit="return confirm('Remove {{ s.email }} from this program area?');">
+            <input type="hidden" name="upa_id" value="{{ s.upa_id }}">
+            <button type="submit" class="btn btn-secondary">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3">Nobody is assigned to submit against this program area yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>Add a Submitter</h3>
+  <form method="post" action="/admin/setup/program-areas/{{ pa.id }}/submitters/grant"
+        class="filter-bar" style="align-items:flex-end;">
+    <div class="field">
+      <label for="submitterUser">User</label>
+      <select id="submitterUser" name="user_id" required>
+        <option value="">Choose...</option>
+        {% for u in available_users %}
+        {% if u.id not in already_submitter_ids %}
+        <option value="{{ u.id }}">{{ u.display_name or u.email }} ({{ u.email }})</option>
+        {% endif %}
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field"><button type="submit" class="btn btn-primary">Add</button></div>
+  </form>
+</div>
+
+<!-- ── Who Approves (checkreq.approval_rules) ───────────────────────────── -->
+<div class="card">
+  <h2>Who Approves</h2>
+  <p class="setup-hint">
+    Approvers act in <strong>Serial Group</strong> order — a higher group only opens once every
+    approver in the group before it clears. <strong>Must Approve</strong> forces this approver onto
+    the chain whenever the request exceeds their own <strong>Must-Approve Threshold</strong>, even if
+    the amount is under their own <strong>Approval Limit</strong>. Approver / Backup Approver accept
+    any address — an address not already known creates a new person, same as Global Approvers above.
+  </p>
+  <div class="setup-toolbar" style="margin-top:0;">
+    <div class="spacer"></div>
+    <span id="arSaveState" class="save-state">No changes</span>
+    <button type="button" id="arAddBtn" class="btn btn-secondary btn-sm">Add Approver</button>
+    <button type="button" id="arSaveBtn" class="btn btn-primary btn-sm" disabled>Save Approval Rules</button>
+  </div>
+
+  <div class="table-scroll">
+    <table class="setup-table" id="arTable" data-save-url="/admin/setup/program-areas/{{ pa.id }}/approval-rules/save">
+      <thead>
+        <tr>
+          <th class="col-email">Approver</th>
+          <th class="col-buffer">Approval Limit ($)</th>
+          <th class="col-allow">Must Approve</th>
+          <th class="col-buffer">Must-Approve Threshold ($)</th>
+          <th class="col-serial">Serial Group</th>
+          <th class="col-email">Backup Approver</th>
+          <th class="col-allow">Active</th>
+          <th class="col-actions"></th>
+        </tr>
+      </thead>
+      <tbody id="arBody">
+        {% for a in approval_rules %}
+        <tr data-row-id="{{ a.id }}">
+          <td class="col-email">
+            <input type="email" data-field="approver_email" list="knownEmails" value="{{ a.approver_email }}">
+          </td>
+          <td class="col-buffer">
+            <input type="number" class="num" data-field="approval_limit" step="0.01" min="0"
+                   value="{{ '%.2f'|format(a.approval_limit) }}">
+          </td>
+          <td class="col-allow">
+            <input type="checkbox" data-field="must_approve_flag" {% if a.must_approve_flag %}checked{% endif %}>
+          </td>
+          <td class="col-buffer">
+            <input type="number" class="num" data-field="must_approve_threshold" step="0.01" min="0"
+                   value="{{ '%.2f'|format(a.must_approve_threshold) }}">
+          </td>
+          <td class="col-serial">
+            <input type="number" class="num" data-field="serial_group" min="1" value="{{ a.serial_group }}">
+          </td>
+          <td class="col-email">
+            <input type="email" data-field="backup_approver_email" list="knownEmails"
+                   value="{{ a.backup_approver_email or '' }}">
+          </td>
+          <td class="col-allow">
+            <input type="checkbox" data-field="is_active" {% if a.is_active %}checked{% endif %}>
+          </td>
+          <td class="col-actions">
+            <button type="button" class="icon-btn delete-toggle" title="Mark this approval rule for removal">&times;</button>
+          </td>
+        </tr>
+        <tr class="msg-row" data-msg-for="{{ a.id }}" hidden><td colspan="8"><div class="row-msg"></div></td></tr>
+        {% else %}
+        <tr id="arEmpty"><td colspan="8">No approval rules configured for this program area.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<datalist id="knownEmails">
+  {% for e in known_emails %}<option value="{{ e }}"></option>{% endfor %}
+</datalist>
+
+<!-- Template row for "Add Approver" -- same pattern as the Global Approvers
+     apprRowTemplate on admin_setup_organizations.html. -->
+<template id="arRowTemplate">
+  <tr data-row-id="">
+    <td class="col-email"><input type="email" data-field="approver_email" list="knownEmails" value=""></td>
+    <td class="col-buffer"><input type="number" class="num" data-field="approval_limit" step="0.01" min="0" value="0.00"></td>
+    <td class="col-allow"><input type="checkbox" data-field="must_approve_flag"></td>
+    <td class="col-buffer"><input type="number" class="num" data-field="must_approve_threshold" step="0.01" min="0" value="0.00"></td>
+    <td class="col-serial"><input type="number" class="num" data-field="serial_group" min="1" value="1"></td>
+    <td class="col-email"><input type="email" data-field="backup_approver_email" list="knownEmails" value=""></td>
+    <td class="col-allow"><input type="checkbox" data-field="is_active" checked></td>
+    <td class="col-actions"><button type="button" class="icon-btn" data-drop-new title="Discard this new row">&times;</button></td>
+  </tr>
+</template>
+
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/admin_setup.js?v={{ asset_version('js/admin_setup.js') }}"></script>
+{% endblock %}

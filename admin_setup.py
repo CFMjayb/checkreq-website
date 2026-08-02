@@ -1,5 +1,6 @@
 """
-admin_setup.py — Beacon Admin > Setup Tables module (PROTOTYPE, 2026-08-01).
+admin_setup.py — Beacon Admin > Setup Tables module (PROTOTYPE, 2026-08-01;
+Program Areas / Approval Rules / User Assignments added 2026-08-02).
 
 Ports `Tools\\26-129 Check Request Setup Tables.xlsm` into Beacon itself. See
 `Admin Module Plan.md` in this project's root for the full design, the
@@ -17,6 +18,30 @@ Built so far (real, working, wired to live checkreq Postgres):
   POST /admin/setup/organizations/save-orgs      — per-entity Global Approval Threshold (JSON)
   POST /admin/setup/organizations/save-approvers — global approver rows (JSON); a row's
                                                     `_delete: true` flag deletes it here too
+
+  Program Areas / Approval Rules / User-Program-Area Assignments -- three
+  workbook tabs folded into ONE screen pair per Admin Module Plan.md's own
+  recommendation ("They're separate tabs in the workbook only because a
+  spreadsheet can't nest one table inside another... a single Program Area
+  detail page: the area's own fields at the top, then 'Who can submit' and
+  'Who approves' as two panels beneath"):
+  GET  /admin/setup/program-areas                          — list (workbook tab: ProgramAreas)
+  POST /admin/setup/program-areas/add                      — create one program area (JSON)
+  GET  /admin/setup/program-areas/{id}                     — detail: the area's own fields,
+                                                              Who Can Submit (UserProgramAreas),
+                                                              Who Approves (ApprovalRules)
+  POST /admin/setup/program-areas/{id}/update              — the area's own fields (Title,
+                                                              Description, Sort Order, Active)
+  POST /admin/setup/program-areas/{id}/submitters/grant    — grant one user submit access
+                                                              (immediate, single-row -- same
+                                                              convention as admin_users.py's
+                                                              own grant-pa/revoke-pa)
+  POST /admin/setup/program-areas/{id}/submitters/revoke   — revoke one user's submit access
+  POST /admin/setup/program-areas/{id}/approval-rules/save — bulk save of Who Approves rows
+                                                              (JSON); a row's `_delete: true`
+                                                              flag deletes it, same batched
+                                                              dirty-save pattern as GL Mapping
+                                                              and Global Approvers above
 
 ARCHITECTURE — why this talks to Postgres directly instead of calling
 qbo-mcp-server's /api/checkreq/* endpoints (which the workbook uses):
@@ -76,8 +101,9 @@ def register(app, *, current_user, current_org, render) -> None:
 # portal.html already handles its own not-yet-built module tiles.
 SETUP_TABS = [
     {"key": "program_areas", "title": "Program Areas",
-     "desc": "The grouping every GL account, approval rule and user assignment hangs off.",
-     "url": None, "built": False, "entity_scoped": True,
+     "desc": "The grouping every GL account, approval rule and user assignment hangs off. "
+             "Each area's own page also manages its approvers and submitters.",
+     "url": "/admin/setup/program-areas", "built": True, "entity_scoped": True,
      "count_sql": "SELECT COUNT(*) AS n FROM checkreq.program_areas WHERE org_id = %s"},
     {"key": "gl_mapping", "title": "Program Area / GL Account Map",
      "desc": "Which GL accounts a program area may code to, their display label, hierarchy and overspend buffer.",
@@ -85,13 +111,16 @@ SETUP_TABS = [
      "count_sql": "SELECT COUNT(*) AS n FROM checkreq.program_area_gl_accounts pga "
                   "JOIN checkreq.program_areas pa ON pa.id = pga.program_area_id WHERE pa.org_id = %s"},
     {"key": "approval_rules", "title": "Approval Rules",
-     "desc": "Per program area: approver, limit, serial group, must-approve threshold, backup.",
-     "url": None, "built": False, "entity_scoped": True,
+     "desc": "Per program area: approver, limit, serial group, must-approve threshold, backup. "
+             "Manage from a program area's own detail page (below), or from a person's own "
+             "page on User Management.",
+     "url": "/admin/setup/program-areas", "built": True, "entity_scoped": True,
      "count_sql": "SELECT COUNT(*) AS n FROM checkreq.approval_rules ar "
                   "JOIN checkreq.program_areas pa ON pa.id = ar.program_area_id WHERE pa.org_id = %s"},
     {"key": "user_program_areas", "title": "User / Program Area Assignments",
-     "desc": "Who is allowed to submit against which program area.",
-     "url": None, "built": False, "entity_scoped": True,
+     "desc": "Who is allowed to submit against which program area. Manage from a program "
+             "area's own detail page (below).",
+     "url": "/admin/setup/program-areas", "built": True, "entity_scoped": True,
      "count_sql": "SELECT COUNT(*) AS n FROM checkreq.user_program_areas upa "
                   "JOIN checkreq.program_areas pa ON pa.id = upa.program_area_id WHERE pa.org_id = %s"},
     {"key": "organizations", "title": "Entities & Global Approvers",
@@ -108,7 +137,11 @@ SETUP_TABS = [
      "count_sql": "SELECT COUNT(*) AS n FROM checkreq.vendors WHERE org_id = %s"},
     # Added 2026-08-01, RBAC build (admin_users.py) -- live since
     # migrations/019_rbac.sql was applied and admin_users.py wired in.
-    {"key": "users", "title": "Users & Roles",
+    # Renamed "Users & Roles" -> "User Management" 2026-08-02 (Jay: it "has
+    # identity, roles, program assignments, and ... approval rules for
+    # them" -- a label change only, admin_users.py/its templates keep their
+    # existing filenames).
+    {"key": "users", "title": "User Management",
      "desc": "Who can sign in, and what each person may do in each entity.",
      "url": "/admin/setup/users", "built": True, "entity_scoped": False,
      "count_sql": "SELECT COUNT(*) AS n FROM checkreq.app_users WHERE is_active"},
@@ -625,3 +658,366 @@ async def organizations_save_approvers(request: Request):
 # was removed 2026-08-02, same reasoning and same session as the GL Mapping
 # delete route above -- a row's `_delete: true` flag now handles it inside
 # organizations_save_approvers(), batched with every other edit.
+
+
+# ── Program Areas / Approval Rules / User-Program-Area Assignments ──────────
+# One screen pair for three workbook tabs, per Admin Module Plan.md's own
+# recommendation: ProgramAreas is the list; each row's detail page carries
+# the area's own fields plus "Who Can Submit" (UserProgramAreas) and "Who
+# Approves" (ApprovalRules) as two panels beneath, since both answer a
+# question ABOUT one program area and the workbook only kept them separate
+# because a spreadsheet can't nest one table inside another.
+
+_PROGRAM_AREA_LIST_SQL = """
+    SELECT pa.id, pa.title, pa.description, pa.sort_order, pa.is_active,
+           COUNT(DISTINCT pga.id) AS gl_count,
+           COUNT(DISTINCT ar.id)  AS approver_count,
+           COUNT(DISTINCT upa.id) AS submitter_count
+    FROM checkreq.program_areas pa
+    LEFT JOIN checkreq.program_area_gl_accounts pga ON pga.program_area_id = pa.id
+    LEFT JOIN checkreq.approval_rules ar            ON ar.program_area_id = pa.id
+    LEFT JOIN checkreq.user_program_areas upa        ON upa.program_area_id = pa.id
+    WHERE pa.org_id = %s
+    GROUP BY pa.id
+    ORDER BY pa.sort_order, pa.title
+"""
+
+_APPROVAL_RULES_SQL = """
+    SELECT ar.id, ar.approval_limit, ar.must_approve_flag, ar.must_approve_threshold,
+           ar.serial_group, ar.is_active,
+           u.email AS approver_email,
+           bu.email AS backup_approver_email
+    FROM checkreq.approval_rules ar
+    JOIN checkreq.app_users u ON u.id = ar.approver_user_id
+    LEFT JOIN checkreq.app_users bu ON bu.id = ar.backup_approver_id
+    WHERE ar.program_area_id = %s
+    ORDER BY ar.serial_group, u.email
+"""
+
+
+@router.get("/admin/setup/program-areas", response_class=HTMLResponse)
+def program_areas_page(request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org:
+        return RedirectResponse("/portal")
+
+    rows = db.query(_PROGRAM_AREA_LIST_SQL, (org["id"],))
+    return _render(request, "admin_setup_program_areas.html", user, {"rows": rows})
+
+
+@router.post("/admin/setup/program-areas/add")
+async def program_area_add(request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org:
+        return JSONResponse({"error": "No entity selected"}, status_code=400)
+
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    if not title:
+        return JSONResponse({"error": "Title is required."}, status_code=400)
+    description = (body.get("description") or "").strip() or None
+    try:
+        sort_order = int(body.get("sort_order") or 0)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Sort Order must be a whole number."}, status_code=400)
+    is_active = bool(body.get("is_active", True))
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            # program_areas has a real UNIQUE(org_id, title) constraint, but
+            # checking first (rather than relying on the DB error alone)
+            # gives a plain-language message instead of a raw psycopg
+            # IntegrityError, matching gl_mapping_add's own precedent.
+            cur.execute(
+                "SELECT 1 FROM checkreq.program_areas WHERE org_id = %s AND LOWER(title) = LOWER(%s)",
+                (org["id"], title),
+            )
+            if cur.fetchone():
+                return JSONResponse(
+                    {"error": "A program area with that title already exists for this entity."},
+                    status_code=400,
+                )
+            cur.execute(
+                "INSERT INTO checkreq.program_areas (org_id, title, description, sort_order, is_active) "
+                "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (org["id"], title, description, sort_order, is_active),
+            )
+            new_id = cur.fetchone()["id"]
+
+    return {"id": new_id}
+
+
+def _program_area_for_org(program_area_id: int, org_id: int) -> dict | None:
+    """Row-ownership check reused by every mutation below -- a program area
+    id arrives from the client (a path segment here, same trust boundary as
+    a row id in a JSON body) and is never assumed to belong to the session's
+    current entity just because it was asked for."""
+    return db.query_one(
+        "SELECT id, org_id, title, description, sort_order, is_active "
+        "FROM checkreq.program_areas WHERE id = %s AND org_id = %s",
+        (program_area_id, org_id),
+    )
+
+
+@router.get("/admin/setup/program-areas/{program_area_id}", response_class=HTMLResponse)
+def program_area_detail_page(program_area_id: int, request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org:
+        return RedirectResponse("/portal")
+
+    pa = _program_area_for_org(program_area_id, org["id"])
+    if not pa:
+        # Either a bad id, or it belongs to the OTHER entity and the header
+        # switcher just hasn't been flipped to match yet -- either way, the
+        # list page (scoped to whichever entity IS selected) is the correct
+        # place to land, not a raw 404.
+        return RedirectResponse(
+            "/admin/setup/program-areas?error=That+program+area+isn%27t+part+of+the+selected+entity.",
+            status_code=303,
+        )
+
+    submitters = db.query(
+        """
+        SELECT upa.id AS upa_id, u.id AS user_id, u.email, u.display_name
+        FROM checkreq.user_program_areas upa
+        JOIN checkreq.app_users u ON u.id = upa.user_id
+        WHERE upa.program_area_id = %s
+        ORDER BY u.email
+        """,
+        (program_area_id,),
+    )
+    already_submitter_ids = {s["user_id"] for s in submitters}
+    available_users = db.query(
+        "SELECT id, email, display_name FROM checkreq.app_users WHERE is_active ORDER BY email"
+    )
+
+    approval_rules = db.query(_APPROVAL_RULES_SQL, (program_area_id,))
+    for a in approval_rules:
+        a["approval_limit"] = _money(a["approval_limit"])
+        a["must_approve_threshold"] = _money(a["must_approve_threshold"])
+
+    known_emails = db.query("SELECT email FROM checkreq.app_users WHERE is_active ORDER BY email")
+
+    return _render(request, "admin_setup_program_area_detail.html", user, {
+        "pa": pa,
+        "submitters": submitters,
+        "already_submitter_ids": already_submitter_ids,
+        "available_users": available_users,
+        "approval_rules": approval_rules,
+        "known_emails": [e["email"] for e in known_emails],
+    })
+
+
+@router.post("/admin/setup/program-areas/{program_area_id}/update")
+async def program_area_update(program_area_id: int, request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org or not _program_area_for_org(program_area_id, org["id"]):
+        return RedirectResponse("/admin/setup/program-areas", status_code=303)
+
+    form = await request.form()
+    title = (form.get("title") or "").strip()
+    if not title:
+        return RedirectResponse(
+            f"/admin/setup/program-areas/{program_area_id}?error=Title+is+required.", status_code=303
+        )
+    description = (form.get("description") or "").strip() or None
+    try:
+        sort_order = int(form.get("sort_order") or 0)
+    except (TypeError, ValueError):
+        return RedirectResponse(
+            f"/admin/setup/program-areas/{program_area_id}?error=Sort+Order+must+be+a+whole+number.",
+            status_code=303,
+        )
+    is_active = form.get("is_active") == "on"
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.program_areas SET title = %s, description = %s, "
+                "sort_order = %s, is_active = %s WHERE id = %s",
+                (title, description, sort_order, is_active, program_area_id),
+            )
+    return RedirectResponse(f"/admin/setup/program-areas/{program_area_id}?saved=1", status_code=303)
+
+
+# ── Who Can Submit (checkreq.user_program_areas) ─────────────────────────────
+# Immediate single-row grant/revoke, deliberately NOT the batched dirty-save
+# pattern -- same convention admin_users.py's own grant-pa/revoke-pa already
+# uses for this identical table from the other direction (one user, many
+# program areas, there; one program area, many users, here). This mirrors a
+# "closest sibling" precedent that already exists in this codebase rather
+# than inventing a new rule for a table that's really the same shape.
+
+@router.post("/admin/setup/program-areas/{program_area_id}/submitters/grant")
+async def program_area_grant_submitter(program_area_id: int, request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org or not _program_area_for_org(program_area_id, org["id"]):
+        return RedirectResponse("/admin/setup/program-areas", status_code=303)
+
+    form = await request.form()
+    try:
+        target_user_id = int(form.get("user_id") or 0)
+    except (TypeError, ValueError):
+        target_user_id = 0
+    if not target_user_id:
+        return RedirectResponse(
+            f"/admin/setup/program-areas/{program_area_id}?error=Pick+a+user.", status_code=303
+        )
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM checkreq.app_users WHERE id = %s", (target_user_id,))
+            if not cur.fetchone():
+                return RedirectResponse(
+                    f"/admin/setup/program-areas/{program_area_id}?error=Unknown+user.", status_code=303
+                )
+            cur.execute(
+                "INSERT INTO checkreq.user_program_areas (user_id, program_area_id) "
+                "VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (target_user_id, program_area_id),
+            )
+    return RedirectResponse(f"/admin/setup/program-areas/{program_area_id}?granted=1", status_code=303)
+
+
+@router.post("/admin/setup/program-areas/{program_area_id}/submitters/revoke")
+async def program_area_revoke_submitter(program_area_id: int, request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org or not _program_area_for_org(program_area_id, org["id"]):
+        return RedirectResponse("/admin/setup/program-areas", status_code=303)
+
+    form = await request.form()
+    try:
+        upa_id = int(form.get("upa_id") or 0)
+    except (TypeError, ValueError):
+        upa_id = 0
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM checkreq.user_program_areas WHERE id = %s AND program_area_id = %s",
+                (upa_id, program_area_id),
+            )
+    return RedirectResponse(f"/admin/setup/program-areas/{program_area_id}?revoked=1", status_code=303)
+
+
+# ── Who Approves (checkreq.approval_rules) ───────────────────────────────────
+# The dense multi-field grid -- same batched dirty-save + `_delete: true` +
+# _RowSavepoint + _get_or_create_user pattern as Global Approvers above,
+# since this table is structurally almost identical (an approver, a backup,
+# a serial group, an active flag) with two extra fields (approval_limit,
+# must_approve_threshold/flag) that global_approvers doesn't need.
+
+@router.post("/admin/setup/program-areas/{program_area_id}/approval-rules/save")
+async def program_area_approval_rules_save(program_area_id: int, request: Request):
+    user, err = _require_cfo(request)
+    if err:
+        return err
+    org = _current_org(request)
+    if not org:
+        return JSONResponse({"error": "No entity selected"}, status_code=400)
+    if not _program_area_for_org(program_area_id, org["id"]):
+        return JSONResponse(
+            {"error": "That program area isn't part of the selected entity."}, status_code=400
+        )
+
+    body = await request.json()
+    rows = body.get("rows") or []
+    results = []
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            for i, r in enumerate(rows):
+                row_id = r.get("id")
+                new_id = None
+                try:
+                    with _RowSavepoint(cur, f"sp_ar_{i}"):
+                        if row_id:
+                            cur.execute(
+                                "SELECT 1 FROM checkreq.approval_rules "
+                                "WHERE id = %s AND program_area_id = %s",
+                                (row_id, program_area_id),
+                            )
+                            if not cur.fetchone():
+                                raise ValueError("This approval rule isn't part of this program area.")
+
+                        if r.get("_delete"):
+                            if row_id:
+                                cur.execute(
+                                    "DELETE FROM checkreq.approval_rules WHERE id = %s", (row_id,)
+                                )
+                            results.append({"id": row_id, "ok": True, "deleted": True})
+                            continue
+
+                        approver_id = _get_or_create_user(cur, r.get("approver_email"))
+                        backup_email = (r.get("backup_approver_email") or "").strip()
+                        backup_id = _get_or_create_user(cur, backup_email) if backup_email else None
+
+                        try:
+                            approval_limit = float(r.get("approval_limit") or 0)
+                        except (TypeError, ValueError):
+                            raise ValueError("Approval limit must be a number.")
+                        if approval_limit < 0:
+                            raise ValueError("Approval limit can't be negative.")
+
+                        try:
+                            must_approve_threshold = float(r.get("must_approve_threshold") or 0)
+                        except (TypeError, ValueError):
+                            raise ValueError("Must-approve threshold must be a number.")
+                        if must_approve_threshold < 0:
+                            raise ValueError("Must-approve threshold can't be negative.")
+
+                        try:
+                            serial_group = int(r.get("serial_group") or 1)
+                        except (TypeError, ValueError):
+                            raise ValueError("Serial group must be a whole number.")
+                        if serial_group < 1:
+                            raise ValueError("Serial group must be 1 or higher.")
+
+                        must_approve_flag = bool(r.get("must_approve_flag"))
+                        is_active = bool(r.get("is_active", True))
+
+                        if row_id:
+                            cur.execute(
+                                "UPDATE checkreq.approval_rules "
+                                "SET approver_user_id = %s, approval_limit = %s, must_approve_flag = %s, "
+                                "    must_approve_threshold = %s, serial_group = %s, "
+                                "    backup_approver_id = %s, is_active = %s "
+                                "WHERE id = %s",
+                                (approver_id, approval_limit, must_approve_flag, must_approve_threshold,
+                                 serial_group, backup_id, is_active, row_id),
+                            )
+                        else:
+                            cur.execute(
+                                "INSERT INTO checkreq.approval_rules "
+                                "(program_area_id, approver_user_id, approval_limit, must_approve_flag, "
+                                " must_approve_threshold, serial_group, backup_approver_id, is_active) "
+                                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                                (program_area_id, approver_id, approval_limit, must_approve_flag,
+                                 must_approve_threshold, serial_group, backup_id, is_active),
+                            )
+                            new_id = cur.fetchone()["id"]
+                    results.append({"id": row_id, "new_id": new_id, "ok": True}
+                                   if new_id else {"id": row_id, "ok": True})
+                except Exception as exc:
+                    results.append({"id": row_id, "ok": False, "error": str(exc)})
+
+    saved = sum(1 for x in results if x["ok"])
+    return {"saved": saved, "failed": len(results) - saved, "results": results}

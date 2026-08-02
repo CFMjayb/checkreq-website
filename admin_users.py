@@ -1,5 +1,8 @@
 """
-admin_users.py — Users & Roles admin screen (RBAC, Plan §6).
+admin_users.py — User Management admin screen (RBAC, Plan §6). Renamed from
+"Users & Roles" 2026-08-02 (Jay: it "has identity, roles, program
+assignments, and ... approval rules for them") -- a label change only, this
+module/its templates keep their existing filenames on purpose.
 
 NOT YET WIRED IN — same status as access_requests.py (see that module's
 docstring). Code-complete, not imported by main.py, and depends on
@@ -35,6 +38,27 @@ detail page, rather than one page trying to do both):
                                           no-self-revoke guards; this route
                                           only translates its LastAdminError
                                           into a user-facing message.
+
+  Approval Rules panel (2026-08-02, Admin Module Plan.md's "who may spend" /
+  "who approves" pairing) -- a per-PERSON entry point onto the same
+  checkreq.approval_rules table admin_setup_program_area_detail.html's own
+  "Who Approves" panel manages from the per-PROGRAM-AREA direction. Same
+  underlying rows, two doors in, matching how Program Areas already works
+  on this exact page (admin_setup_program_area_detail.html's "Who Can
+  Submit" is the other direction of this screen's own Program Areas panel).
+  POST /admin/setup/users/{id}/grant-approval-rule  — designates this
+                                          person as the approver
+                                          (approver_user_id) for a chosen
+                                          program area. Immediate single-row
+                                          action, same convention as
+                                          grant-pa/revoke-pa above.
+  POST /admin/setup/users/{id}/revoke-approval-rule — role="approver"
+                                          deletes the whole rule (this
+                                          person IS the rule); role="backup"
+                                          only clears backup_approver_id on
+                                          someone ELSE's rule, since that
+                                          rule's real approver assignment
+                                          must survive.
 
 Gated on beacon_admin (Plan §6.1: "a bookkeeper who maintains GL mappings
 should not thereby be able to make themselves CFO") -- distinct from
@@ -179,6 +203,48 @@ def _guess_provider(email: str) -> str | None:
     return row["provider"] if row else None
 
 
+def _approval_rules_for_user(user_id: int) -> tuple[list[dict], list[dict]]:
+    """The two roles a person can hold on checkreq.approval_rules: the real
+       approver, or a fallback identity named as someone ELSE's backup.
+       Mirrors admin_setup.py's own _APPROVAL_RULES_SQL shape (this module
+       deliberately never imports admin_setup, same one-way-dependency
+       reasoning as every other admin module's own docstring), just filtered
+       by user instead of by program area."""
+    as_approver = db.query(
+        """
+        SELECT ar.id, ar.program_area_id, pa.title AS program_area_title,
+               o.id AS org_id, o.code AS org_code,
+               ar.approval_limit, ar.must_approve_flag, ar.must_approve_threshold,
+               ar.serial_group, ar.is_active
+          FROM checkreq.approval_rules ar
+          JOIN checkreq.program_areas pa ON pa.id = ar.program_area_id
+          JOIN checkreq.organizations o ON o.id = pa.org_id
+         WHERE ar.approver_user_id = %s
+         ORDER BY o.code, pa.title
+        """,
+        (user_id,),
+    )
+    for r in as_approver:
+        r["approval_limit"] = float(r["approval_limit"] or 0)
+        r["must_approve_threshold"] = float(r["must_approve_threshold"] or 0)
+
+    as_backup = db.query(
+        """
+        SELECT ar.id, ar.program_area_id, pa.title AS program_area_title,
+               o.id AS org_id, o.code AS org_code,
+               au.email AS approver_email
+          FROM checkreq.approval_rules ar
+          JOIN checkreq.program_areas pa ON pa.id = ar.program_area_id
+          JOIN checkreq.organizations o ON o.id = pa.org_id
+          JOIN checkreq.app_users au ON au.id = ar.approver_user_id
+         WHERE ar.backup_approver_id = %s
+         ORDER BY o.code, pa.title
+        """,
+        (user_id,),
+    )
+    return as_approver, as_backup
+
+
 @router.get("/admin/setup/users/{user_id}", response_class=HTMLResponse)
 def user_detail_page(user_id: int, request: Request):
     user, err = _require_beacon_admin(request)
@@ -221,6 +287,9 @@ def user_detail_page(user_id: int, request: Request):
     )
     already_granted_pa_ids = {p["program_area_id"] for p in program_areas}
 
+    approval_rules_as_approver, approval_rules_as_backup = _approval_rules_for_user(user_id)
+    already_approver_pa_ids = {r["program_area_id"] for r in approval_rules_as_approver}
+
     return _render(request, "admin_users_detail.html", user, {
         "target": target,
         "provider_guess": None if target["last_login_provider"] else _guess_provider(target["email"]),
@@ -231,6 +300,9 @@ def user_detail_page(user_id: int, request: Request):
         "program_areas": program_areas,
         "all_program_areas": all_program_areas,
         "already_granted_pa_ids": already_granted_pa_ids,
+        "approval_rules_as_approver": approval_rules_as_approver,
+        "approval_rules_as_backup": approval_rules_as_backup,
+        "already_approver_pa_ids": already_approver_pa_ids,
     })
 
 
@@ -351,3 +423,88 @@ async def user_revoke_role(user_id: int, request: Request):
         return RedirectResponse(f"/admin/setup/users/{user_id}?error={exc}", status_code=303)
 
     return RedirectResponse(f"/admin/setup/users/{user_id}?revoked=1", status_code=303)
+
+
+@router.post("/admin/setup/users/{user_id}/grant-approval-rule")
+async def user_grant_approval_rule(user_id: int, request: Request):
+    """Designates `user_id` as the approver for a chosen program area --
+       the per-person mirror of admin_setup.py's own program-area-scoped
+       Who Approves save. Immediate single-row action (not the batched
+       dirty-save grid that screen uses for its own dense multi-row table),
+       matching this page's own grant-pa/revoke-pa convention for the same
+       reason: this is one add, not many simultaneous edits."""
+    user, err = _require_beacon_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        program_area_id = int(form.get("program_area_id") or 0)
+    except (TypeError, ValueError):
+        program_area_id = 0
+    if not program_area_id:
+        return RedirectResponse(f"/admin/setup/users/{user_id}?error=Pick+a+program+area.", status_code=303)
+
+    try:
+        approval_limit = float(form.get("approval_limit") or 0)
+    except (TypeError, ValueError):
+        return RedirectResponse(f"/admin/setup/users/{user_id}?error=Approval+limit+must+be+a+number.", status_code=303)
+    try:
+        must_approve_threshold = float(form.get("must_approve_threshold") or 0)
+    except (TypeError, ValueError):
+        return RedirectResponse(f"/admin/setup/users/{user_id}?error=Must-approve+threshold+must+be+a+number.", status_code=303)
+    try:
+        serial_group = int(form.get("serial_group") or 1)
+    except (TypeError, ValueError):
+        serial_group = 1
+    serial_group = max(serial_group, 1)
+    must_approve_flag = form.get("must_approve_flag") == "on"
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM checkreq.program_areas WHERE id = %s", (program_area_id,))
+            if not cur.fetchone():
+                return RedirectResponse(f"/admin/setup/users/{user_id}?error=Unknown+program+area.", status_code=303)
+            cur.execute(
+                "INSERT INTO checkreq.approval_rules "
+                "(program_area_id, approver_user_id, approval_limit, must_approve_flag, "
+                " must_approve_threshold, serial_group, is_active) "
+                "VALUES (%s, %s, %s, %s, %s, %s, TRUE)",
+                (program_area_id, user_id, approval_limit, must_approve_flag,
+                 must_approve_threshold, serial_group),
+            )
+    return RedirectResponse(f"/admin/setup/users/{user_id}?ar_granted=1", status_code=303)
+
+
+@router.post("/admin/setup/users/{user_id}/revoke-approval-rule")
+async def user_revoke_approval_rule(user_id: int, request: Request):
+    """role="approver" deletes the whole rule -- this person IS the rule.
+       role="backup" only clears backup_approver_id on someone ELSE's rule;
+       that rule's real approver assignment must survive. Both writes
+       re-verify user_id against the row itself (approver_user_id or
+       backup_approver_id) rather than trusting the client-supplied
+       rule_id alone, same ownership-check discipline as every other
+       mutation in this codebase."""
+    user, err = _require_beacon_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        rule_id = int(form.get("rule_id") or 0)
+    except (TypeError, ValueError):
+        rule_id = 0
+    role = form.get("role")  # "approver" | "backup"
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            if role == "backup":
+                cur.execute(
+                    "UPDATE checkreq.approval_rules SET backup_approver_id = NULL "
+                    "WHERE id = %s AND backup_approver_id = %s",
+                    (rule_id, user_id),
+                )
+            else:
+                cur.execute(
+                    "DELETE FROM checkreq.approval_rules WHERE id = %s AND approver_user_id = %s",
+                    (rule_id, user_id),
+                )
+    return RedirectResponse(f"/admin/setup/users/{user_id}?ar_revoked=1", status_code=303)

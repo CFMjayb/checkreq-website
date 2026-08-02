@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ target.email }} — Users & Roles{% endblock %}
+{% block title %}{{ target.email }} — User Management{% endblock %}
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
 {% endblock %}
@@ -7,7 +7,7 @@
 <div class="page-shell">
 
 <h1>{{ target.display_name or target.email }}</h1>
-<p class="back-link"><a href="/admin/setup/users">&larr; Back to Users &amp; Roles</a></p>
+<p class="back-link"><a href="/admin/setup/users">&larr; Back to User Management</a></p>
 
 {% if request.query_params.get('new') %}
 <div class="banner banner-success">
@@ -20,6 +20,8 @@
 {% if request.query_params.get('revoked') %}<div class="banner banner-success">Role revoked.</div>{% endif %}
 {% if request.query_params.get('pa_granted') %}<div class="banner banner-success">Program area granted.</div>{% endif %}
 {% if request.query_params.get('pa_revoked') %}<div class="banner banner-success">Program area removed.</div>{% endif %}
+{% if request.query_params.get('ar_granted') %}<div class="banner banner-success">Approval rule added.</div>{% endif %}
+{% if request.query_params.get('ar_revoked') %}<div class="banner banner-success">Approval rule updated.</div>{% endif %}
 {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
 
 <div class="card">
@@ -162,6 +164,112 @@
       {% if ns.current_org %}</optgroup>{% endif %}
     </select>
     <button type="submit" class="btn btn-primary">Grant</button>
+  </form>
+</div>
+
+<!-- 2026-08-02: Approval Rules -- a per-person entry point onto the SAME
+     checkreq.approval_rules table admin_setup_program_area_detail.html's
+     own "Who Approves" panel manages, per Admin Module Plan.md's "who may
+     spend" / "who approves" pairing. Two roles a person can hold on a rule:
+     the real approver (approver_user_id), or a fallback identity
+     (backup_approver_id) named on someone ELSE's rule. Removing an
+     "Approver" row deletes the whole rule -- this person IS the rule.
+     Removing a "Backup" row only clears backup_approver_id on that rule;
+     the rule itself (someone else's real approver assignment) must survive. -->
+<div class="card">
+  <h2>Approval Rules</h2>
+  <p class="muted">Which program areas this person approves (or backs up) — the same rule you can
+    also manage from a Program Area's own page under Setup Tables.</p>
+  <table class="simple-table">
+    <thead>
+      <tr><th>Entity</th><th>Program Area</th><th>Role</th><th>Limit / Threshold</th><th>Serial Group</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for r in approval_rules_as_approver %}
+      <tr data-org-row data-org-id="{{ r.org_id }}" data-scope="ar">
+        <td>{{ r.org_code|upper }}</td>
+        <td>{{ r.program_area_title }}</td>
+        <td><span class="badge badge-approved">Approver</span>{% if not r.is_active %} <span class="badge badge-draft">Inactive</span>{% endif %}</td>
+        <td>
+          Limit ${{ '%.2f'|format(r.approval_limit) }}
+          {% if r.must_approve_flag %}&middot; must approve over ${{ '%.2f'|format(r.must_approve_threshold) }}{% endif %}
+        </td>
+        <td>{{ r.serial_group }}</td>
+        <td>
+          <form method="post" action="/admin/setup/users/{{ target.id }}/revoke-approval-rule"
+                onsubmit="return confirm('Remove this approval rule for {{ r.program_area_title }} ({{ r.org_code|upper }}) entirely?');">
+            <input type="hidden" name="rule_id" value="{{ r.id }}">
+            <input type="hidden" name="role" value="approver">
+            <button type="submit" class="btn btn-secondary">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      {% for r in approval_rules_as_backup %}
+      <tr data-org-row data-org-id="{{ r.org_id }}" data-scope="ar">
+        <td>{{ r.org_code|upper }}</td>
+        <td>{{ r.program_area_title }}</td>
+        <td><span class="badge badge-draft">Backup for {{ r.approver_email }}</span></td>
+        <td class="sub">—</td>
+        <td class="sub">—</td>
+        <td>
+          <form method="post" action="/admin/setup/users/{{ target.id }}/revoke-approval-rule"
+                onsubmit="return confirm('Remove {{ target.display_name or target.email }} as backup approver for {{ r.program_area_title }} ({{ r.org_code|upper }})? The rule itself (approver {{ r.approver_email }}) stays.');">
+            <input type="hidden" name="rule_id" value="{{ r.id }}">
+            <input type="hidden" name="role" value="backup">
+            <button type="submit" class="btn btn-secondary">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not approval_rules_as_approver and not approval_rules_as_backup %}
+      <tr><td colspan="6">Not configured as an approver or backup approver on any program area.</td></tr>
+      {% endif %}
+      <tr data-org-empty="ar" hidden><td colspan="6">No approval rules in the selected entity.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Add an Approval Rule</h3>
+  <p class="setup-note">
+    Designates this person as the <strong>approver</strong> for a program area. To make them a
+    <strong>backup</strong> approver instead, edit the other approver's own rule from that program
+    area's own page.
+  </p>
+  <form method="post" action="/admin/setup/users/{{ target.id }}/grant-approval-rule" class="filter-bar" style="align-items:flex-end;">
+    <div class="field">
+      <label for="ar_program_area_id">Program Area</label>
+      <select id="ar_program_area_id" name="program_area_id" required>
+        <option value="">Choose...</option>
+        {% set ns2 = namespace(current_org='') %}
+        {% for pa in all_program_areas %}
+          {% if pa.org_code != ns2.current_org %}
+            {% if ns2.current_org %}</optgroup>{% endif %}
+            <optgroup label="{{ pa.org_code|upper }}">
+            {% set ns2.current_org = pa.org_code %}
+          {% endif %}
+          <option value="{{ pa.id }}" {% if pa.id in already_approver_pa_ids %}disabled{% endif %}>
+            {{ pa.title }}{% if pa.id in already_approver_pa_ids %} (already an approver){% endif %}
+          </option>
+        {% endfor %}
+        {% if ns2.current_org %}</optgroup>{% endif %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="ar_approval_limit">Approval Limit ($)</label>
+      <input type="number" id="ar_approval_limit" name="approval_limit" step="0.01" min="0" value="0.00">
+    </div>
+    <div class="field">
+      <label for="ar_must_approve_threshold">Must-Approve Threshold ($)</label>
+      <input type="number" id="ar_must_approve_threshold" name="must_approve_threshold" step="0.01" min="0" value="0.00">
+    </div>
+    <div class="field">
+      <label><input type="checkbox" id="ar_must_approve_flag" name="must_approve_flag"> Must Approve</label>
+    </div>
+    <div class="field">
+      <label for="ar_serial_group">Serial Group</label>
+      <input type="number" id="ar_serial_group" name="serial_group" min="1" value="1" style="width:80px;">
+    </div>
+    <div class="field"><button type="submit" class="btn btn-primary">Add</button></div>
   </form>
 </div>
 

@@ -46,7 +46,7 @@ _CARDS = [
      "url": "/admin/vendor-requests", "role": "vendor_approver"},
     {"title": "Setup Tables", "desc": "Program areas, GL account mapping, entities, global approvers.",
      "url": "/admin/setup", "role": "setup_admin"},
-    {"title": "Users & Roles", "desc": "Who can sign in, and what each person may do in each entity.",
+    {"title": "User Management", "desc": "Who can sign in, and what each person may do in each entity.",
      "url": "/admin/setup/users", "role": "beacon_admin"},
     {"title": "Access Requests", "desc": "Review self-service requests from users with no role yet.",
      "url": "/admin/access-requests", "role": "beacon_admin"},

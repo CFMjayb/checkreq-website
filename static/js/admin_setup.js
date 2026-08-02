@@ -433,6 +433,101 @@
     }
   }
 
+  // ---- Program Areas list page (2026-08-02, program-area screens) -----
+
+  function initProgramAreasPage() {
+    var addBtn = document.getElementById('paAddBtn');
+    if (!addBtn) return;
+    var addMsg = document.getElementById('paAddMsg');
+
+    addBtn.addEventListener('click', function () {
+      addMsg.className = 'row-msg';
+      var title = document.getElementById('paTitle').value;
+      var body = {
+        title: title,
+        description: document.getElementById('paDescription').value,
+        sort_order: document.getElementById('paSort').value,
+        is_active: document.getElementById('paActive').checked,
+      };
+      if (!title.trim()) {
+        addMsg.className = 'row-msg err';
+        addMsg.textContent = 'Title is required.';
+        return;
+      }
+      addBtn.disabled = true;
+      addMsg.textContent = 'Adding...';
+      fetch('/admin/setup/program-areas/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+        .then(function (res) {
+          addBtn.disabled = false;
+          if (!res.ok || res.d.error) {
+            addMsg.className = 'row-msg err';
+            addMsg.textContent = res.d.error || 'Could not add that program area.';
+            return;
+          }
+          // Same reasoning as the GL Mapping add panel: reload rather than
+          // insert client-side so the new row lands in its real sorted
+          // position and the page's own count columns stay correct.
+          window.location.reload();
+        })
+        .catch(function (err) {
+          addBtn.disabled = false;
+          addMsg.className = 'row-msg err';
+          addMsg.textContent = 'Could not add that program area: ' + err.message;
+        });
+    });
+  }
+
+  // ---- Program Area detail page: Who Approves table --------------------
+  // Same batched dirty-save + template-row "Add" pattern as the
+  // Organizations page's Global Approvers table -- approval_rules is
+  // structurally almost identical to global_approvers (an approver, a
+  // backup, a serial group, an active flag), so this reuses the exact same
+  // wiring rather than a third bespoke implementation.
+
+  function initProgramAreaDetailPage() {
+    var table = document.getElementById('arTable');
+    if (!table) return;
+
+    var ar = wireTable({
+      tableId: 'arTable',
+      saveBtnId: 'arSaveBtn',
+      stateId: 'arSaveState',
+      saveUrl: table.dataset.saveUrl,
+    });
+
+    var addBtn = document.getElementById('arAddBtn');
+    var tpl = document.getElementById('arRowTemplate');
+    var body = document.getElementById('arBody');
+    if (addBtn && tpl && body && ar) {
+      addBtn.addEventListener('click', function () {
+        var empty = document.getElementById('arEmpty');
+        if (empty) empty.remove();
+        var tr = tpl.content.firstElementChild.cloneNode(true);
+        tr.dataset.isNew = '1';
+        tr.setAttribute('data-is-new', '1');
+        tr.querySelectorAll('[data-field]').forEach(function (el) {
+          el.dataset.baseline = ' never';  // always counts as dirty
+        });
+        body.appendChild(tr);
+        ar.refreshState();
+        var first = tr.querySelector('input');
+        if (first) first.focus();
+      });
+
+      body.addEventListener('click', function (e) {
+        var drop = e.target.closest('[data-drop-new]');
+        if (!drop) return;
+        drop.closest('tr').remove();
+        ar.refreshState();
+      });
+    }
+  }
+
   function fmtMoney(n) {
     return '$' + Number(n || 0).toLocaleString('en-US', {
       minimumFractionDigits: 2, maximumFractionDigits: 2,
@@ -442,5 +537,7 @@
   document.addEventListener('DOMContentLoaded', function () {
     initGlMappingPage();
     initOrganizationsPage();
+    initProgramAreasPage();
+    initProgramAreaDetailPage();
   });
 })();

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Program Areas{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+
+<h1 class="setup-h1-compact">Program Areas</h1>
+<p class="back-link"><a href="/admin/setup">&larr; Back to Setup Tables</a></p>
+<p class="sub">
+  The grouping every GL account mapping, approval rule and submitter assignment hangs off, for
+  <strong>{{ current_org.code if current_org else '—' }}</strong>. Open a program area to manage
+  its own fields, who can submit against it, and who approves it.
+</p>
+
+{% if request.query_params.get('error') %}
+<div class="banner banner-error">{{ request.query_params.get('error') }}</div>
+{% endif %}
+
+<details class="add-panel" open>
+  <summary>Add a Program Area</summary>
+  <div class="add-grid" style="grid-template-columns: 1.2fr 2fr 0.6fr 0.7fr auto;">
+    <div class="fld">
+      <label for="paTitle">Title</label>
+      <input type="text" id="paTitle" placeholder="e.g. Diocesan House">
+    </div>
+    <div class="fld">
+      <label for="paDescription">Description</label>
+      <input type="text" id="paDescription">
+    </div>
+    <div class="fld">
+      <label for="paSort">Sort Order</label>
+      <input type="number" id="paSort" value="0">
+    </div>
+    <div class="fld fld-check">
+      <input type="checkbox" id="paActive" checked>
+      <label for="paActive">Active</label>
+    </div>
+    <div class="fld">
+      <button type="button" id="paAddBtn" class="btn btn-primary btn-sm">Add</button>
+    </div>
+  </div>
+  <div id="paAddMsg" class="row-msg"></div>
+</details>
+
+<div class="card">
+  <div class="table-scroll">
+    <table class="setup-table">
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Description</th>
+          <th class="col-sort">Sort Order</th>
+          <th class="col-allow">Active</th>
+          <th>GL Mappings</th>
+          <th>Approvers</th>
+          <th>Submitters</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><strong>{{ r.title }}</strong></td>
+          <td class="sub">{{ r.description or "—" }}</td>
+          <td class="col-sort">{{ r.sort_order }}</td>
+          <td class="col-allow">
+            {% if r.is_active %}Yes{% else %}<span class="badge badge-draft">No</span>{% endif %}
+          </td>
+          <td>{{ r.gl_count }}</td>
+          <td>{{ r.approver_count }}</td>
+          <td>{{ r.submitter_count }}</td>
+          <td><a class="btn btn-secondary btn-sm" href="/admin/setup/program-areas/{{ r.id }}">Manage</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8">No program areas yet for this entity.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="setup-note">
+  Approval Rules and User / Program Area Assignments are managed from each program area's own
+  <strong>Manage</strong> page, not a separate flat list — per Admin Module Plan.md, both answer a
+  question <em>about a program area</em> (who may spend against it, and who approves that spend),
+  so they live where that program area already is instead of being retyped across three tabs.
+</p>
+
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/admin_setup.js?v={{ asset_version('js/admin_setup.js') }}"></script>
+{% endblock %}
