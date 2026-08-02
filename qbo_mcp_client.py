@@ -147,6 +147,25 @@ def get_gl_detail(
     )
 
 
+def get_vendor_last_bill(company: str, qbo_vendor_id: str) -> tuple[dict | None, str | None]:
+    """GET /api/checkreq/vendor-last-bill/{company}?qbo_vendor_id=...
+
+    Invoice Intake, Monkey-See-Monkey-Do GL-coding replay (2026-08-02): a
+    vendor's most recent real QBO Bill/Purchase, for replaying its exact
+    GL-line split onto a new invoice -- per Jay's direct correction that
+    this draws on real QBO transaction history, not Beacon's own (empty,
+    for a brand-new intake flow) internal GL-line table.
+
+    Returns ({"qbo_vendor_id", "found": bool, "bill": {...}|None}, None) on
+    success, or (None, "error text") on failure. "bill", when found:
+    {"txn_id", "txn_type", "txn_date", "total",
+     "lines": [{"acct_id", "acct_num", "acct_name", "amount", "description"}]}."""
+    return _get(
+        "/api/checkreq/vendor-last-bill/{company}", company,
+        {"qbo_vendor_id": qbo_vendor_id},
+    )
+
+
 def create_vendor(
     company: str,
     display_name: str,

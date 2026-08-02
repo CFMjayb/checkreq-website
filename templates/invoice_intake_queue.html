@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Invoice Intake{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Invoice Intake</h1>
+<p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
+
+{% if add_error %}
+<div class="banner banner-error">{{ add_error }}</div>
+{% endif %}
+
+<div class="card">
+  <h2>Upload an Invoice</h2>
+  <p class="sub">Beacon reads what it can off the document and creates a Draft below for you to finish coding.
+     GL coding is never guessed at this step -- that stays your decision.</p>
+  <form method="post" action="/invoice-intake" enctype="multipart/form-data" class="upload-row">
+    <input type="file" name="file" required
+           accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
+    <button type="submit" class="btn btn-primary btn-sm">Upload</button>
+  </form>
+</div>
+
+<div class="card">
+<h2>Draft Queue</h2>
+<p class="sub">Any invoice uploaded here (by anyone with the Invoice Intake role) sits as a Draft until someone
+   finishes coding and submits it -- the same shared inbox, not tied to whoever uploaded it.</p>
+<div class="table-scroll">
+  <table class="simple-table approvals-table">
+    <tr>
+      <th class="col-reqnum">Request #</th>
+      <th class="col-vendor">Vendor</th>
+      <th class="col-amount">Amount</th>
+      <th class="col-date">Uploaded</th>
+      <th class="col-actions">Actions</th>
+    </tr>
+    {% for d in drafts %}
+    <tr>
+      <td class="col-reqnum">{{ d.request_number }}</td>
+      <td class="col-vendor">{{ d.vendor_name }}</td>
+      <td class="col-amount">${{ "%.2f"|format(d.amount) }}</td>
+      <td class="col-date">{{ d.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+      <td class="col-actions"><a href="/requests/{{ d.request_number }}/edit">Code &amp; Submit</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">No Drafts waiting -- upload an invoice above to get started.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+</div>
+</div>
+{% endblock %}

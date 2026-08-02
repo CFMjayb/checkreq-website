@@ -10,13 +10,13 @@
 
 <div class="split-pane split-form">
   <div class="form-header-row">
-    <h1>{% if edit_data %}Edit Check Request — {{ edit_data.editing_request_number }}{% else %}New Check Request{% endif %}</h1>
-    <button type="submit" form="reqForm" class="btn btn-primary btn-sm">{% if edit_data %}Save Changes{% else %}Submit Request{% endif %}</button>
+    <h1>{% if edit_data and edit_data.request_type == 'invoice_payment' %}Invoice Intake — Code &amp; Submit — {{ edit_data.editing_request_number }}{% elif edit_data %}Edit Check Request — {{ edit_data.editing_request_number }}{% else %}New Check Request{% endif %}</h1>
+    <button type="submit" form="reqForm" class="btn btn-primary btn-sm">{% if edit_data and edit_data.request_type == 'invoice_payment' %}Submit for Approval{% elif edit_data %}Save Changes{% else %}Submit Request{% endif %}</button>
   </div>
-  <p class="back-link"><a href="/my-requests">&larr; Back to My Requests</a></p>
+  <p class="back-link"><a href="{% if edit_data and edit_data.request_type == 'invoice_payment' %}/invoice-intake{% else %}/my-requests{% endif %}">&larr; Back to {% if edit_data and edit_data.request_type == 'invoice_payment' %}Invoice Intake{% else %}My Requests{% endif %}</a></p>
   <form method="post" action="/new-request" id="reqForm" enctype="multipart/form-data">
     <input type="hidden" name="org_id" value="{{ current_org.id }}">
-    <input type="hidden" name="request_type" value="check_request">
+    <input type="hidden" name="request_type" value="{{ edit_data.request_type if edit_data else 'check_request' }}">
     {% if edit_data %}
     <input type="hidden" name="editing_request_number" value="{{ edit_data.editing_request_number }}">
     {% endif %}
@@ -44,9 +44,9 @@
 
     <div class="field-row">
       <div class="field">
-        <label>Program Area</label>
-        <select name="program_area_id" id="programAreaSelect" required>
-          <option value="">Loading...</option>
+        <label>Program Area{% if edit_data and edit_data.request_type == 'invoice_payment' %} <span class="sub">(optional — defaults to All)</span>{% endif %}</label>
+        <select name="program_area_id" id="programAreaSelect" {% if not (edit_data and edit_data.request_type == 'invoice_payment') %}required{% endif %}>
+          <option value="">{% if edit_data and edit_data.request_type == 'invoice_payment' %}All Program Areas{% else %}Loading...{% endif %}</option>
         </select>
       </div>
       <div class="field">
@@ -61,6 +61,9 @@
       <a href="#" id="addNewVendorLink" class="add-vendor-link">Can't find this vendor? Add a new one.</a>
       <div id="vendorConfirmedMsg" class="upload-status success" style="display:none;">&#10003; Vendor confirmed and active</div>
       <div id="vendorValidationMsg" class="upload-status error" style="display:none;"></div>
+      {% if edit_data and edit_data.request_type == 'invoice_payment' %}
+      <div id="artStatusBanner" class="banner banner-info" style="display:none;"></div>
+      {% endif %}
     </div>
 
     <input type="hidden" name="using_new_vendor" id="usingNewVendor" value="0">

@@ -62,13 +62,15 @@ function glAccountDepth(sortOrder) {
 async function fetchGlAccountOptions(programAreaId, q) {
   // Filtered/ordered by whichever Program Area is currently selected, via
   // checkreq.program_area_gl_accounts -- NOT the raw, unfiltered chart of
-  // accounts (found missing entirely, live, 2026-07-25). Until a program
-  // area is chosen, there's nothing to filter by -- return no options
-  // rather than hitting the API with a blank program_area_id (that query
-  // param is required server-side, main.py's api_gl_accounts route would
-  // 422 on an empty value).
-  if (!programAreaId) return [];
-  const r = await fetch(`/api/gl-accounts/${CURRENT_ORG_ID}?program_area_id=${programAreaId}&q=${encodeURIComponent(q || '')}`);
+  // accounts (found missing entirely, live, 2026-07-25). Check Requests
+  // always have a real programAreaId by the time this is called (the
+  // field is `required`); Invoice Intake (2026-08-02) can genuinely have
+  // none ("Program Area defaults to All") -- main.py's /api/gl-accounts
+  // route now falls back to the plain active chart of accounts in that
+  // case, so this always fetches something rather than showing nothing.
+  const params = new URLSearchParams({ q: q || '' });
+  if (programAreaId) params.set('program_area_id', programAreaId);
+  const r = await fetch(`/api/gl-accounts/${CURRENT_ORG_ID}?${params.toString()}`);
   const accts = await r.json();
   return accts.map(a => ({ id: a.id, label: glAccountLabel(a), depth: glAccountDepth(a.sort_order) }));
 }
@@ -211,14 +213,41 @@ function initVendorSelect() {
       vendorDisplayText = item.textContent.trim();
       setVendorValidationMessage('');
       setVendorConfirmedMessage(true);
+      refreshArtBanner(value);
       refreshPreview();
     },
     onItemRemove: function () {
       vendorDisplayText = '—';
       setVendorConfirmedMessage(false);
+      refreshArtBanner(null);
       refreshPreview();
     },
   });
+}
+
+// Invoice Intake (Tier 3, 2026-08-02): ART/Monkey-See-Monkey-Do status
+// banner -- only rendered on the coding screen for an invoice_payment
+// Draft (see new_request.html's own {% if %} guard), so this is a no-op
+// everywhere else (a plain Check Request page has no #artStatusBanner
+// element at all). Just exposes what new_request_submit already computes
+// at submission time, same "live-preview" pattern as the approval-chain-
+// preview/budget-status calls.
+async function refreshArtBanner(vendorId) {
+  const banner = document.getElementById('artStatusBanner');
+  if (!banner) return;
+  if (!vendorId) { banner.style.display = 'none'; return; }
+  try {
+    const r = await fetch(`/api/vendor-preapproval-status?vendor_id=${encodeURIComponent(vendorId)}`);
+    const data = await r.json();
+    if (!data.has_art) { banner.style.display = 'none'; return; }
+    let html = `<strong>ART Preapproved</strong> (${data.vendor_display_name}) -- skips the approval chain, goes straight to AP Review.`;
+    if (data.is_monkey_see_monkey_do) html += ' <em>Monkey-See-Monkey-Do: GL coding below was auto-filled from last month’s invoice -- please review.</em>';
+    if (data.special_handling_notes) html += `<br>${data.special_handling_notes}`;
+    banner.innerHTML = html;
+    banner.style.display = '';
+  } catch (e) {
+    banner.style.display = 'none';
+  }
 }
 
 function removeGlLine(btn) {
@@ -549,7 +578,12 @@ async function applyEditPrefill() {
   if (!d) return;
 
   const paSel = document.getElementById('programAreaSelect');
-  paSel.value = String(d.program_area_id);
+  // Invoice Intake's Draft rows may have no Program Area at all
+  // (program_area_id = None, "All") -- leaving the select at its default
+  // blank/"All Program Areas" option, rather than setting the literal
+  // string "None" (which happened to match no option by accident before
+  // this guard existed, but wasn't a real guarantee).
+  if (d.program_area_id) paSel.value = String(d.program_area_id);
 
   const container = document.getElementById('glLines');
   container.querySelectorAll('.glAccount').forEach(sel => { if (sel.tomselect) sel.tomselect.destroy(); });
@@ -574,7 +608,22 @@ async function applyEditPrefill() {
     const acctSel = div.querySelector('.glAccount');
     const ts = initGlAccountSelect(acctSel);
     if (glOptions.length) ts.addOption(glOptions);
-    if (line.gl_account_id) ts.addItem(String(line.gl_account_id));
+    if (line.gl_account_id) {
+      // Real bug found via live testing (2026-08-02): the default fetch
+      // above is capped at 50 accounts (see fetchGlAccountOptions/the
+      // server route's own LIMIT 50) -- for a program area (or, for
+      // Invoice Intake, the full unfiltered chart) with more accounts than
+      // that, a previously-saved account outside that window has no
+      // matching option registered, so addItem() below silently no-ops
+      // and the field renders blank. Guarantee the saved account is always
+      // addable using the account_number/account_name edit_data already
+      // carries for this exact line, regardless of whether the default
+      // fetch happened to include it.
+      if (!ts.options[String(line.gl_account_id)] && line.account_name) {
+        ts.addOption({ id: String(line.gl_account_id), label: glAccountLabel(line), depth: 0 });
+      }
+      ts.addItem(String(line.gl_account_id));
+    }
     if (line.amount) div.querySelector('.glAmount').value = Number(line.amount).toFixed(2);
     if (line.memo) div.querySelector('.glMemo').value = line.memo;
   }
@@ -583,6 +632,7 @@ async function applyEditPrefill() {
   if (d.vendor) {
     vendorTomSelect.addOption({ id: String(d.vendor.id), display_name: d.vendor.display_name });
     vendorTomSelect.addItem(String(d.vendor.id));
+    refreshArtBanner(d.vendor.id);
   } else if (d.new_vendor) {
     showNewVendorPanel(true);
     const nv = d.new_vendor;

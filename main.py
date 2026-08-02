@@ -88,6 +88,7 @@ import email_client
 import qbo_mcp_client
 import app_settings
 import notifications
+import art_preapproval
 
 ATTACHMENTS_BUCKET = "cfm-checkreq-attachments"
 
@@ -211,7 +212,13 @@ GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:81
 MODULES = [
     {"key": "check_request", "title": "Check Request", "desc": "Submit a classic check request.", "url": "/new-request", "enabled": True, "gate": None},
     {"key": "my_requests", "title": "My Requests", "desc": "Track requests you've submitted.", "url": "/my-requests", "enabled": True, "gate": None},
-    {"key": "invoice_payment", "title": "Invoice for Payment", "desc": "Upload and match an invoice.", "url": None, "enabled": False, "gate": None},
+    # Flipped enabled 2026-08-02 (Invoice Processing Intake Plan.md, Tier 3) --
+    # was a disabled "Coming Soon" placeholder. Same generic `m.gate in
+    # any_org_roles` mechanism every other gated tile already uses -- the
+    # invoice_intake_submitter role is granted via the existing Users &
+    # Roles "grant a role" UI, same as pre_approved_submitter, no new admin
+    # screen needed.
+    {"key": "invoice_payment", "title": "Invoice for Payment", "desc": "Upload and code an invoice.", "url": "/invoice-intake", "enabled": True, "gate": "invoice_intake_submitter"},
     # Replaced 2026-08-02 (feedback batch, Item 1) -- was a disabled "Vendor
     # Requests" placeholder; this is now the single consolidated entry point
     # for every admin-ish screen, gated on a synthetic pseudo-role
@@ -815,7 +822,15 @@ def edit_request_form(request_number: str, request: Request, add_error: str = ""
     )
     if not pr:
         return JSONResponse({"error": "Request not found"}, status_code=404)
-    if pr["submitter_user_id"] != user["id"]:
+    # Invoice Intake's Draft queue is a shared team inbox -- any authorized
+    # Invoice Intake staff member may open and finish coding a Draft, not
+    # just whoever originally uploaded it. Matches the identical widened
+    # check in new_request_submit's POST handler (never trust that this
+    # GET route's own check is the only gate -- see that route's comment).
+    if pr["request_type"] == "invoice_payment" and pr["status"] == "Draft":
+        if not rbac.user_has_role(user["id"], "invoice_intake_submitter", pr["org_id"]):
+            return JSONResponse({"error": "Not authorized to code Invoice Intake requests"}, status_code=403)
+    elif pr["submitter_user_id"] != user["id"]:
         # Matches request_pdf's existing authorization-response convention.
         return JSONResponse({"error": "Not authorized to edit this request"}, status_code=403)
     if not _request_is_editable(pr["status"]):
@@ -865,12 +880,15 @@ def edit_request_form(request_number: str, request: Request, add_error: str = ""
 
     edit_data = {
         "editing_request_number": pr["request_number"],
+        "request_type": pr["request_type"],
+        "status": pr["status"],
         "program_area_id": pr["program_area_id"],
         "requested_pay_date": pr["requested_pay_date"].isoformat() if pr["requested_pay_date"] else None,
         "description": pr["description"] or "",
         "special_instructions": pr["special_instructions"] or "",
         "gl_lines": [
-            {"gl_account_id": g["gl_account_id"], "amount": float(g["amount"]), "memo": g["memo"] or ""}
+            {"gl_account_id": g["gl_account_id"], "amount": float(g["amount"]), "memo": g["memo"] or "",
+             "account_number": g["account_number"], "account_name": g["account_name"]}
             for g in gl_lines
         ],
         "vendor": vendor_prefill,
@@ -1200,7 +1218,7 @@ def _approval_email_context(payment_request_id: int) -> dict | None:
         SELECT pr.id, pr.request_number, pr.amount, pr.description, pr.requested_pay_date,
                pr.status, pr.serial_group_current,
                o.name AS org_name, o.code AS org_code,
-               pa.title AS program_area_title,
+               COALESCE(pa.title, 'All Program Areas') AS program_area_title,
                u.display_name AS submitter_name, u.email AS submitter_email,
                v.display_name AS vendor_display_name,
                vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
@@ -1208,7 +1226,7 @@ def _approval_email_context(payment_request_id: int) -> dict | None:
                vr.dba_name AS vr_dba_name
         FROM checkreq.payment_requests pr
         JOIN checkreq.organizations o ON o.id = pr.org_id
-        JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+        LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
         JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
         LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
         LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
@@ -1753,7 +1771,7 @@ def api_vendors(org_id: int, request: Request, q: str = ""):
 
 
 @app.get("/api/gl-accounts/{org_id}")
-def api_gl_accounts(org_id: int, program_area_id: int, request: Request, q: str = ""):
+def api_gl_accounts(org_id: int, request: Request, program_area_id: int | None = None, q: str = ""):
     """Filtered/ordered by the Program Area <-> GL Account mapping
     (checkreq.program_area_gl_accounts) -- that mapping's display_text/
     allow_post/sort_order columns were added and deployed on the
@@ -1765,9 +1783,30 @@ def api_gl_accounts(org_id: int, program_area_id: int, request: Request, q: str 
     same day. allow_post=false rows (header/grouping records) are never
     selectable here. Mirrors qbo-mcp-server's
     get_program_area_gl_accounts() sort logic exactly -- same hierarchical
-    dot-notation ordering, same malformed-sort_order safety guard."""
+    dot-notation ordering, same malformed-sort_order safety guard.
+
+    program_area_id is now OPTIONAL (2026-08-02, Invoice Processing Intake
+    Plan.md Tier 3) -- "Program Area defaults to All" for Invoice Intake
+    means there's no program_area_gl_accounts mapping row to join against
+    at all when none is chosen. Falls back to the plain active chart of
+    accounts, unfiltered/uncurated, in raw account-number order -- this is
+    a real, deliberate degradation (no display_text override, no curated
+    sort_order) versus the curated per-program-area view, not a bug; the
+    Check Request form always supplies a real program_area_id and is
+    completely unaffected by this branch."""
     if not _current_user(request):
         return JSONResponse({"error": "Not signed in"}, status_code=401)
+
+    if program_area_id is None:
+        base_sql = "SELECT id, account_number, account_name, NULL AS sort_order " \
+                    "FROM checkreq.gl_accounts WHERE org_id = %s AND is_active"
+        order_sql = " ORDER BY account_number LIMIT 50"
+        if q:
+            return db.query(
+                base_sql + " AND (account_number ILIKE %s OR account_name ILIKE %s) " + order_sql,
+                (org_id, f"%{q}%", f"%{q}%"),
+            )
+        return db.query(base_sql + order_sql, (org_id,))
 
     base_sql = r"""
         SELECT ga.id, ga.account_number,
@@ -1868,6 +1907,30 @@ def api_budget_status(request: Request, program_area_id: int, gl_account_id: int
         "buffer_amount":   buffer_amount,
         "tier":            tier,
     }
+
+
+@app.get("/api/vendor-preapproval-status")
+def api_vendor_preapproval_status(request: Request, vendor_id: int = 0):
+    """Live-preview endpoint for the Invoice Intake coding screen's ART/
+    Monkey-See-Monkey-Do status banner -- same "just exposes what
+    new_request_submit already computes" pattern as
+    /api/approval-chain-preview and /api/budget-status. Returns
+    {"has_art": false} when there's nothing to show (no vendor selected, or
+    no active ART entry) rather than an error, matching this codebase's
+    established soft-error convention for live-preview endpoints."""
+    user = _current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not signed in"}, status_code=401)
+    org = _current_org(request)
+    if not org:
+        return {"has_art": False}
+    if not vendor_id:
+        return {"has_art": False}
+
+    status = art_preapproval.vendor_preapproval_status(vendor_id, org["id"])
+    if not status:
+        return {"has_art": False}
+    return {"has_art": True, **status}
 
 
 @app.post("/api/budget-check-submission")
@@ -2000,7 +2063,7 @@ def _voucher_context(payment_request_id: int) -> dict | None:
     blanks -- used to render check_voucher.html with real data for the PDF."""
     pr = db.query_one(
         """
-        SELECT pr.*, o.name AS org_name, pa.title AS program_area_title,
+        SELECT pr.*, o.name AS org_name, COALESCE(pa.title, 'All Program Areas') AS program_area_title,
                v.display_name AS vendor_name,
                vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
                vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
@@ -2008,7 +2071,7 @@ def _voucher_context(payment_request_id: int) -> dict | None:
                u.display_name AS submitter_name, u.email AS submitter_email
         FROM checkreq.payment_requests pr
         JOIN checkreq.organizations o ON o.id = pr.org_id
-        JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+        LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
         LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
         LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
         JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
@@ -2300,6 +2363,94 @@ def _archive_attachments(org: dict, payment_request_id: int, request_number: str
                 )
 
 
+def _archive_one_file(org: dict, payment_request_id: int, request_number: str, source: str,
+                       filename: str, content_type: str, data: bytes, user_id: int) -> dict:
+    """One more archived file for an already-existing request -- shared by
+    add_attachment() (the Edit page's "Add" button, one call per file) and
+    Invoice Intake (Tier 3, 2026-08-02: one call for the raw invoice at
+    intake, one for the generated voucher PDF at finalize -- two separate
+    archival moments over one request's life, which _archive_attachments()
+    doesn't support, since it always assumes exactly one archival moment
+    and starts its own index at 1).
+
+    Extracted from add_attachment's own per-file logic (2026-07-26), which
+    already solved the real indexing problem: the next archived-filename
+    index must be unique across every attachment EVER created for this
+    request (not just currently-active ones), since a removed row's index
+    could otherwise be reused and silently overwrite that row's still-
+    intact SharePoint file (upload_bytes() overwrites unconditionally on a
+    filename collision, by design).
+
+    Raises on any failure (GCS or SharePoint) -- caller decides whether
+    that's fatal or a soft, per-file error to collect, matching
+    add_attachment's own existing behavior. Returns the inserted
+    checkreq.payment_request_attachments row's own fields as a dict."""
+    if not (org.get("sp_hostname") and org.get("sp_site_path") and org.get("sp_library_folder")):
+        raise RuntimeError(
+            f"No SharePoint archive location configured for {org['name']} -- "
+            f"set sp_hostname/sp_site_path/sp_library_folder in checkreq.organizations."
+        )
+
+    pr = db.query_one(
+        "SELECT requested_pay_date, amount FROM checkreq.payment_requests WHERE id = %s",
+        (payment_request_id,),
+    )
+    vendor_name = _vendor_display_name_for_request(payment_request_id)
+    pay_date_str = pr["requested_pay_date"].isoformat() if pr["requested_pay_date"] else None
+    total_amount = float(pr["amount"])
+
+    next_index = db.query_one(
+        "SELECT COUNT(*) AS c FROM checkreq.payment_request_attachments WHERE payment_request_id = %s",
+        (payment_request_id,),
+    )["c"] + 1
+
+    ext = _guess_extension(filename, content_type)
+    archived_filename = _compute_archived_filename(
+        org["code"], pay_date_str, vendor_name, total_amount, request_number, next_index, ext,
+    )
+    blob_path = f"{request_number}/{archived_filename}"
+    gcs_client.upload_bytes(ATTACHMENTS_BUCKET, blob_path, data, content_type)
+
+    token = sharepoint_client.get_access_token()
+    site_id = sharepoint_client.get_site_id(token, org["sp_hostname"], org["sp_site_path"])
+    try:
+        sp_result = sharepoint_client.upload_bytes(
+            token, site_id, org["sp_library_folder"], archived_filename, data, content_type,
+        )
+    except Exception:
+        gcs_client.delete_blob(ATTACHMENTS_BUCKET, blob_path)
+        raise
+
+    row = {
+        "source": source,
+        "original_filename": filename,
+        "archived_filename": archived_filename,
+        "content_type": content_type,
+        "size_bytes": len(data),
+        "gcs_bucket": ATTACHMENTS_BUCKET,
+        "gcs_blob_path": blob_path,
+        "sp_file_path": f"{org['sp_library_folder'].strip('/')}/{archived_filename}",
+        "sp_web_url": sp_result.get("webUrl"),
+    }
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO checkreq.payment_request_attachments
+                    (payment_request_id, source, original_filename, archived_filename,
+                     content_type, size_bytes, gcs_bucket, gcs_blob_path, sp_file_path,
+                     sp_web_url, uploaded_by_user_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (payment_request_id, row["source"], row["original_filename"], row["archived_filename"],
+                 row["content_type"], row["size_bytes"], row["gcs_bucket"], row["gcs_blob_path"],
+                 row["sp_file_path"], row["sp_web_url"], user_id),
+            )
+            row["id"] = cur.fetchone()["id"]
+    return row
+
+
 def cleanup_gcs_attachment(payment_request_id: int) -> None:
     """Deletes every GCS-staged copy for a request and stamps gcs_deleted_at
     -- NOT called from anywhere yet. There is no "approved -> posted to QBO"
@@ -2448,17 +2599,33 @@ async def new_request_submit(request: Request):
     org_id = org["id"]
 
     form = await request.form()
-    program_area_id = int(form["program_area_id"])
-
-    if not _user_can_submit_for(user, program_area_id, org_id):
-        return JSONResponse(
-            {"error": "You are not assigned to this program area. "
-                      "Ask an admin to add you in checkreq.user_program_areas, "
-                      "or use Request Access to ask for it."},
-            status_code=403,
-        )
-
     request_type = form.get("request_type", "check_request")
+
+    # Invoice Processing Intake Plan.md (Tier 3, 2026-08-02): "Program Area
+    # defaults to All" -- an Invoice Intake coder, unlike a Check Request
+    # submitter, isn't required to pick one. A blank selection is honored as
+    # None ("All"); a chosen one is still checked the normal way. The Check
+    # Request path below is byte-for-byte what this route always did --
+    # program_area_id stays required and _user_can_submit_for-gated.
+    if request_type == "invoice_payment":
+        raw_pa = (form.get("program_area_id") or "").strip()
+        program_area_id = int(raw_pa) if raw_pa else None
+        if program_area_id is not None and not _user_can_submit_for(user, program_area_id, org_id):
+            return JSONResponse(
+                {"error": "You are not assigned to this program area. "
+                          "Ask an admin to add you in checkreq.user_program_areas, "
+                          "or use Request Access to ask for it."},
+                status_code=403,
+            )
+    else:
+        program_area_id = int(form["program_area_id"])
+        if not _user_can_submit_for(user, program_area_id, org_id):
+            return JSONResponse(
+                {"error": "You are not assigned to this program area. "
+                          "Ask an admin to add you in checkreq.user_program_areas, "
+                          "or use Request Access to ask for it."},
+                status_code=403,
+            )
 
     # Editing an existing request (see edit_request_form) instead of
     # submitting a new one -- editing_request_number is a hidden field that
@@ -2474,7 +2641,15 @@ async def new_request_submit(request: Request):
         )
         if not existing_pr:
             return JSONResponse({"error": "Request not found."}, status_code=404)
-        if existing_pr["submitter_user_id"] != user["id"]:
+        # Invoice Intake's Draft queue is a shared team inbox, not a
+        # personal submission -- any authorized Invoice Intake staff member
+        # may finish coding a Draft, not just whoever originally uploaded
+        # it. Every other request (Check Requests, and an invoice_payment
+        # row once it's past Draft) keeps the existing submitter-only rule.
+        if existing_pr["request_type"] == "invoice_payment" and existing_pr["status"] == "Draft":
+            if not rbac.user_has_role(user["id"], "invoice_intake_submitter", existing_pr["org_id"]):
+                return JSONResponse({"error": "Not authorized to code Invoice Intake requests."}, status_code=403)
+        elif existing_pr["submitter_user_id"] != user["id"]:
             return JSONResponse({"error": "Not authorized to edit this request."}, status_code=403)
         if not _request_is_editable(existing_pr["status"]):
             return JSONResponse(
@@ -2634,6 +2809,14 @@ async def new_request_submit(request: Request):
     # (using_new_vendor has no linked_user_id concept -- see
     # _is_self_payment's own docstring).
     is_self_payment = (not using_new_vendor) and _is_self_payment(vendor_id, user["id"])
+    # Invoice Processing Intake Plan.md (Tier 3): an active ART (Authorized
+    # Recurring Transactions) entry for this vendor -- per Jay's direct
+    # answer this session, an ART-preapproved vendor ALWAYS skips the chain
+    # entirely and lands straight on AP Review, no confirmation step of any
+    # kind (art_list.preapproval_scope is left unused for this reason).
+    vendor_art = (not using_new_vendor) and art_preapproval.vendor_preapproval_status(
+        vendor_id, org_id, total_amount
+    )
     if is_self_payment:
         chain = _self_payment_cfo_chain(user["id"], org_id)
         chain_summary = (
@@ -2658,7 +2841,32 @@ async def new_request_submit(request: Request):
         chain = []
         chain_summary = ("Submitter designates this request as previously approved outside "
                           "Beacon; see attached documentation.")
+    elif vendor_art:
+        # Precedence, deliberate: self-payment and an explicit human
+        # pre-approval attestation both outrank a vendor-level ART setting
+        # -- self-payment is a conflict-of-interest control that should
+        # never be overridable by a convenience designation on the vendor.
+        chain = []
+        chain_summary = (
+            f"ART Preapproved ({vendor_art['vendor_display_name']}) -- skips the approval "
+            f"chain, goes straight to AP Review."
+        )
+        if vendor_art["amount_flag"]:
+            chain_summary += f"\nNote for AP: {vendor_art['amount_flag']}"
     else:
+        # Invoice Intake's "Program Area defaults to All" is about browsing/
+        # coding GL accounts, not approval routing -- without an ART/self-
+        # payment/pre-approved override, SOME program area is required here,
+        # or this request would silently reach an empty chain (which reads
+        # as "nothing required," not "not yet decided") and skip approval
+        # by accident.
+        if program_area_id is None:
+            return JSONResponse(
+                {"error": "Please select a Program Area before submitting -- this vendor "
+                          "isn't ART Preapproved, so a program area is needed to route this "
+                          "for approval."},
+                status_code=400,
+            )
         chain = approval_engine.build_approval_chain(program_area_id, org_id, total_amount)
         chain_summary = approval_engine.describe_chain(chain)
 
@@ -2695,13 +2903,161 @@ async def new_request_submit(request: Request):
     # pre_approved specifically, not on "chain is empty" in general, so this
     # doesn't change behavior for the (separate, pre-existing) case of a
     # program area with no approval_rules configured at all.
-    initial_status = "Approved" if (pre_approved and not chain) else "UnderReview"
+    initial_status = "Approved" if ((pre_approved or vendor_art) and not chain) else "UnderReview"
 
     imp_id = request.session.get("impersonating_user_id")
     impersonated_by = _real_user(request)["id"] if imp_id else None
 
     if existing_pr:
-        # ── EDIT branch ──────────────────────────────────────────────────
+        if existing_pr["status"] == "Draft":
+            # ── DRAFT FINALIZE branch (Invoice Intake, Tier 3, 2026-08-02) ──
+            # A Draft's first real submission -- nothing to "reset" here,
+            # unlike the EDIT branch below, since no approval chain has ever
+            # been computed for this row yet. Always returns, so the
+            # existing EDIT branch immediately below never runs for a Draft.
+            request_number = existing_pr["request_number"]
+            payment_request_id = existing_pr["id"]
+            old_vendor_request_id = existing_pr["vendor_request_id"]
+
+            with db.connect() as conn:
+                with conn.cursor() as cur:
+                    # Vendor bookkeeping -- identical shape to the EDIT
+                    # branch's own handling below (a payment_request has at
+                    # most one vendor_request row; update it in place if one
+                    # already exists rather than creating a duplicate).
+                    new_vendor_request_id = old_vendor_request_id
+                    if using_new_vendor:
+                        requires_w9 = total_amount > VENDOR_W9_AMOUNT_THRESHOLD
+                        if old_vendor_request_id:
+                            cur.execute(
+                                """
+                                UPDATE checkreq.vendor_requests SET
+                                    entity_type = %s, first_name = %s, last_name = %s,
+                                    company_name = %s, dba_name = %s, address_line1 = %s,
+                                    address_line2 = %s, city = %s, state = %s, zip = %s,
+                                    phone = %s, contact_name = %s, contact_email = %s,
+                                    requires_w9 = %s
+                                WHERE id = %s
+                                """,
+                                (new_vendor_fields["entity_type"], new_vendor_fields["first_name"],
+                                 new_vendor_fields["last_name"], new_vendor_fields["company_name"],
+                                 new_vendor_fields["dba_name"], new_vendor_fields["address_line1"],
+                                 new_vendor_fields["address_line2"], new_vendor_fields["city"],
+                                 new_vendor_fields["state"], new_vendor_fields["zip"],
+                                 new_vendor_fields["phone"], new_vendor_fields["contact_name"],
+                                 new_vendor_fields["contact_email"], requires_w9, old_vendor_request_id),
+                            )
+                        else:
+                            upload_token = pysecrets.token_urlsafe(32)
+                            cur.execute(
+                                """
+                                INSERT INTO checkreq.vendor_requests
+                                    (org_id, payment_request_id, entity_type, first_name, last_name,
+                                     company_name, dba_name, address_line1, address_line2, city, state, zip,
+                                     phone, contact_name, contact_email, requires_w9, upload_token,
+                                     created_by_user_id)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                RETURNING id
+                                """,
+                                (org_id, payment_request_id, new_vendor_fields["entity_type"],
+                                 new_vendor_fields["first_name"], new_vendor_fields["last_name"],
+                                 new_vendor_fields["company_name"], new_vendor_fields["dba_name"],
+                                 new_vendor_fields["address_line1"], new_vendor_fields["address_line2"],
+                                 new_vendor_fields["city"], new_vendor_fields["state"], new_vendor_fields["zip"],
+                                 new_vendor_fields["phone"], new_vendor_fields["contact_name"],
+                                 new_vendor_fields["contact_email"], requires_w9, upload_token, user["id"]),
+                            )
+                            new_vendor_request_id = cur.fetchone()["id"]
+                    else:
+                        new_vendor_request_id = None
+
+                    cur.execute(
+                        """
+                        UPDATE checkreq.payment_requests SET
+                            program_area_id = %s, vendor_id = %s, vendor_request_id = %s,
+                            amount = %s, requested_pay_date = %s, description = %s,
+                            special_instructions = %s, status = %s, current_approver_id = %s,
+                            serial_group_current = %s, approval_chain_summary = %s,
+                            overspend_flagged = %s, overspend_detail = %s, budget_checked_at = NOW(),
+                            pre_approved = %s, updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (program_area_id, vendor_id, new_vendor_request_id, total_amount,
+                         requested_pay_date, description, special_instructions,
+                         initial_status, first_display_approver, first_serial_group,
+                         chain_summary, overspend_flagged, overspend_detail, pre_approved,
+                         payment_request_id),
+                    )
+
+                    cur.execute(
+                        "DELETE FROM checkreq.payment_request_gl_lines WHERE payment_request_id = %s",
+                        (payment_request_id,),
+                    )
+                    for acct_id, amt, memo in gl_lines:
+                        cur.execute(
+                            "INSERT INTO checkreq.payment_request_gl_lines "
+                            "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
+                            (payment_request_id, acct_id, amt, memo),
+                        )
+
+                    for tier, entries in (("buffer_notice", budget_result["buffer_notice"]),
+                                           ("cfo_required", budget_result["cfo_required"])):
+                        for e in entries:
+                            cur.execute(
+                                "INSERT INTO checkreq.budget_overage_log "
+                                "(payment_request_id, gl_account_id, tier, annual_budget, projected_spend, buffer_amount) "
+                                "VALUES (%s, %s, %s, %s, %s, %s)",
+                                (payment_request_id, e["gl_account_id"], tier,
+                                 e["annual_budget"], e["projected"], e["buffer_amount"]),
+                            )
+
+                    # Nothing was ever pending for this row -- no supersede
+                    # call needed, unlike the EDIT branch's reset case.
+                    _materialize_approval_actions(cur, payment_request_id, chain)
+
+                    cur.execute(
+                        "INSERT INTO checkreq.audit_log "
+                        "(payment_request_id, action_by_user_id, action_type, comment, "
+                        " previous_status, new_status, impersonated_by_user_id) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (payment_request_id, user["id"], "Submitted", chain_summary,
+                         "Draft", initial_status, impersonated_by),
+                    )
+
+            if budget_result["buffer_notice"]:
+                _send_budget_buffer_notice_email(
+                    request_number, org["name"], org["id"],
+                    [e["detail"] for e in budget_result["buffer_notice"]],
+                )
+            notify_group = first_serial_group
+            if not is_self_payment:
+                advanced = _maybe_auto_approve_self(
+                    payment_request_id, first_serial_group, user["id"], _client_ip(request), request,
+                )
+                if advanced is not None:
+                    notify_group = advanced
+            _notify_approvers_for_group(payment_request_id, notify_group, request)
+
+            # Archive ONLY the generated voucher PDF -- the real invoice was
+            # already archived (source='user_upload') back at intake time.
+            archive_warning = None
+            try:
+                _archive_one_file(
+                    org, payment_request_id, request_number, "generated_pdf",
+                    f"{request_number}.pdf", "application/pdf",
+                    render_check_voucher_pdf(payment_request_id), user["id"],
+                )
+            except Exception as exc:
+                archive_warning = str(exc)
+
+            redirect_url = f"/my-requests?submitted={request_number}"
+            if archive_warning:
+                redirect_url += f"&archive_warning={quote(archive_warning)}"
+            return RedirectResponse(redirect_url, status_code=303)
+
+        # ── EDIT branch (Check Requests, and an invoice_payment row once
+        # it's past Draft) -- unchanged below; unreachable for a Draft
+        # since the branch above always returns ─────────────────────────
         # Approval reset rule, Jay's exact words (2026-07-25): "If you do
         # edit the CR's Vendor or Amount, you have to erase the approval
         # workflow and restart." Compare the NEW vendor identity (vendor_id
@@ -3330,25 +3686,10 @@ async def add_attachment(request_number: str, request: Request):
             f"/requests/{request_number}/edit?add_error={quote('No file selected.')}", status_code=303,
         )
 
-    vendor_name = _vendor_display_name_for_request(pr["id"])
-    pay_date_str = pr["requested_pay_date"].isoformat() if pr["requested_pay_date"] else None
-    total_amount = float(pr["amount"])
-
-    # Next archived-filename index must be unique across every attachment
-    # EVER created for this request, not just the currently-active ones --
-    # reusing an index a removed row already used would silently overwrite
-    # that row's real file in SharePoint the moment it's re-uploaded
-    # (upload_bytes() overwrites unconditionally on a filename collision,
-    # by design -- see its own docstring). COUNT(*) with no removed_at
-    # filter is the simplest index that can never collide with a prior one.
-    next_index = db.query_one(
-        "SELECT COUNT(*) AS c FROM checkreq.payment_request_attachments WHERE payment_request_id = %s",
-        (pr["id"],),
-    )["c"]
-
-    token = sharepoint_client.get_access_token()
-    site_id = sharepoint_client.get_site_id(token, org["sp_hostname"], org["sp_site_path"])
-
+    # Archival itself is now shared with Invoice Intake via _archive_one_file()
+    # (2026-08-02 extraction) -- it handles the vendor-name/pay-date lookup,
+    # the never-reuse-a-removed-row's-index computation, and the GCS+
+    # SharePoint upload pipeline, one call per file.
     imp_id = request.session.get("impersonating_user_id")
     impersonated_by = _real_user(request)["id"] if imp_id else None
 
@@ -3358,37 +3699,11 @@ async def add_attachment(request_number: str, request: Request):
         if not content:
             continue
         try:
-            next_index += 1
             content_type = f.content_type or "application/octet-stream"
-            ext = _guess_extension(f.filename, content_type)
-            archived_filename = _compute_archived_filename(
-                org["code"], pay_date_str, vendor_name, total_amount, request_number, next_index, ext,
-            )
-            blob_path = f"{request_number}/{archived_filename}"
-            gcs_client.upload_bytes(ATTACHMENTS_BUCKET, blob_path, content, content_type)
-            try:
-                sp_result = sharepoint_client.upload_bytes(
-                    token, site_id, org["sp_library_folder"], archived_filename, content, content_type,
-                )
-            except Exception:
-                gcs_client.delete_blob(ATTACHMENTS_BUCKET, blob_path)
-                raise
-
+            _archive_one_file(org, pr["id"], request_number, "user_upload",
+                               f.filename, content_type, content, user["id"])
             with db.connect() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO checkreq.payment_request_attachments
-                            (payment_request_id, source, original_filename, archived_filename,
-                             content_type, size_bytes, gcs_bucket, gcs_blob_path, sp_file_path,
-                             sp_web_url, uploaded_by_user_id)
-                        VALUES (%s, 'user_upload', %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (pr["id"], f.filename, archived_filename, content_type, len(content),
-                         ATTACHMENTS_BUCKET, blob_path,
-                         f"{org['sp_library_folder'].strip('/')}/{archived_filename}",
-                         sp_result.get("webUrl"), user["id"]),
-                    )
                     cur.execute(
                         "INSERT INTO checkreq.audit_log "
                         "(payment_request_id, action_by_user_id, action_type, comment, impersonated_by_user_id) "
@@ -3402,6 +3717,171 @@ async def add_attachment(request_number: str, request: Request):
     if errors:
         redirect_url += f"?add_error={quote('; '.join(errors))}"
     return RedirectResponse(redirect_url, status_code=303)
+
+
+@app.get("/invoice-intake", response_class=HTMLResponse)
+def invoice_intake_queue(request: Request, add_error: str = ""):
+    """Invoice Processing Intake Plan.md (Tier 3, 2026-08-02) -- the shared
+    team queue for invoices uploaded outside the manual Check Request form.
+    Gated on the invoice_intake_submitter role (a plain RBAC grant, same
+    mechanism as pre_approved_submitter -- no new admin UI needed)."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    org = _current_org(request)
+    if not org:
+        return RedirectResponse("/portal")
+    if not rbac.user_has_role(user["id"], "invoice_intake_submitter", org["id"]):
+        return HTMLResponse("Not authorized -- ask an admin to grant you the Invoice Intake role.", status_code=403)
+
+    drafts = db.query(
+        """
+        SELECT pr.request_number, pr.created_at,
+               COALESCE(v.display_name, vr.company_name, vr.first_name || ' ' || vr.last_name,
+                        pr.invoice_extracted_vendor, '—') AS vendor_name,
+               COALESCE(pr.invoice_extracted_amount, pr.amount) AS amount
+        FROM checkreq.payment_requests pr
+        LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+        LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+        WHERE pr.org_id = %s AND pr.request_type = 'invoice_payment' AND pr.status = 'Draft'
+        ORDER BY pr.created_at DESC
+        """,
+        (org["id"],),
+    )
+    return _render(request, "invoice_intake_queue.html", user, {"drafts": drafts, "add_error": add_error})
+
+
+@app.post("/invoice-intake")
+async def invoice_intake_upload(request: Request, file: UploadFile):
+    """Uploads one invoice, extracts what we can, best-effort vendor match,
+    checks ART/Monkey-See-Monkey-Do, creates the Draft row, archives the
+    raw file -- then hands off to the SAME edit/finalize screen a Check
+    Request uses (GET/POST /requests/{request_number}/edit), rather than a
+    second coding UI. Vendor recognition is deliberately the first real
+    step here, before anything else, per the plan's own framing."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    org = _current_org(request)
+    if not org:
+        return RedirectResponse("/portal")
+    if not rbac.user_has_role(user["id"], "invoice_intake_submitter", org["id"]):
+        return HTMLResponse("Not authorized -- ask an admin to grant you the Invoice Intake role.", status_code=403)
+
+    content = await file.read()
+    if len(content) > _EXTRACT_MAX_BYTES:
+        return RedirectResponse(
+            f"/invoice-intake?add_error={quote('File is too large (max 10MB).')}", status_code=303,
+        )
+    mime_type = file.content_type or ""
+    if mime_type not in _EXTRACT_ALLOWED_TYPES:
+        return RedirectResponse(
+            f"/invoice-intake?add_error={quote('Unsupported file type -- use a PDF or JPG/PNG/GIF/WebP image.')}",
+            status_code=303,
+        )
+
+    try:
+        result = await asyncio.to_thread(document_extract.extract_fields, content, mime_type)
+    except Exception as exc:
+        print(f"[invoice-intake] extraction {type(exc).__name__}: {exc}")
+        result = {}
+
+    vendor_name = result.get("vendor_name")
+    vendor_id = None
+    if vendor_name:
+        match = db.query_one(
+            "SELECT id FROM checkreq.vendors WHERE org_id = %s AND is_active AND display_name ILIKE %s "
+            "ORDER BY display_name LIMIT 1",
+            (org["id"], f"%{vendor_name}%"),
+        )
+        if match:
+            vendor_id = match["id"]
+
+    extracted_amount = result.get("amount")
+
+    request_number = _next_request_number("invoice_payment")
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO checkreq.payment_requests
+                    (request_number, request_type, org_id, program_area_id, submitter_user_id,
+                     vendor_id, amount, requested_pay_date, description, status,
+                     source_channel, invoice_extracted_vendor, invoice_extracted_amount)
+                VALUES (%s, 'invoice_payment', %s, NULL, %s, %s, %s, %s, %s, 'Draft',
+                        'manual_upload', %s, %s)
+                RETURNING id
+                """,
+                (request_number, org["id"], user["id"], vendor_id,
+                 extracted_amount or 0, date.today(), result.get("description") or "",
+                 vendor_name, extracted_amount),
+            )
+            payment_request_id = cur.fetchone()["id"]
+
+    # Monkey-See-Monkey-Do pre-fill: only meaningful once a real vendor is
+    # matched AND that vendor's ART entry designates it -- reads real QBO
+    # Bill/Purchase history (Jay's direct correction, 2026-08-02), not
+    # Beacon's own GL-line history, which would be empty for a brand-new
+    # intake flow. Best-effort: any failure here just means no pre-fill,
+    # never blocks the Draft from being created.
+    if vendor_id:
+        art = art_preapproval.vendor_preapproval_status(vendor_id, org["id"])
+        if art and art["is_monkey_see_monkey_do"]:
+            try:
+                _prefill_msmd_gl_lines(org, payment_request_id, vendor_id, extracted_amount)
+            except Exception as exc:
+                print(f"[invoice-intake] MSMD pre-fill failed for vendor {vendor_id}: {exc}")
+
+    # Archive the raw uploaded invoice now -- the generated voucher PDF is
+    # archived separately, at finalize (see the Draft-finalize branch of
+    # new_request_submit).
+    try:
+        _archive_one_file(org, payment_request_id, request_number, "user_upload",
+                           file.filename or "invoice", mime_type, content, user["id"])
+    except Exception as exc:
+        print(f"[invoice-intake] archival failed for {request_number}: {exc}")
+
+    return RedirectResponse(f"/requests/{request_number}/edit?intake=1", status_code=303)
+
+
+def _prefill_msmd_gl_lines(org: dict, payment_request_id: int, vendor_id: int,
+                            new_total: float | None) -> None:
+    """Fetches the vendor's most recent real QBO Bill/Purchase and
+    proportionally replays its GL-line split onto this brand-new Draft --
+    the split PATTERN repeats even though the dollar amounts don't. Never
+    silently final -- every pre-filled line stays fully editable, and the
+    coding screen marks them "auto-filled from last month's coding -- please
+    review" (see invoice_intake=1 handling in new_request.html)."""
+    vendor = db.query_one("SELECT qbo_vendor_id FROM checkreq.vendors WHERE id = %s", (vendor_id,))
+    if not vendor or not vendor.get("qbo_vendor_id"):
+        return
+    result, err = qbo_mcp_client.get_vendor_last_bill((org.get("code") or "").lower(), vendor["qbo_vendor_id"])
+    if err or not result or not result.get("found") or not result.get("bill"):
+        return
+    bill = result["bill"]
+    lines = bill.get("lines") or []
+    prior_total = sum(abs(float(ln["amount"])) for ln in lines)
+    if not lines or prior_total <= 0:
+        return
+    replay_total = float(new_total) if new_total else prior_total
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            for ln in lines:
+                acct = db.query_one(
+                    "SELECT id FROM checkreq.gl_accounts WHERE org_id = %s AND account_number = %s",
+                    (org["id"], ln["acct_num"]),
+                )
+                if not acct:
+                    continue  # this GL account isn't mapped in Beacon -- skip rather than guess
+                fraction = abs(float(ln["amount"])) / prior_total
+                amount = round(replay_total * fraction, 2)
+                cur.execute(
+                    "INSERT INTO checkreq.payment_request_gl_lines "
+                    "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
+                    (payment_request_id, acct["id"], amount,
+                     f"Auto-filled from last month's coding ({bill['txn_date']}) -- please review."),
+                )
 
 
 @app.get("/my-requests", response_class=HTMLResponse)
@@ -3445,7 +3925,7 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
             """
             SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
                    pr.approval_chain_summary, pr.created_at, pr.requested_pay_date, o.code AS org_code,
-                   pa.title AS program_area_title, u.display_name AS submitter_name,
+                   COALESCE(pa.title, 'All Program Areas') AS program_area_title, u.display_name AS submitter_name,
                    u.email AS submitter_email,
                    v.display_name AS vendor_display_name,
                    vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
@@ -3453,7 +3933,7 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
                    vr.dba_name AS vr_dba_name
             FROM checkreq.payment_requests pr
             JOIN checkreq.organizations o ON o.id = pr.org_id
-            JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+            LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
             JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
             LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
             LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
@@ -3467,14 +3947,14 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
             """
             SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
                    pr.approval_chain_summary, pr.created_at, pr.requested_pay_date, o.code AS org_code,
-                   pa.title AS program_area_title,
+                   COALESCE(pa.title, 'All Program Areas') AS program_area_title,
                    v.display_name AS vendor_display_name,
                    vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
                    vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
                    vr.dba_name AS vr_dba_name
             FROM checkreq.payment_requests pr
             JOIN checkreq.organizations o ON o.id = pr.org_id
-            JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+            LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
             LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
             LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
             WHERE pr.submitter_user_id = %s AND pr.org_id = %s
@@ -3554,7 +4034,7 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
         history_rows = db.query(
             """
             SELECT pr.request_number, pr.request_type, pr.amount, o.code AS org_code,
-                   pa.title AS program_area_title,
+                   COALESCE(pa.title, 'All Program Areas') AS program_area_title,
                    v.display_name AS vendor_display_name,
                    vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
                    vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
@@ -3563,7 +4043,7 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
             FROM checkreq.approval_actions aa
             JOIN checkreq.payment_requests pr ON pr.id = aa.payment_request_id
             JOIN checkreq.organizations o ON o.id = pr.org_id
-            JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+            LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
             LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
             LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
             WHERE aa.approver_user_id = %s AND aa.status IN ('approved', 'rejected')
@@ -3598,7 +4078,7 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
             SELECT DISTINCT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount,
                    pr.status, pr.approval_chain_summary, pr.created_at, pr.requested_pay_date,
                    o.code AS org_code,
-                   pa.title AS program_area_title, u.display_name AS submitter_name,
+                   COALESCE(pa.title, 'All Program Areas') AS program_area_title, u.display_name AS submitter_name,
                    u.email AS submitter_email,
                    v.display_name AS vendor_display_name,
                    vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
@@ -3609,7 +4089,7 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
               ON aa.payment_request_id = pr.id AND aa.serial_group = pr.serial_group_current
              AND aa.status = 'pending'
             JOIN checkreq.organizations o ON o.id = pr.org_id
-            JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+            LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
             JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
             LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
             LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
@@ -3624,7 +4104,7 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
             SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
                    pr.approval_chain_summary, pr.created_at, pr.requested_pay_date,
                    o.code AS org_code,
-                   pa.title AS program_area_title,
+                   COALESCE(pa.title, 'All Program Areas') AS program_area_title,
                    v.display_name AS vendor_display_name,
                    vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
                    vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
@@ -3634,7 +4114,7 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
               ON aa.payment_request_id = pr.id AND aa.serial_group = pr.serial_group_current
              AND aa.approver_user_id = %s AND aa.status = 'pending'
             JOIN checkreq.organizations o ON o.id = pr.org_id
-            JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+            LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
             LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
             LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
             WHERE pr.status = 'UnderReview'
@@ -4035,7 +4515,7 @@ def admin_all_requests(request: Request, entity: str = "", vendor: str = "",
         f"""
         SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
                pr.created_at, pr.updated_at, o.code AS org_code,
-               pa.title AS program_area_title, u.display_name AS submitter_name,
+               COALESCE(pa.title, 'All Program Areas') AS program_area_title, u.display_name AS submitter_name,
                u.email AS submitter_email,
                v.display_name AS vendor_display_name,
                vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
@@ -4043,7 +4523,7 @@ def admin_all_requests(request: Request, entity: str = "", vendor: str = "",
                vr.dba_name AS vr_dba_name
         FROM checkreq.payment_requests pr
         JOIN checkreq.organizations o ON o.id = pr.org_id
-        JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+        LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
         JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
         LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
         LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
@@ -4344,14 +4824,14 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
             f"""
             SELECT pr.request_number, pr.request_type, pr.amount, pr.qbo_bill_id,
                    pr.qbo_bill_url, pr.updated_at, o.code AS org_code,
-                   pa.title AS program_area_title,
+                   COALESCE(pa.title, 'All Program Areas') AS program_area_title,
                    v.display_name AS vendor_display_name,
                    vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
                    vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
                    vr.dba_name AS vr_dba_name
             FROM checkreq.payment_requests pr
             JOIN checkreq.organizations o ON o.id = pr.org_id
-            JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+            LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
             LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
             LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
             {where_sql}
@@ -4386,7 +4866,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
                pr.approval_chain_summary, pr.created_at, pr.vendor_request_id,
                pr.overspend_flagged, pr.overspend_detail,
                o.code AS org_code, o.name AS org_name,
-               pa.title AS program_area_title, u.display_name AS submitter_name,
+               COALESCE(pa.title, 'All Program Areas') AS program_area_title, u.display_name AS submitter_name,
                u.email AS submitter_email,
                v.display_name AS vendor_display_name,
                vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
@@ -4395,7 +4875,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
                vr.requires_w9 AS vr_requires_w9, vr.w9_received AS vr_w9_received
         FROM checkreq.payment_requests pr
         JOIN checkreq.organizations o ON o.id = pr.org_id
-        JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+        LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
         JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
         LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
         LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
