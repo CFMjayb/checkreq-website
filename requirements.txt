@@ -12,3 +12,4 @@ google-auth-oauthlib
 playwright
 anthropic
 requests
+argon2-cffi

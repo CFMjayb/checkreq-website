@@ -7,39 +7,69 @@
     <div class="wordmark">Cornerstone Franciscan Ministries</div>
     <h1>Beacon</h1>
     {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
-    <!--
-      Email-first routing (Multi-Provider Authentication Plan.md, Section 3
-      / Section 6 decision 3): the user types their email, /auth/route looks
-      up the domain in checkreq.identity_provider_domains and redirects to
-      the correct provider's own sign-in page (Microsoft or Google) -- no
-      "pick your provider" button, matching Jay's explicit choice over the
-      plan's own recommended two-button design.
 
-      "Remember this browser" (2026-07-26): if a prior successful login left
-      beacon_last_email set, skip straight to a one-click "Continue as X"
-      state -- the actual sign-in is already invisible on a domain-joined
-      device (Azure AD's own seamless SSO), so this removes the one
-      remaining manual step. "Not you?" clears it for just this page load
-      (?switch=1) -- the cookie itself gets overwritten naturally the next
-      time someone actually completes a login, so there's nothing to
-      explicitly delete.
+    {% if mode == 'code_sent' %}
+    <!--
+      Emailed one-time code, step 2 of 2 (Multi-Provider Authentication Plan
+      Addendum 2026-08-06) -- shown after /auth/code/request. Always the same
+      copy regardless of whether the email was actually registered/sent to
+      (auth_code.py's anti-enumeration design) -- there is no way to tell from
+      this screen whether anything landed in an inbox.
+    -->
+    <p class="tagline">We emailed a 6-digit code to<br><strong>{{ email }}</strong>. Enter it below to sign in.</p>
+    <form method="post" action="/auth/code/verify" class="login-email-form">
+      <input type="hidden" name="email" value="{{ email }}">
+      <label for="code" class="sr-only">6-digit code</label>
+      <input type="text" id="code" name="code" required autofocus autocomplete="one-time-code"
+             inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000"
+             class="login-email-input login-code-input">
+      <button type="submit" class="btn btn-primary btn-block">Verify code</button>
+    </form>
+    <form method="post" action="/auth/code/request" class="login-resend-form">
+      <input type="hidden" name="email" value="{{ email }}">
+      <button type="submit" class="link-btn">Send a new code</button>
+    </form>
+    <a href="/login" class="switch-account-link">Use a different email</a>
+
+    {% else %}
+    <!--
+      Front-style single screen (Jay, 2026-08-07): every sign-in option
+      visible on one screen -- no domain-based redirect away from this page.
+      Password + "email me a code" cover the universal fallback (addendum
+      decision 1); Microsoft/Google remain plain buttons below, unchanged
+      from the multi-provider work. identity_provider_domains stays in place
+      server-side (still used for the OAuth login_hint prefill below) but no
+      longer gates which options a visitor even sees.
     -->
     {% if remembered_email %}
-    <p class="tagline">Continue as</p>
-    <form method="get" action="/auth/route" class="login-email-form">
-      <input type="hidden" name="email" value="{{ remembered_email }}">
-      <button type="submit" class="btn btn-primary btn-block continue-as-btn" autofocus>{{ remembered_email }}</button>
-    </form>
-    <a href="/login?switch=1" class="switch-account-link">Not you? Sign in with a different email</a>
+    <p class="tagline">Welcome back</p>
     {% else %}
-    <p class="tagline">Enter your work email address to sign in.</p>
-    <form method="get" action="/auth/route" class="login-email-form">
-      <label for="email" class="sr-only">Work email address</label>
+    <p class="tagline">Sign in to your account.</p>
+    {% endif %}
+
+    <!--
+      One shared form, two submit buttons routed via formaction -- both post
+      the same email (and password, ignored by the code-request endpoint)
+      with zero JS needed to keep them in sync.
+    -->
+    <form method="post" action="/auth/password/verify" class="login-email-form">
+      <label for="email" class="sr-only">Email address</label>
       <input type="email" id="email" name="email" required autofocus
-             placeholder="you@yourorganization.org" value="{{ email or '' }}"
+             placeholder="you@yourorganization.org" value="{{ email or remembered_email or '' }}"
              class="login-email-input">
-      <button type="submit" class="btn btn-primary btn-block">Continue</button>
+      <label for="password" class="sr-only">Password</label>
+      <input type="password" id="password" name="password"
+             placeholder="Password" class="login-email-input">
+      <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+      <button type="submit" formaction="/auth/code/request" class="link-btn">Email me a code instead</button>
     </form>
+
+    <div class="login-divider"><span>or continue with</span></div>
+    <a href="/auth/start" class="btn btn-secondary btn-block provider-btn">Sign in with Microsoft</a>
+    <a href="/auth/google/start" class="btn btn-secondary btn-block provider-btn">Sign in with Google</a>
+    {% if remembered_email %}
+    <a href="/login?switch=1" class="switch-account-link">Not you? Use a different email</a>
+    {% endif %}
     {% endif %}
   </div>
 </div>

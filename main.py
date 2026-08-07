@@ -45,20 +45,38 @@ BUILT 2026-07-26, later same day (Multi-Provider Authentication
 Plan.md, all Section 6 decisions answered directly by Jay, not re-asked):
 Azure AD widened to multi-tenant (auth_azure.py) + a second, independent
 Google OAuth/OIDC provider (auth_google.py) + a shared, INSERT-free
-_complete_login() gate (below) called by BOTH provider callback routes —
-this is the structural fix for the exact class of bug that created Jay's own
-blank jboggs@episcopalmaryland.org duplicate profile on 2026-07-17/18.
-Login-page routing is auto-detect-by-email-domain (checkreq.
-identity_provider_domains), not the plan's own recommended two-button
-design — Jay's explicit choice (plan Section 6, decision 3). Real external
-actions still needed before this actually works for a second tenant/domain
-(neither can be done from this codebase's own credentials — see auth_azure.py
-/ auth_google.py docstrings and CLAUDE.md's Current State entry for this
-build): the Azure Portal "Supported account types" -> Multitenant change, and
-creating a real Google OAuth 2.0 Client ID + checkreq-google-credentials
-secret in the Google Cloud Console. Until both land, cfmins.org/Microsoft
-login is unaffected (works exactly as before); a real second-tenant/Google
-login attempt will fail with a provider-side error, not a Beacon bug.
+_complete_login() gate called by every provider's callback route — this is
+the structural fix for the exact class of bug that created Jay's own blank
+jboggs@episcopalmaryland.org duplicate profile on 2026-07-17/18.
+
+EXTRACTED 2026-08-07 (Jay: "the login programming should be a separate
+program file, shouldn't it?" — main.py was already flagged in Parish Portal
+Plan.md Section 1 as "too big, do not feed it"): every /login, /auth/*, and
+/logout route, plus _complete_login() and its helpers, now live in
+auth_routes.py — this file only does `app.include_router(
+auth_routes.create_router(templates))`. Same session added the third and
+fourth identity flavors there (Multi-Provider Authentication Plan Addendum
+2026-08-06): an emailed one-time code (auth_code.py) and an opt-in
+Beacon-managed password (auth_password.py) — the universal fallback for
+anyone whose email domain isn't Microsoft or Google, e.g. parish volunteers
+on Outlook.com/iCloud/small-custom-domain addresses with no IT department.
+Login page is now a single Front-style screen (Jay's explicit reference)
+showing every option at once — password, email-code, Microsoft, Google — no
+domain-based redirect first; identity_provider_domains stays in the schema
+but no longer gates which buttons render. **Standing rule from this same
+session: no new functionality goes into this file without Jay's explicit
+consent — propose the module split first.**
+
+RECONCILED 2026-08-07 (same session): this extraction was originally built
+against a working-folder copy of main.py that had fallen ~5 days and several
+features behind the actual deployed `main` branch (Program Areas/Approval
+Rules admin, ART completeness, in-app notifications, conversational feedback
+intake, full-screen support, Invoice Intake Tier 3 — none of which had synced
+back into the OneDrive working folder). Re-applied the same auth extraction
+directly onto the real current main.py rather than overwriting it with the
+stale copy — confirmed via diff that the login/auth block itself was
+byte-identical between the stale base and the current file, so nothing about
+those other features was touched or at risk.
 """
 from __future__ import annotations
 
@@ -79,8 +97,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import db
 import rbac
 import approval_engine
-import auth_azure
-import auth_google
+import auth_routes
 import gcs_client
 import sharepoint_client
 import document_extract
@@ -197,11 +214,24 @@ templates.env.globals["asset_version"] = _asset_version
 if os.environ.get("ENABLE_DEV_AUTH_BYPASS") == "1":
     print("*** DEV AUTH BYPASS ENABLED — LOCAL ONLY — /dev/auth-as/{email} is live ***")
 
-# Must exactly match a redirect URI registered on the Azure AD app registration.
-REDIRECT_URI = os.environ.get("AZURE_REDIRECT_URI", "http://localhost:8123/auth/callback")
-# Must exactly match an authorized redirect URI on the Google OAuth 2.0
-# Client ID (not created yet as of 2026-07-26 -- see auth_google.py).
-GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8123/auth/google/callback")
+# Every /login, /auth/*, and /logout route lives in auth_routes.py (pulled
+# out of this file 2026-08-07 -- see that module's docstring). Thin wiring
+# only, per the standing rule against feeding new functionality into
+# main.py directly.
+app.include_router(auth_routes.create_router(templates))
+
+
+@app.get("/how-it-works", response_class=HTMLResponse)
+def how_it_works_page(request: Request):
+    """Rendered replacement for the old docx-only "About Beacon" footer link
+    (2026-08-02) -- rebuilt from Beacon - Overview.docx's own content so
+    staff get a page that actually renders in a browser, with the docx still
+    linked at the bottom for anyone who wants a printable copy. Public, no
+    login required -- matches the footer link's own placement outside the
+    `{% if user %}` header block in base.html, and login.html itself follows
+    the identical no-`user`-in-context render pattern just below."""
+    return templates.TemplateResponse(request, "how_it_works.html", {})
+
 
 # Portal module tiles. A plain list is enough for this scope (6 tiles) --
 # revisit as a real "modules" config table if this grows much past that.
@@ -384,255 +414,6 @@ def health():
     return {"status": "ok"}
 
 
-_NOT_REGISTERED_MESSAGE = (
-    "This email address isn't set up in Beacon yet. Contact your "
-    "administrator to be added, then try signing in again."
-)
-
-# "Remember this browser's email" (2026-07-26, Jay: wants an SSO-like feel --
-# the actual sign-in is already invisible on a domain-joined device thanks to
-# Azure AD's native seamless SSO, the only remaining manual step was typing
-# the email into Beacon's own page every time). A plain, non-httponly-relevant
-# cookie -- it is NOT a credential and NOT the access gate (app_users remains
-# the only real gate, via _complete_login below); it only pre-fills/skips the
-# email-entry step so returning users land on a "Continue as X" button
-# instead of a blank input. Sameite=lax to survive the OAuth-provider
-# redirect chain, matching the session cookie's own settings.
-_REMEMBER_COOKIE = "beacon_last_email"
-_REMEMBER_MAX_AGE = 60 * 60 * 24 * 365  # ~1 year
-
-
-def _remember_email(response: Response, email: str) -> None:
-    response.set_cookie(
-        _REMEMBER_COOKIE, email, max_age=_REMEMBER_MAX_AGE,
-        httponly=True, samesite="lax", secure=ON_CLOUD_RUN,
-    )
-
-
-def _domain_of(email: str) -> str:
-    email = (email or "").strip().lower()
-    return email.rsplit("@", 1)[-1] if "@" in email else ""
-
-
-def _provider_for_domain(domain: str) -> str | None:
-    """checkreq.identity_provider_domains lookup (Multi-Provider
-    Authentication Plan.md, Section 6 decision 3 -- auto-detect by email
-    domain, Jay's explicit choice over the plan's own recommended two-button
-    design). NOT an access allowlist -- this only steers which provider's
-    OAuth flow the login page routes to; app_users (via _complete_login,
-    below) remains the only real access gate either way."""
-    if not domain:
-        return None
-    row = db.query_one(
-        "SELECT provider FROM checkreq.identity_provider_domains "
-        "WHERE domain = %s AND is_active",
-        (domain,),
-    )
-    return row["provider"] if row else None
-
-
-def _log_login_attempt(email: str, provider: str, domain: str, reason: str) -> None:
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO checkreq.login_attempts (email, provider, domain, reason) "
-                "VALUES (%s, %s, %s, %s)",
-                (email, provider, domain, reason),
-            )
-
-
-def _complete_login(request: Request, email: str, display_name: str, provider: str, provider_subject_id: str) -> tuple[int | None, str | None]:
-    """The single, shared post-auth gate for every identity provider
-    (Multi-Provider Authentication Plan.md, Section 4) -- called by BOTH
-    /auth/callback (Microsoft) and /auth/google/callback. Looks up
-    checkreq.app_users by email ONLY -- never inserts a new row. A
-    successful sign-in against Microsoft or Google proves WHO someone is; it
-    does not by itself prove they're allowed to use Beacon -- that's a
-    separate, prior provisioning step owned by an administrator (same as
-    user_program_areas needing to be populated before someone can do
-    anything real).
-
-    This is the structural fix for the exact bug class that created Jay's
-    own blank jboggs@episcopalmaryland.org duplicate profile on
-    2026-07-17/18: the OLD /auth/callback did an unconditional
-    INSERT ... ON CONFLICT, meaning ANY successful sign-in from an email not
-    yet seen silently created a zero-permission row. This helper contains no
-    INSERT at all, full stop -- physically incapable of creating a row, for
-    either provider, now or for any future third provider added the same way.
-
-    Returns (user_id, None) on success (session already stamped with
-    user_id), or (None, reason) on rejection where reason is
-    'not_registered' or 'deactivated' -- both cases are logged to
-    checkreq.login_attempts before returning (Plan.md Section 6 decision 2)."""
-    email = email.strip().lower()
-    domain = _domain_of(email)
-    row = db.query_one("SELECT * FROM checkreq.app_users WHERE email = %s", (email,))
-
-    if not row:
-        _log_login_attempt(email, provider, domain, "not_registered")
-        return None, "not_registered"
-
-    if not row["is_active"]:
-        _log_login_attempt(email, provider, domain, "deactivated")
-        return None, "deactivated"
-
-    id_col = "azure_ad_object_id" if provider == "microsoft" else "google_subject_id"
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"UPDATE checkreq.app_users SET display_name = %s, "
-                f"{id_col} = %s, last_login_provider = %s, last_login_at = NOW() "
-                f"WHERE id = %s",
-                (display_name, provider_subject_id, provider, row["id"]),
-            )
-    request.session["user_id"] = row["id"]
-    return row["id"], None
-
-
-@app.get("/how-it-works", response_class=HTMLResponse)
-def how_it_works_page(request: Request):
-    """Rendered replacement for the old docx-only "About Beacon" footer link
-    (2026-08-02) -- rebuilt from Beacon - Overview.docx's own content so
-    staff get a page that actually renders in a browser, with the docx still
-    linked at the bottom for anyone who wants a printable copy. Public, no
-    login required -- matches the footer link's own placement outside the
-    `{% if user %}` header block in base.html, and login.html itself follows
-    the identical no-`user`-in-context render pattern just below."""
-    return templates.TemplateResponse(request, "how_it_works.html", {})
-
-
-@app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, error: str = "", email: str = "", switch: str = ""):
-    """Renders the styled sign-in card -- now email-first (Multi-Provider
-    Authentication Plan.md, Section 3): the card asks for an email address
-    and submits to /auth/route, which looks up the domain and redirects to
-    the correct provider. The actual per-provider OAuth redirects are
-    separate routes (/auth/start, /auth/google/start) -- this route must
-    render, not redirect, or the cathedral-themed login page is unreachable
-    in normal use.
-
-    "Remember this browser" (2026-07-26): if beacon_last_email is set and
-    the caller didn't explicitly ask to switch accounts (?switch=1), show a
-    one-click "Continue as X" state instead of a blank email input -- the
-    actual sign-in step is already invisible on a domain-joined device via
-    Azure AD's native seamless SSO; this removes the one remaining manual
-    step (typing the email) on repeat visits. Not the access gate --
-    app_users (via _complete_login) remains that regardless."""
-    if _current_user(request):
-        return RedirectResponse("/portal")
-    remembered_email = "" if switch else (request.cookies.get(_REMEMBER_COOKIE) or "")
-    return templates.TemplateResponse(request, "login.html", {
-        "error": error, "email": email, "remembered_email": remembered_email,
-    })
-
-
-@app.get("/auth/route", response_class=HTMLResponse)
-def auth_route(request: Request, email: str = ""):
-    """Email-first login routing (Plan.md Section 3 / Section 6 decision 3).
-    Looks up the typed email's domain in checkreq.identity_provider_domains
-    and redirects to the matching provider's start route. An unmapped domain
-    gets a clear, non-crashing error -- this table needs to be populated for
-    each new served org/domain, same pre-provisioning need as app_users /
-    user_program_areas (a real, documented operational gap, not a bug)."""
-    email = email.strip().lower()
-    domain = _domain_of(email)
-    provider = _provider_for_domain(domain)
-
-    if not provider:
-        return templates.TemplateResponse(request, "login.html", {
-            "error": f"We don't yet recognize \"{domain or email}\" as a supported sign-in domain. "
-                     f"Contact your administrator to have it added, then try again.",
-            "email": email,
-        })
-
-    if provider == "microsoft":
-        return RedirectResponse(f"/auth/start?email={quote(email)}")
-    return RedirectResponse(f"/auth/google/start?email={quote(email)}")
-
-
-@app.get("/auth/start")
-def auth_start(request: Request, email: str = ""):
-    state = pysecrets.token_urlsafe(24)
-    request.session["oauth_state"] = state
-    return RedirectResponse(auth_azure.get_auth_url(REDIRECT_URI, state, login_hint=email or None))
-
-
-@app.get("/auth/callback", response_class=HTMLResponse)
-def auth_callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = ""):
-    if error:
-        return templates.TemplateResponse(request, "login.html", {"error": f"{error}: {error_description}"})
-
-    expected_state = request.session.pop("oauth_state", None)
-    if not state or state != expected_state:
-        return templates.TemplateResponse(request, "login.html", {"error": "Login state mismatch — please try signing in again."})
-
-    try:
-        result = auth_azure.acquire_token(code, REDIRECT_URI)
-    except ValueError as exc:
-        return templates.TemplateResponse(request, "login.html", {"error": str(exc)})
-
-    claims = result.get("id_token_claims", {})
-    email = (claims.get("preferred_username") or claims.get("email") or "").strip().lower()
-    display_name = claims.get("name", "")
-    oid = claims.get("oid", "")
-
-    if not email:
-        return templates.TemplateResponse(request, "login.html", {"error": "Microsoft did not return an email/UPN claim — cannot identify user."})
-
-    user_id, reject_reason = _complete_login(request, email, display_name, "microsoft", oid)
-    if reject_reason == "not_registered":
-        return templates.TemplateResponse(request, "login.html", {"error": _NOT_REGISTERED_MESSAGE})
-    if reject_reason == "deactivated":
-        return templates.TemplateResponse(request, "login.html", {"error": f"{email} is deactivated in checkreq.app_users — contact an admin."})
-
-    resp = RedirectResponse("/portal", status_code=303)
-    _remember_email(resp, email)
-    return resp
-
-
-@app.get("/auth/google/start")
-def auth_google_start(request: Request, email: str = ""):
-    state = pysecrets.token_urlsafe(24)
-    request.session["oauth_state"] = state
-    return RedirectResponse(auth_google.get_auth_url(GOOGLE_REDIRECT_URI, state, login_hint=email or None))
-
-
-@app.get("/auth/google/callback", response_class=HTMLResponse)
-def auth_google_callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = ""):
-    if error:
-        return templates.TemplateResponse(request, "login.html", {"error": f"{error}: {error_description}"})
-
-    expected_state = request.session.pop("oauth_state", None)
-    if not state or state != expected_state:
-        return templates.TemplateResponse(request, "login.html", {"error": "Login state mismatch — please try signing in again."})
-
-    try:
-        claims = auth_google.acquire_token(code, GOOGLE_REDIRECT_URI, state)
-    except ValueError as exc:
-        return templates.TemplateResponse(request, "login.html", {"error": str(exc)})
-
-    email = claims.get("email", "")
-    display_name = claims.get("name", "")
-    sub = claims.get("sub", "")
-
-    if not email:
-        return templates.TemplateResponse(request, "login.html", {"error": "Google did not return an email claim — cannot identify user."})
-
-    user_id, reject_reason = _complete_login(request, email, display_name, "google", sub)
-    if reject_reason == "not_registered":
-        return templates.TemplateResponse(request, "login.html", {"error": _NOT_REGISTERED_MESSAGE})
-    if reject_reason == "deactivated":
-        return templates.TemplateResponse(request, "login.html", {"error": f"{email} is deactivated in checkreq.app_users — contact an admin."})
-
-    resp = RedirectResponse("/portal", status_code=303)
-    _remember_email(resp, email)
-    return resp
-
-
-@app.get("/logout")
-def logout(request: Request):
-    request.session.clear()
-    return RedirectResponse("/login", status_code=303)
 
 
 @app.get("/", response_class=HTMLResponse)
