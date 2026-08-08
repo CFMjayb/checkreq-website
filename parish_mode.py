@@ -37,6 +37,22 @@ main.py's _render() passes to every template, purely so a persistent banner
 can show while it's active (mirroring base.html's existing impersonation
 bar) — deliberately the smallest possible footprint, since a parish has no
 single "identity" to become the way a user does.
+
+CORRECTION, same day, first real test login (Jay): the first cut above only
+covered the CFO-preview half. A user whose ONLY roles are parish-scoped
+(portal.parish_user_roles, zero checkreq.roles at all -- e.g.
+parishadmin@stswithens.org) was landing on the normal diocesan /portal,
+entity picker and all, which is exactly backwards -- "the parish access is
+to allow them access to the portal for a Parish... a parish mode should not
+have an entity picker, they are in their entity." effective_parish_mode()
+below is now the ONE function both main.py's /portal route and _render()
+call: it returns a CFO's explicit preview if one is active, OR -- new --
+the parish a NATIVE parish-only user belongs to (their whole session, no
+toggle needed, since they have no "Diocese Mode" to switch to at all). Also
+new, same correction: the dark-red `body.parish-mode` theme (base.css) now
+applies everywhere a parish is being viewed, not just on /parish-view --
+Jay: "it might be good to change the color palette when you are in parish
+mode... so it is clear if you are in the Parish mode or the Diocesan Mode."
 """
 from __future__ import annotations
 
@@ -46,6 +62,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 import db
 import rbac
 import registry
+import parish_roles
 
 router = APIRouter()
 
@@ -57,6 +74,10 @@ def register(app, *, current_user, render) -> None:
     global _current_user, _render
     _current_user, _render = current_user, render
     app.include_router(router)
+
+
+def _is_beacon_admin(user_id: int) -> bool:
+    return rbac.user_has_role(user_id, "beacon_admin", org_id=None)
 
 
 def _require_real_cfo(request: Request):
@@ -111,6 +132,57 @@ def current_parish_view(request: Request) -> dict | None:
     return parish
 
 
+def _parish_row(parish_id: int) -> dict | None:
+    return db.query_one(
+        "SELECT p.*, o.code AS org_code, o.name AS org_name "
+        "FROM portal.parishes p JOIN checkreq.organizations o ON o.id = p.org_id "
+        "WHERE p.id = %s",
+        (parish_id,),
+    )
+
+
+def _native_parish_ids(user_id: int) -> list[int]:
+    """Every distinct parish this user holds ANY parish role at."""
+    rows = db.query(
+        "SELECT DISTINCT parish_id FROM portal.parish_user_roles "
+        "WHERE user_id = %s AND revoked_at IS NULL",
+        (user_id,),
+    )
+    return [r["parish_id"] for r in rows]
+
+
+def effective_parish_mode(request: Request, user: dict | None) -> tuple[dict | None, bool]:
+    """THE single function main.py's _render() and /portal both call.
+    Returns (parish_row_or_None, is_preview). is_preview distinguishes a
+    CFO's explicit /admin/parish-mode toggle (shows the Exit banner) from a
+    native parish-only user's default, whole-session state (no banner --
+    there is no Diocese Mode for them to exit to). A native user holding
+    roles at more than one parish and with no explicit choice yet returns
+    (None, False) -- the /parish-view route below renders a picker for that
+    case rather than guessing which one they meant."""
+    preview = current_parish_view(request)
+    if preview:
+        return preview, True
+
+    if not user or rbac.user_has_any_role(user["id"]):
+        # Holds at least one checkreq.roles grant somewhere -- diocesan/
+        # entity staff, even if they ALSO happen to hold a parish role.
+        # Their default context stays Diocese Mode; they were never asked
+        # to give that up just because they also help out at one parish.
+        return None, False
+
+    ids = _native_parish_ids(user["id"])
+    if not ids:
+        return None, False
+    if len(ids) == 1:
+        return _parish_row(ids[0]), False
+
+    chosen = request.session.get("native_parish_id")
+    if chosen and chosen in ids:
+        return _parish_row(chosen), False
+    return None, False
+
+
 @router.get("/admin/parish-mode", response_class=HTMLResponse)
 def parish_mode_picker(request: Request):
     real_id, err = _require_real_cfo(request)
@@ -156,7 +228,48 @@ def parish_view_page(request: Request):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
-    parish = current_parish_view(request)
+
+    parish, is_preview = effective_parish_mode(request, user)
     if not parish:
-        return RedirectResponse("/admin/parish-mode")
-    return _render(request, "parish_view.html", user, {"parish": parish})
+        # Either a CFO with nothing active (send them to the picker) or a
+        # native multi-parish user with no choice made yet (render THEIR
+        # own small picker instead -- never the full cross-diocese list a
+        # CFO gets from /admin/parish-mode).
+        own_ids = [] if is_preview else (_native_parish_ids(user["id"]) if not rbac.user_has_any_role(user["id"]) else [])
+        if own_ids:
+            return _render(request, "parish_choose.html", user, {
+                "parishes": [_parish_row(pid) for pid in own_ids],
+            })
+        return RedirectResponse("/admin/parish-mode" if _is_beacon_admin(user["id"]) else "/portal")
+
+    can_review = _is_beacon_admin(user["id"]) or parish_roles.user_has_parish_role(user["id"], "parish_admin", parish["id"])
+    has_other_native_parishes = (not is_preview) and (not rbac.user_has_any_role(user["id"])) \
+        and len(_native_parish_ids(user["id"])) > 1
+    return _render(request, "parish_view.html", user, {
+        "parish": parish, "is_preview": is_preview, "can_review": can_review,
+        "can_switch": is_preview or has_other_native_parishes,
+        "switch_url": "/admin/parish-mode" if is_preview else "/parish-view/switch",
+    })
+
+
+@router.get("/parish-view/switch")
+def parish_view_switch(request: Request):
+    """The rare multi-parish native user's "view a different one of my own
+    parishes" link -- just clears the remembered choice so /parish-view
+    re-renders the (own-parishes-only) picker."""
+    request.session.pop("native_parish_id", None)
+    return RedirectResponse("/parish-view", status_code=303)
+
+
+@router.post("/parish-view/choose/{parish_id}")
+def parish_view_choose(parish_id: int, request: Request):
+    """The rare multi-parish-native-user case: pick which of THEIR OWN
+    parishes to view. Validated against their real grants, never trusted
+    from the posted id alone."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    own_ids = _native_parish_ids(user["id"])
+    if parish_id in own_ids:
+        request.session["native_parish_id"] = parish_id
+    return RedirectResponse("/parish-view", status_code=303)
