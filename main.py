@@ -100,6 +100,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import db
 import rbac
 import parish_roles
+import parish_mode
 import approval_engine
 import auth_routes
 import gcs_client
@@ -427,6 +428,10 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
         # unread count for the header bell -- no push/websocket, just
         # recomputed on every render, per the plan's own design.
         "unread_notification_count": notifications.get_unread_count(user["id"]),
+        # Parish Mode (S4, 2026-08-08) -- fail-closed live re-check lives in
+        # parish_mode.py itself; this is just the thin wiring every template
+        # needs to show the persistent banner (mirrors `impersonating` above).
+        "parish_view": parish_mode.current_parish_view(request),
     }
     if extra:
         ctx.update(extra)
@@ -5321,6 +5326,9 @@ admin_hub.register(app, current_user=_current_user, render=_render)
 parish_access.register(app, current_user=_current_user, render=_render)
 # account.py (2026-08-08) -- closes the "set_password() has no UI caller" gap.
 account.register(app, current_user=_current_user, render=_render)
+# Parish Portal S4, "Diocese Mode / Parish Mode" (2026-08-08) -- same
+# register() pattern, thin wiring only.
+parish_mode.register(app, current_user=_current_user, render=_render)
 
 # In-App Notifications (2026-08-02, In-App Notifications Plan.md).
 # create_notification()/get_unread_count() are already in use above (this

@@ -17,6 +17,17 @@
     <form method="post" action="/admin/impersonate/stop"><button type="submit">Exit Impersonation</button></form>
   </div>
   {% endif %}
+  {# Parish Mode (S4, 2026-08-08) -- mirrors the impersonation bar above
+     exactly, but does NOT change who `user` is anywhere else in the app
+     (unlike impersonation) -- it only unlocks /parish-view and shows this
+     banner so a CFO previewing a parish doesn't lose track of it while
+     browsing the rest of Beacon normally. #}
+  {% if parish_view %}
+  <div class="impersonation-bar">
+    Parish Mode: viewing <strong>{{ parish_view.name }}</strong> ({{ parish_view.org_code }})
+    <form method="post" action="/admin/parish-mode/stop"><button type="submit">Exit Parish Mode</button></form>
+  </div>
+  {% endif %}
   {# Full-screen toggle (2026-08-02): rendered unconditionally, on every
      page including /login -- not gated on `user` like the header is,
      since Jay asked for it on "all screens". Fixed-positioned just under

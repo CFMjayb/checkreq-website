@@ -59,6 +59,11 @@ _CARDS = [
     # matching base.html's own prior rule for this exact link.
     {"title": "Impersonate a User", "desc": "Act as another user for testing or support.",
      "url": "/admin/impersonate", "role": "real_cfo"},
+    # Parish Mode (S4, 2026-08-08) -- gated identically to Impersonate a
+    # User (real_cfo sentinel), same reasoning: hidden while already
+    # impersonating, since only the real underlying CFO may reach it.
+    {"title": "Parish Mode", "desc": "See a specific parish's (currently minimal) portal view.",
+     "url": "/admin/parish-mode", "role": "real_cfo"},
 ]
 
 

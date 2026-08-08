@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ parish.name }} — Parish View — Beacon{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>{{ parish.name }}</h1>
+<p class="back-link"><a href="/admin/parish-mode">&larr; Choose a different parish</a></p>
+
+<div class="card">
+  <p><strong>Diocese:</strong> {{ parish.org_name }} ({{ parish.org_code }})</p>
+  <p><strong>City:</strong> {{ parish.city or "—" }}</p>
+  <p><strong>Served Tier:</strong> {{ parish.served_tier or "—" }}</p>
+  <p><strong>Status:</strong> {{ parish.status }}</p>
+</div>
+
+<div class="card">
+  <p class="sub">This is a placeholder — the real parish-facing portal (congregational directory, clergy info, and whatever else a parish sees when they sign in) is a separate, not-yet-scoped build. This page exists so Parish Mode has somewhere real to land.</p>
+  <p class="sub"><em>Coming soon: congregation and clergy directory (pending TheDataBank vendor's ClergyDirectory endpoint).</em></p>
+</div>
+</div>
+{% endblock %}
