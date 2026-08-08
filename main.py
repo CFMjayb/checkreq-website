@@ -99,6 +99,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import db
 import rbac
+import parish_roles
 import approval_engine
 import auth_routes
 import gcs_client
@@ -266,6 +267,18 @@ MODULES = [
     # worth its own permission gate.
     {"key": "approval_queue", "title": "Approval Queue", "desc": "Review requests awaiting your approval.", "url": "/my-approvals", "enabled": True, "gate": None},
     {"key": "ap_review", "title": "AP Review", "desc": "Final review and QBO posting for fully-approved requests.", "url": "/admin/ap-review", "enabled": True, "gate": "ap_reviewer"},
+    # Parish Portal S3 (2026-08-08): visible to EVERY signed-in user, same
+    # "empty queue is a harmless empty state" reasoning as approval_queue --
+    # a parish volunteer with zero checkreq.roles grants at all still needs
+    # to be able to reach this.
+    {"key": "request_parish_access", "title": "Request Parish Access", "desc": "Ask for access to a specific parish's information.", "url": "/parish-access-request", "enabled": True, "gate": None},
+    # Gated on the synthetic "parish_reviewer" pseudo-role (see _render()
+    # below) rather than a real checkreq.roles key -- deliberately NOT part
+    # of the Administrative Tasks hub, since that hub's own top-level gate
+    # (ADMIN_TASK_ROLE_KEYS) would block a pure Parish Admin who holds no
+    # entity-level role at all (Jay, 2026-08-08: "The Parish Admin will have
+    # to grant access to someone who requests it").
+    {"key": "parish_access_requests", "title": "Parish Access Requests", "desc": "Review and grant pending requests for access to a specific parish.", "url": "/admin/parish-access-requests", "enabled": True, "gate": "parish_reviewer"},
 ]
 
 # The union of roles that unlock the "Administrative Tasks" tile/hub (2026-08-02
@@ -392,6 +405,14 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # a one-off template special-case.
     if any_org_roles & ADMIN_TASK_ROLE_KEYS:
         any_org_roles = any_org_roles | {"administrative_tasks"}
+    # Parish Portal S3 (2026-08-08): same synthetic-pseudo-role trick as
+    # administrative_tasks above, so the Parish Access Requests tile uses
+    # the identical generic `m.gate in any_org_roles` check -- a beacon_admin
+    # (already in any_org_roles) OR anyone holding parish_admin for at least
+    # one parish (a separate grant system, portal.parish_user_roles, so it
+    # can't already be in any_org_roles) both count as a reviewer.
+    if "beacon_admin" in any_org_roles or parish_roles.get_parish_ids_with_role(user["id"], "parish_admin"):
+        any_org_roles = any_org_roles | {"parish_reviewer"}
     ctx = {
         "user": user,
         "real_user": real,
@@ -435,10 +456,16 @@ def portal(request: Request):
     # RBAC (2026-08-01, Plan §9): a user who authenticated successfully but
     # holds no live role anywhere, and has no user_program_areas assignment
     # either, does not get an (empty) portal -- they get the blank
-    # Request Access screen instead.
-    if not rbac.user_has_any_role(user["id"]) and not db.query_one(
-        "SELECT 1 FROM checkreq.user_program_areas WHERE user_id = %s", (user["id"],)
-    ):
+    # Request Access screen instead. Extended 2026-08-08 (Parish Portal S3):
+    # a pure Parish Admin/parish_member/etc -- someone with a real
+    # portal.parish_user_roles grant but ZERO checkreq.roles grants, e.g. a
+    # parish volunteer with no diocesan footprint at all -- is NOT roleless;
+    # they get the real portal (My Requests/Approval Queue will be
+    # empty-but-harmless for them, same as any other low-permission user,
+    # but Request/Review Parish Access must be reachable).
+    if (not rbac.user_has_any_role(user["id"])
+            and not db.query_one("SELECT 1 FROM checkreq.user_program_areas WHERE user_id = %s", (user["id"],))
+            and not parish_roles.get_parish_role_keys(user["id"])):
         return RedirectResponse("/access-request")
 
     return _render(request, "portal.html", user, {"modules": MODULES})

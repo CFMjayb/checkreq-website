@@ -4,12 +4,17 @@
 <div class="page-shell-wide">
 
 <h1>Parish Access Requests</h1>
-<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
-<p class="sub">Pending self-service requests for access to a specific parish's portal.</p>
+<p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
+{% if is_beacon_admin_reviewer %}
+<p class="sub">Pending self-service requests for access to a specific parish's portal — every diocese, since you hold Beacon Admin.</p>
+{% else %}
+<p class="sub">Pending self-service requests for access to a specific parish's portal — only the parish(es) you administer as Parish Admin.</p>
+{% endif %}
 
 {% if request.query_params.get('approved') %}<div class="banner banner-success">Access granted.</div>{% endif %}
 {% if request.query_params.get('rejected') %}<div class="banner banner-info">Request rejected.</div>{% endif %}
 
+{% if is_beacon_admin_reviewer %}
 <form method="get" action="/admin/parish-access-requests" class="filter-bar">
   <div class="field">
     <label>Diocese</label>
@@ -21,6 +26,7 @@
     </select>
   </div>
 </form>
+{% endif %}
 
 <div class="card">
   <table class="simple-table">

@@ -109,6 +109,24 @@ def get_users_with_parish_role(role_key: str, parish_id: int | None = None) -> l
     )
 
 
+def get_parish_ids_with_role(user_id: int, role_key: str) -> list[int]:
+    """Every parish_id this user holds role_key for, live -- the scoping
+    query behind a Parish Admin's own (not diocese-wide) access-request
+    queue (parish_access.py's _require_parish_reviewer). Not the same as
+    get_parish_role_keys(), which returns role KEYS for one parish (or all)
+    -- this returns PARISH IDS for one role, across every parish."""
+    rows = db.query(
+        """
+        SELECT DISTINCT pur.parish_id
+          FROM portal.parish_user_roles pur
+          JOIN portal.parish_roles pr ON pr.key = pur.role_key AND pr.is_active
+         WHERE pur.user_id = %s AND pur.role_key = %s AND pur.revoked_at IS NULL
+        """,
+        (user_id, role_key),
+    )
+    return [r["parish_id"] for r in rows]
+
+
 def all_parish_roles(include_inactive: bool = False) -> list[dict]:
     sql = "SELECT key, label, description, sort_order, is_active FROM portal.parish_roles"
     if not include_inactive:
@@ -185,8 +203,12 @@ def get_pending_parish_access_request(user_id: int) -> dict | None:
     )
 
 
-def list_pending_parish_access_requests() -> list[dict]:
-    """Reviewed by beacon_admin (diocese-wide) -- see module docstring."""
+def list_pending_parish_access_requests(parish_ids: list[int] | None = None) -> list[dict]:
+    """Reviewed by beacon_admin (diocese-wide, parish_ids=None -- see module
+    docstring) OR, as of 2026-08-08 (Jay: "The Parish Admin will have to
+    grant access to someone who requests it"), a Parish Admin reviewing only
+    the parish(es) they themselves administer (parish_ids given, from
+    get_parish_ids_with_role)."""
     return db.query(
         """
         SELECT par.id, par.user_id, u.email, u.display_name,
@@ -199,8 +221,22 @@ def list_pending_parish_access_requests() -> list[dict]:
           JOIN checkreq.organizations o ON o.id = p.org_id
           JOIN portal.parish_roles pr ON pr.key = par.requested_role_key
          WHERE par.status = 'Pending'
+           AND (%s::int[] IS NULL OR par.parish_id = ANY(%s))
          ORDER BY par.requested_at
-        """
+        """,
+        (parish_ids, parish_ids),
+    )
+
+
+def get_parish_access_request(request_id: int) -> dict | None:
+    """One request row by id, parish_id included -- the lookup
+    parish_access.py's approve/reject routes need BEFORE authorizing a
+    non-beacon_admin Parish Admin reviewer (must confirm the request's own
+    parish_id matches one they actually administer, not just that they
+    administer some parish somewhere)."""
+    return db.query_one(
+        "SELECT id, user_id, parish_id, requested_role_key, status FROM portal.parish_access_requests WHERE id = %s",
+        (request_id,),
     )
 
 
