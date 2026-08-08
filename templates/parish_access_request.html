@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Request Parish Access — Beacon{% endblock %}
+{% block content %}
+<div class="page-shell">
+
+<h1>Request Parish Access</h1>
+
+{% if pending %}
+<div class="banner banner-info">
+  <strong>Your request is pending review.</strong> You asked for
+  <strong>{{ pending.role_label }}</strong> access at <strong>{{ pending.parish_name }}</strong>
+  on {{ pending.requested_at }}. A Beacon Admin needs to approve it before you can access
+  that parish's portal — check back later, or reach out to your administrator directly if it's urgent.
+</div>
+{% else %}
+<p class="sub">
+  Tell us which parish you're with and what you need, and a Beacon Admin will review it.
+</p>
+
+{% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <form method="post" action="/parish-access-request">
+    <label for="parish_id">Parish</label>
+    <select id="parish_id" name="parish_id" required>
+      <option value="">Select a parish...</option>
+      {% for p in parishes %}
+      <option value="{{ p.id }}">{{ p.name }}{% if p.city %} ({{ p.city }}){% endif %}</option>
+      {% endfor %}
+    </select>
+
+    <label for="role_key">Access you're requesting</label>
+    <select id="role_key" name="role_key" required>
+      <option value="">Select a role...</option>
+      {% for r in roles %}
+      <option value="{{ r.key }}">{{ r.label }}{% if r.description %} — {{ r.description }}{% endif %}</option>
+      {% endfor %}
+    </select>
+
+    <label for="note">Note (optional)</label>
+    <textarea id="note" name="note" rows="3" placeholder="Anything that would help a Beacon Admin review this — e.g. your role at the parish, who to check with."></textarea>
+
+    <button type="submit" class="btn btn-primary">Submit Request</button>
+  </form>
+</div>
+{% endif %}
+
+</div>
+{% endblock %}

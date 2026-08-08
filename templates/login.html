@@ -31,15 +31,48 @@
     </form>
     <a href="/login" class="switch-account-link">Use a different email</a>
 
+    {% elif mode == 'unmapped' %}
+    <!--
+      Domain-detection fallback (Jay, 2026-08-08): reached only as the
+      response to POST /auth/route when the typed email's domain isn't a
+      known Microsoft/Google domain. A password field appears ONLY if
+      domain_has_password is true (auth_password.has_password() checked
+      server-side before this ever renders) -- otherwise the emailed code
+      is the only first-class option. Microsoft/Google stay available below
+      regardless, per Jay's own "or they can try the Microsoft/Google
+      button" -- the domain table is a routing hint, not a wall.
+    -->
+    <p class="tagline">Signing in as<br><strong>{{ email }}</strong></p>
+
+    {% if domain_has_password %}
+    <form method="post" action="/auth/password/verify" class="login-email-form">
+      <input type="hidden" name="email" value="{{ email }}">
+      <label for="password" class="sr-only">Password</label>
+      <input type="password" id="password" name="password" autofocus
+             placeholder="Password" class="login-email-input">
+      <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+      <button type="submit" formaction="/auth/code/request" class="link-btn">Email me a code instead</button>
+    </form>
+    {% else %}
+    <p class="sub">We don't have a password on file for this address.</p>
+    <form method="post" action="/auth/code/request" class="login-email-form">
+      <input type="hidden" name="email" value="{{ email }}">
+      <button type="submit" class="btn btn-primary btn-block">Email me a code</button>
+    </form>
+    {% endif %}
+
+    <div class="login-divider"><span>or continue with</span></div>
+    <a href="/auth/start?email={{ email|urlencode }}" class="btn btn-secondary btn-block provider-btn">Sign in with Microsoft</a>
+    <a href="/auth/google/start?email={{ email|urlencode }}" class="btn btn-secondary btn-block provider-btn">Sign in with Google</a>
+    <a href="/login" class="switch-account-link">Use a different email</a>
+
     {% else %}
     <!--
-      Front-style single screen (Jay, 2026-08-07): every sign-in option
-      visible on one screen -- no domain-based redirect away from this page.
-      Password + "email me a code" cover the universal fallback (addendum
-      decision 1); Microsoft/Google remain plain buttons below, unchanged
-      from the multi-provider work. identity_provider_domains stays in place
-      server-side (still used for the OAuth login_hint prefill below) but no
-      longer gates which options a visitor even sees.
+      Default screen (Jay, 2026-08-08): email only, no password field yet.
+      Submitting posts to /auth/route, which looks up the domain and either
+      redirects straight into Microsoft/Google OAuth (a known domain) or
+      re-renders this page in mode='unmapped' (see above). Microsoft/Google
+      buttons stay visible here too as an always-available manual fallback.
     -->
     {% if remembered_email %}
     <p class="tagline">Welcome back</p>
@@ -47,21 +80,12 @@
     <p class="tagline">Sign in to your account.</p>
     {% endif %}
 
-    <!--
-      One shared form, two submit buttons routed via formaction -- both post
-      the same email (and password, ignored by the code-request endpoint)
-      with zero JS needed to keep them in sync.
-    -->
-    <form method="post" action="/auth/password/verify" class="login-email-form">
+    <form method="post" action="/auth/route" class="login-email-form">
       <label for="email" class="sr-only">Email address</label>
       <input type="email" id="email" name="email" required autofocus
              placeholder="you@yourorganization.org" value="{{ email or remembered_email or '' }}"
              class="login-email-input">
-      <label for="password" class="sr-only">Password</label>
-      <input type="password" id="password" name="password"
-             placeholder="Password" class="login-email-input">
-      <button type="submit" class="btn btn-primary btn-block">Sign in</button>
-      <button type="submit" formaction="/auth/code/request" class="link-btn">Email me a code instead</button>
+      <button type="submit" class="btn btn-primary btn-block">Continue</button>
     </form>
 
     <div class="login-divider"><span>or continue with</span></div>

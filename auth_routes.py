@@ -23,13 +23,24 @@ app_users row (see its own docstring; this is the fix for the real
 2026-07-17/18 duplicate-profile incident). A new identity provider added here
 in the future must call it too, not invent its own gate.
 
-Front-style single screen (Jay, 2026-08-07): every option -- password, email
-code, Microsoft, Google -- is visible on one /login render, no domain-based
-redirect first. checkreq.identity_provider_domains and _provider_for_domain()
-still exist and still matter (the OAuth login_hint prefill below reads
-nothing from it directly, but the table remains the seed data source for any
-future "highlight the org's usual provider" enhancement) -- they just no
-longer gate which buttons a visitor sees.
+Domain-detection routing, restored (Jay, 2026-08-08, correcting the
+2026-08-07 Front-style single-screen design): /login shows an email-only
+field first, no password. Submitting it (POST /auth/route) looks up the
+domain in checkreq.identity_provider_domains -- a known Microsoft/Google
+domain redirects straight into that provider's OAuth flow; an unmapped
+domain instead renders a second screen offering a password field (only if
+auth_password.has_password(email) is true for that address) and/or the
+emailed one-time code, with the Microsoft/Google buttons still present as a
+manual fallback regardless of what the domain lookup said. This is the
+literal behavior Jay asked for: "if a domain is already registered as a
+Microsoft or Google account, use that... The login screen should say 'Enter
+your email address' and not password (yet)... If not, then the password box
+should appear if the user is known. Or, they can try and log in with the
+Microsoft button or Google button." identity_provider_domains now seeds
+cfmins.org/episcopalmaryland.org/gmail.com plus the common consumer domains
+(outlook.com/hotmail.com/live.com/msn.com/microsoft.com -- 025_common_
+personal_domains.sql, same Jay request, same session) -- it is NOT an access
+allowlist, app_users (via _complete_login, below) remains the only real gate.
 """
 from __future__ import annotations
 
@@ -80,11 +91,11 @@ def _domain_of(email: str) -> str:
 
 
 def _provider_for_domain(domain: str) -> str | None:
-    """checkreq.identity_provider_domains lookup. NOT an access allowlist --
-    app_users (via _complete_login, below) remains the only real access
-    gate. Not currently used to route the /login render (Front-style single
-    screen shows every option regardless) -- kept as the seed data for a
-    possible future "highlight this org's usual provider" hint."""
+    """checkreq.identity_provider_domains lookup, used by /auth/route (below)
+    to pick which OAuth flow an email's domain routes into. NOT an access
+    allowlist -- app_users (via _complete_login, below) remains the only
+    real access gate; an unmapped domain just falls through to the
+    password/code fallback, it is never itself a rejection."""
     if not domain:
         return None
     row = db.query_one(
@@ -173,15 +184,44 @@ def create_router(templates) -> APIRouter:
 
     @router.get("/login", response_class=HTMLResponse)
     def login_page(request: Request, error: str = "", email: str = "", switch: str = "", mode: str = ""):
-        """Front-style single screen (Jay, 2026-08-07): email + password +
-        "email me a code" + Microsoft/Google buttons all visible at once, no
-        domain lookup before rendering. mode='code_sent' instead renders step
-        2 of the emailed-code flow (see /auth/code/request below)."""
+        """Always renders the email-only entry screen on a direct GET --
+        the 'unmapped' (password/code) and 'code_sent' screens are only ever
+        reached as the response to a POST (see /auth/route, below), not
+        navigated to directly, so domain_has_password is never something a
+        GET query param can spoof."""
         if request.session.get("user_id"):
             return RedirectResponse("/portal")
         remembered_email = "" if switch else (request.cookies.get(_REMEMBER_COOKIE) or "")
         return templates.TemplateResponse(request, "login.html", {
             "error": error, "email": email, "remembered_email": remembered_email, "mode": mode,
+        })
+
+    @router.post("/auth/route", response_class=HTMLResponse)
+    async def auth_route(request: Request):
+        """The domain-detection gate every /login submission goes through
+        first. A known Microsoft/Google domain (identity_provider_domains)
+        redirects straight into that provider's OAuth flow with the typed
+        email as login_hint. An unmapped domain renders the 'unmapped'
+        screen instead -- a password field IF auth_password.has_password()
+        is true for that address, else a plain "email me a code" prompt --
+        with the Microsoft/Google buttons still offered below as a manual
+        fallback either way, since the domain table is a routing hint, not
+        an allowlist, and a personal Gmail/Outlook alias on a custom-looking
+        address should never be dead-ended just because it wasn't seeded."""
+        form = await request.form()
+        email = str(form.get("email", "")).strip().lower()
+        if not email or "@" not in email:
+            return templates.TemplateResponse(request, "login.html", {"error": "Enter a valid email address."})
+
+        domain = _domain_of(email)
+        provider = _provider_for_domain(domain)
+        if provider == "microsoft":
+            return RedirectResponse(f"/auth/start?email={quote(email)}", status_code=303)
+        if provider == "google":
+            return RedirectResponse(f"/auth/google/start?email={quote(email)}", status_code=303)
+
+        return templates.TemplateResponse(request, "login.html", {
+            "mode": "unmapped", "email": email, "domain_has_password": auth_password.has_password(email),
         })
 
     @router.get("/auth/start")
@@ -265,15 +305,25 @@ def create_router(templates) -> APIRouter:
         generic error either way (wrong email, no password set, wrong
         password, locked out) -- auth_password.verify_password() already
         collapses all of those to a single False, matching this app's
-        existing anti-enumeration posture."""
+        existing anti-enumeration posture. Only ever reached from the
+        'unmapped' screen (domain_has_password must have been true to show
+        this form at all) -- a failed attempt re-renders that same screen,
+        not the bare email-only default, so the visitor isn't dropped back
+        to square one after a typo."""
         form = await request.form()
         email = str(form.get("email", "")).strip().lower()
         password = str(form.get("password", ""))
-        if not password:
-            return templates.TemplateResponse(request, "login.html", {"error": _INCORRECT_CREDENTIALS_MESSAGE, "email": email})
 
+        def _reject_password() -> HTMLResponse:
+            return templates.TemplateResponse(request, "login.html", {
+                "error": _INCORRECT_CREDENTIALS_MESSAGE, "email": email,
+                "mode": "unmapped", "domain_has_password": True,
+            })
+
+        if not password:
+            return _reject_password()
         if not auth_password.verify_password(email, password):
-            return templates.TemplateResponse(request, "login.html", {"error": _INCORRECT_CREDENTIALS_MESSAGE, "email": email})
+            return _reject_password()
 
         row = db.query_one("SELECT display_name FROM checkreq.app_users WHERE email = %s", (email,))
         user_id, reject_reason = _complete_login(request, email, row["display_name"] if row else "", "password", "")

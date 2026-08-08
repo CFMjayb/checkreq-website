@@ -71,10 +71,13 @@ RECONCILED 2026-08-07 (same session): this extraction was originally built
 against a working-folder copy of main.py that had fallen ~5 days and several
 features behind the actual deployed `main` branch (Program Areas/Approval
 Rules admin, ART completeness, in-app notifications, conversational feedback
-intake, full-screen support, Invoice Intake Tier 3 — none of which had synced
-back into the OneDrive working folder). Re-applied the same auth extraction
-directly onto the real current main.py rather than overwriting it with the
-stale copy — confirmed via diff that the login/auth block itself was
+intake, full-screen support, Invoice Intake Tier 3). Root cause, per Jay: a
+session on his home desktop coded those features directly into the
+C:/GITRepos/checkreq-website checkout instead of the OneDrive working
+folder -- not an OneDrive sync lag, there was simply nothing in the working
+folder for OneDrive to sync. Re-applied the same auth extraction directly
+onto the real current main.py rather than overwriting it with the stale
+copy — confirmed via diff that the login/auth block itself was
 byte-identical between the stale base and the current file, so nothing about
 those other features was touched or at risk.
 """
@@ -5280,10 +5283,14 @@ admin_setup.register(
 import access_requests
 import admin_users
 import admin_hub
+import parish_access
 
 access_requests.register(app, current_user=_current_user, render=_render)
 admin_users.register(app, current_user=_current_user, render=_render)
 admin_hub.register(app, current_user=_current_user, render=_render)
+# Parish Portal S3 (Parish Portal Plan.md Section 2/5) -- same register()
+# pattern as the three lines above, thin wiring only.
+parish_access.register(app, current_user=_current_user, render=_render)
 
 # In-App Notifications (2026-08-02, In-App Notifications Plan.md).
 # create_notification()/get_unread_count() are already in use above (this

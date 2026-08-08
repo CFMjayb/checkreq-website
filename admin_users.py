@@ -74,6 +74,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import db
 import rbac
+import parish_roles
+import registry
 
 router = APIRouter()
 
@@ -290,6 +292,14 @@ def user_detail_page(user_id: int, request: Request):
     approval_rules_as_approver, approval_rules_as_backup = _approval_rules_for_user(user_id)
     already_approver_pa_ids = {r["program_area_id"] for r in approval_rules_as_approver}
 
+    # Parish Portal S3: same panel shape as Roles above, scoped to
+    # portal.parish_user_roles instead of checkreq.user_roles -- lets a
+    # beacon_admin proactively grant parish access (the "invite" mechanism,
+    # same as how a plain app_users row is the only "invite" this app has
+    # ever had) without waiting for a self-service parish-access-request.
+    parish_role_grants = parish_roles.get_parish_roles_for_user(user_id)
+    all_parishes = registry.list_all_parishes()
+
     return _render(request, "admin_users_detail.html", user, {
         "target": target,
         "provider_guess": None if target["last_login_provider"] else _guess_provider(target["email"]),
@@ -303,6 +313,9 @@ def user_detail_page(user_id: int, request: Request):
         "approval_rules_as_approver": approval_rules_as_approver,
         "approval_rules_as_backup": approval_rules_as_backup,
         "already_approver_pa_ids": already_approver_pa_ids,
+        "parish_role_grants": parish_role_grants,
+        "all_parish_roles": parish_roles.all_parish_roles(),
+        "all_parishes": all_parishes,
     })
 
 
@@ -423,6 +436,47 @@ async def user_revoke_role(user_id: int, request: Request):
         return RedirectResponse(f"/admin/setup/users/{user_id}?error={exc}", status_code=303)
 
     return RedirectResponse(f"/admin/setup/users/{user_id}?revoked=1", status_code=303)
+
+
+@router.post("/admin/setup/users/{user_id}/grant-parish-role")
+async def user_grant_parish_role(user_id: int, request: Request):
+    """Parish Portal S3 -- mirrors user_grant_role above exactly, scoped to
+       a parish instead of an entity. No "all parishes" option (unlike the
+       entity grant's "All entities" checkbox) -- a role held across every
+       parish in a diocese isn't a real thing this plan describes; the
+       shared-bookkeeper case is one row per parish, granted individually."""
+    user, err = _require_beacon_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    role_key = (form.get("role_key") or "").strip()
+    try:
+        parish_id = int(form.get("parish_id") or 0)
+    except (TypeError, ValueError):
+        parish_id = 0
+    note = (form.get("note") or "").strip() or None
+
+    if not role_key or not parish_id:
+        return RedirectResponse(f"/admin/setup/users/{user_id}?error=Pick+a+parish+and+role.", status_code=303)
+
+    parish_roles.grant_parish_role(user_id, parish_id, role_key, user["id"], note)
+    return RedirectResponse(f"/admin/setup/users/{user_id}?parish_granted=1", status_code=303)
+
+
+@router.post("/admin/setup/users/{user_id}/revoke-parish-role")
+async def user_revoke_parish_role(user_id: int, request: Request):
+    user, err = _require_beacon_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    role_key = (form.get("role_key") or "").strip()
+    try:
+        parish_id = int(form.get("parish_id") or 0)
+    except (TypeError, ValueError):
+        return RedirectResponse(f"/admin/setup/users/{user_id}?error=Bad+request.", status_code=303)
+
+    parish_roles.revoke_parish_role(user_id, parish_id, role_key, user["id"])
+    return RedirectResponse(f"/admin/setup/users/{user_id}?parish_revoked=1", status_code=303)
 
 
 @router.post("/admin/setup/users/{user_id}/grant-approval-rule")

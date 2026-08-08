@@ -22,6 +22,8 @@
 {% if request.query_params.get('pa_revoked') %}<div class="banner banner-success">Program area removed.</div>{% endif %}
 {% if request.query_params.get('ar_granted') %}<div class="banner banner-success">Approval rule added.</div>{% endif %}
 {% if request.query_params.get('ar_revoked') %}<div class="banner banner-success">Approval rule updated.</div>{% endif %}
+{% if request.query_params.get('parish_granted') %}<div class="banner banner-success">Parish role granted.</div>{% endif %}
+{% if request.query_params.get('parish_revoked') %}<div class="banner banner-success">Parish role revoked.</div>{% endif %}
 {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
 
 <div class="card">
@@ -112,6 +114,63 @@
       {% for o in orgs %}
       <option value="{{ o.id }}">{{ o.name }}</option>
       {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-primary">Grant</button>
+  </form>
+</div>
+
+<!-- Parish Portal S3: same shape as the Roles card above, scoped to a
+     specific parish instead of an entity -- the "invite to a parish"
+     mechanism, mirroring how this whole app has never had a literal
+     emailed invite, just a beacon_admin-provisioned app_users row. -->
+<div class="card">
+  <h2>Parish Roles</h2>
+  <p class="muted">Access this person holds at a specific parish, separate from their entity-level
+    roles above.</p>
+  <table class="simple-table">
+    <thead><tr><th>Role</th><th>Parish</th><th>Granted</th><th>By</th><th></th></tr></thead>
+    <tbody>
+      {% for r in parish_role_grants %}
+      <tr>
+        <td>{{ r.role_label }}</td>
+        <td>{{ r.parish_name }} <span class="muted">({{ r.org_code|upper }})</span></td>
+        <td>{{ r.granted_at }}</td>
+        <td>{{ r.granted_by_email or "—" }}</td>
+        <td>
+          <form method="post" action="/admin/setup/users/{{ target.id }}/revoke-parish-role">
+            <input type="hidden" name="role_key" value="{{ r.role_key }}">
+            <input type="hidden" name="parish_id" value="{{ r.parish_id }}">
+            <button type="submit" class="btn btn-secondary">Revoke</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">No live parish role grants.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>Grant a Parish Role</h3>
+  <form method="post" action="/admin/setup/users/{{ target.id }}/grant-parish-role">
+    <label for="parish_role_key">Role</label>
+    <select id="parish_role_key" name="role_key" required>
+      {% for r in all_parish_roles %}
+      <option value="{{ r.key }}">{{ r.label }}</option>
+      {% endfor %}
+    </select>
+    <label for="parish_id">Parish</label>
+    <select id="parish_id" name="parish_id" required>
+      <option value="">Choose...</option>
+      {% set ns2 = namespace(current_org='') %}
+      {% for p in all_parishes %}
+        {% if p.org_code != ns2.current_org %}
+          {% if ns2.current_org %}</optgroup>{% endif %}
+          <optgroup label="{{ p.org_code|upper }}">
+          {% set ns2.current_org = p.org_code %}
+        {% endif %}
+        <option value="{{ p.id }}">{{ p.name }}{% if p.city %} ({{ p.city }}){% endif %}</option>
+      {% endfor %}
+      {% if ns2.current_org %}</optgroup>{% endif %}
     </select>
     <button type="submit" class="btn btn-primary">Grant</button>
   </form>
