@@ -102,6 +102,7 @@ import rbac
 import parish_roles
 import parish_mode
 import parish_documents
+import parish_info
 import announcements
 import parish_requests
 import approval_engine
@@ -271,18 +272,17 @@ MODULES = [
     # worth its own permission gate.
     {"key": "approval_queue", "title": "Approval Queue", "desc": "Review requests awaiting your approval.", "url": "/my-approvals", "enabled": True, "gate": None},
     {"key": "ap_review", "title": "AP Review", "desc": "Final review and QBO posting for fully-approved requests.", "url": "/admin/ap-review", "enabled": True, "gate": "ap_reviewer"},
-    # Parish Portal S3 (2026-08-08): visible to EVERY signed-in user, same
-    # "empty queue is a harmless empty state" reasoning as approval_queue --
-    # a parish volunteer with zero checkreq.roles grants at all still needs
-    # to be able to reach this.
-    {"key": "request_parish_access", "title": "Request Parish Access", "desc": "Ask for access to a specific parish's information.", "url": "/parish-access-request", "enabled": True, "gate": None},
-    # Gated on the synthetic "parish_reviewer" pseudo-role (see _render()
-    # below) rather than a real checkreq.roles key -- deliberately NOT part
-    # of the Administrative Tasks hub, since that hub's own top-level gate
-    # (ADMIN_TASK_ROLE_KEYS) would block a pure Parish Admin who holds no
-    # entity-level role at all (Jay, 2026-08-08: "The Parish Admin will have
-    # to grant access to someone who requests it").
-    {"key": "parish_access_requests", "title": "Parish Access Requests", "desc": "Review and grant pending requests for access to a specific parish.", "url": "/admin/parish-access-requests", "enabled": True, "gate": "parish_reviewer"},
+    # Parish Portal S3 (2026-08-08), consolidated same day per Jay's direct
+    # feedback ("Request Access replaces Request Parish Access and Parish
+    # Access Requests -- the sub-screen should do all of this, depending on
+    # your RBAC"): ONE tile, gate=None so a parish volunteer with zero
+    # checkreq.roles grants can still reach it -- the page itself
+    # (parish_access.py) shows the submit form to everyone and additionally
+    # shows the review queue inline for anyone who qualifies as a reviewer
+    # (beacon_admin, or parish_admin at the relevant parish). The old
+    # separate "Parish Access Requests" tile/gate is gone; /admin/
+    # parish-access-requests now just redirects here.
+    {"key": "request_parish_access", "title": "Request Access", "desc": "Ask for access to a parish, or review pending requests if you're a reviewer.", "url": "/parish-access-request", "enabled": True, "gate": None},
     # Parish Portal S4+S5 (2026-08-08): same "parish_reviewer" synthetic
     # pseudo-role as the tile above -- a pure Parish Admin (no
     # checkreq.roles grant at all) needs to reach this without the
@@ -5359,6 +5359,9 @@ parish_mode.register(app, current_user=_current_user, render=_render)
 parish_documents.register(app, current_user=_current_user, render=_render)
 announcements.register(app, current_user=_current_user, render=_render)
 parish_requests.register(app, current_user=_current_user, render=_render)
+# 2026-08-08 feedback batch: live Databank contact info, replacing the plain
+# Diocese/City/Served Tier/Status card on parish_view.html.
+parish_info.register(app, current_user=_current_user, render=_render)
 
 # In-App Notifications (2026-08-02, In-App Notifications Plan.md).
 # create_notification()/get_unread_count() are already in use above (this

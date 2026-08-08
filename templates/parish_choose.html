@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Choose a Parish — Beacon{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Choose a Parish</h1>
+<p class="sub">You have access at more than one parish. Pick which one to view.</p>
+
+<div class="card">
+  <table class="simple-table">
+    <thead><tr><th>Parish</th><th>Diocese</th><th></th></tr></thead>
+    <tbody>
+      {% for p in parishes %}
+      <tr>
+        <td>{{ p.name }}{% if p.city %}, {{ p.city }}{% endif %}</td>
+        <td>{{ p.org_code }}</td>
+        <td>
+          <form method="post" action="/parish-view/choose/{{ p.id }}" style="display:inline">
+            <button type="submit" class="btn btn-secondary btn-sm">View</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+</div>
+{% endblock %}

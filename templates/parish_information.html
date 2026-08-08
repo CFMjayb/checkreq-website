@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Parish Information — {{ parish.name }}{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>{{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</h1>
+<p class="back-link"><a href="/parish-view">&larr; Back</a></p>
+
+{% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+
+{% if contact %}
+<div class="card">
+  <h2>{{ contact.company or parish.name }}</h2>
+  <p><strong>Address:</strong>
+    {% if contact.address %}{{ contact.address }}{% if contact.address2 %}, {{ contact.address2 }}{% endif %}<br>{% endif %}
+    {{ contact.city or "—" }}{% if contact.state %}, {{ contact.state }}{% endif %} {{ contact.zip or "" }}
+  </p>
+  <p><strong>Phone:</strong> {{ contact.wphone or contact.hphone or "—" }}</p>
+  <p><strong>Email:</strong> {% if contact.email %}<a href="mailto:{{ contact.email }}">{{ contact.email }}</a>{% else %}—{% endif %}</p>
+  <p><strong>Record type:</strong> {{ contact.recordtype or "—" }}</p>
+</div>
+{% endif %}
+
+<div class="card">
+  <p><strong>Diocese:</strong> {{ parish.org_name }} ({{ parish.org_code }})</p>
+  <p><strong>Served Tier:</strong> {{ parish.served_tier or "—" }}</p>
+  <p><strong>Status:</strong> {{ parish.status }}</p>
+</div>
+
+<div class="card">
+  <p class="sub"><em>Coming soon: congregation and clergy directory (pending TheDataBank vendor's ClergyDirectory endpoint).</em></p>
+</div>
+</div>
+{% endblock %}

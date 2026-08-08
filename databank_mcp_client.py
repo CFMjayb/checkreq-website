@@ -45,6 +45,33 @@ def _get_api_key() -> str:
     return _cached_api_key
 
 
+def get_contact(contact_id: str, timeout: int = 15) -> tuple[dict | None, str | None]:
+    """GET /api/contacts?contactid=X -- one church/congregation record, keyed
+    by the same Databank ContactID stored on portal.parishes.databank_contact_id
+    (2026-08-08 batch of parish matching). Returns (contact_dict_or_None,
+    error_str_or_None) -- never raises, same contract as get_congregations()."""
+    url = f"{DATABANK_MCP_URL}/api/contacts"
+    try:
+        resp = requests.get(
+            url,
+            headers={"X-API-Key": _get_api_key()},
+            params={"contactid": contact_id},
+            timeout=timeout,
+        )
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+        if not resp.ok:
+            return None, data.get("error") or f"HTTP {resp.status_code}: {resp.text[:300]}"
+        if "error" in data:
+            return None, data["error"]
+        contacts = data.get("contacts", [])
+        return (contacts[0] if contacts else None), None
+    except Exception as exc:
+        return None, str(exc)
+
+
 def get_congregations(timeout: int = 30) -> tuple[list[dict] | None, str | None]:
     """GET /api/clergy-directory?congregations=true — the registry-seed shape
     (clergy_directory.congregations_from()): distinct churches keyed by

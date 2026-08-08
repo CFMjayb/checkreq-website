@@ -80,20 +80,80 @@ def _require_parish_reviewer(request: Request):
     return None, JSONResponse({"error": "Beacon Admin or Parish Admin access required"}, status_code=403)
 
 
+def _native_parish_ids(user_id: int) -> list[int]:
+    """Every distinct parish this user holds ANY parish role at -- same
+    small duplication as parish_mode.py's own private helper of the same
+    name (that module's docstring already documents why this codebase
+    accepts the duplication rather than a cross-module import cycle)."""
+    rows = db.query(
+        "SELECT DISTINCT parish_id FROM portal.parish_user_roles "
+        "WHERE user_id = %s AND revoked_at IS NULL",
+        (user_id,),
+    )
+    return [r["parish_id"] for r in rows]
+
+
+def _request_form_context(user: dict, error: str | None = None) -> dict:
+    """Shared by the GET page and a failed POST's re-render. Jay, 2026-08-08:
+    "When a person logs in to a Parish, they should only be able to request
+    access for someone in their Parish -- the Church should be pre-filled
+    for that parish and not be editable." A NATIVE parish-only user (holds
+    a parish role somewhere, but no checkreq.roles grant anywhere -- i.e.
+    not diocesan staff) gets the parish field locked to their own parish(es)
+    rather than the full 95-parish list; diocesan staff and a genuine
+    first-timer (zero native parishes yet) keep the full picker, since
+    staff legitimately need to request access to any parish, and a
+    first-timer has no "own parish" yet to lock to."""
+    is_staff = rbac.user_has_any_role(user["id"])
+    own_ids = [] if is_staff else _native_parish_ids(user["id"])
+    if own_ids:
+        parishes = [p for p in registry.list_all_parishes() if p["id"] in own_ids]
+        locked = len(own_ids) == 1
+    else:
+        parishes = registry.list_all_parishes()
+        locked = False
+    ctx = {
+        "parishes": parishes,
+        "roles": parish_roles.all_parish_roles(),
+        "locked_parish": locked,
+        "error": error,
+    }
+    return ctx
+
+
 @router.get("/parish-access-request", response_class=HTMLResponse)
-def parish_access_request_page(request: Request):
+def parish_access_request_page(request: Request, entity: str = ""):
+    """Consolidated per Jay's direct feedback, 2026-08-08: "Request Access
+    replaces Request Parish Access and Parish Access Requests -- the
+    sub-screen should do all of this, depending on your RBAC." One page:
+    the submit form (everyone), plus an inline review queue for anyone who
+    qualifies as a reviewer (beacon_admin, or parish_admin somewhere)."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
 
     pending = parish_roles.get_pending_parish_access_request(user["id"])
-    parishes = registry.list_all_parishes()
-    roles = parish_roles.all_parish_roles()
-    return _render(request, "parish_access_request.html", user, {
-        "pending": pending,
-        "parishes": parishes,
-        "roles": roles,
-    })
+    ctx = {"pending": pending, **_request_form_context(user)}
+
+    is_admin = _is_beacon_admin(user)
+    parish_admin_ids = parish_roles.get_parish_ids_with_role(user["id"], "parish_admin")
+    if is_admin or parish_admin_ids:
+        scoped_parish_ids = None if is_admin else parish_admin_ids
+        requests_ = parish_roles.list_pending_parish_access_requests(scoped_parish_ids)
+        if entity:
+            requests_ = [r for r in requests_ if r["org_code"] == entity]
+        all_orgs_list = db.query("SELECT code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
+        ctx.update({
+            "is_reviewer": True,
+            "requests": requests_,
+            "all_orgs_list": all_orgs_list,
+            "filter_entity": entity,
+            "is_beacon_admin_reviewer": is_admin,
+        })
+    else:
+        ctx["is_reviewer"] = False
+
+    return _render(request, "parish_access_request.html", user, ctx)
 
 
 @router.post("/parish-access-request")
@@ -113,40 +173,27 @@ async def parish_access_request_submit(request: Request):
     role_key = (form.get("role_key") or "").strip()
     note = (form.get("note") or "").strip() or None
 
+    # Re-check the same own-parish restriction server-side -- the locked
+    # field in the form is a UI convenience, never trusted on its own.
+    form_ctx = _request_form_context(user)
+    allowed_ids = {p["id"] for p in form_ctx["parishes"]}
     parish = db.query_one("SELECT id FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
     role = db.query_one("SELECT key FROM portal.parish_roles WHERE key = %s AND is_active", (role_key,))
-    if not parish or not role:
+    if not parish or not role or parish_id not in allowed_ids:
         return _render(request, "parish_access_request.html", user, {
             "pending": None,
-            "parishes": registry.list_all_parishes(),
-            "roles": parish_roles.all_parish_roles(),
-            "error": "Pick a valid parish and role.",
+            **_request_form_context(user, error="Pick a valid parish and role."),
         })
 
     parish_roles.create_parish_access_request(user["id"], parish_id, role_key, note)
     return RedirectResponse("/parish-access-request", status_code=303)
 
 
-@router.get("/admin/parish-access-requests", response_class=HTMLResponse)
-def admin_parish_access_requests_page(request: Request, entity: str = ""):
-    """A beacon_admin sees every diocese's queue, cross-entity, same as
-       /admin/access-requests. A parish_admin-only reviewer sees ONLY the
-       parish(es) they administer -- list_pending_parish_access_requests()
-       does the actual filtering, this route just decides which scope to
-       pass it."""
-    user, err = _require_parish_reviewer(request)
-    if err:
-        return err
-    is_admin = _is_beacon_admin(user)
-    scoped_parish_ids = None if is_admin else parish_roles.get_parish_ids_with_role(user["id"], "parish_admin")
-    requests_ = parish_roles.list_pending_parish_access_requests(scoped_parish_ids)
-    if entity:
-        requests_ = [r for r in requests_ if r["org_code"] == entity]
-    all_orgs_list = db.query("SELECT code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
-    return _render(request, "admin_parish_access_requests.html", user, {
-        "requests": requests_, "all_orgs_list": all_orgs_list, "filter_entity": entity,
-        "is_beacon_admin_reviewer": is_admin,
-    })
+@router.get("/admin/parish-access-requests")
+def admin_parish_access_requests_redirect():
+    """Consolidated into /parish-access-request, 2026-08-08 -- kept as a
+    redirect so no old link/bookmark 404s."""
+    return RedirectResponse("/parish-access-request", status_code=308)
 
 
 def _authorize_for_request(user: dict, request_id: int):
@@ -178,7 +225,7 @@ async def admin_parish_access_request_approve(request_id: int, request: Request)
         parish_roles.approve_parish_access_request(request_id, user["id"], note)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
-    return RedirectResponse("/admin/parish-access-requests?approved=1", status_code=303)
+    return RedirectResponse("/parish-access-request?approved=1", status_code=303)
 
 
 @router.post("/admin/parish-access-requests/{request_id}/reject")
@@ -192,4 +239,4 @@ async def admin_parish_access_request_reject(request_id: int, request: Request):
     form = await request.form()
     note = (form.get("note") or "").strip() or None
     parish_roles.reject_parish_access_request(request_id, user["id"], note)
-    return RedirectResponse("/admin/parish-access-requests?rejected=1", status_code=303)
+    return RedirectResponse("/parish-access-request?rejected=1", status_code=303)

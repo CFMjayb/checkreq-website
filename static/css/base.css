@@ -634,3 +634,48 @@ table.doc-table td { border-bottom: 1px solid var(--color-border); padding: var(
 
 .btn-link { background: none; border: none; padding: 0; margin-left: var(--space-2); color: var(--color-danger); text-decoration: underline; font-size: 0.85rem; cursor: pointer; }
 .btn-link:hover { opacity: 0.8; }
+
+/* Moved here from portal.css (2026-08-08) -- these were previously only
+   defined in portal.css, which only /portal itself loads. Any other page
+   using the same .module-grid/.module-tile pattern (parish_view.html, and
+   whatever comes next) rendered them as bare unstyled <a> tags -- Jay:
+   "why did you just do options as underscored lines... use buttons like
+   you did there." Belongs in base.css (loaded by every page) since it's a
+   general-purpose tile-button pattern, not portal-specific. */
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-5);
+}
+.module-tile {
+  background: var(--color-card-bg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-5);
+  text-decoration: none;
+  color: var(--color-ink);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  position: relative;
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+a.module-tile:hover { box-shadow: var(--shadow-card-hover); transform: translateY(-3px); }
+.module-tile .icon { width: 40px; height: 40px; color: var(--color-gold); }
+.module-tile h3 { margin: 0; font-size: 1.05rem; }
+.module-tile .desc { color: var(--color-text-muted); font-size: 0.88rem; margin: 0; }
+.module-tile.disabled { opacity: 0.55; cursor: default; }
+.module-tile.disabled .icon { color: var(--color-text-muted); }
+
+/* Diocese-name brand suffix, next to "Beacon" (2026-08-08) -- shown only
+   when the entity switcher is suppressed (parish_view set), replacing the
+   context it would otherwise show. */
+.brand-diocese {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: rgba(255,255,255,0.85);
+  margin-left: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 1px solid rgba(255,255,255,0.35);
+}

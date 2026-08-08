@@ -117,6 +117,13 @@ def update_parish(parish_id: int, org_id: int, **fields) -> dict | None:
         # fields-dict path) since "now" doesn't fit this function's
         # value-per-field shape -- listed here anyway for discoverability.
         "sp_folder_path", "sp_folder_resolved_at",
+        # Databank's own exact congregation label (2026-08-08) -- see
+        # migrations/033_parishes_databank_church_name.sql for why this is
+        # kept verbatim rather than re-derived by fuzzy match every time.
+        "databank_church_name",
+        # The CHURCH's own Databank contact record -- distinct from
+        # databank_churchwebacct (migration 034; Jay is supplying these).
+        "databank_contact_id",
     }
     sets = [f"{k} = %s" for k in fields if k in allowed]
     if not sets:

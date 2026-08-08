@@ -9,6 +9,17 @@
      photo and green sits with it instead). */
   --color-franciscan-green: #1f3d2e;
   --color-franciscan-green-dark: #142822;
+  /* Parish Mode theme (2026-08-08, Jay: "a darker red for parish access --
+     like the red in the Diocese of Maryland's shield -- clear if you are
+     in the Parish mode or the Diocesan Mode"). A reasonable placeholder
+     heraldic red, NOT sampled from the actual shield the way the
+     Franciscan green above was sampled from the real hero photo -- swap
+     these two values for an exact match once Jay can share that image.
+     base.css's body.parish-mode rule overrides --color-franciscan-green
+     itself with these, so every existing rule that already references it
+     (headers, links, buttons, badges) retints automatically. */
+  --color-parish-red: #7a1f2b;
+  --color-parish-red-dark: #591620;
   --color-gold: #c9a227;
   --color-gold-light: #e8c766;
   --color-card-bg: #ffffff;

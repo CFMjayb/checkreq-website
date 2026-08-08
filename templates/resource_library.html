@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Resource Library — Beacon{% endblock %}
+{% block title %}Resources for Parishes — Beacon{% endblock %}
 {% block content %}
 <div class="page-shell">
-<h1>Resource Library</h1>
-<p class="back-link"><a href="/portal">&larr; Back</a></p>
+<h1>Resources for Parishes</h1>
+<p class="back-link"><a href="{{ '/parish-view' if parish_view else '/portal' }}">&larr; Back</a></p>
 <p class="sub">Shared resources from the diocese, available to every parish.</p>
 
 {% if list_error %}<div class="banner banner-error">Couldn't load the library right now: {{ list_error }}</div>{% endif %}

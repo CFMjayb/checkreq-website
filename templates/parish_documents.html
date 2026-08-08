@@ -2,7 +2,7 @@
 {% block title %}Documents — {{ parish.name }}{% endblock %}
 {% block content %}
 <div class="page-shell">
-<h1>Documents — {{ parish.name }}</h1>
+<h1>Documents — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</h1>
 <p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
 
 {% if request.query_params.get('uploaded') %}<div class="banner banner-success">Uploaded.</div>{% endif %}
@@ -26,7 +26,7 @@
       <tr>
         <td>{{ '📁 ' if f.is_folder else '' }}{{ f.name }}</td>
         <td>{{ (f.size / 1024)|round(1) }} KB</td>
-        <td>{% if not f.is_folder %}<a href="/parish-documents/download/readonly/{{ f.name|urlencode }}">View</a>{% endif %}</td>
+        <td>{% if not f.is_folder %}<a href="/parish-documents/download/{{ f.rel_path|urlencode }}">View</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -48,10 +48,10 @@
         <td>{{ f.name }}</td>
         <td>{{ (f.size / 1024)|round(1) }} KB</td>
         <td>
-          <a href="/parish-documents/download/editable/{{ f.name|urlencode }}">View</a>
+          <a href="/parish-documents/download/{{ f.rel_path|urlencode }}">View</a>
           {% if can_edit %}
           <form method="post" action="/parish-documents/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
-            <input type="hidden" name="filename" value="{{ f.name }}">
+            <input type="hidden" name="rel_path" value="{{ f.rel_path }}">
             <button type="submit" class="btn-link">Remove</button>
           </form>
           {% endif %}
@@ -65,8 +65,45 @@
   {% endif %}
   {% if can_edit %}
   <form method="post" action="/parish-documents/upload" enctype="multipart/form-data" class="doc-upload-row">
+    <input type="hidden" name="target" value="parish">
     <input type="file" name="file" required>
     <button type="submit" class="btn btn-secondary">Upload</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card doc-area">
+  <h2>For the Diocese</h2>
+  <p class="sub">Send a document to the diocesan office.{% if not can_edit %} (View only — ask your Parish Admin for upload access.){% endif %}</p>
+  {% if to_diocese_files %}
+  <table class="doc-table">
+    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+      {% for f in to_diocese_files %}
+      <tr>
+        <td>{{ f.name }}</td>
+        <td>{{ (f.size / 1024)|round(1) }} KB</td>
+        <td>
+          <a href="/parish-documents/download/{{ f.rel_path|urlencode }}">View</a>
+          {% if can_edit %}
+          <form method="post" action="/parish-documents/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
+            <input type="hidden" name="rel_path" value="{{ f.rel_path }}">
+            <button type="submit" class="btn-link">Remove</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="doc-empty">Nothing sent yet.</p>
+  {% endif %}
+  {% if can_edit %}
+  <form method="post" action="/parish-documents/upload" enctype="multipart/form-data" class="doc-upload-row">
+    <input type="hidden" name="target" value="diocese">
+    <input type="file" name="file" required>
+    <button type="submit" class="btn btn-secondary">Send to Diocese</button>
   </form>
   {% endif %}
 </div>

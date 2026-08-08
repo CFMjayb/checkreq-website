@@ -4,7 +4,7 @@
 <div class="page-shell">
 <h1>Parish Documents (Admin)</h1>
 <p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
-<p class="sub">Upload documents into a specific parish's read-only ("From the Diocese") area, and see how each parish's SharePoint folder has been matched.</p>
+<p class="sub">Upload documents into a specific parish's "Read Only Files" area, review what a parish has sent "For the Diocese," and see how each parish's SharePoint folder has been matched.</p>
 
 {% if request.query_params.get('uploaded') %}<div class="banner banner-success">Uploaded.</div>{% endif %}
 {% if request.query_params.get('deleted') %}<div class="banner banner-success">Removed.</div>{% endif %}
@@ -24,9 +24,10 @@
 
 {% if selected %}
 <div class="card">
-  <h2>{{ selected.name }}</h2>
+  <h2>{{ selected.name }}{% if selected.city %}, {{ selected.city }}{% endif %}</h2>
   <p class="sub">Matched SharePoint folder: {% if folder %}<code>{{ folder }}</code>{% else %}<em>not matched</em>{% endif %}
-     {% if selected.sp_folder_resolved_at %}(resolved {{ selected.sp_folder_resolved_at }}){% endif %}</p>
+     {% if selected.sp_folder_resolved_at %}(resolved {{ selected.sp_folder_resolved_at }}){% endif %}
+     — re-checked live on every page load.</p>
   <form method="post" action="/admin/parish-documents/{{ selected.id }}/resolve" style="display:inline">
     <button type="submit" class="btn btn-secondary">Re-resolve from SharePoint</button>
   </form>
@@ -41,7 +42,7 @@
 
 {% if folder %}
 <div class="card doc-area">
-  <h2>From the Diocese (read-only to the parish)</h2>
+  <h2>Read Only Files (shared with the parish)</h2>
   {% if files %}
   <table class="doc-table">
     <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
@@ -52,8 +53,9 @@
         <td>{{ (f.size / 1024)|round(1) }} KB</td>
         <td>
           {% if not f.is_folder %}
+          <a href="/admin/parish-documents/{{ selected.id }}/download/{{ f.rel_path|urlencode }}">View</a>
           <form method="post" action="/admin/parish-documents/{{ selected.id }}/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
-            <input type="hidden" name="filename" value="{{ f.name }}">
+            <input type="hidden" name="rel_path" value="{{ f.rel_path }}">
             <button type="submit" class="btn-link">Remove</button>
           </form>
           {% endif %}
@@ -69,6 +71,33 @@
     <input type="file" name="file" required>
     <button type="submit" class="btn btn-secondary">Upload</button>
   </form>
+</div>
+
+<div class="card doc-area">
+  <h2>For the Diocese (sent by the parish)</h2>
+  <p class="sub">Whatever this parish has uploaded to send to your office. Delete once processed.</p>
+  {% if to_diocese_files %}
+  <table class="doc-table">
+    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+      {% for f in to_diocese_files %}
+      <tr>
+        <td>{{ f.name }}</td>
+        <td>{{ (f.size / 1024)|round(1) }} KB</td>
+        <td>
+          <a href="/admin/parish-documents/{{ selected.id }}/download/{{ f.rel_path|urlencode }}">View</a>
+          <form method="post" action="/admin/parish-documents/{{ selected.id }}/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
+            <input type="hidden" name="rel_path" value="{{ f.rel_path }}">
+            <button type="submit" class="btn-link">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="doc-empty">Nothing sent yet.</p>
+  {% endif %}
 </div>
 {% endif %}
 {% endif %}

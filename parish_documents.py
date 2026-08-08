@@ -25,37 +25,63 @@ metadata (categories, view-tracking, targeted per-doc notifications) that
 SharePoint itself can't hold, THAT would be the moment to add a real
 metadata table keyed by SharePoint's own driveItem id -- not before.
 
-Folder conventions (established here, not pre-existing -- confirmed live,
-2026-08-08, that no parish folder had any consistent read-only/editable
-split already):
-  - "Read-only" area = a parish's resolved folder's own root contents
-    (whatever the diocese has already put there, or uploads via
-    /admin/parish-documents going forward), MINUS the "Parish Files"
-    subfolder itself (which has its own separate area, not nested display).
-  - "Editable" area = the "Parish Files" subfolder, created lazily on first
-    upload (never pre-created) -- gated on the parish_documents or
-    parish_admin role for that specific parish, or beacon_admin.
+Folder conventions, REVISED 2026-08-08 per Jay's direct feedback into an
+explicit 3-subfolder protocol (the original cut only had "root minus Parish
+Files" as an implicit read-only area, plus Parish Files -- no dedicated
+diocese-managed subfolder, and no upload-TO-the-diocese path at all):
+  - "Read Only Files" (READONLY_SUBFOLDER) -- diocese-managed, read-only to
+    the parish. Admin uploads (/admin/parish-documents) now go HERE, created
+    lazily on first admin upload. Backward-compatible: any pre-existing
+    LOOSE file sitting at a parish's folder ROOT (e.g. St Philips' property
+    deed, present before this convention existed) still shows in the same
+    "read-only" listing, merged with this subfolder's contents -- nothing
+    already there had to be moved.
+  - "Parish Files" (EDITABLE_SUBFOLDER) -- unchanged from the original cut:
+    the parish's own library, created lazily on first parish upload. Gated
+    on parish_documents/parish_admin for that parish, or beacon_admin.
+  - "For the Diocese" (TO_DIOCESE_SUBFOLDER) -- NEW: a parish uploads here
+    to send something TO the diocese (distinct from Parish Files, which is
+    the parish's own reference library, not an outbox). Same upload/delete
+    permission as Parish Files; also readable by diocesan admins via
+    /admin/parish-documents so staff can retrieve what was submitted.
   - Diocese-wide Resource Library = a single "Resource Library" folder at
     the DioNet drive root (org.sp_resource_library_folder), also created
     lazily. Read-only for everyone; admin upload/manage gated setup_admin/
-    beacon_admin (admin_hub.py card).
+    beacon_admin (admin_hub.py card). Confirmed live, 2026-08-08: no more
+    natural existing SharePoint location for this exists at DioNet (the
+    drive root holds only the 95 per-parish folders, "200. Test Folder",
+    two special-fund folders, and this one) -- current placement stands.
+
+Every listed file/folder now carries its own "rel_path" (relative to the
+parish's resolved root, or the library root) -- the exact address delete/
+download need. This replaced an earlier area+filename addressing scheme
+that couldn't express "this file lives inside a named subfolder" once a
+third subfolder (For the Diocese) existed alongside the root-loose legacy
+files and Parish Files.
 
 Folder-name resolution (resolve_parish_folder): primary match is the
 parish's own `code` column as a "{code}. " prefix (confirmed live: all 95
 real EDOM parishes already have this, and it matches the real SharePoint
 folder names exactly -- e.g. code "090" -> "090. St Philips Episcopal
 Church, Annapolis"). Fuzzy fallback (difflib against "{name}") covers a gap
-or a not-yet-code-matched parish. Result is cached on
-portal.parishes.sp_folder_path (registry.update_parish) so normal page
-loads never re-list+re-fuzzy-match; force=True (the admin "Re-resolve"
-button) always re-checks live.
+or a not-yet-code-matched parish. Result is WRITTEN to
+portal.parishes.sp_folder_path/sp_folder_resolved_at for admin-page
+display, but as of 2026-08-08 is no longer READ to skip the live check --
+Jay: "you need to make sure you read the sharepoint folder on each entry to
+the screen as I made some folder changes and the screen did not update."
+(root cause: a permanently-cached folder NAME silently 404s -- returning an
+empty listing, not an error -- the moment the real folder is renamed/moved
+in SharePoint outside the app; re-resolving live every page view is the
+fix). force= is kept as a parameter for backward compatibility with the
+admin "Re-resolve" button's call site, but every code path now behaves as
+force=True regardless of the value passed.
 """
 from __future__ import annotations
 
 import difflib
 import re
 
-from fastapi import APIRouter, Request, UploadFile, File
+from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 
 import db
@@ -70,7 +96,10 @@ router = APIRouter()
 _current_user = None
 _render = None
 
+READONLY_SUBFOLDER = "Read Only Files"
 EDITABLE_SUBFOLDER = "Parish Files"
+TO_DIOCESE_SUBFOLDER = "For the Diocese"
+_SPECIAL_SUBFOLDERS = {READONLY_SUBFOLDER, EDITABLE_SUBFOLDER, TO_DIOCESE_SUBFOLDER}
 _FUZZY_THRESHOLD = 0.72
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB -- generous for scanned documents
 
@@ -104,14 +133,14 @@ def _site_and_token(org: dict) -> tuple[str, str]:
     return token, site_id
 
 
-def resolve_parish_folder(org: dict, parish: dict, force: bool = False) -> str | None:
+def resolve_parish_folder(org: dict, parish: dict, force: bool = True) -> str | None:
     """Returns the matched SharePoint folder NAME (relative to
     org.sp_parish_library_folder), or None if no org config / no match.
-    Cached on portal.parishes.sp_folder_path unless force=True."""
+    Always re-checks live (see module docstring, 2026-08-08) -- `force` is
+    kept only so the admin "Re-resolve" button's call site doesn't need to
+    change; every caller behaves identically regardless of its value now."""
     if not org or not org.get("sp_parish_hostname"):
         return None
-    if not force and parish.get("sp_folder_path"):
-        return parish["sp_folder_path"]
 
     token, site_id = _site_and_token(org)
     root = org.get("sp_parish_library_folder") or ""
@@ -143,22 +172,55 @@ def _parish_root(org: dict, folder_name: str) -> str:
 
 
 # ── Parish document areas ────────────────────────────────────────────────────
+# Every entry gets a "rel_path" -- the exact address delete/download need,
+# relative to the parish's own resolved root. Root-loose legacy files get
+# rel_path=name (unchanged addressing); subfolder contents get
+# rel_path="{Subfolder}/{name}".
 
 def list_readonly(org: dict, folder_name: str) -> list[dict]:
+    """Read Only Files subfolder + any pre-existing loose file sitting at
+    the parish's root (backward compat -- see module docstring)."""
     token, site_id = _site_and_token(org)
-    entries = sharepoint_client.list_folder(token, site_id, _parish_root(org, folder_name))
-    return [e for e in entries if e["name"] != EDITABLE_SUBFOLDER]
+    base = _parish_root(org, folder_name)
+    out = []
+    for e in sharepoint_client.list_folder(token, site_id, base):
+        if e["name"] in _SPECIAL_SUBFOLDERS:
+            continue
+        e = dict(e, rel_path=e["name"])
+        out.append(e)
+    for e in sharepoint_client.list_folder(token, site_id, f"{base}/{READONLY_SUBFOLDER}"):
+        e = dict(e, rel_path=f"{READONLY_SUBFOLDER}/{e['name']}")
+        out.append(e)
+    return out
 
 
 def list_editable(org: dict, folder_name: str) -> list[dict]:
     token, site_id = _site_and_token(org)
-    base = f"{_parish_root(org, folder_name)}/{EDITABLE_SUBFOLDER}"
-    return sharepoint_client.list_folder(token, site_id, base)
+    base = _parish_root(org, folder_name)
+    out = []
+    for e in sharepoint_client.list_folder(token, site_id, f"{base}/{EDITABLE_SUBFOLDER}"):
+        e = dict(e, rel_path=f"{EDITABLE_SUBFOLDER}/{e['name']}")
+        out.append(e)
+    return out
+
+
+def list_to_diocese(org: dict, folder_name: str) -> list[dict]:
+    token, site_id = _site_and_token(org)
+    base = _parish_root(org, folder_name)
+    out = []
+    for e in sharepoint_client.list_folder(token, site_id, f"{base}/{TO_DIOCESE_SUBFOLDER}"):
+        e = dict(e, rel_path=f"{TO_DIOCESE_SUBFOLDER}/{e['name']}")
+        out.append(e)
+    return out
 
 
 def upload_readonly(org: dict, folder_name: str, filename: str, data: bytes, content_type: str) -> None:
+    """Admin upload -- now goes into the Read Only Files subfolder (created
+    lazily), never the parish's folder root directly."""
     token, site_id = _site_and_token(org)
-    sharepoint_client.upload_bytes(token, site_id, _parish_root(org, folder_name), filename, data, content_type)
+    base = _parish_root(org, folder_name)
+    sharepoint_client.ensure_folder(token, site_id, base, READONLY_SUBFOLDER)
+    sharepoint_client.upload_bytes(token, site_id, f"{base}/{READONLY_SUBFOLDER}", filename, data, content_type)
 
 
 def upload_editable(org: dict, folder_name: str, filename: str, data: bytes, content_type: str) -> None:
@@ -168,21 +230,21 @@ def upload_editable(org: dict, folder_name: str, filename: str, data: bytes, con
     sharepoint_client.upload_bytes(token, site_id, f"{base}/{EDITABLE_SUBFOLDER}", filename, data, content_type)
 
 
-def delete_readonly(org: dict, folder_name: str, filename: str) -> None:
-    token, site_id = _site_and_token(org)
-    sharepoint_client.delete_file(token, site_id, f"{_parish_root(org, folder_name)}/{filename}")
-
-
-def delete_editable(org: dict, folder_name: str, filename: str) -> None:
-    token, site_id = _site_and_token(org)
-    sharepoint_client.delete_file(token, site_id, f"{_parish_root(org, folder_name)}/{EDITABLE_SUBFOLDER}/{filename}")
-
-
-def download_parish_file(org: dict, folder_name: str, area: str, filename: str) -> bytes:
+def upload_to_diocese(org: dict, folder_name: str, filename: str, data: bytes, content_type: str) -> None:
     token, site_id = _site_and_token(org)
     base = _parish_root(org, folder_name)
-    path = f"{base}/{filename}" if area == "readonly" else f"{base}/{EDITABLE_SUBFOLDER}/{filename}"
-    return sharepoint_client.download_bytes(token, site_id, path)
+    sharepoint_client.ensure_folder(token, site_id, base, TO_DIOCESE_SUBFOLDER)
+    sharepoint_client.upload_bytes(token, site_id, f"{base}/{TO_DIOCESE_SUBFOLDER}", filename, data, content_type)
+
+
+def delete_parish_file(org: dict, folder_name: str, rel_path: str) -> None:
+    token, site_id = _site_and_token(org)
+    sharepoint_client.delete_file(token, site_id, f"{_parish_root(org, folder_name)}/{rel_path}")
+
+
+def download_parish_file(org: dict, folder_name: str, rel_path: str) -> bytes:
+    token, site_id = _site_and_token(org)
+    return sharepoint_client.download_bytes(token, site_id, f"{_parish_root(org, folder_name)}/{rel_path}")
 
 
 # ── Resource library (diocese-wide) ──────────────────────────────────────────
@@ -256,23 +318,28 @@ def parish_documents_page(request: Request):
     if err:
         return err
     folder = resolve_parish_folder(org, parish)
-    readonly_files, editable_files, list_error = [], [], None
+    readonly_files, editable_files, to_diocese_files, list_error = [], [], [], None
     if folder:
         try:
             readonly_files = list_readonly(org, folder)
             editable_files = list_editable(org, folder)
+            to_diocese_files = list_to_diocese(org, folder)
         except RuntimeError as exc:
             list_error = str(exc)
     return _render(request, "parish_documents.html", user, {
         "parish": parish, "folder": folder,
         "readonly_files": readonly_files, "editable_files": editable_files,
+        "to_diocese_files": to_diocese_files,
         "can_edit": _can_edit_parish_docs(user, parish),
         "list_error": list_error,
     })
 
 
 @router.post("/parish-documents/upload")
-async def parish_documents_upload(request: Request, file: UploadFile = File(...)):
+async def parish_documents_upload(request: Request, file: UploadFile = File(...), target: str = Form("parish")):
+    """target='parish' -> Parish Files (the parish's own library);
+    target='diocese' -> For the Diocese (an outbox to the diocesan office).
+    Same permission gate either way."""
     user, parish, org, err = _parish_context(request)
     if err:
         return err
@@ -284,7 +351,11 @@ async def parish_documents_upload(request: Request, file: UploadFile = File(...)
     data = await file.read()
     if len(data) > MAX_UPLOAD_BYTES:
         return RedirectResponse("/parish-documents?error=toolarge", status_code=303)
-    upload_editable(org, folder, file.filename, data, file.content_type or "application/octet-stream")
+    content_type = file.content_type or "application/octet-stream"
+    if target == "diocese":
+        upload_to_diocese(org, folder, file.filename, data, content_type)
+    else:
+        upload_editable(org, folder, file.filename, data, content_type)
     return RedirectResponse("/parish-documents?uploaded=1", status_code=303)
 
 
@@ -296,27 +367,31 @@ async def parish_documents_delete(request: Request):
     if not _can_edit_parish_docs(user, parish):
         return JSONResponse({"error": "You don't have permission to remove files here."}, status_code=403)
     form = await request.form()
-    filename = (form.get("filename") or "").strip()
+    rel_path = (form.get("rel_path") or "").strip()
+    # A parish may only delete its OWN uploads (Parish Files / For the
+    # Diocese) -- never Read Only Files, even if a request were crafted by
+    # hand to try.
+    if not (rel_path.startswith(f"{EDITABLE_SUBFOLDER}/") or rel_path.startswith(f"{TO_DIOCESE_SUBFOLDER}/")):
+        return JSONResponse({"error": "You can't remove that file."}, status_code=403)
     folder = resolve_parish_folder(org, parish)
-    if folder and filename:
-        delete_editable(org, folder, filename)
+    if folder and rel_path:
+        delete_parish_file(org, folder, rel_path)
     return RedirectResponse("/parish-documents?deleted=1", status_code=303)
 
 
-@router.get("/parish-documents/download/{area}/{filename:path}")
-def parish_documents_download(area: str, filename: str, request: Request):
+@router.get("/parish-documents/download/{rel_path:path}")
+def parish_documents_download(rel_path: str, request: Request):
     user, parish, org, err = _parish_context(request)
     if err:
         return err
-    if area not in ("readonly", "editable"):
-        return JSONResponse({"error": "Unknown area"}, status_code=400)
     folder = resolve_parish_folder(org, parish)
     if not folder:
         return JSONResponse({"error": "Not found"}, status_code=404)
     try:
-        data = download_parish_file(org, folder, area, filename)
+        data = download_parish_file(org, folder, rel_path)
     except RuntimeError:
         return JSONResponse({"error": "Not found"}, status_code=404)
+    filename = rel_path.rsplit("/", 1)[-1]
     return Response(content=data, media_type="application/octet-stream",
                      headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
@@ -376,7 +451,7 @@ def admin_parish_documents_page(request: Request, parish_id: int = 0):
     if err:
         return err
     parishes = registry.list_all_parishes()
-    selected, files, folder, list_error = None, [], None, None
+    selected, files, to_diocese_files, folder, list_error = None, [], [], None, None
     if parish_id:
         selected = next((p for p in parishes if p["id"] == parish_id), None)
         if selected:
@@ -385,16 +460,19 @@ def admin_parish_documents_page(request: Request, parish_id: int = 0):
             if folder:
                 try:
                     files = list_readonly(org, folder)
+                    to_diocese_files = list_to_diocese(org, folder)
                 except RuntimeError as exc:
                     list_error = str(exc)
     return _render(request, "admin_parish_documents.html", user, {
         "parishes": parishes, "selected": selected, "files": files,
+        "to_diocese_files": to_diocese_files,
         "folder": folder, "list_error": list_error,
     })
 
 
 @router.post("/admin/parish-documents/{parish_id}/upload")
 async def admin_parish_documents_upload(parish_id: int, request: Request, file: UploadFile = File(...)):
+    """Admin uploads always go into Read Only Files -- see module docstring."""
     user, err = _require_docs_admin(request)
     if err:
         return err
@@ -412,6 +490,10 @@ async def admin_parish_documents_upload(parish_id: int, request: Request, file: 
 
 @router.post("/admin/parish-documents/{parish_id}/delete")
 async def admin_parish_documents_delete(parish_id: int, request: Request):
+    """Handles a rel_path from either section shown on this page -- Read
+    Only Files (staff cleaning up their own uploads) or For the Diocese
+    (staff clearing a processed parish submission). Never Parish Files --
+    that's the parish's own area, not shown or manageable here."""
     user, err = _require_docs_admin(request)
     if err:
         return err
@@ -419,12 +501,33 @@ async def admin_parish_documents_delete(parish_id: int, request: Request):
     if not parish:
         return RedirectResponse("/admin/parish-documents")
     form = await request.form()
-    filename = (form.get("filename") or "").strip()
+    rel_path = (form.get("rel_path") or "").strip()
     org = db.query_one("SELECT * FROM checkreq.organizations WHERE id = %s", (parish["org_id"],))
     folder = resolve_parish_folder(org, parish)
-    if folder and filename:
-        delete_readonly(org, folder, filename)
+    if folder and rel_path:
+        delete_parish_file(org, folder, rel_path)
     return RedirectResponse(f"/admin/parish-documents?parish_id={parish_id}&deleted=1", status_code=303)
+
+
+@router.get("/admin/parish-documents/{parish_id}/download/{rel_path:path}")
+def admin_parish_documents_download(parish_id: int, rel_path: str, request: Request):
+    user, err = _require_docs_admin(request)
+    if err:
+        return err
+    parish = db.query_one("SELECT * FROM portal.parishes WHERE id = %s", (parish_id,))
+    if not parish:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    org = db.query_one("SELECT * FROM checkreq.organizations WHERE id = %s", (parish["org_id"],))
+    folder = resolve_parish_folder(org, parish)
+    if not folder:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    try:
+        data = download_parish_file(org, folder, rel_path)
+    except RuntimeError:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    filename = rel_path.rsplit("/", 1)[-1]
+    return Response(content=data, media_type="application/octet-stream",
+                     headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
 
 @router.post("/admin/parish-documents/{parish_id}/resolve")

@@ -1,33 +1,37 @@
 {% extends "base.html" %}
-{% block title %}Request Parish Access — Beacon{% endblock %}
+{% block title %}Request Access — Beacon{% endblock %}
 {% block content %}
-<div class="page-shell">
+<div class="page-shell-wide">
 
-<h1>Request Parish Access</h1>
+<h1>Request Access</h1>
+<p class="back-link"><a href="{{ '/parish-view' if parish_view else '/portal' }}">&larr; Back</a></p>
 
 {% if pending %}
 <div class="banner banner-info">
   <strong>Your request is pending review.</strong> You asked for
   <strong>{{ pending.role_label }}</strong> access at <strong>{{ pending.parish_name }}</strong>
-  on {{ pending.requested_at }}. A Beacon Admin needs to approve it before you can access
+  on {{ pending.requested_at }}. A reviewer needs to approve it before you can access
   that parish's portal — check back later, or reach out to your administrator directly if it's urgent.
 </div>
 {% else %}
-<p class="sub">
-  Tell us which parish you're with and what you need, and a Beacon Admin will review it.
-</p>
+<p class="sub">Tell us which parish you're with and what you need, and a reviewer will look at it.</p>
 
 {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
 
 <div class="card">
   <form method="post" action="/parish-access-request">
     <label for="parish_id">Parish</label>
+    {% if locked_parish %}
+    <input type="text" value="{{ parishes[0].name }}{% if parishes[0].city %}, {{ parishes[0].city }}{% endif %}" disabled>
+    <input type="hidden" name="parish_id" value="{{ parishes[0].id }}">
+    {% else %}
     <select id="parish_id" name="parish_id" required>
       <option value="">Select a parish...</option>
       {% for p in parishes %}
-      <option value="{{ p.id }}">{{ p.name }}{% if p.city %} ({{ p.city }}){% endif %}</option>
+      <option value="{{ p.id }}">{{ p.name }}{% if p.city %}, {{ p.city }}{% endif %}</option>
       {% endfor %}
     </select>
+    {% endif %}
 
     <label for="role_key">Access you're requesting</label>
     <select id="role_key" name="role_key" required>
@@ -38,10 +42,66 @@
     </select>
 
     <label for="note">Note (optional)</label>
-    <textarea id="note" name="note" rows="3" placeholder="Anything that would help a Beacon Admin review this — e.g. your role at the parish, who to check with."></textarea>
+    <textarea id="note" name="note" rows="3" placeholder="Anything that would help a reviewer — e.g. your role at the parish, who to check with."></textarea>
 
     <button type="submit" class="btn btn-primary">Submit Request</button>
   </form>
+</div>
+{% endif %}
+
+{% if is_reviewer %}
+<h2 style="margin-top:var(--space-6);">Requests to Review</h2>
+{% if is_beacon_admin_reviewer %}
+<p class="sub">Pending self-service requests for access to a specific parish's portal — every diocese, since you hold Beacon Admin.</p>
+{% else %}
+<p class="sub">Pending self-service requests for access to a specific parish's portal — only the parish(es) you administer as Parish Admin.</p>
+{% endif %}
+
+{% if request.query_params.get('approved') %}<div class="banner banner-success">Access granted.</div>{% endif %}
+{% if request.query_params.get('rejected') %}<div class="banner banner-info">Request rejected.</div>{% endif %}
+
+{% if is_beacon_admin_reviewer %}
+<form method="get" action="/parish-access-request" class="filter-bar">
+  <div class="field">
+    <label>Diocese</label>
+    <select name="entity" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for o in all_orgs_list %}
+      <option value="{{ o.code }}" {% if filter_entity == o.code %}selected{% endif %}>{{ o.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</form>
+{% endif %}
+
+<div class="card">
+  <table class="simple-table">
+    <thead>
+      <tr><th>Requested</th><th>User</th><th>Diocese</th><th>Parish</th><th>Role requested</th><th>Note</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for r in requests %}
+      <tr>
+        <td>{{ r.requested_at }}</td>
+        <td>{{ r.display_name or r.email }}<br><span class="muted">{{ r.email }}</span></td>
+        <td>{{ r.org_code }}</td>
+        <td>{{ r.parish_name }}</td>
+        <td>{{ r.role_label }}<br><span class="muted">{{ r.role_description }}</span></td>
+        <td>{{ r.note or "—" }}</td>
+        <td class="actions-cell">
+          <form method="post" action="/admin/parish-access-requests/{{ r.id }}/approve" style="display:inline">
+            <button type="submit" class="btn btn-primary">Approve</button>
+          </form>
+          <form method="post" action="/admin/parish-access-requests/{{ r.id }}/reject" style="display:inline">
+            <button type="submit" class="btn btn-secondary">Reject</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7">No pending requests.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 {% endif %}
 

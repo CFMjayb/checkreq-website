@@ -10,19 +10,23 @@
   <link rel="stylesheet" href="/static/css/base.css?v={{ asset_version('css/base.css') }}">
   {% block extra_css %}{% endblock %}
 </head>
-<body>
+<body{% if parish_view %} class="parish-mode"{% endif %}>
   {% if impersonating %}
   <div class="impersonation-bar">
     Viewing as <strong>{{ user.display_name or user.email }}</strong> — impersonated by {{ real_user.display_name or real_user.email }}
     <form method="post" action="/admin/impersonate/stop"><button type="submit">Exit Impersonation</button></form>
   </div>
   {% endif %}
-  {# Parish Mode (S4, 2026-08-08) -- mirrors the impersonation bar above
-     exactly, but does NOT change who `user` is anywhere else in the app
-     (unlike impersonation) -- it only unlocks /parish-view and shows this
-     banner so a CFO previewing a parish doesn't lose track of it while
-     browsing the rest of Beacon normally. #}
-  {% if parish_view %}
+  {# Parish Mode (S4, 2026-08-08). Jay, correcting the first cut: a NATIVE
+     parish user (their only roles are parish-scoped -- no Exit needed,
+     there is no "Diocese Mode" for them to return to) is in Parish Mode
+     for their whole session by default -- the dark-red `body.parish-mode`
+     theme above communicates that on its own. Only a CFO's EXPLICIT preview
+     (parish_mode_preview=True, started from /admin/parish-mode) shows this
+     bar with a real Exit button, mirroring the impersonation bar exactly,
+     since that's the one case where losing track of the toggle would be
+     confusing. #}
+  {% if parish_view and parish_mode_preview %}
   <div class="impersonation-bar">
     Parish Mode: viewing <strong>{{ parish_view.name }}</strong> ({{ parish_view.org_code }})
     <form method="post" action="/admin/parish-mode/stop"><button type="submit">Exit Parish Mode</button></form>
@@ -51,7 +55,8 @@
   </button>
   {% if user %}
   <header class="site-header">
-    <a href="/portal" class="brand">Beacon</a>
+    <a href="{{ '/parish-view' if parish_view else '/portal' }}" class="brand">Beacon</a>
+    {% if parish_view %}<span class="brand-diocese">{{ parish_view.org_name }}</span>{% endif %}
     <nav>
       {# 2026-08-02 feedback batch, Items 1 & 2: the top nav had gotten too
          busy -- New Request/Requests/My Approvals are removed here since
@@ -65,7 +70,11 @@
          three links above -- no functional difference, one fewer thing in
          the bar. #}
       <a href="/feedback">Feedback</a>
-      {% if current_org %}
+      {# Jay, 2026-08-08: "A parish mode should not have an entity picker --
+         they are in their entity." A parish isn't scoped by the diocesan
+         EDOM/Claggett entity switcher at all -- suppressed whenever
+         parish_view is set, native or preview alike. #}
+      {% if current_org and not parish_view %}
       <div class="entity-badge">
         <span class="label">Entity</span>
         <select id="entitySwitcher">
@@ -107,7 +116,7 @@
   <footer style="margin-top:48px;padding:16px 24px;border-top:1px solid #d9d9d9;text-align:center;font-family:Arial,sans-serif;font-size:13px;color:#666;">
     <a href="/how-it-works" style="color:#1F4E79;text-decoration:none;font-weight:600;">About Beacon — How Beacon Works</a>
   </footer>
-  {% if user and current_org %}<script src="/static/js/entity_switcher.js?v={{ asset_version('js/entity_switcher.js') }}"></script>{% endif %}
+  {% if user and current_org and not parish_view %}<script src="/static/js/entity_switcher.js?v={{ asset_version('js/entity_switcher.js') }}"></script>{% endif %}
   {% if user %}<script src="/static/js/notifications.js?v={{ asset_version('js/notifications.js') }}"></script>{% endif %}
   <script src="/static/js/fullscreen.js?v={{ asset_version('js/fullscreen.js') }}"></script>
   {% block extra_js %}{% endblock %}

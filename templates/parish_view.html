@@ -1,18 +1,11 @@
 {% extends "base.html" %}
-{% block title %}{{ parish.name }} — Beacon{% endblock %}
+{% block title %}{{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %} — Beacon{% endblock %}
 {% block content %}
 <div class="page-shell">
-<h1>{{ parish.name }}</h1>
+<h1>{{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</h1>
 {% if can_switch %}
 <p class="back-link"><a href="{{ switch_url }}">&larr; Choose a different parish</a></p>
 {% endif %}
-
-<div class="card">
-  <p><strong>Diocese:</strong> {{ parish.org_name }} ({{ parish.org_code }})</p>
-  <p><strong>City:</strong> {{ parish.city or "—" }}</p>
-  <p><strong>Served Tier:</strong> {{ parish.served_tier or "—" }}</p>
-  <p><strong>Status:</strong> {{ parish.status }}</p>
-</div>
 
 {# Announcements feed (Parish Portal S4, 2026-08-08) -- fetched client-side
    via GET /api/announcements/mine, which derives the viewer's own parish
@@ -28,28 +21,34 @@
 
 <h2>Parish Home</h2>
 <div class="module-grid">
+  {# 2026-08-08 feedback batch: the plain Diocese/City/Served Tier/Status
+     card that used to sit here ("the big white pill in the main area is
+     junk") is gone -- replaced by a real Parish Information page sourced
+     live from Databank via the parish's own databank_contact_id. #}
+  <a class="module-tile" href="/parish-information">
+    <h3>Parish Information</h3>
+    <p class="desc">Contact details and diocese info for this parish, from Databank.</p>
+  </a>
   <a class="module-tile" href="/parish-documents">
     <h3>Documents</h3>
     <p class="desc">What the diocese has shared with you, and your own parish's files.</p>
   </a>
   <a class="module-tile" href="/resource-library">
-    <h3>Resource Library</h3>
+    <h3>Resources for Parishes</h3>
     <p class="desc">Shared diocese-wide resources.</p>
   </a>
   <a class="module-tile" href="/parish-requests">
     <h3>Feedback &amp; Requests</h3>
     <p class="desc">Send feedback or ask for something, and see your own history.</p>
   </a>
+  {# Consolidated 2026-08-08 (Jay: "Request Access replaces Request Parish
+     Access and Parish Access Requests -- the sub-screen should do all of
+     this, depending on your RBAC") -- one tile, the page itself shows the
+     submit form plus an inline review queue for anyone who qualifies. #}
   <a class="module-tile" href="/parish-access-request">
-    <h3>Request Parish Access</h3>
-    <p class="desc">Ask for access to this or another parish.</p>
+    <h3>Request Access</h3>
+    <p class="desc">Ask for access to a parish, or review pending requests if you're a reviewer.</p>
   </a>
-  {% if can_review %}
-  <a class="module-tile" href="/admin/parish-access-requests">
-    <h3>Parish Access Requests</h3>
-    <p class="desc">Review and grant pending requests for this parish.</p>
-  </a>
-  {% endif %}
 </div>
 
 <div class="card">
