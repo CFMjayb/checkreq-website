@@ -64,6 +64,12 @@
         </select>
       </div>
       {% endif %}
+      {# account.py (2026-08-08): the one UI caller auth_password.set_password()
+         never had, closing a gap flagged since S1. Kept as a single plain
+         nav link, same tier as Feedback -- everyone needs this occasionally,
+         no role gate, doesn't belong buried in the Administrative Tasks hub
+         since it's account-level, not admin-level. #}
+      <a href="/account/password">Password</a>
       {# In-App Notifications (2026-08-02): bell + unread badge, next to
          Log out, on every page -- NOT scoped to the currently-selected
          entity, per the plan's own recommendation (see notifications.py).

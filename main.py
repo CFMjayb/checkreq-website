@@ -5311,6 +5311,7 @@ import access_requests
 import admin_users
 import admin_hub
 import parish_access
+import account
 
 access_requests.register(app, current_user=_current_user, render=_render)
 admin_users.register(app, current_user=_current_user, render=_render)
@@ -5318,6 +5319,8 @@ admin_hub.register(app, current_user=_current_user, render=_render)
 # Parish Portal S3 (Parish Portal Plan.md Section 2/5) -- same register()
 # pattern as the three lines above, thin wiring only.
 parish_access.register(app, current_user=_current_user, render=_render)
+# account.py (2026-08-08) -- closes the "set_password() has no UI caller" gap.
+account.register(app, current_user=_current_user, render=_render)
 
 # In-App Notifications (2026-08-02, In-App Notifications Plan.md).
 # create_notification()/get_unread_count() are already in use above (this
