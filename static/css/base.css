@@ -183,6 +183,15 @@ p { margin: 0 0 var(--space-3); }
 }
 .impersonation-bar button:hover { opacity: 0.88; }
 
+/* ---- Parish Mode theme (2026-08-08) -- overriding the variable itself,
+   not individual rules, retints the header/links/buttons/badges everywhere
+   they already reference --color-franciscan-green with zero duplication.
+   See tokens.css for why these exact values are a placeholder. ---- */
+body.parish-mode {
+  --color-franciscan-green: var(--color-parish-red);
+  --color-franciscan-green-dark: var(--color-parish-red-dark);
+}
+
 .page-shell { max-width: 1100px; margin: 0 auto; padding: var(--space-6) var(--space-5); }
 
 /* 2026-08-02 feedback batch, Item 3: "all screens need a back hyperlink
@@ -599,3 +608,29 @@ table.status-history-table th:nth-child(4), table.status-history-table td:nth-ch
 .chat-input-row { display: flex; gap: var(--space-2); align-items: flex-end; margin-bottom: var(--space-3); }
 .chat-input-row textarea { flex: 1; resize: vertical; }
 .chat-actions { display: flex; align-items: center; gap: var(--space-3); }
+
+/* ---- Parish Portal S4+S5 (2026-08-08): announcements feed, document
+   listings, parish-request cards. Reuses existing tokens/card shape --
+   nothing here overrides the parish-mode red theme, it just inherits it via
+   --color-franciscan-green like everything else already does. ---- */
+.announcement-item { border-bottom: 1px solid var(--color-border); padding: var(--space-3) 0; }
+.announcement-item:last-child { border-bottom: none; }
+.announcement-title { font-weight: 700; color: var(--color-franciscan-green); }
+.announcement-date { font-size: 0.78rem; color: var(--color-text-muted); margin-bottom: var(--space-1); }
+.announcement-body { font-size: 0.92rem; white-space: pre-wrap; }
+
+.doc-area { margin-bottom: var(--space-5); }
+.doc-area h2 { font-size: 1.05rem; margin-bottom: var(--space-2); }
+table.doc-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+table.doc-table th { text-align: left; text-transform: uppercase; letter-spacing: 0.03em; font-size: 0.72rem; color: var(--color-text-muted); border-bottom: 2px solid var(--color-border); padding: var(--space-2) var(--space-3); }
+table.doc-table td { border-bottom: 1px solid var(--color-border); padding: var(--space-2) var(--space-3); vertical-align: middle; }
+.doc-empty { color: var(--color-text-muted); font-size: 0.88rem; padding: var(--space-2) 0; }
+.doc-upload-row { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-3); }
+.doc-upload-row input[type=file] { flex: 1; }
+
+.badge-request-open { background: #eaf1ec; color: var(--color-franciscan-green); }
+.badge-request-reviewed { background: #f5c04a33; color: var(--color-warning); }
+.badge-request-closed { background: #ece7da; color: var(--color-text-muted); }
+
+.btn-link { background: none; border: none; padding: 0; margin-left: var(--space-2); color: var(--color-danger); text-decoration: underline; font-size: 0.85rem; cursor: pointer; }
+.btn-link:hover { opacity: 0.8; }

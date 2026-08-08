@@ -64,6 +64,15 @@ _CARDS = [
     # impersonating, since only the real underlying CFO may reach it.
     {"title": "Parish Mode", "desc": "See a specific parish's (currently minimal) portal view.",
      "url": "/admin/parish-mode", "role": "real_cfo"},
+    # Parish Portal S4+S5 (2026-08-08) -- three new diocesan-side management
+    # screens. `role` is a LIST here (setup_admin OR beacon_admin) -- see
+    # the visibility check below, which now accepts either shape.
+    {"title": "Announcements", "desc": "Post dated, targeted announcements to parish users.",
+     "url": "/admin/announcements", "role": ["setup_admin", "beacon_admin"]},
+    {"title": "Parish Documents", "desc": "Upload documents into a specific parish's read-only archive.",
+     "url": "/admin/parish-documents", "role": ["setup_admin", "beacon_admin"]},
+    {"title": "Resource Library", "desc": "Manage the diocese-wide shared resource library.",
+     "url": "/admin/resource-library", "role": ["setup_admin", "beacon_admin"]},
 ]
 
 
@@ -81,6 +90,8 @@ def admin_hub(request: Request):
     for c in _CARDS:
         if c["role"] == "real_cfo":
             visible = (not is_impersonating) and real_uid and rbac.user_has_role(real_uid, "cfo", org_id=None)
+        elif isinstance(c["role"], list):
+            visible = rbac.user_has_any_role(user["id"], c["role"], org_id=None)
         else:
             visible = rbac.user_has_role(user["id"], c["role"], org_id=None)
         if visible:

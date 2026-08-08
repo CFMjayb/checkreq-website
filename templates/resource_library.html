@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Resource Library — Beacon{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Resource Library</h1>
+<p class="back-link"><a href="/portal">&larr; Back</a></p>
+<p class="sub">Shared resources from the diocese, available to every parish.</p>
+
+{% if list_error %}<div class="banner banner-error">Couldn't load the library right now: {{ list_error }}</div>{% endif %}
+
+<div class="card doc-area">
+  {% if files %}
+  <table class="doc-table">
+    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+      {% for f in files %}
+      {% if not f.is_folder %}
+      <tr>
+        <td>{{ f.name }}</td>
+        <td>{{ (f.size / 1024)|round(1) }} KB</td>
+        <td><a href="/resource-library/download/{{ f.name|urlencode }}">View</a></td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="doc-empty">Nothing has been shared here yet.</p>
+  {% endif %}
+</div>
+</div>
+{% endblock %}

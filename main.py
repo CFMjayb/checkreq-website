@@ -101,6 +101,9 @@ import db
 import rbac
 import parish_roles
 import parish_mode
+import parish_documents
+import announcements
+import parish_requests
 import approval_engine
 import auth_routes
 import gcs_client
@@ -280,6 +283,11 @@ MODULES = [
     # entity-level role at all (Jay, 2026-08-08: "The Parish Admin will have
     # to grant access to someone who requests it").
     {"key": "parish_access_requests", "title": "Parish Access Requests", "desc": "Review and grant pending requests for access to a specific parish.", "url": "/admin/parish-access-requests", "enabled": True, "gate": "parish_reviewer"},
+    # Parish Portal S4+S5 (2026-08-08): same "parish_reviewer" synthetic
+    # pseudo-role as the tile above -- a pure Parish Admin (no
+    # checkreq.roles grant at all) needs to reach this without the
+    # Administrative Tasks hub's own top-level gate blocking them.
+    {"key": "parish_requests_review", "title": "Parish Requests", "desc": "Review parish feedback and general requests.", "url": "/admin/parish-requests", "enabled": True, "gate": "parish_reviewer"},
 ]
 
 # The union of roles that unlock the "Administrative Tasks" tile/hub (2026-08-02
@@ -414,6 +422,7 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # can't already be in any_org_roles) both count as a reviewer.
     if "beacon_admin" in any_org_roles or parish_roles.get_parish_ids_with_role(user["id"], "parish_admin"):
         any_org_roles = any_org_roles | {"parish_reviewer"}
+    _parish_view, _parish_view_is_preview = parish_mode.effective_parish_mode(request, user)
     ctx = {
         "user": user,
         "real_user": real,
@@ -428,10 +437,13 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
         # unread count for the header bell -- no push/websocket, just
         # recomputed on every render, per the plan's own design.
         "unread_notification_count": notifications.get_unread_count(user["id"]),
-        # Parish Mode (S4, 2026-08-08) -- fail-closed live re-check lives in
-        # parish_mode.py itself; this is just the thin wiring every template
-        # needs to show the persistent banner (mirrors `impersonating` above).
-        "parish_view": parish_mode.current_parish_view(request),
+        # Parish Mode (S4, 2026-08-08) -- fail-closed live re-check and
+        # native-vs-preview logic all live in parish_mode.py itself; this
+        # is just the thin wiring every template needs, both for the
+        # persistent Exit banner (only on a CFO's explicit preview) and for
+        # the dark-red body.parish-mode theme (applies either way).
+        "parish_view": _parish_view,
+        "parish_mode_preview": _parish_view_is_preview,
     }
     if extra:
         ctx.update(extra)
@@ -472,6 +484,18 @@ def portal(request: Request):
             and not db.query_one("SELECT 1 FROM checkreq.user_program_areas WHERE user_id = %s", (user["id"],))
             and not parish_roles.get_parish_role_keys(user["id"])):
         return RedirectResponse("/access-request")
+
+    # Parish Portal S4 correction (2026-08-08, Jay, first real test login):
+    # a user whose ONLY roles are parish-scoped has no diocesan "entity" to
+    # work in at all -- send them straight to their own parish's page
+    # instead of the diocesan portal (entity picker and all). Also covers a
+    # CFO's explicit /admin/parish-mode preview. parish_mode.effective_
+    # parish_mode() returning (None, False) for a native multi-parish user
+    # with no choice made yet is STILL a reason to redirect here --
+    # /parish-view itself renders their own small picker in that case.
+    parish, _ = parish_mode.effective_parish_mode(request, user)
+    if parish or (not rbac.user_has_any_role(user["id"]) and parish_roles.get_parish_role_keys(user["id"])):
+        return RedirectResponse("/parish-view")
 
     return _render(request, "portal.html", user, {"modules": MODULES})
 
@@ -5329,6 +5353,12 @@ account.register(app, current_user=_current_user, render=_render)
 # Parish Portal S4, "Diocese Mode / Parish Mode" (2026-08-08) -- same
 # register() pattern, thin wiring only.
 parish_mode.register(app, current_user=_current_user, render=_render)
+# Parish Portal S4+S5 (2026-08-08): announcements, document archive/library,
+# and parish feedback/general-requests -- three more new modules, same thin
+# register() wiring, no logic added here.
+parish_documents.register(app, current_user=_current_user, render=_render)
+announcements.register(app, current_user=_current_user, render=_render)
+parish_requests.register(app, current_user=_current_user, render=_render)
 
 # In-App Notifications (2026-08-02, In-App Notifications Plan.md).
 # create_notification()/get_unread_count() are already in use above (this

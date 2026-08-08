@@ -79,11 +79,15 @@ def get_parish(parish_id: int, org_id: int) -> dict | None:
 
 def create_parish(org_id: int, name: str, **fields) -> dict:
     """fields may include: code, city, status, databank_churchwebacct,
-    qbo_ar_customer_id, qbo_ap_vendor_id, served_tier, modules, contacts."""
+    qbo_ar_customer_id, qbo_ap_vendor_id, served_tier, modules, contacts,
+    parochial_report_id, pr_name, legal_name, ein (2026-08-08 -- the
+    identifiers a parish's own Annual Parochial Report uses, distinct from
+    this app's own `name` and from QBO's Customer/Vendor display names)."""
     allowed = {
         "code", "city", "status", "databank_churchwebacct",
         "qbo_ar_customer_id", "qbo_ap_vendor_id", "served_tier",
         "modules", "contacts",
+        "parochial_report_id", "pr_name", "legal_name", "ein",
     }
     cols = ["org_id", "name"] + [k for k in fields if k in allowed]
     vals = [org_id, name] + [fields[k] for k in fields if k in allowed]
@@ -105,6 +109,14 @@ def update_parish(parish_id: int, org_id: int, **fields) -> dict | None:
         "name", "code", "city", "status", "databank_churchwebacct",
         "qbo_ar_customer_id", "qbo_ap_vendor_id", "served_tier",
         "modules", "contacts", "is_active",
+        "parochial_report_id", "pr_name", "legal_name", "ein",
+        # Parish Portal S5 (2026-08-08): the resolved-SharePoint-folder cache
+        # (parish_documents.resolve_parish_folder()) and its own staff-
+        # visible timestamp. sp_folder_resolved_at is set separately by the
+        # caller (a plain UPDATE ... NOW(), not through this generic
+        # fields-dict path) since "now" doesn't fit this function's
+        # value-per-field shape -- listed here anyway for discoverability.
+        "sp_folder_path", "sp_folder_resolved_at",
     }
     sets = [f"{k} = %s" for k in fields if k in allowed]
     if not sets:

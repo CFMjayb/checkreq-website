@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Announcements — Admin{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Announcements</h1>
+<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+
+{% if request.query_params.get('created') %}<div class="banner banner-success">Announcement created.</div>{% endif %}
+{% if request.query_params.get('updated') %}<div class="banner banner-success">Announcement updated.</div>{% endif %}
+{% if request.query_params.get('deactivated') %}<div class="banner banner-success">Deactivated.</div>{% endif %}
+{% if request.query_params.get('reactivated') %}<div class="banner banner-success">Reactivated.</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="banner banner-error">Please fill in an entity, title, and body.</div>{% endif %}
+
+<div class="form-card">
+  <h2>{% if editing %}Edit Announcement{% else %}New Announcement{% endif %}</h2>
+  <form method="post" action="{% if editing %}/admin/announcements/{{ editing.id }}{% else %}/admin/announcements{% endif %}">
+    {% if not editing %}
+    <div class="field">
+      <label for="org_id">Entity</label>
+      <select id="org_id" name="org_id" required>
+        {% for o in orgs %}<option value="{{ o.id }}">{{ o.code }} — {{ o.name }}</option>{% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    <div class="field">
+      <label for="title">Title</label>
+      <input type="text" id="title" name="title" required value="{{ editing.title if editing else '' }}">
+    </div>
+    <div class="field">
+      <label for="body">Message</label>
+      <textarea id="body" name="body" rows="4" required>{{ editing.body if editing else '' }}</textarea>
+    </div>
+    <div class="field">
+      <label for="target_parish_ids">Target parishes (leave none selected = every parish)</label>
+      <select id="target_parish_ids" name="target_parish_ids" multiple size="6">
+        {% for p in parishes %}
+        <option value="{{ p.id }}" {% if editing and editing.target_parish_ids and p.id in editing.target_parish_ids %}selected{% endif %}>{{ p.org_code }} — {{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="target_roles">Target roles (leave none selected = every role)</label>
+      <select id="target_roles" name="target_roles" multiple size="4">
+        {% for r in roles %}
+        <option value="{{ r.key }}" {% if editing and editing.target_roles and r.key in editing.target_roles %}selected{% endif %}>{{ r.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="publish_at">Publish at (blank = now)</label>
+      <input type="datetime-local" id="publish_at" name="publish_at" value="{{ editing.publish_at.strftime('%Y-%m-%dT%H:%M') if editing and editing.publish_at else '' }}">
+    </div>
+    <div class="field">
+      <label for="expires_at">Expires at (optional)</label>
+      <input type="datetime-local" id="expires_at" name="expires_at" value="{{ editing.expires_at.strftime('%Y-%m-%dT%H:%M') if editing and editing.expires_at else '' }}">
+    </div>
+    <button type="submit" class="btn">{% if editing %}Save Changes{% else %}Create{% endif %}</button>
+    {% if editing %}<a href="/admin/announcements" class="btn btn-secondary">Cancel</a>{% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <h2>All Announcements</h2>
+  <table class="simple-table">
+    <thead><tr><th>Entity</th><th>Title</th><th>Publish</th><th>Expires</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.org_code }}</td>
+        <td>{{ r.title }}</td>
+        <td>{{ r.publish_at.strftime('%Y-%m-%d %H:%M') if r.publish_at else '—' }}</td>
+        <td>{{ r.expires_at.strftime('%Y-%m-%d %H:%M') if r.expires_at else '—' }}</td>
+        <td>{{ 'Active' if r.is_active else 'Inactive' }}</td>
+        <td>
+          <a href="/admin/announcements/{{ r.id }}/edit">Edit</a>
+          {% if r.is_active %}
+          <form method="post" action="/admin/announcements/{{ r.id }}/deactivate" style="display:inline"><button type="submit" class="btn-link">Deactivate</button></form>
+          {% else %}
+          <form method="post" action="/admin/announcements/{{ r.id }}/reactivate" style="display:inline"><button type="submit" class="btn-link">Reactivate</button></form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+</div>
+{% endblock %}

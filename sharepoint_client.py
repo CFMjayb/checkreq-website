@@ -123,6 +123,57 @@ def download_bytes(token: str, site_id: str, file_path: str) -> bytes:
     return resp.content
 
 
+def list_folder(token: str, site_id: str, folder_path: str) -> list[dict]:
+    """Lists a folder's immediate children (files and subfolders).
+    folder_path='' lists the drive root. Returns [] if the folder doesn't
+    exist yet (404) -- callers (Parish Portal S5, 2026-08-08) treat a
+    not-yet-created area (e.g. a parish's own editable "Parish Files"
+    subfolder before its first upload) as genuinely empty, not an error."""
+    seg = folder_path.strip("/")
+    if seg:
+        url = f"{GRAPH_BASE}/sites/{site_id}/drive/root:/{seg}:/children?$top=500"
+    else:
+        url = f"{GRAPH_BASE}/sites/{site_id}/drive/root/children?$top=500"
+    resp = requests.get(url, headers=_headers(token))
+    if resp.status_code == 404:
+        return []
+    _check(resp, f'list "{seg or "/"}"')
+    out = []
+    for it in resp.json().get("value", []):
+        out.append({
+            "name": it["name"],
+            "is_folder": "folder" in it,
+            "size": it.get("size", 0),
+            "id": it.get("id"),
+            "web_url": it.get("webUrl"),
+            "last_modified": it.get("lastModifiedDateTime"),
+        })
+    return out
+
+
+def ensure_folder(token: str, site_id: str, parent_path: str, name: str) -> None:
+    """Creates a subfolder `name` under parent_path if it doesn't already
+    exist (Parish Portal S5). Deliberately does NOT use
+    @microsoft.graph.conflictBehavior='replace' the way upload_bytes does --
+    for a FOLDER, "replace" risks clobbering an already-existing folder's
+    real contents, not just overwriting one file. Checks via a plain
+    listing first and only POSTs a create when genuinely missing; a 409 on
+    the create (another request won the same race) is treated as success,
+    not an error."""
+    existing = list_folder(token, site_id, parent_path)
+    if any(it["is_folder"] and it["name"] == name for it in existing):
+        return
+    seg = parent_path.strip("/")
+    url = (f"{GRAPH_BASE}/sites/{site_id}/drive/root:/{seg}:/children" if seg
+           else f"{GRAPH_BASE}/sites/{site_id}/drive/root/children")
+    resp = requests.post(url, headers=_headers(token), json={
+        "name": name, "folder": {}, "@microsoft.graph.conflictBehavior": "fail",
+    })
+    if resp.status_code not in (201, 409):
+        raise RuntimeError(f'create folder "{name}" under "{parent_path}" failed '
+                            f'({resp.status_code}): {resp.text[:300]!r}')
+
+
 def delete_file(token: str, site_id: str, file_path: str) -> None:
     """Not currently called by any route (attachment removal in this app is a
     soft-delete only -- see payment_request_attachments.removed_at) -- added

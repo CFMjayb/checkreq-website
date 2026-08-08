@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Parish Documents — Admin{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Parish Documents (Admin)</h1>
+<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+<p class="sub">Upload documents into a specific parish's read-only ("From the Diocese") area, and see how each parish's SharePoint folder has been matched.</p>
+
+{% if request.query_params.get('uploaded') %}<div class="banner banner-success">Uploaded.</div>{% endif %}
+{% if request.query_params.get('deleted') %}<div class="banner banner-success">Removed.</div>{% endif %}
+{% if list_error %}<div class="banner banner-error">Couldn't load documents right now: {{ list_error }}</div>{% endif %}
+
+<div class="card">
+  <form method="get" action="/admin/parish-documents" class="field">
+    <label for="parish_id">Choose a parish</label>
+    <select id="parish_id" name="parish_id" onchange="this.form.submit()">
+      <option value="">— Select —</option>
+      {% for p in parishes %}
+      <option value="{{ p.id }}" {% if selected and selected.id == p.id %}selected{% endif %}>{{ p.org_code }} — {{ p.name }}{% if p.city %}, {{ p.city }}{% endif %}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+
+{% if selected %}
+<div class="card">
+  <h2>{{ selected.name }}</h2>
+  <p class="sub">Matched SharePoint folder: {% if folder %}<code>{{ folder }}</code>{% else %}<em>not matched</em>{% endif %}
+     {% if selected.sp_folder_resolved_at %}(resolved {{ selected.sp_folder_resolved_at }}){% endif %}</p>
+  <form method="post" action="/admin/parish-documents/{{ selected.id }}/resolve" style="display:inline">
+    <button type="submit" class="btn btn-secondary">Re-resolve from SharePoint</button>
+  </form>
+  <details style="margin-top:8px;">
+    <summary>Manual override</summary>
+    <form method="post" action="/admin/parish-documents/{{ selected.id }}/override" class="field" style="margin-top:8px;">
+      <input type="text" name="folder_path" placeholder="Exact SharePoint folder name" value="{{ folder or '' }}">
+      <button type="submit" class="btn btn-secondary">Set folder</button>
+    </form>
+  </details>
+</div>
+
+{% if folder %}
+<div class="card doc-area">
+  <h2>From the Diocese (read-only to the parish)</h2>
+  {% if files %}
+  <table class="doc-table">
+    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+      {% for f in files %}
+      <tr>
+        <td>{{ '📁 ' if f.is_folder else '' }}{{ f.name }}</td>
+        <td>{{ (f.size / 1024)|round(1) }} KB</td>
+        <td>
+          {% if not f.is_folder %}
+          <form method="post" action="/admin/parish-documents/{{ selected.id }}/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
+            <input type="hidden" name="filename" value="{{ f.name }}">
+            <button type="submit" class="btn-link">Remove</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="doc-empty">Nothing here yet.</p>
+  {% endif %}
+  <form method="post" action="/admin/parish-documents/{{ selected.id }}/upload" enctype="multipart/form-data" class="doc-upload-row">
+    <input type="file" name="file" required>
+    <button type="submit" class="btn btn-secondary">Upload</button>
+  </form>
+</div>
+{% endif %}
+{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Resource Library — Admin{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Resource Library (Admin)</h1>
+<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+
+{% if request.query_params.get('uploaded') %}<div class="banner banner-success">Uploaded.</div>{% endif %}
+{% if request.query_params.get('deleted') %}<div class="banner banner-success">Removed.</div>{% endif %}
+{% if list_error %}<div class="banner banner-error">Couldn't load the library right now: {{ list_error }}</div>{% endif %}
+
+{% if not org %}
+<div class="card"><p class="sub">No entity has a parish/resource-library SharePoint destination configured yet.</p></div>
+{% else %}
+<div class="card doc-area">
+  <p class="sub">Folder: <code>{{ org.sp_resource_library_folder or 'Resource Library' }}</code> ({{ org.sp_parish_hostname }}{{ org.sp_parish_site_path }})</p>
+  {% if files %}
+  <table class="doc-table">
+    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+      {% for f in files %}
+      {% if not f.is_folder %}
+      <tr>
+        <td>{{ f.name }}</td>
+        <td>{{ (f.size / 1024)|round(1) }} KB</td>
+        <td>
+          <a href="/resource-library/download/{{ f.name|urlencode }}">View</a>
+          <form method="post" action="/admin/resource-library/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
+            <input type="hidden" name="filename" value="{{ f.name }}">
+            <button type="submit" class="btn-link">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="doc-empty">Nothing here yet.</p>
+  {% endif %}
+  <form method="post" action="/admin/resource-library/upload" enctype="multipart/form-data" class="doc-upload-row">
+    <input type="file" name="file" required>
+    <button type="submit" class="btn btn-secondary">Upload</button>
+  </form>
+</div>
+{% endif %}
+</div>
+{% endblock %}

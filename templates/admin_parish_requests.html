@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Parish Requests — Admin{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Parish Requests</h1>
+<p class="back-link"><a href="/portal">&larr; Back</a></p>
+<p class="sub">{% if is_beacon_admin_reviewer %}Showing every parish's requests.{% else %}Showing only the parish(es) you administer.{% endif %}</p>
+
+<p>
+  <a href="/admin/parish-requests?view=open" {% if view != 'all' %}style="font-weight:700;"{% endif %}>Open</a>
+  &nbsp;|&nbsp;
+  <a href="/admin/parish-requests?view=all" {% if view == 'all' %}style="font-weight:700;"{% endif %}>All</a>
+</p>
+
+{% if request.query_params.get('responded') %}<div class="banner banner-success">Saved.</div>{% endif %}
+
+<div class="card">
+  {% if rows %}
+  <table class="simple-table">
+    <thead><tr><th>Date</th><th>Entity</th><th>Parish</th><th>From</th><th>Type</th><th>Subject</th><th>Message</th><th>Status</th><th>Respond</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.created_at.strftime('%Y-%m-%d') if r.created_at else '—' }}</td>
+        <td>{{ r.org_code }}</td>
+        <td>{{ r.parish_name }}</td>
+        <td>{{ r.submitter_name or r.submitter_email }}</td>
+        <td>{{ 'Feedback' if r.kind == 'feedback' else 'General Request' }}</td>
+        <td>{{ r.subject or '—' }}</td>
+        <td style="max-width:280px;white-space:pre-wrap;">{{ r.message }}</td>
+        <td><span class="badge badge-request-{{ r.status|lower }}">{{ r.status }}</span></td>
+        <td>
+          <form method="post" action="/admin/parish-requests/{{ r.id }}/respond">
+            <select name="status">
+              <option value="Reviewed" {% if r.status == 'Reviewed' %}selected{% endif %}>Reviewed</option>
+              <option value="Closed" {% if r.status == 'Closed' %}selected{% endif %}>Closed</option>
+              <option value="Open" {% if r.status == 'Open' %}selected{% endif %}>Open</option>
+            </select>
+            <input type="text" name="review_note" placeholder="Note (optional)" value="{{ r.review_note or '' }}">
+            <button type="submit" class="btn btn-secondary">Save</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="doc-empty">Nothing to review.</p>
+  {% endif %}
+</div>
+</div>
+{% endblock %}

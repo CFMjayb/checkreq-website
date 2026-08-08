@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Documents — {{ parish.name }}{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Documents — {{ parish.name }}</h1>
+<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+
+{% if request.query_params.get('uploaded') %}<div class="banner banner-success">Uploaded.</div>{% endif %}
+{% if request.query_params.get('deleted') %}<div class="banner banner-success">Removed.</div>{% endif %}
+{% if request.query_params.get('error') == 'nofolder' %}<div class="banner banner-error">This parish's SharePoint folder hasn't been matched yet — contact the diocesan office.</div>{% endif %}
+{% if request.query_params.get('error') == 'toolarge' %}<div class="banner banner-error">That file is too large (25MB limit).</div>{% endif %}
+{% if list_error %}<div class="banner banner-error">Couldn't load documents right now: {{ list_error }}</div>{% endif %}
+
+{% if not folder %}
+<div class="card"><p class="sub">No SharePoint folder has been matched for this parish yet. Contact the diocesan office to have it set up.</p></div>
+{% else %}
+
+<div class="card doc-area">
+  <h2>From the Diocese</h2>
+  <p class="sub">Documents the diocese has shared with your parish. Read-only.</p>
+  {% if readonly_files %}
+  <table class="doc-table">
+    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+      {% for f in readonly_files %}
+      <tr>
+        <td>{{ '📁 ' if f.is_folder else '' }}{{ f.name }}</td>
+        <td>{{ (f.size / 1024)|round(1) }} KB</td>
+        <td>{% if not f.is_folder %}<a href="/parish-documents/download/readonly/{{ f.name|urlencode }}">View</a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="doc-empty">Nothing here yet.</p>
+  {% endif %}
+</div>
+
+<div class="card doc-area">
+  <h2>Our Parish Files</h2>
+  <p class="sub">Your parish's own files.{% if not can_edit %} (View only — ask your Parish Admin for upload access.){% endif %}</p>
+  {% if editable_files %}
+  <table class="doc-table">
+    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+      {% for f in editable_files %}
+      <tr>
+        <td>{{ f.name }}</td>
+        <td>{{ (f.size / 1024)|round(1) }} KB</td>
+        <td>
+          <a href="/parish-documents/download/editable/{{ f.name|urlencode }}">View</a>
+          {% if can_edit %}
+          <form method="post" action="/parish-documents/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
+            <input type="hidden" name="filename" value="{{ f.name }}">
+            <button type="submit" class="btn-link">Remove</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="doc-empty">Nothing here yet.</p>
+  {% endif %}
+  {% if can_edit %}
+  <form method="post" action="/parish-documents/upload" enctype="multipart/form-data" class="doc-upload-row">
+    <input type="file" name="file" required>
+    <button type="submit" class="btn btn-secondary">Upload</button>
+  </form>
+  {% endif %}
+</div>
+
+{% endif %}
+</div>
+{% endblock %}

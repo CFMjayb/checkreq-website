@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Feedback & Requests — {{ parish.name }}{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Feedback &amp; Requests</h1>
+<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+
+{% if request.query_params.get('submitted') %}<div class="banner banner-success">Sent. Thank you!</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="banner banner-error">Please choose a type and enter a message.</div>{% endif %}
+
+<div class="form-card">
+  <h2>Send Feedback or Make a Request</h2>
+  <form method="post" action="/parish-requests">
+    <div class="field">
+      <label>Type</label>
+      <label><input type="radio" name="kind" value="feedback" checked> Feedback</label>
+      <label style="margin-left:16px;"><input type="radio" name="kind" value="general_request"> General Request</label>
+    </div>
+    <div class="field">
+      <label for="subject">Subject (optional)</label>
+      <input type="text" id="subject" name="subject">
+    </div>
+    <div class="field">
+      <label for="message">Message</label>
+      <textarea id="message" name="message" rows="4" required></textarea>
+    </div>
+    <button type="submit" class="btn">Send</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Your History</h2>
+  {% if mine %}
+  <table class="simple-table">
+    <thead><tr><th>Date</th><th>Parish</th><th>Type</th><th>Subject</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for r in mine %}
+      <tr>
+        <td>{{ r.created_at.strftime('%Y-%m-%d') if r.created_at else '—' }}</td>
+        <td>{{ r.parish_name }}</td>
+        <td>{{ 'Feedback' if r.kind == 'feedback' else 'General Request' }}</td>
+        <td>{{ r.subject or '—' }}</td>
+        <td><span class="badge badge-request-{{ r.status|lower }}">{{ r.status }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="doc-empty">You haven't submitted anything yet.</p>
+  {% endif %}
+</div>
+</div>
+{% endblock %}
