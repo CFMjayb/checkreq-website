@@ -30,6 +30,9 @@
       {% if not m.gate or m.gate in any_org_roles %}
         {% if m.enabled and current_org %}
         <a class="module-tile" href="{{ m.url }}">
+          {% if tile_badges.get(m.key) %}
+          <span class="tile-badge{% if tile_badges[m.key].is_new %} tile-badge-new{% endif %}">{{ tile_badges[m.key].count if tile_badges[m.key].count < 100 else '99+' }}</span>
+          {% endif %}
           <h3>{{ m.title }}</h3>
           <p class="desc">{{ m.desc }}</p>
         </a>

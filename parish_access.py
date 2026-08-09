@@ -45,6 +45,7 @@ import rbac
 import registry
 import parish_roles
 import parish_mode
+import tile_badges
 
 router = APIRouter()
 
@@ -136,6 +137,7 @@ def parish_access_request_page(request: Request, entity: str = ""):
     is_admin = _is_beacon_admin(user)
     parish_admin_ids = parish_roles.get_parish_ids_with_role(user["id"], "parish_admin")
     if is_admin or parish_admin_ids:
+        tile_badges.mark_viewed(user["id"], "request_parish_access")
         scoped_parish_ids = None if is_admin else parish_admin_ids
         requests_ = parish_roles.list_pending_parish_access_requests(scoped_parish_ids)
         if entity:

@@ -26,6 +26,7 @@ import db
 import rbac
 import parish_roles
 import parish_mode
+import tile_badges
 
 router = APIRouter()
 
@@ -157,6 +158,7 @@ def admin_parish_requests_page(request: Request, view: str = "open"):
     user, err = _require_reviewer(request)
     if err:
         return err
+    tile_badges.mark_viewed(user["id"], "parish_requests_review")
     is_admin = _is_beacon_admin(user)
     scoped_ids = None if is_admin else parish_roles.get_parish_ids_with_role(user["id"], "parish_admin")
     rows = list_for_review(scoped_ids, include_closed=(view == "all"))

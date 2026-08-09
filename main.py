@@ -103,6 +103,7 @@ import parish_roles
 import parish_mode
 import parish_documents
 import parish_info
+import tile_badges
 import announcements
 import parish_requests
 import approval_engine
@@ -444,6 +445,10 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
         # the dark-red body.parish-mode theme (applies either way).
         "parish_view": _parish_view,
         "parish_mode_preview": _parish_view_is_preview,
+        # Portal tile badges (2026-08-08) -- computed on every render, same
+        # as unread_notification_count above; a tile with nothing open
+        # simply has no key in this dict (portal.html renders no badge).
+        "tile_badges": tile_badges.get_badges(user["id"], org_id),
     }
     if extra:
         ctx.update(extra)
@@ -3864,6 +3869,7 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
     org = _current_org(request)
     if not org:
         return RedirectResponse("/portal")
+    tile_badges.mark_viewed(user["id"], "approval_queue")
 
     # Jay, 2026-07-29: "how can I see items already taken an action on?"
     # Once approved/rejected, a request drops off the pending queue entirely
@@ -4647,6 +4653,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
     user, err = _require_ap_reviewer(request)
     if err:
         return err
+    tile_badges.mark_viewed(user["id"], "ap_review")
 
     all_orgs_list = db.query("SELECT code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
 

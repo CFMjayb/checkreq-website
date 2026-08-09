@@ -684,6 +684,32 @@ a.module-tile:hover { box-shadow: var(--shadow-card-hover); transform: translate
 .module-tile.disabled { opacity: 0.55; cursor: default; }
 .module-tile.disabled .icon { color: var(--color-text-muted); }
 
+/* Tile unread-count badges (2026-08-08, Jay: "put a number in the upper
+   right hand of the box... bold the number [if new/unseen]"). Count always
+   shows (matches every other badge in this app); bold + a slightly
+   stronger color is the only "unseen" signal, not a second number. */
+.tile-badge {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #ece7da;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tile-badge-new {
+  background: var(--color-danger);
+  color: #fff;
+  font-weight: 800;
+}
+
 /* Diocese-name brand suffix, next to "Beacon" (2026-08-08) -- shown only
    when the entity switcher is suppressed (parish_view set), replacing the
    context it would otherwise show. */
