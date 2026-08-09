@@ -44,6 +44,7 @@ import db
 import rbac
 import registry
 import parish_roles
+import parish_mode
 
 router = APIRouter()
 
@@ -80,35 +81,32 @@ def _require_parish_reviewer(request: Request):
     return None, JSONResponse({"error": "Beacon Admin or Parish Admin access required"}, status_code=403)
 
 
-def _native_parish_ids(user_id: int) -> list[int]:
-    """Every distinct parish this user holds ANY parish role at -- same
-    small duplication as parish_mode.py's own private helper of the same
-    name (that module's docstring already documents why this codebase
-    accepts the duplication rather than a cross-module import cycle)."""
-    rows = db.query(
-        "SELECT DISTINCT parish_id FROM portal.parish_user_roles "
-        "WHERE user_id = %s AND revoked_at IS NULL",
-        (user_id,),
-    )
-    return [r["parish_id"] for r in rows]
-
-
-def _request_form_context(user: dict, error: str | None = None) -> dict:
+def _request_form_context(request: Request, user: dict, error: str | None = None) -> dict:
     """Shared by the GET page and a failed POST's re-render. Jay, 2026-08-08:
     "When a person logs in to a Parish, they should only be able to request
     access for someone in their Parish -- the Church should be pre-filled
-    for that parish and not be editable." A NATIVE parish-only user (holds
-    a parish role somewhere, but no checkreq.roles grant anywhere -- i.e.
-    not diocesan staff) gets the parish field locked to their own parish(es)
-    rather than the full 95-parish list; diocesan staff and a genuine
-    first-timer (zero native parishes yet) keep the full picker, since
-    staff legitimately need to request access to any parish, and a
-    first-timer has no "own parish" yet to lock to."""
-    is_staff = rbac.user_has_any_role(user["id"])
-    own_ids = [] if is_staff else _native_parish_ids(user["id"])
-    if own_ids:
-        parishes = [p for p in registry.list_all_parishes() if p["id"] in own_ids]
-        locked = len(own_ids) == 1
+    for that parish and not be editable."
+
+    CORRECTED same day, real bug Jay caught by testing: this must key off
+    the CURRENT PARISH CONTEXT (parish_mode.effective_parish_mode()), not
+    the signed-in identity's own native parish_user_roles. A CFO previewing
+    a specific parish via Parish Mode is still themselves in _current_user()
+    -- Parish Mode deliberately never changes that (parish_mode.py's own
+    docstring) -- so checking "does THIS USER hold a native parish role"
+    always found none for a CFO and fell through to the unrestricted
+    picker, letting Jay request access for any parish while previewing
+    All Saints Frederick specifically. Locking to whichever parish is
+    ACTIVELY being viewed (native or CFO-preview alike) is what actually
+    matches "they should only be able to request access for someone in
+    their Parish." Diocesan staff who aren't currently viewing any
+    specific parish (plain /portal browsing) keep the full picker, since
+    that's the legitimate "request access to parish X on someone's behalf"
+    case; a genuine first-timer with no parish context also gets the full
+    list, since there's nothing to lock to yet."""
+    parish, _is_preview = parish_mode.effective_parish_mode(request, user)
+    if parish:
+        parishes = [parish]
+        locked = True
     else:
         parishes = registry.list_all_parishes()
         locked = False
@@ -133,7 +131,7 @@ def parish_access_request_page(request: Request, entity: str = ""):
         return RedirectResponse("/login")
 
     pending = parish_roles.get_pending_parish_access_request(user["id"])
-    ctx = {"pending": pending, **_request_form_context(user)}
+    ctx = {"pending": pending, **_request_form_context(request, user)}
 
     is_admin = _is_beacon_admin(user)
     parish_admin_ids = parish_roles.get_parish_ids_with_role(user["id"], "parish_admin")
@@ -175,14 +173,14 @@ async def parish_access_request_submit(request: Request):
 
     # Re-check the same own-parish restriction server-side -- the locked
     # field in the form is a UI convenience, never trusted on its own.
-    form_ctx = _request_form_context(user)
+    form_ctx = _request_form_context(request, user)
     allowed_ids = {p["id"] for p in form_ctx["parishes"]}
     parish = db.query_one("SELECT id FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
     role = db.query_one("SELECT key FROM portal.parish_roles WHERE key = %s AND is_active", (role_key,))
     if not parish or not role or parish_id not in allowed_ids:
         return _render(request, "parish_access_request.html", user, {
             "pending": None,
-            **_request_form_context(user, error="Pick a valid parish and role."),
+            **_request_form_context(request, user, error="Pick a valid parish and role."),
         })
 
     parish_roles.create_parish_access_request(user["id"], parish_id, role_key, note)
