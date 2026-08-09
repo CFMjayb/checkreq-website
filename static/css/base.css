@@ -670,6 +670,11 @@ a.module-tile:hover { box-shadow: var(--shadow-card-hover); transform: translate
 /* Diocese-name brand suffix, next to "Beacon" (2026-08-08) -- shown only
    when the entity switcher is suppressed (parish_view set), replacing the
    context it would otherwise show. */
+/* Wraps .brand + .brand-diocese so .site-header's own space-between rule
+   treats them as ONE item, not two spread across the row (real bug, Jay:
+   "it is rendering, just too far to the right" -- .site-header's flex
+   children were .brand/.brand-diocese/nav as 3 separate items). */
+.brand-group { display: flex; align-items: center; }
 .brand-diocese {
   font-family: var(--font-body);
   font-size: 0.95rem;

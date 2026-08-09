@@ -55,8 +55,10 @@
   </button>
   {% if user %}
   <header class="site-header">
-    <a href="{{ '/parish-view' if parish_view else '/portal' }}" class="brand">Beacon</a>
-    {% if parish_view %}<span class="brand-diocese">{{ parish_view.org_name }}</span>{% endif %}
+    <div class="brand-group">
+      <a href="{{ '/parish-view' if parish_view else '/portal' }}" class="brand">Beacon</a>
+      {% if parish_view %}<span class="brand-diocese">{{ parish_view.org_name }}</span>{% endif %}
+    </div>
     <nav>
       {# 2026-08-02 feedback batch, Items 1 & 2: the top nav had gotten too
          busy -- New Request/Requests/My Approvals are removed here since
