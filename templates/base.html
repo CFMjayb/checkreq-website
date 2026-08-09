@@ -86,19 +86,12 @@
         </select>
       </div>
       {% endif %}
-      {# account.py (2026-08-08): the one UI caller auth_password.set_password()
-         never had, closing a gap flagged since S1. Kept as a single plain
-         nav link, same tier as Feedback -- everyone needs this occasionally,
-         no role gate, doesn't belong buried in the Administrative Tasks hub
-         since it's account-level, not admin-level. #}
-      <a href="/account/password">Password</a>
-      {# In-App Notifications (2026-08-02): bell + unread badge, next to
-         Log out, on every page -- NOT scoped to the currently-selected
-         entity, per the plan's own recommendation (see notifications.py).
-         Dropdown content is fetched fresh on click (GET /api/notifications),
-         not server-rendered here -- querying it on every page load for
-         data that's usually never opened isn't worth it; only the unread
-         COUNT above is computed on every render. #}
+      {# In-App Notifications (2026-08-02): bell + unread badge -- NOT scoped
+         to the currently-selected entity, per the plan's own recommendation
+         (see notifications.py). Dropdown content is fetched fresh on click
+         (GET /api/notifications), not server-rendered here -- querying it
+         on every page load for data that's usually never opened isn't
+         worth it; only the unread COUNT above is computed on every render. #}
       <div class="notif-bell-wrap">
         <button type="button" id="notifBellBtn" class="notif-bell-btn" aria-label="Notifications">
           &#128276;{% if unread_notification_count %}<span class="notif-badge">{{ unread_notification_count if unread_notification_count < 100 else '99+' }}</span>{% endif %}
@@ -110,7 +103,32 @@
           </div>
         </div>
       </div>
-      <a href="/logout">Log out ({{ user.display_name or user.email }})</a>
+      {# User menu (2026-08-08 feedback batch) -- replaces the standalone
+         "Password" link and the plain "Log out (name)" link with one
+         dropdown, per Jay's direct spec: Parish Mode / Diocese Mode (both
+         gated on the REAL identity holding cfo, same check
+         parish_mode.py's own _require_real_cfo uses -- "real_roles" is
+         already computed for every render, no main.py change needed),
+         Profile, Change Password, Log off. Content is server-rendered
+         (a static list of links, no fetch) -- only the open/closed toggle
+         is JS, mirroring notifications.js's click-outside-to-close
+         mechanism exactly (static/js/user_menu.js). #}
+      <div class="notif-bell-wrap">
+        <button type="button" id="userMenuBtn" class="user-menu-btn">
+          {{ user.display_name or user.email }} &#9662;
+        </button>
+        <div id="userMenuPopup" class="notif-popup user-menu-popup" hidden>
+          {% if 'cfo' in real_roles %}
+          <a href="/admin/parish-mode" class="user-menu-item">Parish Mode</a>
+          <form method="post" action="/admin/parish-mode/stop" class="user-menu-item-form">
+            <button type="submit" class="user-menu-item">Diocese Mode</button>
+          </form>
+          {% endif %}
+          <a href="/account/profile" class="user-menu-item">Profile</a>
+          <a href="/account/password" class="user-menu-item">Change Password</a>
+          <a href="/logout" class="user-menu-item">Log off</a>
+        </div>
+      </div>
     </nav>
   </header>
   {% endif %}
@@ -120,6 +138,7 @@
   </footer>
   {% if user and current_org and not parish_view %}<script src="/static/js/entity_switcher.js?v={{ asset_version('js/entity_switcher.js') }}"></script>{% endif %}
   {% if user %}<script src="/static/js/notifications.js?v={{ asset_version('js/notifications.js') }}"></script>{% endif %}
+  {% if user %}<script src="/static/js/user_menu.js?v={{ asset_version('js/user_menu.js') }}"></script>{% endif %}
   <script src="/static/js/fullscreen.js?v={{ asset_version('js/fullscreen.js') }}"></script>
   {% block extra_js %}{% endblock %}
 </body>

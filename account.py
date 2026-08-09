@@ -26,6 +26,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+import db
 import auth_password
 
 router = APIRouter()
@@ -87,3 +88,48 @@ async def account_password_submit(request: Request):
     return _render(request, "account_password.html", user, {
         "has_password": True, "success": True, "just_set": not already_has_password,
     })
+
+
+@router.get("/account/profile", response_class=HTMLResponse)
+def account_profile_page(request: Request):
+    """New (2026-08-08 feedback batch, folded into the new user-menu
+    dropdown): editable display_name/first_name/last_name/mobile_phone --
+    all columns that already existed (migration 032, for the Databank
+    contact-import work) but had no self-service UI. Email is deliberately
+    NOT editable here -- it's the login identity, changing it is an admin
+    action (Users & Roles), not a personal-info edit."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    return _render(request, "account_profile.html", user, {})
+
+
+@router.post("/account/profile", response_class=HTMLResponse)
+async def account_profile_submit(request: Request):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+
+    form = await request.form()
+    display_name = str(form.get("display_name", "")).strip()
+    first_name = str(form.get("first_name", "")).strip() or None
+    last_name = str(form.get("last_name", "")).strip() or None
+    mobile_phone = str(form.get("mobile_phone", "")).strip() or None
+
+    if not display_name:
+        return _render(request, "account_profile.html", user, {
+            "error": "Display name can't be blank.",
+            "form_values": {"display_name": display_name, "first_name": first_name,
+                             "last_name": last_name, "mobile_phone": mobile_phone},
+        })
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.app_users SET display_name = %s, first_name = %s, "
+                "last_name = %s, mobile_phone = %s WHERE id = %s",
+                (display_name, first_name, last_name, mobile_phone, user["id"]),
+            )
+    updated_user = dict(user, display_name=display_name, first_name=first_name,
+                         last_name=last_name, mobile_phone=mobile_phone)
+    return _render(request, "account_profile.html", updated_user, {"success": True})

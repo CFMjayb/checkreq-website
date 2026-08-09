@@ -123,6 +123,23 @@ p { margin: 0 0 var(--space-3); }
 .notif-item .notif-message { font-size: 0.85rem; color: var(--color-ink); }
 .notif-item .notif-time { font-size: 0.72rem; color: var(--color-text-muted); margin-top: 2px; }
 
+/* User menu dropdown (2026-08-08 feedback batch) -- reuses .notif-popup's
+   positioning/card styling directly, .user-menu-popup only adds the
+   width/padding that differ from the notification list. */
+.user-menu-btn {
+  background: none; border: none; padding: 0; margin: 0; cursor: pointer;
+  color: #d8d2c0; font-size: 0.92rem; font-family: inherit;
+}
+.user-menu-btn:hover { color: var(--color-gold-light); }
+.user-menu-popup { min-width: 200px; padding: var(--space-2) 0; }
+.user-menu-item {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  padding: var(--space-2) var(--space-4); font-size: 0.88rem; color: var(--color-ink);
+  text-decoration: none; cursor: pointer; font-family: inherit;
+}
+.user-menu-item:hover { background: #f4f1e8; }
+.user-menu-item-form { margin: 0; }
+
 /* ---- Full-screen toggle (2026-08-02) -- fixed-positioned just under the
    green header bar, on EVERY page including /login (Jay: "for all
    screens"), so it can't be gated inside `.site-header`'s own

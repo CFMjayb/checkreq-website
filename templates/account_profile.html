@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Profile — Beacon{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Profile</h1>
+<p class="back-link"><a href="{{ '/parish-view' if parish_view else '/portal' }}">&larr; Back</a></p>
+
+{% if success %}<div class="banner banner-success">Your profile has been updated.</div>{% endif %}
+{% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <form method="post" action="/account/profile">
+    <label for="display_name">Display Name</label>
+    <input type="text" id="display_name" name="display_name" required
+           value="{{ (form_values.display_name if form_values else user.display_name) or '' }}">
+
+    <label for="first_name">First Name</label>
+    <input type="text" id="first_name" name="first_name"
+           value="{{ (form_values.first_name if form_values else user.first_name) or '' }}">
+
+    <label for="last_name">Last Name</label>
+    <input type="text" id="last_name" name="last_name"
+           value="{{ (form_values.last_name if form_values else user.last_name) or '' }}">
+
+    <label for="mobile_phone">Mobile Phone</label>
+    <input type="text" id="mobile_phone" name="mobile_phone"
+           value="{{ (form_values.mobile_phone if form_values else user.mobile_phone) or '' }}">
+
+    <p class="sub">Email: {{ user.email }} (contact your administrator to change this)</p>
+
+    <button type="submit" class="btn btn-primary">Save Changes</button>
+  </form>
+</div>
+</div>
+{% endblock %}
