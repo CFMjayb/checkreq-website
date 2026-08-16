@@ -11,15 +11,17 @@
 <p class="sub">Setup tables, user roles, approvals, and system administration — only the sections you have access to are shown below.</p>
 
 {% for g in groups %}
-<h2 style="margin-top: var(--space-5);">{{ g.label }}</h2>
-<div class="setup-grid">
-  {% for c in g.cards %}
-  <div class="setup-tile is-built">
-    <h2><a href="{{ c.url }}">{{ c.title }}</a></h2>
-    <div class="desc">{{ c.desc }}</div>
+<details class="setup-section" style="margin-top: var(--space-5);" open>
+  <summary><h2>{{ g.label }}</h2></summary>
+  <div class="setup-grid">
+    {% for c in g.cards %}
+    <div class="setup-tile is-built">
+      <h2><a href="{{ c.url }}">{{ c.title }}</a></h2>
+      <div class="desc">{{ c.desc }}</div>
+    </div>
+    {% endfor %}
   </div>
-  {% endfor %}
-</div>
+</details>
 {% else %}
 <div class="setup-grid">
   <div class="setup-tile">
