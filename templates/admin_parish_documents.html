@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_doc_tree_macro.html" import doc_tree %}
 {% block title %}Parish Documents — Admin{% endblock %}
 {% block content %}
 <div class="page-shell">
@@ -57,26 +58,7 @@
 <div class="card doc-area">
   <h2>Read Only Files (shared with the parish)</h2>
   {% if files %}
-  <table class="doc-table">
-    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
-    <tbody>
-      {% for f in files %}
-      <tr>
-        <td>{{ '📁 ' if f.is_folder else '' }}{{ f.name }}</td>
-        <td>{{ (f.size / 1024)|round(1) }} KB</td>
-        <td>
-          {% if not f.is_folder %}
-          <a href="/admin/parish-documents/{{ selected.id }}/download/{{ f.rel_path|urlencode }}">View</a>
-          <form method="post" action="/admin/parish-documents/{{ selected.id }}/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
-            <input type="hidden" name="rel_path" value="{{ f.rel_path }}">
-            <button type="submit" class="btn-link">Remove</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {{ doc_tree(files, '/admin/parish-documents/' ~ selected.id ~ '/download/', '/admin/parish-documents/' ~ selected.id ~ '/delete') }}
   {% else %}
   <p class="doc-empty">Nothing here yet.</p>
   {% endif %}
@@ -90,24 +72,7 @@
   <h2>For the Diocese (sent by the parish)</h2>
   <p class="sub">Whatever this parish has uploaded to send to your office. Delete once processed.</p>
   {% if to_diocese_files %}
-  <table class="doc-table">
-    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
-    <tbody>
-      {% for f in to_diocese_files %}
-      <tr>
-        <td>{{ f.name }}</td>
-        <td>{{ (f.size / 1024)|round(1) }} KB</td>
-        <td>
-          <a href="/admin/parish-documents/{{ selected.id }}/download/{{ f.rel_path|urlencode }}">View</a>
-          <form method="post" action="/admin/parish-documents/{{ selected.id }}/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
-            <input type="hidden" name="rel_path" value="{{ f.rel_path }}">
-            <button type="submit" class="btn-link">Remove</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {{ doc_tree(to_diocese_files, '/admin/parish-documents/' ~ selected.id ~ '/download/', '/admin/parish-documents/' ~ selected.id ~ '/delete') }}
   {% else %}
   <p class="doc-empty">Nothing sent yet.</p>
   {% endif %}

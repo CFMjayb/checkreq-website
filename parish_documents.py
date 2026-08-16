@@ -108,6 +108,14 @@ _FUZZY_THRESHOLD = 0.72
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB -- generous for scanned documents
 
 
+def _content_disposition(filename: str, force_download: bool) -> str:
+    """2026-08-16, Jay: View should open in a new browser tab/window,
+    Download should be its own separate, real download button -- both hit
+    the same route, distinguished only by this one query flag."""
+    kind = "attachment" if force_download else "inline"
+    return f'{kind}; filename="{filename}"'
+
+
 def _guess_media_type(filename: str) -> str:
     """2026-08-16, Jay: PDFs (and other common types) should open in the
     browser's own built-in viewer, not force a download -- every download
@@ -274,76 +282,72 @@ def _parish_root(org: dict, folder_name: str) -> str:
 # Every entry gets a "rel_path" -- the exact address delete/download need,
 # relative to the parish's own resolved root. Root-loose legacy files get
 # rel_path=name (unchanged addressing); subfolder contents get
-# rel_path="{Subfolder}/{name}", and a browsed-into nested subfolder's
-# contents get rel_path="{Subfolder}/{subpath}/{name}".
+# rel_path="{Subfolder}/{name}", nested arbitrarily deep.
 #
-# 2026-08-16 fix (real, reported bug -- item 19 from the 2026-08-16
-# feedback session: "folders list correctly and open, but no files ever
-# show up underneath them"): every list_* function used to fetch exactly
-# ONE level -- a folder found at that level had no way to actually open it
-# anywhere in the app (the template never even rendered a link for a
-# folder row). Each list_* function now takes an optional `subpath`,
-# relative to that area's own subfolder root, and lists INTO it instead of
-# the area's top level when given -- the root loose-file listing in
-# list_readonly is skipped once subpath is set, since a legacy loose file
-# has no "browse into" concept of its own.
+# 2026-08-16, Jay's own direct correction of the click-into-a-folder /
+# breadcrumb design built earlier the same day ("the way you implemented
+# the dropdown is not workable... load the entire tree for the folder and
+# then let the user open the tree and select files"): each area's list_*
+# function now eagerly walks the WHOLE subtree in one call (via
+# _list_tree(), a handful of recursive Graph calls -- a parish's document
+# tree is small, a few subfolders and at most a few dozen files, so this
+# costs nothing meaningful) and returns a nested {name, is_folder,
+# rel_path, size, children} structure the template renders as a real
+# expand/collapse tree, instead of one flat page per subfolder depth.
 
-def _breadcrumb(area_label: str, subpath: str) -> list[dict]:
-    """[{label, path}] for rendering a clickable breadcrumb -- the last
-    entry (the current location) has path=None so the template knows not
-    to link it. path="" always means the area's own top level."""
-    crumbs = [{"label": area_label, "path": ""}]
-    parts = [p for p in subpath.split("/") if p] if subpath else []
-    accum = []
-    for i, p in enumerate(parts):
-        accum.append(p)
-        crumbs.append({"label": p, "path": "/".join(accum)})
-    if crumbs:
-        crumbs[-1] = {**crumbs[-1], "path": None}
-    return crumbs
+def _list_tree(token: str, site_id: str, path: str, rel_prefix: str = "") -> list[dict]:
+    """Recursively lists everything under `path`, returning nested nodes.
+    `rel_prefix` is prepended to every node's own rel_path so the caller
+    can anchor the tree at a subfolder (e.g. "Read Only Files") while every
+    node's rel_path still resolves correctly from the parish's own root --
+    the same addressing every delete/download route already expects.
+    Folders sort before files, both alphabetically, so a scan reads
+    top-down the way a real file browser does."""
+    nodes = []
+    for e in sharepoint_client.list_folder(token, site_id, path):
+        rel_path = f"{rel_prefix}/{e['name']}" if rel_prefix else e["name"]
+        node = {"name": e["name"], "is_folder": e["is_folder"], "rel_path": rel_path, "size": e.get("size", 0)}
+        if e["is_folder"]:
+            node["children"] = _list_tree(token, site_id, f"{path}/{e['name']}", rel_path)
+        nodes.append(node)
+    nodes.sort(key=lambda n: (not n["is_folder"], n["name"].lower()))
+    return nodes
 
 
-def list_readonly(org: dict, folder_name: str, subpath: str = "") -> list[dict]:
-    """Read Only Files subfolder + any pre-existing loose file sitting at
-    the parish's root (backward compat -- see module docstring) when
-    subpath is blank; browses INTO Read Only Files/{subpath} instead once
-    subpath is given (see the fix note above)."""
+def list_readonly(org: dict, folder_name: str) -> list[dict]:
+    """The full "From the Diocese" tree: any pre-existing loose file
+    sitting at the parish's root (backward compat -- see module docstring)
+    as flat top-level entries, plus the ENTIRE Read Only Files subtree --
+    "Read Only Files" itself is Beacon's own internal convention, never
+    something staff created on purpose, so its contents are flattened into
+    this area's own top level rather than shown as a visible wrapper
+    folder; any REAL subfolder staff created underneath it (e.g. "Tax
+    Letters") still appears as its own real, nested folder node."""
     token, site_id = _site_and_token(org)
     base = _parish_root(org, folder_name)
     out = []
-    if not subpath:
-        for e in sharepoint_client.list_folder(token, site_id, base):
-            if e["name"] in _SPECIAL_SUBFOLDERS:
-                continue
-            e = dict(e, rel_path=e["name"])
-            out.append(e)
-    area_path = f"{READONLY_SUBFOLDER}/{subpath}" if subpath else READONLY_SUBFOLDER
-    for e in sharepoint_client.list_folder(token, site_id, f"{base}/{area_path}"):
-        e = dict(e, rel_path=f"{area_path}/{e['name']}")
-        out.append(e)
+    for e in sharepoint_client.list_folder(token, site_id, base):
+        if e["name"] in _SPECIAL_SUBFOLDERS:
+            continue
+        node = {"name": e["name"], "is_folder": e["is_folder"], "rel_path": e["name"], "size": e.get("size", 0)}
+        if e["is_folder"]:
+            node["children"] = _list_tree(token, site_id, f"{base}/{e['name']}", e["name"])
+        out.append(node)
+    out.extend(_list_tree(token, site_id, f"{base}/{READONLY_SUBFOLDER}", READONLY_SUBFOLDER))
+    out.sort(key=lambda n: (not n["is_folder"], n["name"].lower()))
     return out
 
 
-def list_editable(org: dict, folder_name: str, subpath: str = "") -> list[dict]:
+def list_editable(org: dict, folder_name: str) -> list[dict]:
     token, site_id = _site_and_token(org)
     base = _parish_root(org, folder_name)
-    area_path = f"{EDITABLE_SUBFOLDER}/{subpath}" if subpath else EDITABLE_SUBFOLDER
-    out = []
-    for e in sharepoint_client.list_folder(token, site_id, f"{base}/{area_path}"):
-        e = dict(e, rel_path=f"{area_path}/{e['name']}")
-        out.append(e)
-    return out
+    return _list_tree(token, site_id, f"{base}/{EDITABLE_SUBFOLDER}", EDITABLE_SUBFOLDER)
 
 
-def list_to_diocese(org: dict, folder_name: str, subpath: str = "") -> list[dict]:
+def list_to_diocese(org: dict, folder_name: str) -> list[dict]:
     token, site_id = _site_and_token(org)
     base = _parish_root(org, folder_name)
-    area_path = f"{TO_DIOCESE_SUBFOLDER}/{subpath}" if subpath else TO_DIOCESE_SUBFOLDER
-    out = []
-    for e in sharepoint_client.list_folder(token, site_id, f"{base}/{area_path}"):
-        e = dict(e, rel_path=f"{area_path}/{e['name']}")
-        out.append(e)
-    return out
+    return _list_tree(token, site_id, f"{base}/{TO_DIOCESE_SUBFOLDER}", TO_DIOCESE_SUBFOLDER)
 
 
 def upload_readonly(org: dict, folder_name: str, filename: str, data: bytes, content_type: str) -> None:
@@ -495,7 +499,7 @@ def _parish_in_current_diocese(request: Request, parish_id: int) -> dict | None:
 # ── Parish-facing routes ──────────────────────────────────────────────────────
 
 @router.get("/parish-documents", response_class=HTMLResponse)
-def parish_documents_page(request: Request, ro_path: str = "", edit_path: str = "", diocese_path: str = ""):
+def parish_documents_page(request: Request):
     user, parish, org, err = _parish_context(request)
     if err:
         return err
@@ -503,9 +507,9 @@ def parish_documents_page(request: Request, ro_path: str = "", edit_path: str = 
     readonly_files, editable_files, to_diocese_files, list_error = [], [], [], None
     if folder:
         try:
-            readonly_files = list_readonly(org, folder, ro_path)
-            editable_files = list_editable(org, folder, edit_path)
-            to_diocese_files = list_to_diocese(org, folder, diocese_path)
+            readonly_files = list_readonly(org, folder)
+            editable_files = list_editable(org, folder)
+            to_diocese_files = list_to_diocese(org, folder)
         except RuntimeError as exc:
             list_error = str(exc)
 
@@ -546,12 +550,6 @@ def parish_documents_page(request: Request, ro_path: str = "", edit_path: str = 
         "can_edit": _can_edit_parish_docs(user, parish),
         "list_error": list_error,
         "cornerstone_section": cornerstone_section,
-        # 2026-08-16 fix (item 19): breadcrumbs + the raw current path for
-        # each area, so a folder row can link one level deeper and the
-        # breadcrumb can link back up -- see _breadcrumb()'s own docstring.
-        "ro_path": ro_path, "ro_breadcrumb": _breadcrumb("From the Diocese", ro_path),
-        "edit_path": edit_path, "edit_breadcrumb": _breadcrumb("Our Parish Files", edit_path),
-        "diocese_path": diocese_path, "diocese_breadcrumb": _breadcrumb("For the Diocese", diocese_path),
     })
 
 
@@ -600,7 +598,7 @@ async def parish_documents_delete(request: Request):
 
 
 @router.get("/parish-documents/download/{rel_path:path}")
-def parish_documents_download(rel_path: str, request: Request):
+def parish_documents_download(rel_path: str, request: Request, download: int = 0):
     user, parish, org, err = _parish_context(request)
     if err:
         return err
@@ -613,7 +611,7 @@ def parish_documents_download(rel_path: str, request: Request):
         return JSONResponse({"error": "Not found"}, status_code=404)
     filename = rel_path.rsplit("/", 1)[-1]
     return Response(content=data, media_type=_guess_media_type(filename),
-                     headers={"Content-Disposition": f'inline; filename="{filename}"'})
+                     headers={"Content-Disposition": _content_disposition(filename, bool(download))})
 
 
 @router.get("/resource-library", response_class=HTMLResponse)
@@ -644,7 +642,7 @@ def resource_library_page(request: Request):
 
 
 @router.get("/resource-library/download/{filename:path}")
-def resource_library_download(filename: str, request: Request):
+def resource_library_download(filename: str, request: Request, download: int = 0):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
@@ -659,8 +657,9 @@ def resource_library_download(filename: str, request: Request):
         data = download_library_file(org, filename)
     except RuntimeError:
         return JSONResponse({"error": "Not found"}, status_code=404)
-    return Response(content=data, media_type=_guess_media_type(filename),
-                     headers={"Content-Disposition": f'inline; filename="{filename}"'})
+    display_name = filename.rsplit("/", 1)[-1]
+    return Response(content=data, media_type=_guess_media_type(display_name),
+                     headers={"Content-Disposition": _content_disposition(display_name, bool(download))})
 
 
 # ── Diocesan admin routes ─────────────────────────────────────────────────────
@@ -736,7 +735,7 @@ async def admin_parish_documents_delete(parish_id: int, request: Request):
 
 
 @router.get("/admin/parish-documents/{parish_id}/download/{rel_path:path}")
-def admin_parish_documents_download(parish_id: int, rel_path: str, request: Request):
+def admin_parish_documents_download(parish_id: int, rel_path: str, request: Request, download: int = 0):
     user, err = _require_docs_admin(request)
     if err:
         return err
@@ -753,7 +752,7 @@ def admin_parish_documents_download(parish_id: int, rel_path: str, request: Requ
         return JSONResponse({"error": "Not found"}, status_code=404)
     filename = rel_path.rsplit("/", 1)[-1]
     return Response(content=data, media_type=_guess_media_type(filename),
-                     headers={"Content-Disposition": f'inline; filename="{filename}"'})
+                     headers={"Content-Disposition": _content_disposition(filename, bool(download))})
 
 
 @router.post("/admin/parish-documents/{parish_id}/resolve")

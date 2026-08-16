@@ -1,0 +1,49 @@
+{# _doc_tree_macro.html -- shared recursive file-tree renderer, 2026-08-16.
+
+   Jay's direct correction of the click-into-a-folder/breadcrumb design built
+   earlier the same day: "load the entire tree for the folder and then let
+   the user open the tree and select files, as needed. If they View, you
+   should open up another browser window with that. You should also provide
+   a download button." parish_documents.py's list_readonly/list_editable/
+   list_to_diocese (and cornerstone_documents.py's own list_* functions, if
+   ever extended the same way) now return a nested [{name, is_folder,
+   rel_path, size, children}] structure instead of one flat page per
+   subfolder depth -- this macro renders that structure as a real nested
+   <details> tree, shared by both the parish-facing and admin-facing
+   Documents pages so the two never drift into two different behaviors.
+
+   download_url_prefix: e.g. "/parish-documents/download/" or
+   "/admin/parish-documents/123/download/" -- rel_path is appended
+   (urlencoded) directly onto it.
+   delete_action_url: the form action for a Remove button, or None/omitted
+   to render files as view/download-only (e.g. the read-only "From the
+   Diocese" area, which never had a Remove button). #}
+{% macro doc_tree(nodes, download_url_prefix, delete_action_url=None) %}
+<ul class="doc-tree">
+  {% for n in nodes %}
+  <li>
+    {% if n.is_folder %}
+    <details>
+      <summary>📁 {{ n.name }}</summary>
+      {{ doc_tree(n.children, download_url_prefix, delete_action_url) }}
+    </details>
+    {% else %}
+    <div class="doc-tree-file">
+      <span class="doc-tree-name">{{ n.name }}</span>
+      <span class="doc-tree-size">{{ (n.size / 1024)|round(1) }} KB</span>
+      <span class="doc-tree-actions">
+        <a href="{{ download_url_prefix }}{{ n.rel_path|urlencode }}" target="_blank" rel="noopener">View</a>
+        <a href="{{ download_url_prefix }}{{ n.rel_path|urlencode }}?download=1">Download</a>
+        {% if delete_action_url %}
+        <form method="post" action="{{ delete_action_url }}" onsubmit="return confirm('Remove this file?');">
+          <input type="hidden" name="rel_path" value="{{ n.rel_path }}">
+          <button type="submit" class="btn-link">Remove</button>
+        </form>
+        {% endif %}
+      </span>
+    </div>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endmacro %}

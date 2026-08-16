@@ -686,6 +686,25 @@ table.doc-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 table.doc-table th { text-align: left; text-transform: uppercase; letter-spacing: 0.03em; font-size: 0.72rem; color: var(--color-text-muted); border-bottom: 2px solid var(--color-border); padding: var(--space-2) var(--space-3); }
 table.doc-table td { border-bottom: 1px solid var(--color-border); padding: var(--space-2) var(--space-3); vertical-align: middle; }
 .doc-empty { color: var(--color-text-muted); font-size: 0.88rem; padding: var(--space-2) 0; }
+
+/* Recursive file-tree browser (2026-08-16, replacing the click-into-a-
+   folder/breadcrumb design per Jay's direct correction: "load the entire
+   tree... let the user open the tree and select files"). Nested <details>
+   give free expand/collapse with no JS -- same reasoning as .doc-area's
+   own collapsible-section pattern, just one level deeper and repeatable. */
+.doc-tree, .doc-tree ul { list-style: none; margin: 0; padding-left: 0; }
+.doc-tree ul { padding-left: var(--space-4); }
+.doc-tree li { margin: 1px 0; }
+.doc-tree details > summary { cursor: pointer; list-style: none; padding: 3px 0; font-size: 0.88rem; }
+.doc-tree details > summary::-webkit-details-marker { display: none; }
+.doc-tree details > summary::before { content: '\25b8'; display: inline-block; width: 1em; transition: transform 0.15s ease; }
+.doc-tree details[open] > summary::before { transform: rotate(90deg); }
+.doc-tree-file { display: flex; align-items: center; gap: var(--space-2); font-size: 0.88rem; padding: 3px 0; }
+.doc-tree-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.doc-tree-size { color: var(--color-text-muted); font-size: 0.78rem; white-space: nowrap; }
+.doc-tree-actions { display: flex; gap: var(--space-2); white-space: nowrap; align-items: center; }
+.doc-tree-actions form { display: inline; }
+
 .doc-upload-row { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-3); }
 .doc-upload-row input[type=file] { flex: 1; }
 
