@@ -63,6 +63,7 @@ import db
 import rbac
 import registry
 import parish_roles
+import cornerstone_mode
 
 router = APIRouter()
 
@@ -195,11 +196,21 @@ def parish_mode_picker(request: Request):
     parishes by switching entities first (top-nav), same as every other
     screen in this app already works. list_all_parishes() itself is
     untouched -- still unscoped for its other, genuinely cross-diocese
-    caller."""
+    caller.
+
+    Same-day follow-up (Jay, live test): "you should only be able to access
+    Parish Mode when you are in Diocese Mode." A Cornerstone-served
+    parish-org has no parishes of its own underneath it (portal.parishes.
+    org_id always points at the diocese) -- this used to just silently
+    return an empty list when Cornerstone Mode was active; now blocked
+    outright, matching Jay's stated rule rather than a confusing empty
+    picker."""
     real_id, err = _require_real_cfo(request)
     if err:
         return err
     org = _current_org(request)
+    if org and cornerstone_mode.is_cornerstone_org(org["id"]):
+        return RedirectResponse("/portal")
     parishes = registry.list_parishes(org["id"]) if org else []
     return _render(request, "parish_mode.html", _current_user(request), {
         "parishes": parishes,
@@ -209,10 +220,27 @@ def parish_mode_picker(request: Request):
 
 @router.post("/admin/parish-mode/stop")
 def parish_mode_stop(request: Request):
+    """"Diocese Mode" -- the ONE way back out of either Parish Mode preview
+    OR Cornerstone Mode (base.html's user-menu only ever shows this button
+    in those two states, never both pickers at once, per Jay's 2026-08-16
+    "the only switcher is back to Diocese Mode" rule).
+
+    2026-08-16 fix, live test: this used to ONLY clear a Parish Mode preview
+    flag -- a real no-op whenever Cornerstone Mode was active instead (that
+    session flag was never set to begin with), so the button appeared to do
+    nothing and the user stayed stuck in the served parish-org. Cornerstone
+    Mode is a real entity switch (current_org_id), not a session-flag
+    preview like Parish Mode, so leaving it means resetting current_org_id
+    back to the resolved diocese too."""
     real_id = request.session.get("user_id")
     if real_id:
         _close_open_parish_mode(real_id)
     request.session.pop("parish_view_id", None)
+    current_org_id = request.session.get("current_org_id")
+    if current_org_id:
+        diocese_org_id = cornerstone_mode.resolve_diocese_org_id(current_org_id)
+        if diocese_org_id != current_org_id:
+            request.session["current_org_id"] = diocese_org_id
     return RedirectResponse("/portal", status_code=303)
 
 
@@ -225,10 +253,18 @@ def parish_mode_start(parish_id: int, request: Request):
     (org_id=None). Now independently re-verified against this SPECIFIC
     parish's own org, matching the same "tile/action must match" discipline
     applied elsewhere this session (parish_access.py's _authorize_for_request,
-    admin_hub.py's card-vs-route fix)."""
+    admin_hub.py's card-vs-route fix).
+
+    Same-day follow-up: also independently re-checks the Diocese-Mode-only
+    gate (a crafted POST while Cornerstone Mode is active must not bypass
+    what the picker route above already blocks)."""
     real_id, err = _require_real_cfo(request)
     if err:
         return err
+
+    org = _current_org(request)
+    if org and cornerstone_mode.is_cornerstone_org(org["id"]):
+        return RedirectResponse("/portal")
 
     target = db.query_one("SELECT id, org_id FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
     if not target or not rbac.user_has_role(real_id, "cfo", target["org_id"]):

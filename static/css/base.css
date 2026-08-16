@@ -132,12 +132,20 @@ p { margin: 0 0 var(--space-3); }
 }
 .user-menu-btn:hover { color: var(--color-gold-light); }
 .user-menu-popup { min-width: 200px; padding: var(--space-2) 0; }
-.user-menu-item {
+/* 2026-08-16, Jay, live test: "almost impossible to see the options" --
+   real bug, not a new one: `.site-header nav a` (line ~33, a pale color
+   meant for links sitting directly on the dark header bar) has higher
+   specificity (1 class + 2 type selectors) than a bare `.user-menu-item`
+   (1 class), so every <a>-based item in this white popup was silently
+   rendering in that pale header color instead of --color-ink -- pale text
+   on a white popup background. Scoping the selector under
+   `.user-menu-popup` (2 classes) beats it regardless of source order. */
+.user-menu-popup .user-menu-item {
   display: block; width: 100%; text-align: left; background: none; border: none;
   padding: var(--space-2) var(--space-4); font-size: 0.88rem; color: var(--color-ink);
   text-decoration: none; cursor: pointer; font-family: inherit;
 }
-.user-menu-item:hover { background: #f4f1e8; }
+.user-menu-popup .user-menu-item:hover { background: #f4f1e8; }
 .user-menu-item-form { margin: 0; }
 
 /* ---- Full-screen toggle (2026-08-02) -- fixed-positioned just under the

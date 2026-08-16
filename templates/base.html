@@ -57,7 +57,12 @@
   <header class="site-header">
     <div class="brand-group">
       <a href="{{ '/parish-view' if parish_view else '/portal' }}" class="brand">Beacon</a>
-      {% if parish_view %}<span class="brand-diocese">{{ parish_view.org_name }}</span>{% endif %}
+      {# Jay, 2026-08-16: "the banner should also show what entity you are
+         working in to the right of Beacon... in all modes" -- parish_view
+         already showed the diocese name (unchanged, existing behavior);
+         the elif is the missing case, Diocese Mode and Cornerstone Mode
+         both populate current_org whenever an entity is selected. #}
+      {% if parish_view %}<span class="brand-diocese">{{ parish_view.org_name }}</span>{% elif current_org %}<span class="brand-diocese">{{ current_org.name }}</span>{% endif %}
     </div>
     <nav>
       {# 2026-08-02 feedback batch, Items 1 & 2: the top nav had gotten too
@@ -75,8 +80,13 @@
       {# Jay, 2026-08-08: "A parish mode should not have an entity picker --
          they are in their entity." A parish isn't scoped by the diocesan
          EDOM/Claggett entity switcher at all -- suppressed whenever
-         parish_view is set, native or preview alike. #}
-      {% if current_org and not parish_view %}
+         parish_view is set, native or preview alike. Extended 2026-08-16
+         (live test): also suppressed in Cornerstone Mode, same reasoning --
+         all_orgs is dioceses-only now, so showing it while working inside a
+         served parish-org would list unrelated dioceses with nothing
+         actually selected; "the only switcher [in Cornerstone Mode] is
+         back to Diocese Mode" (the user-menu button), not this dropdown. #}
+      {% if current_org and not parish_view and not cornerstone_context %}
       <div class="entity-badge">
         <span class="label">Entity</span>
         <select id="entitySwitcher">
@@ -118,20 +128,35 @@
           {{ user.display_name or user.email }} &#9662;
         </button>
         <div id="userMenuPopup" class="notif-popup user-menu-popup" hidden>
-          {% if 'cfo' in real_roles %}
-          <a href="/admin/parish-mode" class="user-menu-item">Parish Mode</a>
+          {# Three mutually-exclusive modes (Jay, 2026-08-16, live test):
+             "you should only be able to access Parish Mode when you are in
+             Diocese Mode... when you are in Parish Mode, the only switcher
+             is back to Diocese Mode. Cornerstone Mode is available to
+             Diocese Mode only." parish_mode_preview is true only during a
+             CFO's active Parish Mode preview (not a native parish-only
+             user's own default view -- they have no Diocese Mode to exit
+             to); cornerstone_context is true whenever the selected entity
+             is a served parish-org. Either one showing means the ONLY
+             option offered is the single Diocese Mode exit -- never both
+             pickers, never a direct switch between them. #}
+          {% if parish_mode_preview or cornerstone_context %}
           <form method="post" action="/admin/parish-mode/stop" class="user-menu-item-form">
             <button type="submit" class="user-menu-item">Diocese Mode</button>
           </form>
+          {% else %}
+          {% if 'cfo' in real_roles %}
+          <a href="/admin/parish-mode" class="user-menu-item">Parish Mode</a>
           {% endif %}
           {# Cornerstone Mode (Phase B, 2026-08-16): existence check --
              holds cornerstone_employee at ANY served parish-org, same
              "real_roles is the real identity's full role set anywhere"
              pattern 'cfo' already uses just above. The picker itself
              (cornerstone_mode.py) narrows to the specific parish-orgs
-             this user actually holds the grant at. #}
+             this user actually holds the grant at, scoped to the current
+             diocese only. #}
           {% if 'cornerstone_employee' in real_roles %}
           <a href="/admin/cornerstone-mode" class="user-menu-item">Cornerstone Mode</a>
+          {% endif %}
           {% endif %}
           <a href="/account/profile" class="user-menu-item">Profile</a>
           <a href="/account/password" class="user-menu-item">Change Password</a>

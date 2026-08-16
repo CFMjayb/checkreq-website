@@ -466,12 +466,11 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
         # saw all 4 entities though she should only reach EDOM). Filtered to
         # orgs _user_has_org_access() actually grants -- checkreq.roles OR
         # checkreq.user_program_areas, no exceptions, matching the same
-        # explicit-grant-required rule select_entity now enforces. A handful
-        # of extra small queries per render is fine at this org count (a
-        # handful of entities, not hundreds).
-        "all_orgs": [o for o in db.query(
-            "SELECT id, code, name FROM checkreq.organizations WHERE is_active ORDER BY name"
-        ) if _user_has_org_access(user["id"], o["id"])],
+        # explicit-grant-required rule select_entity now enforces. Same-day
+        # follow-up (Jay, live test): also excludes Cornerstone-served
+        # parish-orgs -- "when I am in Diocese Mode, I should only see the
+        # Dioceses in the Entity picker" -- see _accessible_diocese_orgs().
+        "all_orgs": _accessible_diocese_orgs(user["id"]),
         "roles": entity_roles,  # back-compat alias, same value as entity_roles
         "entity_roles": entity_roles,
         "real_roles": _roles(request, real, None),
@@ -552,6 +551,16 @@ def portal(request: Request):
     # since it bridges two different data models, portal.parishes-level
     # docs vs. this checkreq.organizations-level AP entity).
     org = _current_org(request)
+    # 2026-08-16, Jay: "when a user logs in and only has one entity assigned
+    # to them, you can skip past the entity chooser and go straight to that
+    # entity." Only ever auto-picks among real dioceses (never a
+    # Cornerstone-served parish-org -- those are reached exclusively via the
+    # Cornerstone Mode picker, never assumed).
+    if not org:
+        dioceses = _accessible_diocese_orgs(user["id"])
+        if len(dioceses) == 1:
+            return RedirectResponse(f"/select-entity/{dioceses[0]['id']}", status_code=303)
+
     modules = MODULES
     if org and cornerstone_mode.is_cornerstone_org(org["id"]):
         modules = [m for m in MODULES if m["key"] in CORNERSTONE_MODULE_KEYS]
@@ -580,6 +589,21 @@ def _user_has_org_access(user_id: int, org_id: int) -> bool:
         (user_id, org_id),
     )
     return row is not None
+
+
+def _accessible_diocese_orgs(user_id: int) -> list[dict]:
+    """Every top-level diocese/entity this user can access -- deliberately
+    EXCLUDES Cornerstone-served parish-orgs. Jay, 2026-08-16, live testing:
+    "when I am in Diocese Mode, I should only see the Dioceses in the Entity
+    picker. Right now you show them all, even parishes that are Cornerstone
+    served" -- a served parish-org is a real checkreq.organizations row (so
+    _user_has_org_access() alone can't tell it apart from a diocese), but
+    it's meant to be reached ONLY through the Cornerstone Mode picker, never
+    the plain entity switcher -- otherwise the two pickers show overlapping,
+    indistinguishable lists (EDOM/Claggett next to a dozen parish codes)."""
+    return [o for o in db.query(
+        "SELECT id, code, name FROM checkreq.organizations WHERE is_active ORDER BY name"
+    ) if _user_has_org_access(user_id, o["id"]) and not cornerstone_mode.is_cornerstone_org(o["id"])]
 
 
 @app.get("/select-entity/{org_id}")

@@ -68,11 +68,44 @@ def is_cornerstone_org(org_id: int | None) -> bool:
         return False
 
 
-def get_cornerstone_picker_orgs(user_id: int) -> list[dict]:
+def resolve_diocese_org_id(org_id: int) -> int:
+    """2026-08-16, real bugs found live by Jay ("switching between the three
+    modes doesn't work right now"): if org_id is a served parish's own
+    AP-org (linked FROM some portal.parishes row), return that parish's
+    DIOCESE org_id instead -- the "step back one level" resolution both
+    "Diocese Mode" (main.py's stop route) and the Parish Mode picker
+    (parish_mode.py) need. A served parish-org has no parishes of its own
+    underneath it -- portal.parishes.org_id always points at the diocese --
+    so treating it as-is for either purpose left Diocese Mode as a no-op
+    and Parish Mode's picker showing "No parishes yet in this entity".
+    Returns org_id unchanged if it's already a diocese, or on any DB error
+    (same fail-closed philosophy as the rest of this module)."""
+    try:
+        row = db.query_one("SELECT org_id FROM portal.parishes WHERE linked_org_id = %s", (org_id,))
+        return row["org_id"] if row else org_id
+    except Exception:
+        return org_id
+
+
+def _parish_preview_active(request: Request) -> bool:
+    """Lightweight duplicate of parish_mode.current_parish_view()'s own
+    session-key check -- avoids a circular import, since parish_mode.py now
+    needs to import THIS module (resolve_diocese_org_id / is_cornerstone_org
+    for its own Diocese-Mode-only gating, see that file). Fails safe in the
+    deny direction only: a stale flag just blocks Cornerstone Mode entry a
+    little too eagerly, never opens anything it shouldn't."""
+    return bool(request.session.get("parish_view_id"))
+
+
+def get_cornerstone_picker_orgs(user_id: int, diocese_org_id: int) -> list[dict]:
     """Served parish-orgs where this user actually holds cornerstone_employee
     -- their own real grants, not every served parish (same "explicit grant
-    required, no inheritance" rule as everything else in this app).
-    Fails closed (empty list) if migrations 036/037 haven't landed yet."""
+    required, no inheritance" rule as everything else in this app) --
+    scoped to the CURRENT diocese only. Jay, 2026-08-16, live test:
+    "Cornerstone Mode is available to Diocese Mode only and only relates to
+    parishes served for that Diocese" -- not a cross-diocese list of every
+    parish this person might work at anywhere. Fails closed (empty list) if
+    migrations 036/037 haven't landed yet."""
     try:
         return db.query(
             """
@@ -84,9 +117,10 @@ def get_cornerstone_picker_orgs(user_id: int) -> list[dict]:
             JOIN portal.parishes p ON p.linked_org_id = o.id
             JOIN checkreq.organizations pdio ON pdio.id = p.org_id
             WHERE ur.user_id = %s AND ur.role_key = 'cornerstone_employee' AND ur.revoked_at IS NULL
-            ORDER BY pdio.name, p.name
+              AND pdio.id = %s
+            ORDER BY p.name
             """,
-            (user_id,),
+            (user_id, diocese_org_id),
         )
     except Exception:
         return []
@@ -94,23 +128,38 @@ def get_cornerstone_picker_orgs(user_id: int) -> list[dict]:
 
 @router.get("/admin/cornerstone-mode", response_class=HTMLResponse)
 def cornerstone_mode_picker(request: Request):
-    """Visibility of the user-menu link that reaches this page is an
-    existence check (holds cornerstone_employee ANYWHERE -- see base.html),
-    matching Parish/Diocese Mode's own real_roles-based visibility pattern.
-    This picker itself only ever lists the parish-orgs this SPECIFIC user
-    is actually granted at."""
+    """Jay, 2026-08-16, live test: "Cornerstone Mode is available to Diocese
+    Mode only" -- reachable only from a plain diocese context, never
+    stacked on top of an active Parish Mode preview or an already-active
+    Cornerstone Mode session; the one way out of either of those is
+    "Diocese Mode" first (base.html's user-menu already only shows this
+    link in that state, this is the matching server-side gate -- same
+    "tile visibility must match its route's own gate" discipline as
+    admin_hub.py's earlier self-correction)."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
-    orgs = get_cornerstone_picker_orgs(user["id"])
+    org = _current_org(request)
+    if _parish_preview_active(request) or not org or is_cornerstone_org(org["id"]):
+        return RedirectResponse("/portal")
+    orgs = get_cornerstone_picker_orgs(user["id"], org["id"])
     return _render(request, "cornerstone_mode.html", user, {"orgs": orgs})
 
 
 @router.post("/admin/cornerstone-mode/{org_id}")
 def cornerstone_mode_select(org_id: int, request: Request):
-    """Just a normal entity-switch (reuses /select-entity's own
-    authorization check -- _user_has_org_access() in main.py -- so a
-    crafted org_id that this user doesn't actually hold cornerstone_employee
-    at, or that isn't even a served parish-org, is rejected the identical
-    way any other unauthorized entity-switch attempt would be)."""
+    """Same Diocese-Mode-only gate as the picker above, re-checked
+    independently (a direct POST must not bypass what the picker's own
+    display already enforces) -- then a normal entity-switch, reusing
+    /select-entity's own authorization check (_user_has_org_access() in
+    main.py) so a crafted org_id this user doesn't actually hold
+    cornerstone_employee at, or that isn't even a served parish-org, is
+    rejected the identical way any other unauthorized entity-switch
+    attempt would be."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    org = _current_org(request)
+    if _parish_preview_active(request) or not org or is_cornerstone_org(org["id"]):
+        return RedirectResponse("/portal")
     return RedirectResponse(f"/select-entity/{org_id}", status_code=303)
