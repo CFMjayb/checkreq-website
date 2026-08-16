@@ -14,14 +14,12 @@
 <div class="form-card">
   <h2>{% if editing %}Edit Announcement{% else %}New Announcement{% endif %}</h2>
   <form method="post" action="{% if editing %}/admin/announcements/{{ editing.id }}{% else %}/admin/announcements{% endif %}">
-    {% if not editing %}
-    <div class="field">
-      <label for="org_id">Entity</label>
-      <select id="org_id" name="org_id" required>
-        {% for o in orgs %}<option value="{{ o.id }}">{{ o.code }} — {{ o.name }}</option>{% endfor %}
-      </select>
-    </div>
-    {% endif %}
+    {# 2026-08-16 fix: was a cross-diocese <select> (every active org,
+       including served parish-orgs) -- the entity is now the session's
+       own currently-selected one (switch entities via the top nav to
+       post an announcement for a different diocese), same
+       session-authoritative pattern every other form in this app uses. #}
+    <p class="sub">Entity: <strong>{{ current_org.code }} — {{ current_org.name }}</strong></p>
     <div class="field">
       <label for="title">Title</label>
       <input type="text" id="title" name="title" required value="{{ editing.title if editing else '' }}">
@@ -30,22 +28,52 @@
       <label for="body">Message</label>
       <textarea id="body" name="body" rows="4" required>{{ editing.body if editing else '' }}</textarea>
     </div>
+    {# 2026-08-16 (Phase H, item 20): target_scope makes the audience an
+       explicit choice instead of an implicit "did they leave the parish
+       picker empty" inference. Requires migrations/
+       039_announcements_target_scope.sql -- NOT YET APPLIED. Until Jay
+       runs it, selecting anything here still saves fine (announcements.py's
+       create/update fall back gracefully to the pre-migration INSERT/UPDATE
+       shape), but the choice itself is silently dropped -- every
+       announcement behaves as "All parishes in this diocese" (today's only
+       real behavior) until the migration lands. #}
     <div class="field">
-      <label for="target_parish_ids">Target parishes (leave none selected = every parish)</label>
+      <label for="target_scope">Audience</label>
+      <select id="target_scope" name="target_scope" onchange="beaconAnnouncementScopeChanged()">
+        {% set scope = editing.target_scope if editing and editing.target_scope else 'all_parishes_in_diocese' %}
+        <option value="all_parishes_in_diocese" {% if scope == 'all_parishes_in_diocese' %}selected{% endif %}>All parishes in this diocese</option>
+        <option value="served_entities" {% if scope == 'served_entities' %}selected{% endif %}>Cornerstone-served parishes only</option>
+        <option value="specific_parishes" {% if scope == 'specific_parishes' %}selected{% endif %}>Specific parishes (choose below)</option>
+        <option value="all_employees" {% if scope == 'all_employees' %}selected{% endif %}>All Cornerstone/diocesan employees (notification bell only — not a parish feed)</option>
+      </select>
+      <p class="hint">Requires a schema update not yet applied (target_scope) — see this page's own template comment. Until then every announcement behaves as "All parishes in this diocese".</p>
+    </div>
+    <div class="field" id="beaconTargetParishField">
+      <label for="target_parish_ids">Target parishes (used only when Audience is "Specific parishes")</label>
       <select id="target_parish_ids" name="target_parish_ids" multiple size="6">
         {% for p in parishes %}
-        <option value="{{ p.id }}" {% if editing and editing.target_parish_ids and p.id in editing.target_parish_ids %}selected{% endif %}>{{ p.org_code }} — {{ p.name }}</option>
+        <option value="{{ p.id }}" {% if editing and editing.target_parish_ids and p.id in editing.target_parish_ids %}selected{% endif %}>{{ p.name }}</option>
         {% endfor %}
       </select>
     </div>
-    <div class="field">
-      <label for="target_roles">Target roles (leave none selected = every role)</label>
+    <div class="field" id="beaconTargetRolesField">
+      <label for="target_roles">Target parish roles (leave none selected = every role; not used for "All employees")</label>
       <select id="target_roles" name="target_roles" multiple size="4">
         {% for r in roles %}
         <option value="{{ r.key }}" {% if editing and editing.target_roles and r.key in editing.target_roles %}selected{% endif %}>{{ r.label }}</option>
         {% endfor %}
       </select>
     </div>
+    <script>
+      function beaconAnnouncementScopeChanged() {
+        var scope = document.getElementById('target_scope').value;
+        var parishField = document.getElementById('beaconTargetParishField');
+        var rolesField = document.getElementById('beaconTargetRolesField');
+        parishField.style.display = (scope === 'specific_parishes') ? '' : 'none';
+        rolesField.style.display = (scope === 'all_employees') ? 'none' : '';
+      }
+      document.addEventListener('DOMContentLoaded', beaconAnnouncementScopeChanged);
+    </script>
     <div class="field">
       <label for="publish_at">Publish at (blank = now)</label>
       <input type="datetime-local" id="publish_at" name="publish_at" value="{{ editing.publish_at.strftime('%Y-%m-%dT%H:%M') if editing and editing.publish_at else '' }}">
@@ -62,12 +90,22 @@
 <div class="card">
   <h2>All Announcements</h2>
   <table class="simple-table">
-    <thead><tr><th>Entity</th><th>Title</th><th>Publish</th><th>Expires</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>Entity</th><th>Title</th><th>Audience</th><th>Publish</th><th>Expires</th><th>Status</th><th></th></tr></thead>
     <tbody>
       {% for r in rows %}
       <tr>
         <td>{{ r.org_code }}</td>
         <td>{{ r.title }}</td>
+        {# r.target_scope is blank/undefined on any environment where
+           migrations/039_announcements_target_scope.sql hasn't been
+           applied yet -- falls back to today's real behavior label rather
+           than showing nothing. #}
+        <td>
+          {% if r.target_scope == 'served_entities' %}Served parishes only
+          {% elif r.target_scope == 'specific_parishes' %}Specific parishes
+          {% elif r.target_scope == 'all_employees' %}All employees (bell only)
+          {% else %}All parishes in diocese{% endif %}
+        </td>
         <td>{{ r.publish_at.strftime('%Y-%m-%d %H:%M') if r.publish_at else '—' }}</td>
         <td>{{ r.expires_at.strftime('%Y-%m-%d %H:%M') if r.expires_at else '—' }}</td>
         <td>{{ 'Active' if r.is_active else 'Inactive' }}</td>

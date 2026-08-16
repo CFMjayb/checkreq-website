@@ -326,12 +326,41 @@ def _parish_context(request: Request):
 
 
 def _require_docs_admin(request: Request):
+    """2026-08-16 fix: was org_id=None (cross-diocese existence check) --
+    a real gap flagged, not fixed, earlier the same day (see Cornerstone
+    Served Parishes Plan.md's own "Open judgment call" note and Decision 5:
+    "beacon_admin sees every parish/entity within the diocese they're
+    currently switched into... reaching a different diocese means
+    switching entities first"). No equivalent "must see every diocese's
+    parish documents at once" workflow exists here (unlike /admin/all-
+    requests' deliberate cross-entity design) -- scoped to the CURRENTLY
+    SELECTED entity, matching Manage Parishes / the Parish Mode picker."""
     user = _current_user(request)
     if not user:
         return None, RedirectResponse("/login")
-    if not rbac.user_has_any_role(user["id"], ["setup_admin", "beacon_admin"], org_id=None):
+    org = _current_org(request)
+    if not org or not rbac.user_has_any_role(user["id"], ["setup_admin", "beacon_admin"], org_id=org["id"]):
         return None, JSONResponse({"error": "Setup Admin or Beacon Admin access required"}, status_code=403)
     return user, None
+
+
+def _parish_in_current_diocese(request: Request, parish_id: int) -> dict | None:
+    """Record-level check for every admin route below that takes a
+    parish_id: the parish must belong to the CURRENTLY SELECTED diocese,
+    not just any diocese this admin holds a role at somewhere. Returns
+    None (treat as not-found/not-authorized) if the parish doesn't exist,
+    is inactive, or belongs to a different diocese than the one currently
+    selected -- closes a real gap where every one of these routes
+    previously trusted a crafted parish_id from ANY diocese with zero
+    cross-check, since the old cross-entity _require_docs_admin gate never
+    verified WHICH diocese's parish was actually being touched."""
+    org = _current_org(request)
+    if not org:
+        return None
+    parish = db.query_one("SELECT * FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
+    if not parish or parish["org_id"] != org["id"]:
+        return None
+    return parish
 
 
 # ── Parish-facing routes ──────────────────────────────────────────────────────
@@ -506,17 +535,17 @@ def admin_parish_documents_page(request: Request, parish_id: int = 0):
     user, err = _require_docs_admin(request)
     if err:
         return err
-    parishes = registry.list_all_parishes()
+    org_ctx = _current_org(request)
+    parishes = registry.list_parishes(org_ctx["id"]) if org_ctx else []
     selected, files, to_diocese_files, folder, list_error = None, [], [], None, None
     if parish_id:
-        selected = next((p for p in parishes if p["id"] == parish_id), None)
+        selected = _parish_in_current_diocese(request, parish_id)
         if selected:
-            org = db.query_one("SELECT * FROM checkreq.organizations WHERE id = %s", (selected["org_id"],))
-            folder = resolve_parish_folder(org, selected)
+            folder = resolve_parish_folder(org_ctx, selected)
             if folder:
                 try:
-                    files = list_readonly(org, folder)
-                    to_diocese_files = list_to_diocese(org, folder)
+                    files = list_readonly(org_ctx, folder)
+                    to_diocese_files = list_to_diocese(org_ctx, folder)
                 except RuntimeError as exc:
                     list_error = str(exc)
     return _render(request, "admin_parish_documents.html", user, {
@@ -532,10 +561,10 @@ async def admin_parish_documents_upload(parish_id: int, request: Request, file: 
     user, err = _require_docs_admin(request)
     if err:
         return err
-    parish = db.query_one("SELECT * FROM portal.parishes WHERE id = %s", (parish_id,))
+    parish = _parish_in_current_diocese(request, parish_id)
     if not parish:
         return RedirectResponse("/admin/parish-documents")
-    org = db.query_one("SELECT * FROM checkreq.organizations WHERE id = %s", (parish["org_id"],))
+    org = _current_org(request)
     folder = resolve_parish_folder(org, parish)
     if folder:
         data = await file.read()
@@ -553,12 +582,12 @@ async def admin_parish_documents_delete(parish_id: int, request: Request):
     user, err = _require_docs_admin(request)
     if err:
         return err
-    parish = db.query_one("SELECT * FROM portal.parishes WHERE id = %s", (parish_id,))
+    parish = _parish_in_current_diocese(request, parish_id)
     if not parish:
         return RedirectResponse("/admin/parish-documents")
     form = await request.form()
     rel_path = (form.get("rel_path") or "").strip()
-    org = db.query_one("SELECT * FROM checkreq.organizations WHERE id = %s", (parish["org_id"],))
+    org = _current_org(request)
     folder = resolve_parish_folder(org, parish)
     if folder and rel_path:
         delete_parish_file(org, folder, rel_path)
@@ -570,10 +599,10 @@ def admin_parish_documents_download(parish_id: int, rel_path: str, request: Requ
     user, err = _require_docs_admin(request)
     if err:
         return err
-    parish = db.query_one("SELECT * FROM portal.parishes WHERE id = %s", (parish_id,))
+    parish = _parish_in_current_diocese(request, parish_id)
     if not parish:
         return JSONResponse({"error": "Not found"}, status_code=404)
-    org = db.query_one("SELECT * FROM checkreq.organizations WHERE id = %s", (parish["org_id"],))
+    org = _current_org(request)
     folder = resolve_parish_folder(org, parish)
     if not folder:
         return JSONResponse({"error": "Not found"}, status_code=404)
@@ -593,9 +622,9 @@ def admin_parish_documents_resolve(parish_id: int, request: Request):
     user, err = _require_docs_admin(request)
     if err:
         return err
-    parish = db.query_one("SELECT * FROM portal.parishes WHERE id = %s", (parish_id,))
+    parish = _parish_in_current_diocese(request, parish_id)
     if parish:
-        org = db.query_one("SELECT * FROM checkreq.organizations WHERE id = %s", (parish["org_id"],))
+        org = _current_org(request)
         resolve_parish_folder(org, parish, force=True)
     return RedirectResponse(f"/admin/parish-documents?parish_id={parish_id}", status_code=303)
 
@@ -612,7 +641,7 @@ async def admin_parish_documents_override(parish_id: int, request: Request):
         return err
     form = await request.form()
     value = (form.get("folder_path") or "").strip() or None
-    parish = db.query_one("SELECT org_id FROM portal.parishes WHERE id = %s", (parish_id,))
+    parish = _parish_in_current_diocese(request, parish_id)
     if parish:
         registry.update_parish(parish_id, parish["org_id"], sp_folder_path=value)
     return RedirectResponse(f"/admin/parish-documents?parish_id={parish_id}", status_code=303)

@@ -16,7 +16,7 @@
     <select id="parish_id" name="parish_id" onchange="this.form.submit()">
       <option value="">— Select —</option>
       {% for p in parishes %}
-      <option value="{{ p.id }}" {% if selected and selected.id == p.id %}selected{% endif %}>{{ p.org_code }} — {{ p.name }}{% if p.city %}, {{ p.city }}{% endif %}</option>
+      <option value="{{ p.id }}" {% if selected and selected.id == p.id %}selected{% endif %}>{{ p.name }}{% if p.city %}, {{ p.city }}{% endif %}</option>
       {% endfor %}
     </select>
   </form>
