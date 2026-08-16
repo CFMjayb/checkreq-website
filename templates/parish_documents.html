@@ -109,5 +109,114 @@
 </div>
 
 {% endif %}
+
+{# "From Cornerstone" section (2026-08-16, Jay's own spec) -- only rendered
+   when the currently-selected entity is itself a Cornerstone-served
+   parish-org. A separate SharePoint site/tenant from everything above
+   (cornerstone_documents.py / cfm_sharepoint_client.py), so it's kept as
+   its own visually-distinct block rather than mixed into the 3 cards
+   above. #}
+{% if cornerstone_section %}
+<h2 style="margin-top:var(--space-6)">From Cornerstone</h2>
+{% if not cornerstone_section.entity_folder %}
+<div class="card"><p class="sub">No SharePoint folder has been matched for this entity yet under Church Files. Contact CFM staff to have it set up.</p></div>
+{% else %}
+{% if cornerstone_section.list_error %}<div class="banner banner-error">Couldn't load Cornerstone documents right now: {{ cornerstone_section.list_error }}</div>{% endif %}
+
+<div class="card doc-area">
+  <h2>From Parish</h2>
+  <p class="sub">This entity's own outbox to CFM.{% if not cornerstone_section.can_edit %} (View only.){% endif %}</p>
+  {% if cornerstone_section.from_parish_files %}
+  <table class="doc-table">
+    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+      {% for f in cornerstone_section.from_parish_files %}
+      <tr>
+        <td>{{ f.name }}</td>
+        <td>{{ (f.size / 1024)|round(1) }} KB</td>
+        <td>
+          <a href="/cornerstone-documents/download/{{ f.rel_path|urlencode }}">View</a>
+          {% if cornerstone_section.can_edit %}
+          <form method="post" action="/cornerstone-documents/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
+            <input type="hidden" name="rel_path" value="{{ f.rel_path }}">
+            <button type="submit" class="btn-link">Remove</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="doc-empty">Nothing here yet.</p>
+  {% endif %}
+  {% if cornerstone_section.can_edit %}
+  <form method="post" action="/cornerstone-documents/upload" enctype="multipart/form-data" class="doc-upload-row">
+    <input type="hidden" name="target" value="from_parish">
+    <input type="file" name="file" required>
+    <button type="submit" class="btn btn-secondary">Upload</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card doc-area">
+  <h2>To Parish — Read Only</h2>
+  <p class="sub">CFM/diocese-managed content. View only.</p>
+  {% if cornerstone_section.to_parish_readonly_files %}
+  <table class="doc-table">
+    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+      {% for f in cornerstone_section.to_parish_readonly_files %}
+      <tr>
+        <td>{{ f.name }}</td>
+        <td>{{ (f.size / 1024)|round(1) }} KB</td>
+        <td><a href="/cornerstone-documents/download/{{ f.rel_path|urlencode }}">View</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="doc-empty">Nothing here yet.</p>
+  {% endif %}
+</div>
+
+<div class="card doc-area">
+  <h2>To Parish — Read Write</h2>
+  <p class="sub">Content this entity can also edit/collaborate on.{% if not cornerstone_section.can_edit %} (View only.){% endif %}</p>
+  {% if cornerstone_section.to_parish_readwrite_files %}
+  <table class="doc-table">
+    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
+    <tbody>
+      {% for f in cornerstone_section.to_parish_readwrite_files %}
+      <tr>
+        <td>{{ f.name }}</td>
+        <td>{{ (f.size / 1024)|round(1) }} KB</td>
+        <td>
+          <a href="/cornerstone-documents/download/{{ f.rel_path|urlencode }}">View</a>
+          {% if cornerstone_section.can_edit %}
+          <form method="post" action="/cornerstone-documents/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
+            <input type="hidden" name="rel_path" value="{{ f.rel_path }}">
+            <button type="submit" class="btn-link">Remove</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="doc-empty">Nothing here yet.</p>
+  {% endif %}
+  {% if cornerstone_section.can_edit %}
+  <form method="post" action="/cornerstone-documents/upload" enctype="multipart/form-data" class="doc-upload-row">
+    <input type="hidden" name="target" value="to_parish_rw">
+    <input type="file" name="file" required>
+    <button type="submit" class="btn btn-secondary">Upload</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+{% endif %}
+
 </div>
 {% endblock %}

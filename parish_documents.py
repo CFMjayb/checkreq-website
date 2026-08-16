@@ -90,6 +90,7 @@ import registry
 import parish_roles
 import parish_mode
 import cornerstone_mode
+import cornerstone_documents
 import sharepoint_client
 
 router = APIRouter()
@@ -349,12 +350,44 @@ def parish_documents_page(request: Request):
             to_diocese_files = list_to_diocese(org, folder)
         except RuntimeError as exc:
             list_error = str(exc)
+
+    # "From Cornerstone" section (2026-08-16, Jay's own spec): only when the
+    # CURRENTLY SELECTED entity is itself a Cornerstone-served parish-org --
+    # a completely different SharePoint site/tenant than the DioNet-based
+    # section above (see cornerstone_documents.py / cfm_sharepoint_client.py).
+    # Note this uses the RAW current org (the served parish-org, e.g. code
+    # "MEC"), NOT `org` above (which is the parish's own DIOCESE, e.g.
+    # EDOM -- portal.parishes.org_id always points there, never at a served
+    # org) -- the Church Files folder is keyed on the served org's own code.
+    cornerstone_section = None
+    cornerstone_org = _current_org(request)
+    if cornerstone_org and cornerstone_mode.is_cornerstone_org(cornerstone_org["id"]):
+        entity_folder = cornerstone_documents.resolve_entity_folder(cornerstone_org["code"])
+        from_parish_files, to_parish_readonly_files, to_parish_readwrite_files = [], [], []
+        cs_list_error = None
+        if entity_folder:
+            try:
+                from_parish_files = cornerstone_documents.list_from_parish(entity_folder)
+                to_parish_readonly_files = cornerstone_documents.list_to_parish_readonly(entity_folder)
+                to_parish_readwrite_files = cornerstone_documents.list_to_parish_readwrite(entity_folder)
+            except RuntimeError as exc:
+                cs_list_error = str(exc)
+        cornerstone_section = {
+            "entity_folder": entity_folder,
+            "from_parish_files": from_parish_files,
+            "to_parish_readonly_files": to_parish_readonly_files,
+            "to_parish_readwrite_files": to_parish_readwrite_files,
+            "list_error": cs_list_error,
+            "can_edit": cornerstone_documents.can_edit(user, cornerstone_org["id"]),
+        }
+
     return _render(request, "parish_documents.html", user, {
         "parish": parish, "folder": folder,
         "readonly_files": readonly_files, "editable_files": editable_files,
         "to_diocese_files": to_diocese_files,
         "can_edit": _can_edit_parish_docs(user, parish),
         "list_error": list_error,
+        "cornerstone_section": cornerstone_section,
     })
 
 

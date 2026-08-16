@@ -102,6 +102,7 @@ import rbac
 import parish_roles
 import parish_mode
 import parish_documents
+import cornerstone_documents
 import parish_info
 import tile_badges
 import announcements
@@ -5790,6 +5791,7 @@ cornerstone_mode.register(app, current_user=_current_user, current_org=_current_
 # and parish feedback/general-requests -- three more new modules, same thin
 # register() wiring, no logic added here.
 parish_documents.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+cornerstone_documents.register(app, current_user=_current_user, current_org=_current_org)
 announcements.register(app, current_user=_current_user, render=_render)
 parish_requests.register(app, current_user=_current_user, render=_render)
 # 2026-08-08 feedback batch: live Databank contact info, replacing the plain
