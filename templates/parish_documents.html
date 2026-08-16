@@ -15,16 +15,33 @@
 <div class="card"><p class="sub">No SharePoint folder has been matched for this parish yet. Contact the diocesan office to have it set up.</p></div>
 {% else %}
 
+{% if folder_stale %}
+<div class="banner banner-error">This parish's SharePoint folder may have been renamed or moved — contact the diocesan office if documents below look out of date.</div>
+{% endif %}
+
 <details class="card doc-area">
   <summary><h2>From the Diocese</h2></summary>
   <p class="sub">Documents the diocese has shared with your parish. Read-only.</p>
+  {% if ro_path %}
+  <p class="sub">
+    {% for c in ro_breadcrumb %}
+      {% if c.path is not none %}<a href="?ro_path={{ c.path|urlencode }}">{{ c.label }}</a> / {% else %}<strong>{{ c.label }}</strong>{% endif %}
+    {% endfor %}
+  </p>
+  {% endif %}
   {% if readonly_files %}
   <table class="doc-table">
     <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
     <tbody>
       {% for f in readonly_files %}
       <tr>
-        <td>{{ '📁 ' if f.is_folder else '' }}{{ f.name }}</td>
+        <td>
+          {% if f.is_folder %}
+          <a href="?ro_path={{ (ro_path ~ '/' ~ f.name if ro_path else f.name)|urlencode }}">📁 {{ f.name }}</a>
+          {% else %}
+          {{ f.name }}
+          {% endif %}
+        </td>
         <td>{{ (f.size / 1024)|round(1) }} KB</td>
         <td>{% if not f.is_folder %}<a href="/parish-documents/download/{{ f.rel_path|urlencode }}">View</a>{% endif %}</td>
       </tr>
@@ -39,21 +56,36 @@
 <details class="card doc-area">
   <summary><h2>Our Parish Files</h2></summary>
   <p class="sub">Your parish's own files.{% if not can_edit %} (View only — ask your Parish Admin for upload access.){% endif %}</p>
+  {% if edit_path %}
+  <p class="sub">
+    {% for c in edit_breadcrumb %}
+      {% if c.path is not none %}<a href="?edit_path={{ c.path|urlencode }}">{{ c.label }}</a> / {% else %}<strong>{{ c.label }}</strong>{% endif %}
+    {% endfor %}
+  </p>
+  {% endif %}
   {% if editable_files %}
   <table class="doc-table">
     <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
     <tbody>
       {% for f in editable_files %}
       <tr>
-        <td>{{ f.name }}</td>
+        <td>
+          {% if f.is_folder %}
+          <a href="?edit_path={{ (edit_path ~ '/' ~ f.name if edit_path else f.name)|urlencode }}">📁 {{ f.name }}</a>
+          {% else %}
+          {{ f.name }}
+          {% endif %}
+        </td>
         <td>{{ (f.size / 1024)|round(1) }} KB</td>
         <td>
+          {% if not f.is_folder %}
           <a href="/parish-documents/download/{{ f.rel_path|urlencode }}">View</a>
           {% if can_edit %}
           <form method="post" action="/parish-documents/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
             <input type="hidden" name="rel_path" value="{{ f.rel_path }}">
             <button type="submit" class="btn-link">Remove</button>
           </form>
+          {% endif %}
           {% endif %}
         </td>
       </tr>
@@ -75,21 +107,36 @@
 <details class="card doc-area">
   <summary><h2>For the Diocese</h2></summary>
   <p class="sub">Send a document to the diocesan office.{% if not can_edit %} (View only — ask your Parish Admin for upload access.){% endif %}</p>
+  {% if diocese_path %}
+  <p class="sub">
+    {% for c in diocese_breadcrumb %}
+      {% if c.path is not none %}<a href="?diocese_path={{ c.path|urlencode }}">{{ c.label }}</a> / {% else %}<strong>{{ c.label }}</strong>{% endif %}
+    {% endfor %}
+  </p>
+  {% endif %}
   {% if to_diocese_files %}
   <table class="doc-table">
     <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
     <tbody>
       {% for f in to_diocese_files %}
       <tr>
-        <td>{{ f.name }}</td>
+        <td>
+          {% if f.is_folder %}
+          <a href="?diocese_path={{ (diocese_path ~ '/' ~ f.name if diocese_path else f.name)|urlencode }}">📁 {{ f.name }}</a>
+          {% else %}
+          {{ f.name }}
+          {% endif %}
+        </td>
         <td>{{ (f.size / 1024)|round(1) }} KB</td>
         <td>
+          {% if not f.is_folder %}
           <a href="/parish-documents/download/{{ f.rel_path|urlencode }}">View</a>
           {% if can_edit %}
           <form method="post" action="/parish-documents/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
             <input type="hidden" name="rel_path" value="{{ f.rel_path }}">
             <button type="submit" class="btn-link">Remove</button>
           </form>
+          {% endif %}
           {% endif %}
         </td>
       </tr>

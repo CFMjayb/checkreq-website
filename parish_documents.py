@@ -79,6 +79,7 @@ force=True regardless of the value passed.
 from __future__ import annotations
 
 import difflib
+import mimetypes
 import re
 
 from fastapi import APIRouter, Request, UploadFile, File, Form
@@ -105,6 +106,19 @@ TO_DIOCESE_SUBFOLDER = "For the Diocese"
 _SPECIAL_SUBFOLDERS = {READONLY_SUBFOLDER, EDITABLE_SUBFOLDER, TO_DIOCESE_SUBFOLDER}
 _FUZZY_THRESHOLD = 0.72
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB -- generous for scanned documents
+
+
+def _guess_media_type(filename: str) -> str:
+    """2026-08-16, Jay: PDFs (and other common types) should open in the
+    browser's own built-in viewer, not force a download -- every download
+    route in this file used to hardcode application/octet-stream
+    regardless of Content-Disposition: inline, which makes every browser
+    download the file no matter what. mimetypes covers PDF/images/text
+    correctly out of the box; falls back to octet-stream (still a
+    download, but never a wrong/misleading Content-Type) for anything it
+    doesn't recognize."""
+    guessed, _ = mimetypes.guess_type(filename)
+    return guessed or "application/octet-stream"
 
 
 def register(app, *, current_user, current_org, render) -> None:
@@ -182,11 +196,15 @@ def _site_and_token(org: dict) -> tuple[str, str]:
 
 
 def resolve_parish_folder(org: dict, parish: dict, force: bool = True) -> str | None:
-    """Returns the matched SharePoint folder NAME (relative to
-    org.sp_parish_library_folder), or None if no org config / no match.
-    Always re-checks live (see module docstring, 2026-08-08) -- `force` is
-    kept only so the admin "Re-resolve" button's call site doesn't need to
-    change; every caller behaves identically regardless of its value now."""
+    """Runs the real matching algorithm (code-prefix, then fuzzy fallback)
+    against a live SharePoint listing and STORES whatever it finds. This
+    is a real re-derivation, not a cheap check -- 2026-08-16, per Jay's
+    direct correction of the original "always re-check live" design ("why
+    would we replace it every time?"): this should only ever run for a
+    parish's FIRST match, or when an admin explicitly clicks "Re-resolve
+    from SharePoint" -- never on a routine page view (see
+    get_parish_folder() below, which is what every passive page load now
+    calls instead)."""
     if not org or not org.get("sp_parish_hostname"):
         return None
 
@@ -214,6 +232,39 @@ def resolve_parish_folder(org: dict, parish: dict, force: bool = True) -> str | 
     return match
 
 
+def folder_still_exists(org: dict, folder_name: str) -> bool:
+    """A cheap existence check -- does NOT run the matching algorithm at
+    all, just confirms the stored folder name still shows up in a live
+    listing. One Graph call, same as resolve_parish_folder()'s own root
+    listing, but never re-derives or changes anything."""
+    if not org or not org.get("sp_parish_hostname") or not folder_name:
+        return False
+    token, site_id = _site_and_token(org)
+    root = org.get("sp_parish_library_folder") or ""
+    entries = sharepoint_client.list_folder(token, site_id, root)
+    return any(e["is_folder"] and e["name"] == folder_name for e in entries)
+
+
+def get_parish_folder(org: dict, parish: dict) -> tuple[str | None, bool]:
+    """The function every passive page load calls -- returns
+    (folder_name, stale). `stale=True` means a folder was previously
+    matched and stored, but the live existence check just now couldn't
+    find it (renamed/moved/deleted in SharePoint outside the app, or a
+    transient Graph hiccup) -- `folder_name` is still the STORED value in
+    that case, never silently swapped for a different guess, so the
+    caller can decide whether to still attempt to read it or just show
+    the warning. A parish with NO stored value yet gets one real
+    resolve_parish_folder() call (first-time match) -- after that, this
+    function never re-runs the matching algorithm on its own; only the
+    explicit "Re-resolve from SharePoint" button does."""
+    stored = parish.get("sp_folder_path")
+    if not stored:
+        return resolve_parish_folder(org, parish, force=True), False
+    if folder_still_exists(org, stored):
+        return stored, False
+    return stored, True
+
+
 def _parish_root(org: dict, folder_name: str) -> str:
     root = (org.get("sp_parish_library_folder") or "").strip("/")
     return f"{root}/{folder_name}" if root else folder_name
@@ -223,41 +274,74 @@ def _parish_root(org: dict, folder_name: str) -> str:
 # Every entry gets a "rel_path" -- the exact address delete/download need,
 # relative to the parish's own resolved root. Root-loose legacy files get
 # rel_path=name (unchanged addressing); subfolder contents get
-# rel_path="{Subfolder}/{name}".
+# rel_path="{Subfolder}/{name}", and a browsed-into nested subfolder's
+# contents get rel_path="{Subfolder}/{subpath}/{name}".
+#
+# 2026-08-16 fix (real, reported bug -- item 19 from the 2026-08-16
+# feedback session: "folders list correctly and open, but no files ever
+# show up underneath them"): every list_* function used to fetch exactly
+# ONE level -- a folder found at that level had no way to actually open it
+# anywhere in the app (the template never even rendered a link for a
+# folder row). Each list_* function now takes an optional `subpath`,
+# relative to that area's own subfolder root, and lists INTO it instead of
+# the area's top level when given -- the root loose-file listing in
+# list_readonly is skipped once subpath is set, since a legacy loose file
+# has no "browse into" concept of its own.
 
-def list_readonly(org: dict, folder_name: str) -> list[dict]:
+def _breadcrumb(area_label: str, subpath: str) -> list[dict]:
+    """[{label, path}] for rendering a clickable breadcrumb -- the last
+    entry (the current location) has path=None so the template knows not
+    to link it. path="" always means the area's own top level."""
+    crumbs = [{"label": area_label, "path": ""}]
+    parts = [p for p in subpath.split("/") if p] if subpath else []
+    accum = []
+    for i, p in enumerate(parts):
+        accum.append(p)
+        crumbs.append({"label": p, "path": "/".join(accum)})
+    if crumbs:
+        crumbs[-1] = {**crumbs[-1], "path": None}
+    return crumbs
+
+
+def list_readonly(org: dict, folder_name: str, subpath: str = "") -> list[dict]:
     """Read Only Files subfolder + any pre-existing loose file sitting at
-    the parish's root (backward compat -- see module docstring)."""
+    the parish's root (backward compat -- see module docstring) when
+    subpath is blank; browses INTO Read Only Files/{subpath} instead once
+    subpath is given (see the fix note above)."""
     token, site_id = _site_and_token(org)
     base = _parish_root(org, folder_name)
     out = []
-    for e in sharepoint_client.list_folder(token, site_id, base):
-        if e["name"] in _SPECIAL_SUBFOLDERS:
-            continue
-        e = dict(e, rel_path=e["name"])
-        out.append(e)
-    for e in sharepoint_client.list_folder(token, site_id, f"{base}/{READONLY_SUBFOLDER}"):
-        e = dict(e, rel_path=f"{READONLY_SUBFOLDER}/{e['name']}")
-        out.append(e)
-    return out
-
-
-def list_editable(org: dict, folder_name: str) -> list[dict]:
-    token, site_id = _site_and_token(org)
-    base = _parish_root(org, folder_name)
-    out = []
-    for e in sharepoint_client.list_folder(token, site_id, f"{base}/{EDITABLE_SUBFOLDER}"):
-        e = dict(e, rel_path=f"{EDITABLE_SUBFOLDER}/{e['name']}")
+    if not subpath:
+        for e in sharepoint_client.list_folder(token, site_id, base):
+            if e["name"] in _SPECIAL_SUBFOLDERS:
+                continue
+            e = dict(e, rel_path=e["name"])
+            out.append(e)
+    area_path = f"{READONLY_SUBFOLDER}/{subpath}" if subpath else READONLY_SUBFOLDER
+    for e in sharepoint_client.list_folder(token, site_id, f"{base}/{area_path}"):
+        e = dict(e, rel_path=f"{area_path}/{e['name']}")
         out.append(e)
     return out
 
 
-def list_to_diocese(org: dict, folder_name: str) -> list[dict]:
+def list_editable(org: dict, folder_name: str, subpath: str = "") -> list[dict]:
     token, site_id = _site_and_token(org)
     base = _parish_root(org, folder_name)
+    area_path = f"{EDITABLE_SUBFOLDER}/{subpath}" if subpath else EDITABLE_SUBFOLDER
     out = []
-    for e in sharepoint_client.list_folder(token, site_id, f"{base}/{TO_DIOCESE_SUBFOLDER}"):
-        e = dict(e, rel_path=f"{TO_DIOCESE_SUBFOLDER}/{e['name']}")
+    for e in sharepoint_client.list_folder(token, site_id, f"{base}/{area_path}"):
+        e = dict(e, rel_path=f"{area_path}/{e['name']}")
+        out.append(e)
+    return out
+
+
+def list_to_diocese(org: dict, folder_name: str, subpath: str = "") -> list[dict]:
+    token, site_id = _site_and_token(org)
+    base = _parish_root(org, folder_name)
+    area_path = f"{TO_DIOCESE_SUBFOLDER}/{subpath}" if subpath else TO_DIOCESE_SUBFOLDER
+    out = []
+    for e in sharepoint_client.list_folder(token, site_id, f"{base}/{area_path}"):
+        e = dict(e, rel_path=f"{area_path}/{e['name']}")
         out.append(e)
     return out
 
@@ -411,17 +495,17 @@ def _parish_in_current_diocese(request: Request, parish_id: int) -> dict | None:
 # ── Parish-facing routes ──────────────────────────────────────────────────────
 
 @router.get("/parish-documents", response_class=HTMLResponse)
-def parish_documents_page(request: Request):
+def parish_documents_page(request: Request, ro_path: str = "", edit_path: str = "", diocese_path: str = ""):
     user, parish, org, err = _parish_context(request)
     if err:
         return err
-    folder = resolve_parish_folder(org, parish)
+    folder, folder_stale = get_parish_folder(org, parish)
     readonly_files, editable_files, to_diocese_files, list_error = [], [], [], None
     if folder:
         try:
-            readonly_files = list_readonly(org, folder)
-            editable_files = list_editable(org, folder)
-            to_diocese_files = list_to_diocese(org, folder)
+            readonly_files = list_readonly(org, folder, ro_path)
+            editable_files = list_editable(org, folder, edit_path)
+            to_diocese_files = list_to_diocese(org, folder, diocese_path)
         except RuntimeError as exc:
             list_error = str(exc)
 
@@ -456,12 +540,18 @@ def parish_documents_page(request: Request):
         }
 
     return _render(request, "parish_documents.html", user, {
-        "parish": parish, "folder": folder,
+        "parish": parish, "folder": folder, "folder_stale": folder_stale,
         "readonly_files": readonly_files, "editable_files": editable_files,
         "to_diocese_files": to_diocese_files,
         "can_edit": _can_edit_parish_docs(user, parish),
         "list_error": list_error,
         "cornerstone_section": cornerstone_section,
+        # 2026-08-16 fix (item 19): breadcrumbs + the raw current path for
+        # each area, so a folder row can link one level deeper and the
+        # breadcrumb can link back up -- see _breadcrumb()'s own docstring.
+        "ro_path": ro_path, "ro_breadcrumb": _breadcrumb("From the Diocese", ro_path),
+        "edit_path": edit_path, "edit_breadcrumb": _breadcrumb("Our Parish Files", edit_path),
+        "diocese_path": diocese_path, "diocese_breadcrumb": _breadcrumb("For the Diocese", diocese_path),
     })
 
 
@@ -475,7 +565,7 @@ async def parish_documents_upload(request: Request, file: UploadFile = File(...)
         return err
     if not _can_edit_parish_docs(user, parish):
         return JSONResponse({"error": "You don't have permission to add files here."}, status_code=403)
-    folder = resolve_parish_folder(org, parish)
+    folder, _stale = get_parish_folder(org, parish)
     if not folder:
         return RedirectResponse("/parish-documents?error=nofolder", status_code=303)
     data = await file.read()
@@ -503,7 +593,7 @@ async def parish_documents_delete(request: Request):
     # hand to try.
     if not (rel_path.startswith(f"{EDITABLE_SUBFOLDER}/") or rel_path.startswith(f"{TO_DIOCESE_SUBFOLDER}/")):
         return JSONResponse({"error": "You can't remove that file."}, status_code=403)
-    folder = resolve_parish_folder(org, parish)
+    folder, _stale = get_parish_folder(org, parish)
     if folder and rel_path:
         delete_parish_file(org, folder, rel_path)
     return RedirectResponse("/parish-documents?deleted=1", status_code=303)
@@ -514,7 +604,7 @@ def parish_documents_download(rel_path: str, request: Request):
     user, parish, org, err = _parish_context(request)
     if err:
         return err
-    folder = resolve_parish_folder(org, parish)
+    folder, _stale = get_parish_folder(org, parish)
     if not folder:
         return JSONResponse({"error": "Not found"}, status_code=404)
     try:
@@ -522,7 +612,7 @@ def parish_documents_download(rel_path: str, request: Request):
     except RuntimeError:
         return JSONResponse({"error": "Not found"}, status_code=404)
     filename = rel_path.rsplit("/", 1)[-1]
-    return Response(content=data, media_type="application/octet-stream",
+    return Response(content=data, media_type=_guess_media_type(filename),
                      headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
 
@@ -569,7 +659,7 @@ def resource_library_download(filename: str, request: Request):
         data = download_library_file(org, filename)
     except RuntimeError:
         return JSONResponse({"error": "Not found"}, status_code=404)
-    return Response(content=data, media_type="application/octet-stream",
+    return Response(content=data, media_type=_guess_media_type(filename),
                      headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
 
@@ -582,11 +672,17 @@ def admin_parish_documents_page(request: Request, parish_id: int = 0):
         return err
     org_ctx = _current_org(request)
     parishes = registry.list_parishes(org_ctx["id"]) if org_ctx else []
-    selected, files, to_diocese_files, folder, list_error = None, [], [], None, None
+    selected, files, to_diocese_files, folder, folder_stale, list_error = None, [], [], None, False, None
     if parish_id:
         selected = _parish_in_current_diocese(request, parish_id)
         if selected:
-            folder = resolve_parish_folder(org_ctx, selected)
+            # 2026-08-16, per Jay's direct correction: a passive page load
+            # must never re-derive (and potentially silently change) the
+            # matched folder -- see get_parish_folder()'s own docstring.
+            # Only a first-ever match, or the explicit "Re-resolve from
+            # SharePoint" button below, actually re-runs the matching
+            # algorithm.
+            folder, folder_stale = get_parish_folder(org_ctx, selected)
             if folder:
                 try:
                     files = list_readonly(org_ctx, folder)
@@ -596,7 +692,7 @@ def admin_parish_documents_page(request: Request, parish_id: int = 0):
     return _render(request, "admin_parish_documents.html", user, {
         "parishes": parishes, "selected": selected, "files": files,
         "to_diocese_files": to_diocese_files,
-        "folder": folder, "list_error": list_error,
+        "folder": folder, "folder_stale": folder_stale, "list_error": list_error,
     })
 
 
@@ -610,7 +706,7 @@ async def admin_parish_documents_upload(parish_id: int, request: Request, file: 
     if not parish:
         return RedirectResponse("/admin/parish-documents")
     org = _current_org(request)
-    folder = resolve_parish_folder(org, parish)
+    folder, _stale = get_parish_folder(org, parish)
     if folder:
         data = await file.read()
         if len(data) <= MAX_UPLOAD_BYTES:
@@ -633,7 +729,7 @@ async def admin_parish_documents_delete(parish_id: int, request: Request):
     form = await request.form()
     rel_path = (form.get("rel_path") or "").strip()
     org = _current_org(request)
-    folder = resolve_parish_folder(org, parish)
+    folder, _stale = get_parish_folder(org, parish)
     if folder and rel_path:
         delete_parish_file(org, folder, rel_path)
     return RedirectResponse(f"/admin/parish-documents?parish_id={parish_id}&deleted=1", status_code=303)
@@ -648,7 +744,7 @@ def admin_parish_documents_download(parish_id: int, rel_path: str, request: Requ
     if not parish:
         return JSONResponse({"error": "Not found"}, status_code=404)
     org = _current_org(request)
-    folder = resolve_parish_folder(org, parish)
+    folder, _stale = get_parish_folder(org, parish)
     if not folder:
         return JSONResponse({"error": "Not found"}, status_code=404)
     try:
@@ -656,7 +752,7 @@ def admin_parish_documents_download(parish_id: int, rel_path: str, request: Requ
     except RuntimeError:
         return JSONResponse({"error": "Not found"}, status_code=404)
     filename = rel_path.rsplit("/", 1)[-1]
-    return Response(content=data, media_type="application/octet-stream",
+    return Response(content=data, media_type=_guess_media_type(filename),
                      headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
 

@@ -27,9 +27,20 @@
 {% if selected %}
 <div class="card">
   <h2>{{ selected.name }}{% if selected.city %}, {{ selected.city }}{% endif %}</h2>
-  <p class="sub">Matched SharePoint folder: {% if folder %}<code>{{ folder }}</code>{% else %}<em>not matched</em>{% endif %}
-     {% if selected.sp_folder_resolved_at %}(resolved {{ selected.sp_folder_resolved_at }}){% endif %}
-     — re-checked live on every page load.</p>
+  {# 2026-08-16, Jay's direct correction: no more "Matched...not matched"
+     and no more re-deriving the match on every page load -- once set, it
+     stays set. A stored folder that no longer shows up in a live check
+     gets a distinct warning instead of silently being treated the same
+     as "never matched." #}
+  {% if not folder %}
+  <p class="sub">No SharePoint folder matched for this parish yet. Click Re-resolve to search for one.</p>
+  {% elif folder_stale %}
+  <p class="banner banner-error">The folder last matched (<code>{{ folder }}</code>) no longer shows up in
+     SharePoint — it may have been renamed or moved. Click Re-resolve to search again, or set one manually below.</p>
+  {% else %}
+  <p class="sub">SharePoint folder: <code>{{ folder }}</code>
+     {% if selected.sp_folder_resolved_at %}(matched {{ selected.sp_folder_resolved_at }}){% endif %}</p>
+  {% endif %}
   <form method="post" action="/admin/parish-documents/{{ selected.id }}/resolve" style="display:inline">
     <button type="submit" class="btn btn-secondary">Re-resolve from SharePoint</button>
   </form>
