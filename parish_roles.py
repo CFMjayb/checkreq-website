@@ -75,11 +75,18 @@ def get_parish_role_keys(user_id: int, parish_id: int | None = None) -> set[str]
 
 def get_parish_roles_for_user(user_id: int) -> list[dict]:
     """Every (parish, role) pair this user holds, ordered for display --
-       mirrors rbac.get_roles_for_user's shape."""
+       mirrors rbac.get_roles_for_user's shape.
+
+       linked_org_id (2026-08-16, admin_users_detail.html's "Cornerstone
+       Entity Roles" gating) is non-NULL exactly when this specific parish
+       is Cornerstone-served -- Jay: "If a user is at All Saints in
+       Frederick, that is NOT a Cornerstone served parish and the user
+       would only have parish roles showing." Selected here so the
+       template can check it without a second query."""
     return db.query(
         """
         SELECT pur.id AS parish_user_role_id, pur.parish_id, p.name AS parish_name,
-               p.org_id, o.code AS org_code,
+               p.org_id, p.linked_org_id, o.code AS org_code,
                pur.role_key, pr.label AS role_label, pr.description AS role_description,
                pur.granted_at, g.email AS granted_by_email, pur.note
           FROM portal.parish_user_roles pur

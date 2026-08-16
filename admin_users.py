@@ -324,7 +324,7 @@ def user_detail_page(user_id: int, request: Request):
         """,
         (user_id,),
     )
-    orgs = db.query(
+    all_orgs = db.query(
         "SELECT id, code, name, cornerstone_served FROM checkreq.organizations "
         "WHERE is_active ORDER BY name"
     )
@@ -348,8 +348,29 @@ def user_detail_page(user_id: int, request: Request):
         """
     )
     parish_info_by_org = {r["org_id"]: r for r in parish_links}
-    for o in orgs:
+    for o in all_orgs:
         o["parish_info"] = parish_info_by_org.get(o["id"])  # None => diocese-level entity
+
+    # Parish Portal S3: computed here (moved up from its original spot
+    # below) so its linked_org_id column can feed the entity-list scoping
+    # right below -- see get_parish_roles_for_user()'s own docstring for
+    # why linked_org_id is selected there.
+    parish_role_grants = parish_roles.get_parish_roles_for_user(user_id)
+
+    # 2026-08-16, Jay: "all users that see the Cornerstone-served roles
+    # would only have an entity drop down of their entities they have been
+    # granted access to" -- the dropdown (and the Grant-a-Role form's own
+    # entity select, which shares this same `orgs` list) used to show
+    # EVERY active organization system-wide, letting an admin accidentally
+    # grant a role at an entity this person has no real connection to.
+    # Scoped to: entities with an existing checkreq.roles/user_program_areas
+    # grant, UNION the served-org(s) linked to any parish this person holds
+    # a Parish Role at (even with zero entity-level grants there yet -- see
+    # admin_users_detail.html's own "Cornerstone Entity Roles" visibility
+    # gate, which uses the identical union for the same reason).
+    relevant_org_ids = {r["org_id"] for r in roles} | {r["org_id"] for r in program_areas}
+    relevant_org_ids |= {r["linked_org_id"] for r in parish_role_grants if r["linked_org_id"]}
+    orgs = [o for o in all_orgs if o["id"] in relevant_org_ids]
 
     # 2026-08-02 feedback batch, Item 14.2: which entities does this person
     # actually have SOMETHING in -- drives the dropdown's "multiple
@@ -377,7 +398,8 @@ def user_detail_page(user_id: int, request: Request):
     # beacon_admin proactively grant parish access (the "invite" mechanism,
     # same as how a plain app_users row is the only "invite" this app has
     # ever had) without waiting for a self-service parish-access-request.
-    parish_role_grants = parish_roles.get_parish_roles_for_user(user_id)
+    # (parish_role_grants itself is computed earlier now, above `orgs` --
+    # see that block's own comment for why.)
     # Cornerstone Served Parishes Plan.md Phase C, item 17.3: same "current
     # entity only" restriction as item 13/21 (admin_setup.py's Program Area
     # detail page, main.py's /admin/parish-mode picker) -- as served
