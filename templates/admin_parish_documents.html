@@ -8,6 +8,8 @@
 
 {% if request.query_params.get('uploaded') %}<div class="banner banner-success">Uploaded.</div>{% endif %}
 {% if request.query_params.get('deleted') %}<div class="banner banner-success">Removed.</div>{% endif %}
+{% if request.query_params.get('resolved') == '1' %}<div class="banner banner-success">Matched: <code>{{ folder }}</code></div>{% endif %}
+{% if request.query_params.get('resolved') == '0' %}<div class="banner banner-error">No matching SharePoint folder found for this parish. Check that a folder starting with its code exists under Church Files, or set one manually below.</div>{% endif %}
 {% if list_error %}<div class="banner banner-error">Couldn't load documents right now: {{ list_error }}</div>{% endif %}
 
 <div class="card">

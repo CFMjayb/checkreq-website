@@ -663,15 +663,24 @@ def admin_parish_documents_download(parish_id: int, rel_path: str, request: Requ
 @router.post("/admin/parish-documents/{parish_id}/resolve")
 def admin_parish_documents_resolve(parish_id: int, request: Request):
     """Force a fresh live Graph lookup (a code correction, or a SharePoint
-    folder that didn't exist yet last time) -- bypasses the cache."""
+    folder that didn't exist yet last time) -- bypasses the cache.
+
+    2026-08-16 fix: this discarded resolve_parish_folder()'s return value
+    entirely -- clicking the button gave zero feedback either way, which
+    reads as "did that even do anything?" regardless of whether a match
+    was actually found. Now redirects with a resolved=1 (found) or
+    resolved=0 (genuinely no matching folder in SharePoint) query param so
+    the page can say which one happened."""
     user, err = _require_docs_admin(request)
     if err:
         return err
     parish = _parish_in_current_diocese(request, parish_id)
-    if parish:
-        org = _current_org(request)
-        resolve_parish_folder(org, parish, force=True)
-    return RedirectResponse(f"/admin/parish-documents?parish_id={parish_id}", status_code=303)
+    if not parish:
+        return RedirectResponse("/admin/parish-documents")
+    org = _current_org(request)
+    match = resolve_parish_folder(org, parish, force=True)
+    flag = "resolved=1" if match else "resolved=0"
+    return RedirectResponse(f"/admin/parish-documents?parish_id={parish_id}&{flag}", status_code=303)
 
 
 @router.post("/admin/parish-documents/{parish_id}/override")
