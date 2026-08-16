@@ -26,8 +26,8 @@
 {% if request.query_params.get('parish_revoked') %}<div class="banner banner-success">Parish role revoked.</div>{% endif %}
 {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
 
-<div class="card">
-  <h2>Identity</h2>
+<details class="card setup-section" open>
+  <summary><h2>Identity</h2></summary>
   <form method="post" action="/admin/setup/users/{{ target.id }}/update">
     <label for="email">Email</label>
     <input type="email" id="email" name="email" value="{{ target.email }}" required>
@@ -51,7 +51,7 @@
     </p>
     <button type="submit" class="btn btn-primary">Save Identity</button>
   </form>
-</div>
+</details>
 
 {% if orgs|length > 1 %}
 <!-- Cornerstone Served Parishes Plan.md Phase F, items 17.2/18: "entity
@@ -66,8 +66,8 @@
      default) keeps the historical behavior: every panel shown, no
      single-entity label, since a mixed set can't honestly be called
      diocese- or parish-level. -->
-<div class="card" style="margin-top:24px;">
-  <h2>Choose an Entity</h2>
+<details class="card setup-section" open style="margin-top:24px;">
+  <summary><h2>Choose an Entity</h2></summary>
   <p class="muted">
     Roles are always held per entity. Program Areas and Approval Rules only apply within
     Cornerstone-served entities (the ones with full AP: GL coding, budgets, check requests) --
@@ -98,11 +98,11 @@
   <div id="entityLevelHeader" class="entity-level-header" hidden>
     <span class="badge" id="entityLevelBadge"></span>
   </div>
-</div>
+</details>
 {% endif %}
 
-<div class="card">
-  <h2>Roles</h2>
+<details class="card setup-section" open>
+  <summary><h2>Roles</h2></summary>
   <table class="simple-table">
     <thead><tr><th>Role</th><th>Entity</th><th>Granted</th><th>By</th><th></th></tr></thead>
     <tbody>
@@ -144,14 +144,14 @@
     </select>
     <button type="submit" class="btn btn-primary">Grant</button>
   </form>
-</div>
+</details>
 
 <!-- Parish Portal S3: same shape as the Roles card above, scoped to a
      specific parish instead of an entity -- the "invite to a parish"
      mechanism, mirroring how this whole app has never had a literal
      emailed invite, just a beacon_admin-provisioned app_users row. -->
-<div class="card">
-  <h2>Parish Roles</h2>
+<details class="card setup-section" open>
+  <summary><h2>Parish Roles</h2></summary>
   <p class="muted">Access this person holds at a specific parish, separate from their entity-level
     roles above.</p>
   <table class="simple-table">
@@ -199,10 +199,10 @@
     </select>
     <button type="submit" class="btn btn-primary">Grant</button>
   </form>
-</div>
+</details>
 
-<div class="card" id="programAreasCard">
-  <h2>Program Areas</h2>
+<details class="card setup-section" id="programAreasCard" open>
+  <summary><h2>Program Areas</h2></summary>
   <p class="muted">Which budgets this person's spending is drawn against — a finer grain than
     entity.</p>
   <div id="programAreasContent">
@@ -251,7 +251,7 @@
     <button type="submit" class="btn btn-primary">Grant</button>
   </form>
   </div><!-- /#programAreasContent -->
-</div>
+</details>
 
 <!-- 2026-08-02: Approval Rules -- a per-person entry point onto the SAME
      checkreq.approval_rules table admin_setup_program_area_detail.html's
@@ -268,8 +268,8 @@
      selected entity that isn't Cornerstone-served (not a content-swapped
      note), since approval routing doesn't exist for an entity with no
      Program Areas to route by. -->
-<div class="card" id="approvalRulesCard">
-  <h2>Approval Rules</h2>
+<details class="card setup-section" id="approvalRulesCard" open>
+  <summary><h2>Approval Rules</h2></summary>
   <p class="muted">Which program areas this person approves (or backs up) — the same rule you can
     also manage from a Program Area's own page under Setup Tables.</p>
   <div id="approvalRulesContent">
@@ -365,7 +365,7 @@
     <div class="field"><button type="submit" class="btn btn-primary">Add</button></div>
   </form>
   </div><!-- /#approvalRulesContent -->
-</div>
+</details>
 
 </div>
 {% endblock %}

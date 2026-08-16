@@ -110,9 +110,27 @@
   }
 
   // ---- detail page: entity filter ---------------------------------------
+  // 2026-08-16, Jay: "when you are working on grant roles to an entity,
+  // after you add a role, do not clear the entity filter." Every Grant/
+  // Revoke form on this page is a plain POST -> 303 redirect -> fresh GET
+  // of this same page, and the filter was never anything but an in-memory
+  // <select> value -- a full page reload always reset it to "All entities".
+  // Persisted via sessionStorage (keyed on the page's own path, so each
+  // user's detail page keeps its own remembered filter) rather than a
+  // server round-trip: this filter only ever hides/shows already-rendered
+  // rows client-side, so there's no server-side data it needs to affect.
   function wireEntityFilter() {
     const sel = document.getElementById('entityFilter');
     if (!sel) return;
+
+    const storageKey = 'admin_users_entity_filter:' + window.location.pathname;
+    const remembered = sessionStorage.getItem(storageKey);
+    if (remembered && sel.querySelector('option[value="' + CSS.escape(remembered) + '"]')) {
+      sel.value = remembered;
+    }
+    sel.addEventListener('change', function () {
+      sessionStorage.setItem(storageKey, sel.value);
+    });
 
     const header = document.getElementById('entityLevelHeader');
     const badge = document.getElementById('entityLevelBadge');
