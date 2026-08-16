@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Timekeeping Review — {{ current_org.name }}{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Timekeeping Review</h1>
+<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+<p class="sub">Submitted hours and pending staff roster changes across every Cornerstone-served parish
+under {{ current_org.name }}.</p>
+
+{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
+{% if request.query_params.get('approved') %}<div class="banner banner-success">Change approved and applied to the roster.</div>{% endif %}
+{% if request.query_params.get('rejected') %}<div class="banner banner-success">Change rejected. The parish has been notified.</div>{% endif %}
+
+<h2>Pending Roster Changes</h2>
+<p class="sub">Approving applies the change to the real staff roster immediately. Rejecting requires a
+reason — the parish sees it and can correct and resubmit.</p>
+<div class="card">
+<div class="table-scroll">
+<table class="simple-table">
+  <tr>
+    <th>Parish</th><th>Change</th><th>Staff Member</th><th>Proposed Values</th>
+    <th>Proposed By</th><th>Period</th><th>Submitted</th><th></th>
+  </tr>
+  {% for c in roster_changes %}
+  <tr>
+    <td>{{ c.parish_name }}</td>
+    <td><span class="badge badge-pending">{{ c.change_type|capitalize }}</span></td>
+    <td>
+      {% if c.change_type == 'add' %}
+        {{ c.proposed_first_name }} {{ c.proposed_last_name }} <span class="sub">(new)</span>
+      {% else %}
+        {{ c.current_first_name }} {{ c.current_last_name }}
+      {% endif %}
+    </td>
+    <td>
+      {% if c.change_type == 'edit' %}
+        {{ c.proposed_first_name }} {{ c.proposed_last_name }}{% if c.proposed_position %}, {{ c.proposed_position }}{% endif %}
+        {% if c.proposed_employee_number %} (#{{ c.proposed_employee_number }}){% endif %}
+      {% elif c.change_type == 'add' %}
+        {{ c.proposed_position or "—" }}{% if c.proposed_employee_number %} (#{{ c.proposed_employee_number }}){% endif %}
+      {% else %}
+        &mdash;
+      {% endif %}
+    </td>
+    <td>{{ c.created_by_name or c.created_by_email or "—" }}</td>
+    <td>{{ c.period_label or (c.period_start|string ~ " to " ~ c.period_end|string) }}</td>
+    <td>{{ c.submitted_at.strftime("%Y-%m-%d") if c.submitted_at else "—" }}</td>
+    <td>
+      <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/approve" style="display:inline">
+        <button type="submit" class="btn btn-primary btn-sm">Approve</button>
+      </form>
+      <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/reject" style="display:inline" onsubmit="return promptRejectReason(this)">
+        <input type="hidden" name="review_note" value="">
+        <button type="submit" class="btn btn-secondary btn-sm">Reject</button>
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="8" class="sub">No roster changes awaiting review.</td></tr>
+  {% endfor %}
+</table>
+</div>
+</div>
+
+<h2>Submitted Time Entry Periods</h2>
+<p class="sub">Read-only for now — adjusting or finalizing individual hours isn't built yet in this pass.</p>
+<div class="card">
+<div class="table-scroll">
+<table class="simple-table">
+  <tr><th>Parish</th><th>Period</th><th>Submitted By</th><th>Submitted</th><th>Total Hours</th></tr>
+  {% for s in submitted_periods %}
+  <tr>
+    <td>{{ s.parish_name }}</td>
+    <td>{{ s.period_label or (s.period_start|string ~ " to " ~ s.period_end|string) }}</td>
+    <td>{{ s.submitted_by_name or s.submitted_by_email or "—" }}</td>
+    <td>{{ s.submitted_at.strftime("%Y-%m-%d %H:%M") if s.submitted_at else "—" }}</td>
+    <td>{{ "%.2f"|format(s.total_hours) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="sub">No submitted periods awaiting review.</td></tr>
+  {% endfor %}
+</table>
+</div>
+</div>
+</div>
+<script>
+function promptRejectReason(form) {
+  const reason = prompt("Reason for rejecting this roster change (the parish will see this):", "");
+  if (reason === null) return false;
+  form.querySelector('input[name="review_note"]').value = reason;
+  return true;
+}
+</script>
+{% endblock %}

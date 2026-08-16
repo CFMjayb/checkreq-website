@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Timekeeping — {{ parish.name }}{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Timekeeping</h1>
+<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+<div class="banner banner-info">
+  Timekeeping isn't available for {{ parish.name }} — it's only enabled for parishes designated
+  Cornerstone Served. Ask your diocese if this parish should be enabled (Administrative Tasks &rarr;
+  Manage Parishes).
+</div>
+</div>
+{% endblock %}

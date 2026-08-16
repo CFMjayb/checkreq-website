@@ -5,23 +5,23 @@
 <h1>Staff Roster</h1>
 <p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
 <p class="sub">Staff whose time is reported for {{ parish.name }}. Name and job title only — this
-table never stores pay rates, salary, or any other compensation data.</p>
+table never stores pay rates, salary, or any other compensation data.
+{% if can_manage %}Adding, editing, or deactivating a staff member below submits it as a proposed
+change — it takes effect once your diocese's HR Admin approves it.{% endif %}</p>
 
 {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
-{% if request.query_params.get('added') %}<div class="banner banner-success">Staff member added.</div>{% endif %}
-{% if request.query_params.get('updated') %}<div class="banner banner-success">Updated.</div>{% endif %}
-{% if request.query_params.get('toggled') %}<div class="banner banner-success">Updated.</div>{% endif %}
+{% if request.query_params.get('change_proposed') %}<div class="banner banner-success">Change submitted for diocese review. It will take effect once an HR Admin approves it — see "Your Proposed Changes" below.</div>{% endif %}
 
 {% if can_manage %}
 <div class="card">
 <details>
-  <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ Add Staff Member</summary>
+  <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ Propose a New Staff Member</summary>
   <form method="post" action="/timekeeping/roster/create" style="margin-top:12px">
     <div class="field"><label>First Name</label><input type="text" name="first_name" required></div>
     <div class="field"><label>Last Name</label><input type="text" name="last_name" required></div>
     <div class="field"><label>Position</label><input type="text" name="position" placeholder="e.g. Sexton"></div>
     <div class="field"><label>Employee # (optional)</label><input type="text" name="employee_number"></div>
-    <button type="submit" class="btn btn-sm">Add</button>
+    <button type="submit" class="btn btn-sm">Submit for Review</button>
   </form>
 </details>
 </div>
@@ -60,17 +60,17 @@ table never stores pay rates, salary, or any other compensation data.</p>
     {% if can_manage %}
     <td>
       <details>
-        <summary class="btn btn-secondary btn-sm" style="display:inline-block;cursor:pointer">Edit&hellip;</summary>
+        <summary class="btn btn-secondary btn-sm" style="display:inline-block;cursor:pointer">Propose Edit&hellip;</summary>
         <form method="post" action="/timekeeping/roster/{{ s.id }}/update" style="margin-top:8px">
           <div class="field"><label>First Name</label><input type="text" name="first_name" value="{{ s.first_name }}" required></div>
           <div class="field"><label>Last Name</label><input type="text" name="last_name" value="{{ s.last_name }}" required></div>
           <div class="field"><label>Position</label><input type="text" name="position" value="{{ s.position or '' }}"></div>
           <div class="field"><label>Employee #</label><input type="text" name="employee_number" value="{{ s.employee_number or '' }}"></div>
-          <button type="submit" class="btn btn-sm">Save</button>
+          <button type="submit" class="btn btn-sm">Submit for Review</button>
         </form>
       </details>
       <form method="post" action="/timekeeping/roster/{{ s.id }}/toggle-active" style="display:inline;margin-left:6px">
-        <button type="submit" class="btn btn-secondary btn-sm">{{ 'Deactivate' if s.is_active else 'Reactivate' }}</button>
+        <button type="submit" class="btn btn-secondary btn-sm">Propose {{ 'Deactivate' if s.is_active else 'Reactivate' }}</button>
       </form>
     </td>
     {% endif %}
@@ -82,6 +82,43 @@ table never stores pay rates, salary, or any other compensation data.</p>
 </table>
 </div>
 </div>
+
+{% if can_manage %}
+<h2>Your Proposed Changes</h2>
+<p class="sub">Everything you've proposed for this roster, and its current status. A change queued here
+(not yet submitted) takes effect only once you Submit your next Timekeeping period — see
+<a href="/timekeeping">Time Entry</a>. A rejected change is never reused — propose it again above to
+try again.</p>
+<div class="card">
+<div class="table-scroll">
+<table class="simple-table">
+  <tr><th>Change</th><th>Staff Member</th><th>Status</th><th>Reviewer Note</th><th>Proposed</th></tr>
+  {% for c in pending_changes %}
+  <tr>
+    <td>{{ c.change_type|capitalize }}</td>
+    <td>
+      {% if c.change_type == 'add' %}{{ c.proposed_first_name }} {{ c.proposed_last_name }}
+      {% else %}{{ c.current_first_name }} {{ c.current_last_name }}{% endif %}
+    </td>
+    <td>
+      {% if c.status == 'pending' and not c.payroll_period_id %}
+        <span class="badge badge-draft">Queued for next submission</span>
+      {% elif c.status == 'pending' %}
+        <span class="badge badge-pending">Awaiting diocese review</span>
+      {% else %}
+        <span class="badge badge-{{ c.status }}">{{ c.status|capitalize }}</span>
+      {% endif %}
+    </td>
+    <td>{{ c.review_note or "—" }}</td>
+    <td>{{ c.created_at.strftime("%Y-%m-%d") if c.created_at else "—" }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="sub">Nothing proposed yet.</td></tr>
+  {% endfor %}
+</table>
+</div>
+</div>
+{% endif %}
 
 {% if parish.linked_org_id %}
 <p class="back-link"><a href="/timekeeping">Go to Time Entry &rarr;</a></p>

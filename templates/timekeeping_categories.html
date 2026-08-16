@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Time Categories — Timekeeping{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Time Categories</h1>
+<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+<p class="sub">Categories shown on {{ current_org.name }}'s served parishes' time-entry grid.
+Renaming a category doesn't affect hours already logged against it; hiding one removes it from
+future entry without touching historical data.</p>
+
+{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
+{% if request.query_params.get('saved') %}<div class="banner banner-success">Saved.</div>{% endif %}
+
+<div class="card">
+<details>
+  <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ Add Category</summary>
+  <form method="post" action="/admin/timekeeping/categories/create" style="margin-top:12px">
+    <div class="field"><label>Key (short, no spaces)</label><input type="text" name="key" required placeholder="e.g. jury_duty"></div>
+    <div class="field"><label>Label</label><input type="text" name="label" required placeholder="e.g. Jury Duty"></div>
+    <div class="field"><label>Sort Order</label><input type="number" name="sort_order" value="50"></div>
+    <button type="submit" class="btn btn-sm">Add</button>
+  </form>
+</details>
+</div>
+
+<div class="card">
+<div class="table-scroll">
+<table class="simple-table">
+  <tr><th>Label</th><th>Key</th><th>Sort</th><th>Status</th><th></th></tr>
+  {% for c in categories %}
+  <tr>
+    <td>
+      <details>
+        <summary style="cursor:pointer">{{ c.label }}</summary>
+        <form method="post" action="/admin/timekeeping/categories/{{ c.id }}/update" style="margin-top:8px">
+          <div class="field"><label>Label</label><input type="text" name="label" value="{{ c.label }}" required></div>
+          <div class="field"><label>Sort Order</label><input type="number" name="sort_order" value="{{ c.sort_order }}"></div>
+          <button type="submit" class="btn btn-sm">Save</button>
+        </form>
+      </details>
+    </td>
+    <td class="sub">{{ c.key }}</td>
+    <td>{{ c.sort_order }}</td>
+    <td>
+      {% if c.is_active %}<span class="badge badge-confirmed">Active</span>
+      {% else %}<span class="sub">Hidden</span>{% endif %}
+    </td>
+    <td>
+      <form method="post" action="/admin/timekeeping/categories/{{ c.id }}/toggle-active">
+        <button type="submit" class="btn btn-secondary btn-sm">{{ 'Hide' if c.is_active else 'Unhide' }}</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+  {% if not categories %}
+  <tr><td colspan="5" class="sub">No categories yet — the diocese's default 4 (Regular/Overtime/PTO-Sick/Holiday) are seeded automatically when the migration is applied.</td></tr>
+  {% endif %}
+</table>
+</div>
+</div>
+</div>
+{% endblock %}

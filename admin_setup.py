@@ -82,6 +82,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import art_completeness
 import db
+import org_features
 import rbac
 
 router = APIRouter()
@@ -550,12 +551,54 @@ def organizations_page(request: Request):
     known_emails = db.query(
         "SELECT email FROM checkreq.app_users WHERE is_active ORDER BY email"
     )
+
+    # 2026-08-16, Jay: diocese-level feature toggles (Timekeeping/HR is the
+    # first). Only real DIOCESES get a row here -- a Cornerstone-served
+    # PARISH's own org row is a different kind of entity (see
+    # admin_users_detail.html's own "parish_info" distinction) and features
+    # like Timekeeping are diocese-wide, not per-served-parish.
+    served_org_ids = {
+        r["linked_org_id"] for r in db.query(
+            "SELECT linked_org_id FROM portal.parishes WHERE linked_org_id IS NOT NULL"
+        )
+    }
+    diocese_orgs = [o for o in orgs if o["id"] not in served_org_ids]
+    feature_matrix = org_features.matrix_for_orgs([o["id"] for o in diocese_orgs])
+
     return _render(request, "admin_setup_organizations.html", user, {
         "orgs": orgs,
         "approvers": approvers,
         "unassigned_count": len(unassigned),
         "known_emails": [e["email"] for e in known_emails],
+        "diocese_orgs": diocese_orgs,
+        "known_features": org_features.KNOWN_FEATURES,
+        "feature_matrix": feature_matrix,
     })
+
+
+@router.post("/admin/setup/organizations/toggle-feature")
+async def organizations_toggle_feature(request: Request):
+    """2026-08-16: one small immediate-submit toggle per checkbox, not the
+    batched dirty-row Save pattern the Entities/Global Approvers tables
+    above use -- this grid is a handful of boolean cells that rarely
+    change, and a feature going live/off is exactly the kind of action
+    that should take effect the moment it's clicked, not sit pending in an
+    unsaved batch."""
+    user, err = _require_setup_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        org_id = int(form.get("org_id", ""))
+    except ValueError:
+        return RedirectResponse("/admin/setup/organizations?error=Bad+request.", status_code=303)
+    feature_key = (form.get("feature_key") or "").strip()
+    enabled = form.get("enabled") == "1"
+    known_keys = {k for k, _ in org_features.KNOWN_FEATURES}
+    if feature_key not in known_keys:
+        return RedirectResponse("/admin/setup/organizations?error=Unknown+feature.", status_code=303)
+    org_features.set_feature(org_id, feature_key, enabled, user["id"])
+    return RedirectResponse("/admin/setup/organizations?saved=1", status_code=303)
 
 
 @router.post("/admin/setup/organizations/save-orgs")

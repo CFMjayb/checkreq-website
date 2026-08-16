@@ -69,6 +69,53 @@
   </div>
 </details>
 
+<!-- ── Diocese Features ─────────────────────────────────────────────────── -->
+<!-- 2026-08-16, Jay: "There will be other features that we can turn on and
+     off for Dioceses" -- one row per real diocese (never a Cornerstone-
+     served parish's own org row -- these features are diocese-wide), one
+     checkbox column per known feature_key. Each checkbox submits
+     immediately (its own tiny form), not the batched Save pattern above --
+     see the route's own docstring for why. -->
+<details class="setup-section" open>
+  <summary><h2>Diocese Features</h2></summary>
+  <p class="setup-hint">
+    Turn a feature on or off for a specific diocese. Takes effect immediately.
+  </p>
+  <div class="card">
+    <table class="setup-table">
+      <thead>
+        <tr>
+          <th class="col-entity">Diocese</th>
+          {% for key, label in known_features %}
+          <th>{{ label }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in diocese_orgs %}
+        <tr>
+          <td><strong>{{ o.code }}</strong></td>
+          {% for key, label in known_features %}
+          {% set is_on = feature_matrix.get((o.id, key), False) %}
+          <td>
+            <form method="post" action="/admin/setup/organizations/toggle-feature">
+              <input type="hidden" name="org_id" value="{{ o.id }}">
+              <input type="hidden" name="feature_key" value="{{ key }}">
+              <input type="hidden" name="enabled" value="{{ '0' if is_on else '1' }}">
+              <label style="cursor:pointer;">
+                <input type="checkbox" {% if is_on %}checked{% endif %} onchange="this.form.requestSubmit()">
+                {{ 'On' if is_on else 'Off' }}
+              </label>
+            </form>
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+
 <!-- ── Global approvers ─────────────────────────────────────────────────── -->
 <details class="setup-section" open>
   <summary><h2>Global Approvers</h2></summary>

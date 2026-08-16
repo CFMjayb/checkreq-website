@@ -18,6 +18,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+import org_features
 import rbac
 
 router = APIRouter()
@@ -100,10 +101,17 @@ _CARDS = [
     # (timekeeping.py's own _require_diocese_admin() independently rejects
     # a Cornerstone-Mode-selected entity too, since these are keyed to the
     # DIOCESE org, never a served parish's own linked org).
+    # 2026-08-16, Jay: moved to their own "HR" group at the bottom, and now
+    # gated on the new checkreq.org_features "timekeeping" flag (see
+    # org_features.py) in addition to the existing role check -- these
+    # cards (and the whole HR group heading itself) simply don't appear
+    # for a diocese that hasn't had Timekeeping/HR turned on, DME being the
+    # first and currently only one. feature_key is checked generically in
+    # the loop below, same pattern as the role/entity-scoped checks.
     {"title": "Payroll Periods", "desc": "Define diocese payroll periods for Timekeeping-enabled parishes.",
-     "url": "/admin/timekeeping/periods", "role": "setup_admin", "group": "parish"},
+     "url": "/admin/timekeeping/periods", "role": "setup_admin", "group": "hr", "feature_key": "timekeeping"},
     {"title": "Time Categories", "desc": "Configure the categories parishes report hours against.",
-     "url": "/admin/timekeeping/categories", "role": "setup_admin", "group": "parish"},
+     "url": "/admin/timekeeping/categories", "role": "setup_admin", "group": "hr", "feature_key": "timekeeping"},
     # Timekeeping HR Roster Review Plan.md (2026-08-16) -- Stage 4's
     # diocese-side review screen. Entity-scoped like the two cards above
     # (same DIOCESE org_id, never a served parish's own linked org -- see
@@ -112,15 +120,18 @@ _CARDS = [
     # now handles a list for entity-scoped cards too, not just cross-entity
     # ones.
     {"title": "Timekeeping Review", "desc": "Approve or reject proposed staff roster changes; see submitted hours awaiting review.",
-     "url": "/admin/timekeeping/review", "role": ["hr_admin", "beacon_admin"], "group": "parish"},
+     "url": "/admin/timekeeping/review", "role": ["hr_admin", "beacon_admin"], "group": "hr", "feature_key": "timekeeping"},
 ]
 
 # Fixed display order + section headings -- per Jay's explicit request,
 # Beacon-overall items come first, not alphabetically or by insertion order.
+# "HR" added 2026-08-16, deliberately LAST -- Jay: "the HR-related options
+# ... should be in their own HR section at the bottom."
 _CARD_GROUPS = [
     ("beacon", "Beacon"),
     ("ap", "AP"),
     ("parish", "Parish"),
+    ("hr", "HR"),
 ]
 
 # Titles whose underlying route is genuinely entity-scoped (not cross-entity
@@ -183,6 +194,15 @@ def admin_hub(request: Request):
             visible = rbac.user_has_any_role(user["id"], c["role"], org_id=None)
         else:
             visible = rbac.user_has_role(user["id"], c["role"], org_id=None)
+        # 2026-08-16, Jay: HR cards (and any future feature-gated card)
+        # additionally require the diocese feature itself to be turned on
+        # -- checked here, generically, rather than folded into the role
+        # logic above, so a role check and a feature check never have to
+        # be reconciled inside the same branch. A card with no feature_key
+        # is unaffected (org_features.is_enabled only ever runs for the
+        # small set that opts into it).
+        if visible and c.get("feature_key"):
+            visible = bool(org_id) and org_features.is_enabled(org_id, c["feature_key"])
         if visible:
             cards.append(c)
 

@@ -109,6 +109,10 @@ import announcements
 import parish_requests
 import parish_org_admin
 import cornerstone_mode
+import timekeeping
+import timekeeping_roster
+import timekeeping_entries
+import timekeeping_review
 import approval_engine
 import auth_routes
 import gcs_client
@@ -297,7 +301,7 @@ MODULES = [
 # The union of roles that unlock the "Administrative Tasks" tile/hub (2026-08-02
 # feedback batch, Item 1) -- deliberately excludes ap_reviewer, which keeps its
 # own separate portal tile and was never part of the consolidated 8.
-ADMIN_TASK_ROLE_KEYS = {"cfo", "setup_admin", "beacon_admin", "vendor_approver"}
+ADMIN_TASK_ROLE_KEYS = {"cfo", "setup_admin", "beacon_admin", "vendor_approver", "hr_admin"}
 
 # Cornerstone Served Parishes Phase B (2026-08-16) -- the tile subset shown
 # on /portal when the current entity is a served parish-org, per Jay's own
@@ -5841,6 +5845,17 @@ parish_requests.register(app, current_user=_current_user, render=_render)
 # 2026-08-08 feedback batch: live Databank contact info, replacing the plain
 # Diocese/City/Served Tier/Status card on parish_view.html.
 parish_info.register(app, current_user=_current_user, render=_render)
+
+# Timekeeping HR Roster Review Plan.md (2026-08-16), finished and wired live
+# same day it was gated on the new org_features "timekeeping" flag --
+# timekeeping_roster.register()/timekeeping_entries.register() take ONLY
+# `render` (no current_user/current_org kwarg -- they resolve the parish
+# context internally via timekeeping.served_parish_context()); passing
+# either extra kwarg to those two raises TypeError at import time.
+timekeeping.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+timekeeping_roster.register(app, render=_render)
+timekeeping_entries.register(app, render=_render)
+timekeeping_review.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 
 # In-App Notifications (2026-08-02, In-App Notifications Plan.md).
 # create_notification()/get_unread_count() are already in use above (this

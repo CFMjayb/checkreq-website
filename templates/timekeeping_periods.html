@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Payroll Periods — Timekeeping{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Payroll Periods</h1>
+<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+<p class="sub">Payroll periods for {{ current_org.name }}. Every Cornerstone-served parish under this
+diocese shares the same periods — opening one here is what lets those parishes start entering time.</p>
+
+{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
+{% if request.query_params.get('created') %}<div class="banner banner-success">Period created.</div>{% endif %}
+
+<div class="card">
+<details>
+  <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ New Payroll Period</summary>
+  <form method="post" action="/admin/timekeeping/periods/create" style="margin-top:12px">
+    <div class="field"><label>Start Date</label><input type="date" name="period_start" required></div>
+    <div class="field"><label>End Date</label><input type="date" name="period_end" required></div>
+    <div class="field"><label>Submission Deadline (optional)</label><input type="date" name="submission_deadline"></div>
+    <div class="field"><label>Label (optional)</label><input type="text" name="label" placeholder="e.g. Jan 1-15, 2027"></div>
+    <button type="submit" class="btn btn-sm">Create</button>
+  </form>
+</details>
+</div>
+
+<div class="card">
+<div class="table-scroll">
+<table class="simple-table">
+  <tr><th>Period</th><th>Dates</th><th>Deadline</th><th>Status</th></tr>
+  {% for p in periods %}
+  <tr>
+    <td>{{ p.label or "—" }}</td>
+    <td>{{ p.period_start }} to {{ p.period_end }}</td>
+    <td>{{ p.submission_deadline or "—" }}</td>
+    <td><span class="badge">{{ p.status }}</span></td>
+  </tr>
+  {% endfor %}
+  {% if not periods %}
+  <tr><td colspan="4" class="sub">No payroll periods yet.</td></tr>
+  {% endif %}
+</table>
+</div>
+</div>
+
+<div class="banner banner-info" style="font-size:0.9em">
+  Closing/processing a period and the Excel payroll export aren't built yet in this pass — new
+  periods stay "open" indefinitely for now. See this project's own Timekeeping build plan for the
+  remaining stages.
+</div>
+</div>
+{% endblock %}

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Timekeeping — {{ parish.name }}{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Timekeeping</h1>
+<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+<p class="sub">
+  {{ parish.name }}'s time entry for the current open payroll period.
+  <a href="/timekeeping/roster">Manage staff roster</a>
+</p>
+
+{% if request.query_params.get('saved') %}<div class="banner banner-success">Saved.</div>{% endif %}
+{% if request.query_params.get('submitted') %}
+<div class="banner banner-success">
+  Submitted to the diocese for review.
+  {% set rc = request.query_params.get('roster_changes', '0')|int %}
+  {% if rc > 0 %}Also included {{ rc }} pending roster change{{ '' if rc == 1 else 's' }} — see
+  <a href="/timekeeping/roster">Staff Roster</a> for status.{% endif %}
+</div>
+{% endif %}
+{% if request.query_params.get('error') == 'noperiod' %}<div class="banner banner-error">No open payroll period right now.</div>{% endif %}
+{% if request.query_params.get('error') == 'locked' %}<div class="banner banner-error">This period has already been submitted. Ask your diocese to reopen it before making further changes.</div>{% endif %}
+{% if request.query_params.get('error') == 'already_submitted' %}<div class="banner banner-error">This period has already been submitted. Ask your diocese to reopen it if you need to make changes.</div>{% endif %}
+{% if request.query_params.get('error') == 'processed' %}<div class="banner banner-error">This period has been processed by the diocese and is now read-only.</div>{% endif %}
+
+{% if not period %}
+<div class="banner banner-info">
+  There is no open payroll period right now — ask your diocese to open one (Administrative Tasks
+  &rarr; Payroll Periods) before entering time.
+</div>
+{% else %}
+
+<p class="sub">
+  Period: <strong>{{ period.label or (period.period_start|string ~ " to " ~ period.period_end|string) }}</strong>
+  {% if period.submission_deadline %} &middot; Submit by {{ period.submission_deadline }}{% endif %}
+  &middot;
+  {% if submission and submission.status == 'submitted' %}
+    <span class="badge badge-submitted">Submitted</span>
+    {% if submission.submitted_at %} on {{ submission.submitted_at.strftime("%Y-%m-%d") }}{% endif %}
+  {% elif submission and submission.status == 'reopened' %}
+    <span class="badge badge-pending">Reopened — resubmit when ready</span>
+  {% else %}
+    <span class="badge badge-draft">Draft — not yet submitted</span>
+  {% endif %}
+</p>
+
+{% set locked = submission and submission.status == 'submitted' %}
+{% if locked %}
+<div class="banner banner-info">
+  This period has been submitted to the diocese and is now locked. Ask your diocese to reopen it if
+  you need to make a correction.
+</div>
+{% endif %}
+
+{% if not can_enter %}
+<div class="banner banner-info">You can view this parish's time entries, but you don't have permission to enter or change them.</div>
+{% endif %}
+
+{% if not staff %}
+<div class="card"><p class="sub">No staff on the roster yet. <a href="/timekeeping/roster">Add staff to the roster</a> before entering time.</p></div>
+{% elif not categories %}
+<div class="card"><p class="sub">No active time categories are configured for this diocese yet.</p></div>
+{% else %}
+
+<form method="post" action="/timekeeping/save">
+  {% for s in staff %}
+  <div class="card">
+    <h2 style="margin-bottom:4px">{{ s.first_name }} {{ s.last_name }}{% if s.position %} <span class="sub">— {{ s.position }}</span>{% endif %}</h2>
+    <div class="table-scroll">
+    <table class="simple-table">
+      <tr>
+        <th>Category</th>
+        {% for d in dates %}<th>{{ d.month }}/{{ d.day }}</th>{% endfor %}
+      </tr>
+      {% for c in categories %}
+      <tr>
+        <td>{{ c.label }}</td>
+        {% for d in dates %}
+        {% set val = entries.get((s.id, c.id, d)) %}
+        <td>
+          <input type="number" step="0.25" min="0" max="24" style="width:4.2em"
+                 name="hours_{{ s.id }}_{{ c.id }}_{{ d.isoformat() }}"
+                 value="{{ '%.2f'|format(val) if val is not none and val > 0 else '' }}"
+                 {% if not can_enter or locked %}disabled{% endif %}>
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+    </div>
+  </div>
+  {% endfor %}
+  {% if can_enter and not locked %}
+  <button type="submit" class="btn">Save Draft</button>
+  <p class="sub" style="margin-top:8px">Saves without submitting — you can keep editing.</p>
+  {% endif %}
+</form>
+
+{% if can_enter and not locked %}
+<form method="post" action="/timekeeping/submit" onsubmit="return confirm('Submit this period to the diocese? You will not be able to make further changes unless the diocese reopens it.');" style="margin-top:8px">
+  <button type="submit" class="btn btn-primary">Submit Period to Diocese</button>
+  <p class="sub" style="margin-top:8px">
+    Submitting locks this period's hours and also sends along any staff roster changes you've
+    proposed since your last submission — see <a href="/timekeeping/roster">Staff Roster</a>.
+  </p>
+</form>
+{% endif %}
+{% endif %}
+{% endif %}
+</div>
+{% endblock %}
