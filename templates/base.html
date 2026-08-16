@@ -115,14 +115,30 @@
       </div>
       {# User menu (2026-08-08 feedback batch) -- replaces the standalone
          "Password" link and the plain "Log out (name)" link with one
-         dropdown, per Jay's direct spec: Parish Mode / Diocese Mode (both
-         gated on the REAL identity holding cfo, same check
-         parish_mode.py's own _require_real_cfo uses -- "real_roles" is
-         already computed for every render, no main.py change needed),
-         Profile, Change Password, Log off. Content is server-rendered
-         (a static list of links, no fetch) -- only the open/closed toggle
-         is JS, mirroring notifications.js's click-outside-to-close
-         mechanism exactly (static/js/user_menu.js). #}
+         dropdown: Parish Mode / Diocese Mode / Cornerstone Mode, Profile,
+         Change Password, Log off. Content is server-rendered (a static
+         list of links, no fetch) -- only the open/closed toggle is JS,
+         mirroring notifications.js's click-outside-to-close mechanism
+         exactly (static/js/user_menu.js).
+
+         2026-08-16, Jay, live test: "aren't you trying to impersonate ALL
+         of that user? How can you diagnose security/permission issues when
+         you are impersonating a user if your permissions are mixed into
+         it?" -- correct, and the original design (gated on real_roles, the
+         REAL admin's own roles, unconditionally) was wrong for exactly
+         that reason: while impersonating, Jay would see Parish/Cornerstone
+         Mode regardless of whether the PERSONA actually holds cfo/
+         cornerstone_employee, defeating the point of impersonation as a
+         faithful preview. Changed to `effective_roles` (main.py's
+         _render()) -- the CURRENTLY EFFECTIVE identity's roles, i.e. the
+         persona's own while impersonating, same as real_roles otherwise.
+         parish_mode.py's server-side gate was changed to match (was
+         _require_real_cfo, now _require_effective_cfo) -- the link and the
+         route must agree, or a crafted POST while impersonating a non-cfo
+         persona could still succeed even though the link is correctly
+         hidden. Safe to flip: this can only ever narrow what an
+         impersonated view can reach, never grant more than the persona
+         already has. #}
       <div class="notif-bell-wrap">
         <button type="button" id="userMenuBtn" class="user-menu-btn">
           {{ user.display_name or user.email }} &#9662;
@@ -144,17 +160,16 @@
             <button type="submit" class="user-menu-item">Diocese Mode</button>
           </form>
           {% else %}
-          {% if 'cfo' in real_roles %}
+          {% if 'cfo' in effective_roles %}
           <a href="/admin/parish-mode" class="user-menu-item">Parish Mode</a>
           {% endif %}
           {# Cornerstone Mode (Phase B, 2026-08-16): existence check --
-             holds cornerstone_employee at ANY served parish-org, same
-             "real_roles is the real identity's full role set anywhere"
-             pattern 'cfo' already uses just above. The picker itself
-             (cornerstone_mode.py) narrows to the specific parish-orgs
-             this user actually holds the grant at, scoped to the current
-             diocese only. #}
-          {% if 'cornerstone_employee' in real_roles %}
+             holds cornerstone_employee at ANY served parish-org, for the
+             CURRENTLY EFFECTIVE identity (see the block comment above).
+             The picker itself (cornerstone_mode.py) narrows to the
+             specific parish-orgs this identity actually holds the grant
+             at, scoped to the current diocese only. #}
+          {% if 'cornerstone_employee' in effective_roles %}
           <a href="/admin/cornerstone-mode" class="user-menu-item">Cornerstone Mode</a>
           {% endif %}
           {% endif %}

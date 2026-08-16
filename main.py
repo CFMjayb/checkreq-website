@@ -304,10 +304,29 @@ ADMIN_TASK_ROLE_KEYS = {"cfo", "setup_admin", "beacon_admin", "vendor_approver"}
 # a small, explicit set rather than "everything except X" -- easiest to
 # extend correctly if the parish-side menu (still unscoped, "we'll walk
 # through those together") ends up needing more CFM-staff-side tiles too.
+# Extended same day, live test: Jay's full enumeration also named "AP
+# Review" -- already a real MODULES tile, just missed from the first cut.
 CORNERSTONE_MODULE_KEYS = {
-    "check_request", "my_requests", "invoice_payment",
+    "check_request", "my_requests", "invoice_payment", "ap_review",
     "approval_queue", "administrative_tasks", "parish_requests_review",
 }
+
+# 2026-08-16, same live test: "Document Library, and Resources would show
+# [under Cornerstone Mode] -- correct?" These are NOT part of the shared
+# MODULES list above (they're parish-scoped concepts -- showing them on the
+# plain, no-specific-parish diocesan dashboard wouldn't make sense) --
+# Cornerstone-Mode-only, appended in the /portal route below. Reuse the
+# existing parish-facing routes (parish_documents.py), bridged there to
+# resolve the CURRENT served parish-org's own linked parish when no Parish
+# Mode preview is active (see parish_documents._parish_context).
+CORNERSTONE_ONLY_MODULES = [
+    {"key": "parish_document_library", "title": "Document Library",
+     "desc": "View and manage this parish's documents.", "url": "/parish-documents",
+     "enabled": True, "gate": None},
+    {"key": "parish_resource_library", "title": "Resources",
+     "desc": "Diocese-wide reference library.", "url": "/resource-library",
+     "enabled": True, "gate": None},
+]
 
 
 def _real_user(request: Request) -> dict | None:
@@ -409,10 +428,15 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     RBAC (2026-08-01, revised 2026-08-16): also injects `roles` (an alias of
     `entity_roles`, kept for template back-compat), `entity_roles` (the
     CURRENT/impersonated identity's role keys, scoped to the current
-    entity), and `real_roles` (the REAL identity's, cross-entity by design
-    -- matches base.html's Parish/Diocese Mode toggle, which must gate on
-    the real user's `cfo` grant regardless of entity, same as
-    parish_mode.py's own `_require_real_cfo`).
+    entity), `real_roles` (the REAL identity's, cross-entity -- used only
+    for things inherently about the real session itself, e.g. the
+    impersonation banner's own re-check), and `effective_roles` (the
+    CURRENTLY EFFECTIVE identity's, cross-entity -- the impersonated
+    persona's own roles while impersonating, same as real_roles otherwise;
+    matches base.html's Parish/Cornerstone Mode toggle and parish_mode.py's
+    `_require_effective_cfo`, changed 2026-08-16 per Jay's direct feedback
+    that the real admin's own permissions shouldn't "leak into" what an
+    impersonated view shows).
 
     2026-08-16: `entity_roles` replaces the old `any_org_roles` (was
     cross-entity, "holds this role ANYWHERE"). Jay's explicit direction:
@@ -474,6 +498,17 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
         "roles": entity_roles,  # back-compat alias, same value as entity_roles
         "entity_roles": entity_roles,
         "real_roles": _roles(request, real, None),
+        # 2026-08-16, Jay: "aren't you trying to impersonate ALL of that
+        # user? How can you diagnose security/permission issues when you
+        # are impersonating a user if your permissions are mixed into it?"
+        # -- the CURRENTLY EFFECTIVE identity's cross-entity roles: the
+        # impersonated persona's own roles while impersonating, or the same
+        # as real_roles otherwise (user == real when not impersonating).
+        # Distinct from real_roles, which is deliberately ALWAYS the real
+        # admin (used only for things that are inherently about the real
+        # session itself, e.g. the impersonation banner's own fail-closed
+        # re-check above -- not for "what can this identity do" UI).
+        "effective_roles": _roles(request, user, None),
         # In-App Notifications (2026-08-02): live-as-of-this-page-load
         # unread count for the header bell -- no push/websocket, just
         # recomputed on every render, per the plan's own design.
@@ -563,7 +598,7 @@ def portal(request: Request):
 
     modules = MODULES
     if org and cornerstone_mode.is_cornerstone_org(org["id"]):
-        modules = [m for m in MODULES if m["key"] in CORNERSTONE_MODULE_KEYS]
+        modules = [m for m in MODULES if m["key"] in CORNERSTONE_MODULE_KEYS] + CORNERSTONE_ONLY_MODULES
 
     return _render(request, "portal.html", user, {"modules": modules})
 
@@ -5754,7 +5789,7 @@ cornerstone_mode.register(app, current_user=_current_user, current_org=_current_
 # Parish Portal S4+S5 (2026-08-08): announcements, document archive/library,
 # and parish feedback/general-requests -- three more new modules, same thin
 # register() wiring, no logic added here.
-parish_documents.register(app, current_user=_current_user, render=_render)
+parish_documents.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 announcements.register(app, current_user=_current_user, render=_render)
 parish_requests.register(app, current_user=_current_user, render=_render)
 # 2026-08-08 feedback batch: live Databank contact info, replacing the plain

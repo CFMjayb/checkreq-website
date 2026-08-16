@@ -89,11 +89,13 @@ import rbac
 import registry
 import parish_roles
 import parish_mode
+import cornerstone_mode
 import sharepoint_client
 
 router = APIRouter()
 
 _current_user = None
+_current_org = None
 _render = None
 
 READONLY_SUBFOLDER = "Read Only Files"
@@ -104,9 +106,9 @@ _FUZZY_THRESHOLD = 0.72
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB -- generous for scanned documents
 
 
-def register(app, *, current_user, render) -> None:
-    global _current_user, _render
-    _current_user, _render = current_user, render
+def register(app, *, current_user, current_org, render) -> None:
+    global _current_user, _current_org, _render
+    _current_user, _current_org, _render = current_user, current_org, render
     app.include_router(router)
 
 
@@ -280,6 +282,14 @@ def download_library_file(org: dict, filename: str) -> bytes:
 def _can_edit_parish_docs(user: dict, parish: dict) -> bool:
     if rbac.user_has_role(user["id"], "beacon_admin", org_id=None):
         return True
+    # 2026-08-16 (Jay, Cornerstone Mode tiles): a genuine cornerstone_employee
+    # at this parish's own linked AP org has real, full working access to it
+    # -- the whole point of the grant -- so they can manage its documents
+    # too, same as a native parish_admin/parish_documents holder can.
+    # linked_org_id is only ever set for a Cornerstone-served parish, so
+    # this is a no-op for every ordinary (non-served) parish.
+    if parish.get("linked_org_id") and rbac.user_has_role(user["id"], "cornerstone_employee", parish["linked_org_id"]):
+        return True
     return parish_roles.user_has_any_parish_role(
         user["id"], ["parish_documents", "parish_admin"], parish["id"]
     )
@@ -290,11 +300,24 @@ def _parish_context(request: Request):
     success. Mirrors the small-duplication pattern parish_mode.py's own
     docstring documents (admin_hub.py's _ADMIN_TASK_ROLE_KEYS) -- this
     module deliberately calls parish_mode.effective_parish_mode() (a READ)
-    rather than importing anything that would create a cycle."""
+    rather than importing anything that would create a cycle.
+
+    2026-08-16 (Jay, live test, Cornerstone Mode): "Document Library, and
+    Resources would show [under Cornerstone Mode] -- correct?" A diocesan
+    staffer working inside a served parish's own AP org (current_org is
+    that parish's linked_org_id) has no active Parish Mode preview and no
+    native parish role -- effective_parish_mode() alone would send them to
+    /parish-view for nothing. Falls back to resolving the SAME parish via
+    cornerstone_mode.get_parish_for_org() when that's the case, so
+    Cornerstone Mode reaches its own parish's documents directly."""
     user = _current_user(request)
     if not user:
         return None, None, None, RedirectResponse("/login")
     parish, _is_preview = parish_mode.effective_parish_mode(request, user)
+    if not parish:
+        org_ctx = _current_org(request)
+        if org_ctx and cornerstone_mode.is_cornerstone_org(org_ctx["id"]):
+            parish = cornerstone_mode.get_parish_for_org(org_ctx["id"])
     if not parish:
         return None, None, None, RedirectResponse("/parish-view")
     org = db.query_one("SELECT * FROM checkreq.organizations WHERE id = %s", (parish["org_id"],))

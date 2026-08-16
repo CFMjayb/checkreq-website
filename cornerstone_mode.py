@@ -87,6 +87,25 @@ def resolve_diocese_org_id(org_id: int) -> int:
         return org_id
 
 
+def get_parish_for_org(org_id: int) -> dict | None:
+    """The portal.parishes row THIS served org is linked FROM -- the reverse
+    of resolve_diocese_org_id's own diocese lookup. Used by
+    parish_documents.py so a diocesan staffer working inside a served
+    parish's own AP org (Cornerstone Mode) reaches that SAME parish's
+    Document Library, without needing a separate Parish Mode preview on
+    top (Jay, 2026-08-16: "Document Library, and Resources would show"
+    under Cornerstone Mode). Fails closed (None) on any DB error."""
+    try:
+        return db.query_one(
+            "SELECT p.*, o.code AS org_code, o.name AS org_name "
+            "FROM portal.parishes p JOIN checkreq.organizations o ON o.id = p.org_id "
+            "WHERE p.linked_org_id = %s",
+            (org_id,),
+        )
+    except Exception:
+        return None
+
+
 def _parish_preview_active(request: Request) -> bool:
     """Lightweight duplicate of parish_mode.current_parish_view()'s own
     session-key check -- avoids a circular import, since parish_mode.py now

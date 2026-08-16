@@ -82,17 +82,32 @@ def _is_beacon_admin(user_id: int) -> bool:
     return rbac.user_has_role(user_id, "beacon_admin", org_id=None)
 
 
-def _require_real_cfo(request: Request):
-    """Mirrors main.py's impersonate_start/_picker exactly: gated on the
-    REAL session identity (request.session['user_id'] directly, bypassing
-    any impersonation already in effect — a non-CFO impersonated persona
-    must not be able to reach this any more than they can chain-
-    impersonate), re-checked live every call, never trusted from a cached
-    session flag."""
+def _require_effective_cfo(request: Request):
+    """2026-08-16, Jay, live test: "aren't you trying to impersonate ALL of
+    that user? How can you diagnose security/permission issues when you
+    are impersonating a user if your permissions are mixed into it?" --
+    correct. This USED to be gated on the REAL session identity only
+    (request.session['user_id'] directly, bypassing any impersonation in
+    effect) -- reasoned at the time as "a non-CFO impersonated persona must
+    not be able to reach this any more than they can chain-impersonate."
+    That reasoning solved the wrong problem: it prevented an impersonated
+    persona from GAINING power, but in doing so let the REAL admin's own
+    cfo status leak INTO the impersonated view regardless of whether the
+    persona actually holds it -- exactly backwards from what impersonation
+    is for (seeing exactly what they'd see). Now gated on the CURRENTLY
+    EFFECTIVE identity (_current_user(), the persona while impersonating,
+    same as the real user otherwise) -- this is still safe against
+    escalation (it can only ever narrow access, never grant the persona
+    something the real admin alone had), and re-checked live every call
+    same as before. Still returns the REAL session user_id, not the
+    persona's -- the audit trail (parish_mode_log, the session's own
+    parish_view_id ownership) should reflect who physically clicked, not
+    who they were viewing as."""
     real_id = request.session.get("user_id")
     if not real_id:
         return None, RedirectResponse("/login")
-    if not rbac.user_has_role(real_id, "cfo", org_id=None):
+    current = _current_user(request)
+    if not current or not rbac.user_has_role(current["id"], "cfo", org_id=None):
         return None, JSONResponse({"error": "CFO access required"}, status_code=403)
     return real_id, None
 
@@ -205,7 +220,7 @@ def parish_mode_picker(request: Request):
     return an empty list when Cornerstone Mode was active; now blocked
     outright, matching Jay's stated rule rather than a confusing empty
     picker."""
-    real_id, err = _require_real_cfo(request)
+    real_id, err = _require_effective_cfo(request)
     if err:
         return err
     org = _current_org(request)
@@ -249,16 +264,17 @@ def parish_mode_start(parish_id: int, request: Request):
     """2026-08-16: the picker above only ever SHOWS parishes under the
     current entity, but that's a display-layer filter, not authorization --
     a crafted POST could previously start Parish Mode for ANY parish_id
-    regardless of diocese, since _require_real_cfo checks cfo cross-entity
+    regardless of diocese, since the gate checks cfo cross-entity
     (org_id=None). Now independently re-verified against this SPECIFIC
     parish's own org, matching the same "tile/action must match" discipline
     applied elsewhere this session (parish_access.py's _authorize_for_request,
-    admin_hub.py's card-vs-route fix).
-
-    Same-day follow-up: also independently re-checks the Diocese-Mode-only
-    gate (a crafted POST while Cornerstone Mode is active must not bypass
-    what the picker route above already blocks)."""
-    real_id, err = _require_real_cfo(request)
+    admin_hub.py's card-vs-route fix). Same-day follow-up: also checked
+    against the CURRENTLY EFFECTIVE identity (the impersonated persona's
+    own cfo status, not the real admin's -- see _require_effective_cfo's
+    own docstring), and independently re-checks the Diocese-Mode-only gate
+    (a crafted POST while Cornerstone Mode is active must not bypass what
+    the picker route above already blocks)."""
+    real_id, err = _require_effective_cfo(request)
     if err:
         return err
 
@@ -267,7 +283,8 @@ def parish_mode_start(parish_id: int, request: Request):
         return RedirectResponse("/portal")
 
     target = db.query_one("SELECT id, org_id FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
-    if not target or not rbac.user_has_role(real_id, "cfo", target["org_id"]):
+    current = _current_user(request)
+    if not target or not current or not rbac.user_has_role(current["id"], "cfo", target["org_id"]):
         return RedirectResponse("/admin/parish-mode")
 
     _close_open_parish_mode(real_id)
