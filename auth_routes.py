@@ -85,6 +85,32 @@ def _remember_email(response: Response, email: str) -> None:
     )
 
 
+# 2026-08-16, Jay: reported "Login state mismatch" on a first sign-in
+# attempt right after logging out, succeeding on an immediate retry --
+# described as a recurring pattern seen since this login mechanism was
+# first built. The oauth_state CSRF check previously lived in
+# request.session["oauth_state"] -- the SAME general-purpose session
+# object every other part of this app reads/writes (current_org_id,
+# impersonation, parish-mode preview, etc.). Moving it to its own small,
+# dedicated cookie removes any possible interaction with the rest of the
+# session's lifecycle (a logout's session.clear() one request earlier, or
+# any other concurrent session write) as a source of this class of bug --
+# standard practice for an OAuth CSRF-state value, and a strict hardening
+# regardless of whether that specific interaction was ever the exact
+# mechanism. 10 minutes is generous for a real interactive sign-in
+# (including a Microsoft/Google consent screen) but short enough that a
+# stale, never-completed attempt doesn't linger.
+_OAUTH_STATE_COOKIE = "beacon_oauth_state"
+_OAUTH_STATE_MAX_AGE = 600
+
+
+def _set_oauth_state_cookie(response: Response, state: str) -> None:
+    response.set_cookie(
+        _OAUTH_STATE_COOKIE, state, max_age=_OAUTH_STATE_MAX_AGE,
+        httponly=True, samesite="lax", secure=ON_CLOUD_RUN,
+    )
+
+
 def _domain_of(email: str) -> str:
     email = (email or "").strip().lower()
     return email.rsplit("@", 1)[-1] if "@" in email else ""
@@ -227,15 +253,16 @@ def create_router(templates) -> APIRouter:
     @router.get("/auth/start")
     def auth_start(request: Request, email: str = ""):
         state = pysecrets.token_urlsafe(24)
-        request.session["oauth_state"] = state
-        return RedirectResponse(auth_azure.get_auth_url(REDIRECT_URI, state, login_hint=email or None))
+        resp = RedirectResponse(auth_azure.get_auth_url(REDIRECT_URI, state, login_hint=email or None))
+        _set_oauth_state_cookie(resp, state)
+        return resp
 
     @router.get("/auth/callback", response_class=HTMLResponse)
     def auth_callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = ""):
         if error:
             return templates.TemplateResponse(request, "login.html", {"error": f"{error}: {error_description}"})
 
-        expected_state = request.session.pop("oauth_state", None)
+        expected_state = request.cookies.get(_OAUTH_STATE_COOKIE)
         if not state or state != expected_state:
             return templates.TemplateResponse(request, "login.html", {"error": "Login state mismatch — please try signing in again."})
 
@@ -259,21 +286,23 @@ def create_router(templates) -> APIRouter:
             return templates.TemplateResponse(request, "login.html", {"error": f"{email} is deactivated in checkreq.app_users — contact an admin."})
 
         resp = RedirectResponse("/portal", status_code=303)
+        resp.delete_cookie(_OAUTH_STATE_COOKIE)
         _remember_email(resp, email)
         return resp
 
     @router.get("/auth/google/start")
     def auth_google_start(request: Request, email: str = ""):
         state = pysecrets.token_urlsafe(24)
-        request.session["oauth_state"] = state
-        return RedirectResponse(auth_google.get_auth_url(GOOGLE_REDIRECT_URI, state, login_hint=email or None))
+        resp = RedirectResponse(auth_google.get_auth_url(GOOGLE_REDIRECT_URI, state, login_hint=email or None))
+        _set_oauth_state_cookie(resp, state)
+        return resp
 
     @router.get("/auth/google/callback", response_class=HTMLResponse)
     def auth_google_callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = ""):
         if error:
             return templates.TemplateResponse(request, "login.html", {"error": f"{error}: {error_description}"})
 
-        expected_state = request.session.pop("oauth_state", None)
+        expected_state = request.cookies.get(_OAUTH_STATE_COOKIE)
         if not state or state != expected_state:
             return templates.TemplateResponse(request, "login.html", {"error": "Login state mismatch — please try signing in again."})
 
@@ -296,6 +325,7 @@ def create_router(templates) -> APIRouter:
             return templates.TemplateResponse(request, "login.html", {"error": f"{email} is deactivated in checkreq.app_users — contact an admin."})
 
         resp = RedirectResponse("/portal", status_code=303)
+        resp.delete_cookie(_OAUTH_STATE_COOKIE)
         _remember_email(resp, email)
         return resp
 
