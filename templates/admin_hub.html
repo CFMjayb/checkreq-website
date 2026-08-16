@@ -10,18 +10,23 @@
 <p><a href="/portal">&larr; Back to Portal</a></p>
 <p class="sub">Setup tables, user roles, approvals, and system administration — only the sections you have access to are shown below.</p>
 
+{% for g in groups %}
+<h2 style="margin-top: var(--space-5);">{{ g.label }}</h2>
 <div class="setup-grid">
-  {% for c in cards %}
+  {% for c in g.cards %}
   <div class="setup-tile is-built">
     <h2><a href="{{ c.url }}">{{ c.title }}</a></h2>
     <div class="desc">{{ c.desc }}</div>
   </div>
-  {% else %}
+  {% endfor %}
+</div>
+{% else %}
+<div class="setup-grid">
   <div class="setup-tile">
     <div class="desc">Nothing here yet for your current role.</div>
   </div>
-  {% endfor %}
 </div>
+{% endfor %}
 
 </div>
 {% endblock %}

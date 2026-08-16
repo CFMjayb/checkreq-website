@@ -30,7 +30,15 @@ _render = None
 # (this module must never import main, which imports this one), same small
 # duplication admin_setup.py/access_requests.py/admin_users.py already each
 # accept for their own local `_require_*` guards.
-_ADMIN_TASK_ROLE_KEYS = ["cfo", "setup_admin", "beacon_admin", "vendor_approver"]
+#
+# 'hr_admin' added 2026-08-16 (Timekeeping HR Roster Review Plan.md) -- an
+# hr_admin-only user (holding no other admin role) would otherwise be
+# bounced straight back to /portal before ever seeing the Timekeeping
+# Review card below; main.py's own ADMIN_TASK_ROLE_KEYS constant needs the
+# identical addition for the "Administrative Tasks" portal tile itself to
+# even appear for such a user -- see this project's own wiring snippet for
+# that one-line change.
+_ADMIN_TASK_ROLE_KEYS = ["cfo", "setup_admin", "beacon_admin", "vendor_approver", "hr_admin"]
 
 
 def register(app, *, current_user, current_org, render) -> None:
@@ -39,52 +47,87 @@ def register(app, *, current_user, current_org, render) -> None:
     app.include_router(router)
 
 
-# (title, desc, url, role_key_or_None-for-real-roles-cfo-check)
+# (title, desc, url, role_key_or_None-for-real-roles-cfo-check, group)
+#
+# `group` added 2026-08-16, Jay: "the Admin Tasks screen is getting busy...
+# group them: AP related, Parish related, and the ones that are related to
+# Beacon overall (which should be at the beginning of the list)." Purely a
+# display grouping (see _CARD_GROUPS below for the fixed display order) --
+# does not change any card's own visibility gate.
 _CARDS = [
-    {"title": "All Requests", "desc": "Every check request, every entity, every status.",
-     "url": "/admin/all-requests", "role": "cfo"},
-    {"title": "Vendor Approvals", "desc": "Approve or reject new-vendor requests; confirm W-9 receipt.",
-     "url": "/admin/vendor-requests", "role": "vendor_approver"},
-    {"title": "Setup Tables", "desc": "Program areas, GL account mapping, entities, global approvers.",
-     "url": "/admin/setup", "role": "setup_admin"},
     {"title": "User Management", "desc": "Who can sign in, and what each person may do in each entity.",
-     "url": "/admin/setup/users", "role": "beacon_admin"},
+     "url": "/admin/setup/users", "role": "beacon_admin", "group": "beacon"},
     {"title": "Access Requests", "desc": "Review self-service requests from users with no role yet.",
-     "url": "/admin/access-requests", "role": "beacon_admin"},
+     "url": "/admin/access-requests", "role": "beacon_admin", "group": "beacon"},
     {"title": "Feedback Log", "desc": "Everything submitted through the Feedback screen.",
-     "url": "/admin/feedback", "role": "cfo"},
+     "url": "/admin/feedback", "role": "cfo", "group": "beacon"},
     {"title": "Test Mode", "desc": "Redirect outgoing emails to a test address while testing.",
-     "url": "/admin/test-mode", "role": "setup_admin"},
+     "url": "/admin/test-mode", "role": "setup_admin", "group": "beacon"},
     # "real_cfo" is a sentinel handled specially below -- gated on the REAL
     # identity (not impersonated) and hidden entirely while impersonating,
     # matching base.html's own prior rule for this exact link.
     {"title": "Impersonate a User", "desc": "Act as another user for testing or support.",
-     "url": "/admin/impersonate", "role": "real_cfo"},
+     "url": "/admin/impersonate", "role": "real_cfo", "group": "beacon"},
+
+    {"title": "All Requests", "desc": "Every check request, every entity, every status.",
+     "url": "/admin/all-requests", "role": "cfo", "group": "ap"},
+    {"title": "Vendor Approvals", "desc": "Approve or reject new-vendor requests; confirm W-9 receipt.",
+     "url": "/admin/vendor-requests", "role": "vendor_approver", "group": "ap"},
+    {"title": "Setup Tables", "desc": "Program areas, GL account mapping, entities, global approvers.",
+     "url": "/admin/setup", "role": "setup_admin", "group": "ap"},
+
     # Parish Mode (S4, 2026-08-08) -- gated identically to Impersonate a
     # User (real_cfo sentinel), same reasoning: hidden while already
     # impersonating, since only the real underlying CFO may reach it.
     {"title": "Parish Mode", "desc": "See a specific parish's (currently minimal) portal view.",
-     "url": "/admin/parish-mode", "role": "real_cfo"},
+     "url": "/admin/parish-mode", "role": "real_cfo", "group": "parish"},
     # Parish Portal S4+S5 (2026-08-08) -- three new diocesan-side management
     # screens. `role` is a LIST here (setup_admin OR beacon_admin) -- see
     # the visibility check below, which now accepts either shape.
     {"title": "Announcements", "desc": "Post dated, targeted announcements to parish users.",
-     "url": "/admin/announcements", "role": ["setup_admin", "beacon_admin"]},
+     "url": "/admin/announcements", "role": ["setup_admin", "beacon_admin"], "group": "parish"},
     {"title": "Parish Documents", "desc": "Upload documents into a specific parish's read-only archive.",
-     "url": "/admin/parish-documents", "role": ["setup_admin", "beacon_admin"]},
+     "url": "/admin/parish-documents", "role": ["setup_admin", "beacon_admin"], "group": "parish"},
     {"title": "Resource Library", "desc": "Manage the diocese-wide shared resource library.",
-     "url": "/admin/resource-library", "role": ["setup_admin", "beacon_admin"]},
+     "url": "/admin/resource-library", "role": ["setup_admin", "beacon_admin"], "group": "parish"},
     # Cornerstone Served Parishes Phase A (2026-08-16) -- entity-scoped, same
     # reasoning as Setup Tables (see _ENTITY_SCOPED_TITLES below): this
     # screen only ever shows/acts on the current diocese's own parishes.
     {"title": "Manage Parishes", "desc": "Designate a parish Cornerstone Served, or view its status.",
-     "url": "/admin/manage-parishes", "role": "setup_admin"},
+     "url": "/admin/manage-parishes", "role": "setup_admin", "group": "parish"},
+    # Cornerstone Served Parishes Phase K (2026-08-16) -- diocese-wide
+    # Timekeeping config, entity-scoped the same way Manage Parishes is
+    # (timekeeping.py's own _require_diocese_admin() independently rejects
+    # a Cornerstone-Mode-selected entity too, since these are keyed to the
+    # DIOCESE org, never a served parish's own linked org).
+    {"title": "Payroll Periods", "desc": "Define diocese payroll periods for Timekeeping-enabled parishes.",
+     "url": "/admin/timekeeping/periods", "role": "setup_admin", "group": "parish"},
+    {"title": "Time Categories", "desc": "Configure the categories parishes report hours against.",
+     "url": "/admin/timekeeping/categories", "role": "setup_admin", "group": "parish"},
+    # Timekeeping HR Roster Review Plan.md (2026-08-16) -- Stage 4's
+    # diocese-side review screen. Entity-scoped like the two cards above
+    # (same DIOCESE org_id, never a served parish's own linked org -- see
+    # timekeeping_review.py's own _require_hr_admin()). `role` is a LIST
+    # (hr_admin OR beacon_admin) -- see the visibility check below, which
+    # now handles a list for entity-scoped cards too, not just cross-entity
+    # ones.
+    {"title": "Timekeeping Review", "desc": "Approve or reject proposed staff roster changes; see submitted hours awaiting review.",
+     "url": "/admin/timekeeping/review", "role": ["hr_admin", "beacon_admin"], "group": "parish"},
+]
+
+# Fixed display order + section headings -- per Jay's explicit request,
+# Beacon-overall items come first, not alphabetically or by insertion order.
+_CARD_GROUPS = [
+    ("beacon", "Beacon"),
+    ("ap", "AP"),
+    ("parish", "Parish"),
 ]
 
 # Titles whose underlying route is genuinely entity-scoped (not cross-entity
 # by design/necessity like everything else in this hub) -- see admin_hub()'s
 # own docstring for why this distinction matters.
-_ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes"}
+_ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes", "Payroll Periods", "Time Categories",
+                          "Timekeeping Review"}
 
 
 @router.get("/admin", response_class=HTMLResponse)
@@ -123,7 +166,19 @@ def admin_hub(request: Request):
         if c["role"] == "real_cfo":
             visible = (not is_impersonating) and real_uid and rbac.user_has_role(real_uid, "cfo", org_id=None)
         elif c["title"] in _ENTITY_SCOPED_TITLES:
-            visible = org_id is not None and rbac.user_has_role(user["id"], "setup_admin", org_id=org_id)
+            # 2026-08-16: generalized from a hardcoded "setup_admin" check
+            # (every entity-scoped card used to require exactly that role)
+            # to check the CARD'S OWN c["role"] instead -- Timekeeping
+            # Review's required role is hr_admin/beacon_admin, not
+            # setup_admin. Verified this doesn't change behavior for the
+            # 4 pre-existing entity-scoped titles, which all have
+            # c["role"] == "setup_admin" already.
+            if org_id is None:
+                visible = False
+            elif isinstance(c["role"], list):
+                visible = rbac.user_has_any_role(user["id"], c["role"], org_id=org_id)
+            else:
+                visible = rbac.user_has_role(user["id"], c["role"], org_id=org_id)
         elif isinstance(c["role"], list):
             visible = rbac.user_has_any_role(user["id"], c["role"], org_id=None)
         else:
@@ -131,4 +186,13 @@ def admin_hub(request: Request):
         if visible:
             cards.append(c)
 
-    return _render(request, "admin_hub.html", user, {"cards": cards})
+    # Grouped for display only (Jay, 2026-08-16: "the Admin Tasks screen is
+    # getting busy... group them") -- a group with nothing visible in it is
+    # simply omitted, not shown as an empty section.
+    grouped = []
+    for key, label in _CARD_GROUPS:
+        group_cards = [c for c in cards if c["group"] == key]
+        if group_cards:
+            grouped.append({"label": label, "cards": group_cards})
+
+    return _render(request, "admin_hub.html", user, {"groups": grouped})
