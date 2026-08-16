@@ -107,6 +107,7 @@ import tile_badges
 import announcements
 import parish_requests
 import parish_org_admin
+import cornerstone_mode
 import approval_engine
 import auth_routes
 import gcs_client
@@ -297,6 +298,17 @@ MODULES = [
 # own separate portal tile and was never part of the consolidated 8.
 ADMIN_TASK_ROLE_KEYS = {"cfo", "setup_admin", "beacon_admin", "vendor_approver"}
 
+# Cornerstone Served Parishes Phase B (2026-08-16) -- the tile subset shown
+# on /portal when the current entity is a served parish-org, per Jay's own
+# enumeration (Cornerstone Served Parishes Plan.md, Phase B). Deliberately
+# a small, explicit set rather than "everything except X" -- easiest to
+# extend correctly if the parish-side menu (still unscoped, "we'll walk
+# through those together") ends up needing more CFM-staff-side tiles too.
+CORNERSTONE_MODULE_KEYS = {
+    "check_request", "my_requests", "invoice_payment",
+    "approval_queue", "administrative_tasks", "parish_requests_review",
+}
+
 
 def _real_user(request: Request) -> dict | None:
     """The actual authenticated identity (session['user_id']) -- set only by
@@ -436,9 +448,16 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     if "beacon_admin" in entity_roles or parish_roles.get_parish_ids_with_role(user["id"], "parish_admin"):
         entity_roles = entity_roles | {"parish_reviewer"}
     _parish_view, _parish_view_is_preview = parish_mode.effective_parish_mode(request, user)
+    # Cornerstone Served Parishes Phase B (2026-08-16): True whenever the
+    # currently-selected entity is a served parish-org -- drives the
+    # dark-blue theme + user-menu indicator in base.html. No separate
+    # session state to track (see cornerstone_mode.py's own docstring) --
+    # this is just a live check against whichever org is currently selected.
+    cornerstone_context = bool(org and cornerstone_mode.is_cornerstone_org(org["id"]))
     ctx = {
         "user": user,
         "real_user": real,
+        "cornerstone_context": cornerstone_context,
         "impersonating": bool(request.session.get("impersonating_user_id"))
                           and bool(real and rbac.user_has_role(real["id"], "cfo", org_id=None)),
         "current_org": org,
@@ -524,7 +543,20 @@ def portal(request: Request):
     if parish or (not rbac.user_has_any_role(user["id"]) and parish_roles.get_parish_role_keys(user["id"])):
         return RedirectResponse("/parish-view")
 
-    return _render(request, "portal.html", user, {"modules": MODULES})
+    # Cornerstone Served Parishes Phase B (2026-08-16): a curated tile list
+    # when the currently-selected entity is a served parish-org, per Jay's
+    # own enumeration (Check Request/My Requests/Invoice for Payment/
+    # Approval Queue/Administrative Tasks/Parish Requests -- Feedback is
+    # already an always-visible nav link, not a tile; "Documents" is
+    # deliberately not included yet, flagged as needing its own design pass
+    # since it bridges two different data models, portal.parishes-level
+    # docs vs. this checkreq.organizations-level AP entity).
+    org = _current_org(request)
+    modules = MODULES
+    if org and cornerstone_mode.is_cornerstone_org(org["id"]):
+        modules = [m for m in MODULES if m["key"] in CORNERSTONE_MODULE_KEYS]
+
+    return _render(request, "portal.html", user, {"modules": modules})
 
 
 def _user_has_org_access(user_id: int, org_id: int) -> bool:
@@ -5694,6 +5726,7 @@ parish_mode.register(app, current_user=_current_user, current_org=_current_org, 
 # Cornerstone Served Parishes Phase A (Cornerstone Served Parishes Plan.md) --
 # same register() pattern as everything else, thin wiring only.
 parish_org_admin.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+cornerstone_mode.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 # Parish Portal S4+S5 (2026-08-08): announcements, document archive/library,
 # and parish feedback/general-requests -- three more new modules, same thin
 # register() wiring, no logic added here.

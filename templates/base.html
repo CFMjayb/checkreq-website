@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/static/css/base.css?v={{ asset_version('css/base.css') }}">
   {% block extra_css %}{% endblock %}
 </head>
-<body{% if parish_view %} class="parish-mode"{% endif %}>
+<body{% if parish_view %} class="parish-mode"{% elif cornerstone_context %} class="cornerstone-mode"{% endif %}>
   {% if impersonating %}
   <div class="impersonation-bar">
     Viewing as <strong>{{ user.display_name or user.email }}</strong> — impersonated by {{ real_user.display_name or real_user.email }}
@@ -123,6 +123,15 @@
           <form method="post" action="/admin/parish-mode/stop" class="user-menu-item-form">
             <button type="submit" class="user-menu-item">Diocese Mode</button>
           </form>
+          {% endif %}
+          {# Cornerstone Mode (Phase B, 2026-08-16): existence check --
+             holds cornerstone_employee at ANY served parish-org, same
+             "real_roles is the real identity's full role set anywhere"
+             pattern 'cfo' already uses just above. The picker itself
+             (cornerstone_mode.py) narrows to the specific parish-orgs
+             this user actually holds the grant at. #}
+          {% if 'cornerstone_employee' in real_roles %}
+          <a href="/admin/cornerstone-mode" class="user-menu-item">Cornerstone Mode</a>
           {% endif %}
           <a href="/account/profile" class="user-menu-item">Profile</a>
           <a href="/account/password" class="user-menu-item">Change Password</a>

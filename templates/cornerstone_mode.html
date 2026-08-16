@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Cornerstone Mode — Beacon{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Cornerstone Mode</h1>
+<p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
+<p class="sub">Parishes you're set up to work with as a Cornerstone Franciscan Ministries employee. Picking one switches your entity there — same as the usual entity switcher, just scoped to the parishes you actually work with.</p>
+
+<div class="card">
+  <table class="simple-table">
+    <thead><tr><th>Parish</th><th>Diocese</th><th>City</th><th></th></tr></thead>
+    <tbody>
+      {% for o in orgs %}
+      <tr>
+        <td>{{ o.parish_name }}</td>
+        <td>{{ o.diocese_name }}</td>
+        <td>{{ o.city or "—" }}</td>
+        <td>
+          <form method="post" action="/admin/cornerstone-mode/{{ o.org_id }}" style="display:inline">
+            <button type="submit" class="btn btn-secondary btn-sm">Enter</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">No Cornerstone-served parishes set up for you yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+</div>
+{% endblock %}

@@ -20,6 +20,15 @@
      (headers, links, buttons, badges) retints automatically. */
   --color-parish-red: #7a1f2b;
   --color-parish-red-dark: #591620;
+  /* Cornerstone Mode theme (2026-08-16, Jay: "make the Cornerstone banner
+     bar a pretty rich dark blue") -- distinct from Parish Mode's red, since
+     the two are different concepts (a served parish's own portal view vs.
+     a Cornerstone Franciscan Ministries staffer working a served parish's
+     full AP process). Same override mechanism as Parish Mode: base.css's
+     body.cornerstone-mode rule swaps --color-franciscan-green itself, so
+     every existing rule retints automatically, no new rules needed. */
+  --color-cornerstone-blue: #14294d;
+  --color-cornerstone-blue-dark: #0b1830;
   --color-gold: #c9a227;
   --color-gold-light: #e8c766;
   --color-card-bg: #ffffff;

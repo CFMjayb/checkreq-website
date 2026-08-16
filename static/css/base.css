@@ -209,6 +209,18 @@ body.parish-mode {
   --color-franciscan-green-dark: var(--color-parish-red-dark);
 }
 
+/* ---- Cornerstone Mode theme (2026-08-16) -- same override mechanism as
+   Parish Mode above, deliberately a distinct color (rich dark blue, not
+   red) since it's a different concept: a Cornerstone Franciscan Ministries
+   staffer working a served parish's own full AP process, not a parish's
+   own portal view. Mutually exclusive with body.parish-mode in practice
+   (main.py only ever applies one class), but written as its own selector
+   rather than an :not(.parish-mode) guard for clarity. ---- */
+body.cornerstone-mode {
+  --color-franciscan-green: var(--color-cornerstone-blue);
+  --color-franciscan-green-dark: var(--color-cornerstone-blue-dark);
+}
+
 .page-shell { max-width: 1100px; margin: 0 auto; padding: var(--space-6) var(--space-5); }
 
 /* 2026-08-02 feedback batch, Item 3: "all screens need a back hyperlink
