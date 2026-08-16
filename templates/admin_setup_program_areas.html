@@ -8,17 +8,20 @@
 
 <h1 class="setup-h1-compact">Program Areas</h1>
 <p class="back-link"><a href="/admin/setup">&larr; Back to Setup Tables</a></p>
-<p class="sub">
-  The grouping every GL account mapping, approval rule and submitter assignment hangs off, for
-  <strong>{{ current_org.code if current_org else '—' }}</strong>. Open a program area to manage
-  its own fields, who can submit against it, and who approves it.
-</p>
+<p class="sub">For <strong>{{ current_org.code if current_org else '—' }}</strong>. Open a program area to manage its own fields, who can submit against it, and who approves it.</p>
 
 {% if request.query_params.get('error') %}
 <div class="banner banner-error">{{ request.query_params.get('error') }}</div>
 {% endif %}
 
-<details class="add-panel" open>
+{# Phase E (2026-08-16), item 10: collapsed by default (was `open`) -- same
+   collapse mechanism GL Mapping's own Add panel already uses. The prior
+   full paragraph explaining what this table is/does ("The grouping every
+   GL account mapping, approval rule and submitter assignment hangs off...")
+   is replaced by per-column header tooltips (title= attributes) below,
+   right where each explanation is actually needed instead of front-loaded
+   as a wall of text. #}
+<details class="add-panel">
   <summary>Add a Program Area</summary>
   <div class="add-grid" style="grid-template-columns: 1.2fr 2fr 0.6fr 0.7fr auto;">
     <div class="fld">
@@ -45,17 +48,17 @@
 </details>
 
 <div class="card">
-  <div class="table-scroll">
-    <table class="setup-table">
+  <div class="table-scroll setup-scroll">
+    <table class="setup-table pa-table">
       <thead>
         <tr>
-          <th>Title</th>
-          <th>Description</th>
-          <th class="col-sort">Sort Order</th>
-          <th class="col-allow">Active</th>
-          <th>GL Mappings</th>
-          <th>Approvers</th>
-          <th>Submitters</th>
+          <th title="The program area's name, shown throughout Beacon (New Request's Program Area picker, approval chains, budget checks).">Title</th>
+          <th title="Optional free-text note about this program area -- not shown to submitters, reference for setup staff only.">Description</th>
+          <th class="col-sort" title="Controls this table's row order -- lower numbers first. Purely cosmetic, no effect on approvals or budgets.">Sort</th>
+          <th title="How many GL accounts are mapped to this program area (Program Area / GL Account Map).">GL Mappings</th>
+          <th title="How many people are configured as approvers for requests against this program area (Approval Rules).">Approvers</th>
+          <th title="How many people are allowed to submit a request against this program area (User / Program Area Assignments).">Submitters</th>
+          <th class="col-allow" title="Whether submitters can currently select this program area on a new request. Inactive program areas stay here for historical requests but drop out of the picker.">Active</th>
           <th></th>
         </tr>
       </thead>
@@ -65,12 +68,12 @@
           <td><strong>{{ r.title }}</strong></td>
           <td class="sub">{{ r.description or "—" }}</td>
           <td class="col-sort">{{ r.sort_order }}</td>
-          <td class="col-allow">
-            {% if r.is_active %}Yes{% else %}<span class="badge badge-draft">No</span>{% endif %}
-          </td>
           <td>{{ r.gl_count }}</td>
           <td>{{ r.approver_count }}</td>
           <td>{{ r.submitter_count }}</td>
+          <td class="col-allow">
+            {% if r.is_active %}Yes{% else %}<span class="badge badge-draft">No</span>{% endif %}
+          </td>
           <td><a class="btn btn-secondary btn-sm" href="/admin/setup/program-areas/{{ r.id }}">Manage</a></td>
         </tr>
         {% else %}

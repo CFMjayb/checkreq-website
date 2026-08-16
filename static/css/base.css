@@ -20,6 +20,14 @@ p { margin: 0 0 var(--space-3); }
   align-items: center;
   justify-content: space-between;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  /* 2026-08-16, item 9: the green top bar should never scroll out of
+     view on any screen. z-index above .impersonation-bar's own 100 (also
+     sticky, top:0) so the two don't fight for the same spot when both are
+     visible at once (impersonating/previewing while scrolled) -- a real
+     but rare edge case, deliberately left as-is for now per Jay. */
+  position: sticky;
+  top: 0;
+  z-index: 150;
 }
 .site-header .brand {
   font-family: var(--font-display);

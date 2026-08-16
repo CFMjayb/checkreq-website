@@ -1,0 +1,39 @@
+/* scroll_panel.css — shared sticky-header/scrollable-body table wrapper.
+   Cornerstone Served Parishes Plan.md, Phase E (items 9/10): "One shared
+   sticky-header/scrollable-body component, applied to My Requests, Admin ->
+   All Requests, Program Areas, and [User Management, see item 11's note in
+   admin_users_index.html]."
+
+   admin_setup.css already built exactly this pattern once, `.setup-scroll`
+   (2026-08-01, GL Mapping/ART): "I don't necessarily like screens that
+   scroll where you lose all of the top area... I prefer to actually have
+   the scroll occur in the actual list" -- the column header row stays
+   visible (sticky) while only the row body scrolls. Its container rule
+   (max-height/overflow-y) is already table-agnostic, but its sticky-header
+   selector is hard-scoped to `table.setup-table thead th`, so it can't be
+   reused as-is on the `table.simple-table`/`table.approvals-table` markup
+   My Requests, Admin -> All Requests, and User Management all use instead.
+
+   Rather than edit admin_setup.css itself (touched by other work this same
+   day) or fork a second copy of the same container rule under the same
+   class name (risking two slightly-different definitions of `.setup-scroll`
+   drifting apart), this is ONE new, self-contained stylesheet with its own
+   class, `.scroll-panel` -- add it alongside a page's existing
+   `.table-scroll` wrapper div to get the identical behavior regardless of
+   which table class the page itself happens to use. Program Areas already
+   uses `table.setup-table` and gets this for free from `.setup-scroll`
+   (add that class instead, no new file needed there); this file is for
+   every OTHER table shape. */
+
+.scroll-panel {
+  max-height: calc(100vh - 300px);
+  min-height: 220px;
+  overflow-y: auto;
+}
+.scroll-panel table thead th,
+.scroll-panel table tr:first-child th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-card-bg, #fff);
+}

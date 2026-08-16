@@ -2,6 +2,18 @@
 {% block title %}User Management — Beacon{% endblock %}
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+{# Phase E (2026-08-16), item 11: this table had NO scroll wrapper of any
+   kind -- unlike every sibling admin table (My Requests, Admin -> All
+   Requests, AP Review, Vendor Requests, GL Mapping, Manage Parishes all
+   wrap their table in .table-scroll), a 9-column table here (Display Name /
+   First Name / Email / Active / Last Sign-in / Program Areas / Entities /
+   Roles / Manage) had nothing containing its overflow -- on a narrower
+   viewport or with real long emails/names, the table pushes the PAGE itself
+   wider instead of showing a clean, contained horizontal scrollbar. This is
+   the strongest concrete match found for the plan's own "still-unidentified
+   horizontal-scrollbar screen" (item 11) -- see the session report for the
+   other candidates checked and ruled out. #}
+<link rel="stylesheet" href="/static/css/scroll_panel.css?v={{ asset_version('css/scroll_panel.css') }}">
 {% endblock %}
 {% block content %}
 <div class="page-shell-wide">
@@ -50,6 +62,7 @@
 </div>
 
 <div class="card">
+  <div class="table-scroll scroll-panel">
   <table class="simple-table" id="usersTable">
     <thead>
       <tr>
@@ -138,6 +151,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </div>
 
 </div>

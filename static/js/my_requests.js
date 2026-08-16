@@ -10,6 +10,18 @@
 // 2. Cancel confirmation (Task 2) -- a plain confirm() dialog before the
 //    Cancel form submits, consistent with how this codebase handles other
 //    destructive-ish actions elsewhere (no custom modal needed for this).
+//
+// 3. Phase E (2026-08-16): My Requests and Admin -> All Requests both gained
+//    a `.scroll-panel` sticky-header/scrollable-body wrapper this session.
+//    .status-popup is `position:absolute` (base.css), and an
+//    `overflow-y:auto` ancestor clips ANY absolutely-positioned descendant
+//    that renders outside its box, regardless of the descendant's own
+//    `overflow:visible` -- the exact same failure mode Tom Select's GL
+//    Account dropdown hit inside a scrolling container (2026-07-29, fixed
+//    there via `dropdownParent:'body'`). Only reposition a popup this way
+//    when it's actually inside a `.scroll-panel` -- my_approvals.html also
+//    loads this file and has no such wrapper, so its popups keep their
+//    original CSS-only behavior untouched.
 
 document.addEventListener('DOMContentLoaded', () => {
   let openPopup = null;
@@ -33,6 +45,23 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       closeOpenPopup();
       popup.hidden = false;
+      const scrollPanel = btn.closest('.scroll-panel');
+      if (scrollPanel) {
+        if (popup.dataset.reparented !== '1') {
+          document.body.appendChild(popup);
+          popup.dataset.reparented = '1';
+          popup.style.position = 'fixed';
+          popup.style.right = 'auto';
+        }
+        const rect = btn.getBoundingClientRect();
+        const popupWidth = popup.offsetWidth || 300;
+        let left = rect.right - popupWidth;
+        if (left < 8) left = 8;
+        const maxLeft = window.innerWidth - popupWidth - 8;
+        if (left > maxLeft) left = Math.max(8, maxLeft);
+        popup.style.left = left + 'px';
+        popup.style.top = (rect.bottom + 4) + 'px';
+      }
       openPopup = popup;
     });
   });

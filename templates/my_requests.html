@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block title %}My Requests{% endblock %}
+{% block extra_css %}
+{# Phase E (2026-08-16): sticky column headers, scrolling row body -- see
+   static/css/scroll_panel.css for why this is its own small stylesheet
+   rather than an edit to base.css/admin_setup.css. #}
+<link rel="stylesheet" href="/static/css/scroll_panel.css?v={{ asset_version('css/scroll_panel.css') }}">
+{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
 <h1>My Requests</h1>
@@ -36,7 +42,7 @@
 {% endif %}
 
 <div class="card">
-<div class="table-scroll">
+<div class="table-scroll scroll-panel">
   <table class="simple-table approvals-table">
     <tr>
       <th class="col-reqnum">Request #</th>
