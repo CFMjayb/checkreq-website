@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}GL Accounts — Beacon{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>GL Accounts</h1>
+<p class="back-link"><a href="/admin/setup">&larr; Back to Setup Tables</a></p>
+<p class="sub">
+  {{ current_org.code }} &mdash; chart of accounts, synced nightly from QBO. Read-only — this list
+  isn't editable here; use QuickBooks Online itself to add or change an account.
+</p>
+
+{% if error %}
+<div class="banner banner-error">Couldn't load GL accounts from qbo-mcp-server: {{ error }}</div>
+{% endif %}
+
+{% if rows %}
+<div class="card">
+  <p style="margin:0 0 12px;">
+    <input type="text" id="glFilter" placeholder="Filter by account number or name&hellip;"
+           style="max-width:320px;">
+    <span class="sub" id="glCount">{{ rows|length }} account{{ '' if rows|length == 1 else 's' }}</span>
+  </p>
+  <div class="table-scroll">
+    <table class="simple-table" id="glTable">
+      <thead>
+        <tr>
+          <th>Account Number</th>
+          <th>Account Name</th>
+          <th>Type</th>
+          <th>Annual Budget</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.account_number }}</td>
+          <td>{{ r.account_name }}</td>
+          <td>{{ r.account_type or "—" }}</td>
+          <td>
+            {% if r.annual_budget is not none %}
+              ${{ '%.2f'|format(r.annual_budget) }}
+            {% else %}
+              <span class="sub">—</span>
+            {% endif %}
+          </td>
+          <td>{% if r.is_active %}Active{% else %}<span class="sub">Inactive</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+{% if not error %}
+<div class="card"><p class="sub">No GL accounts on file for {{ current_org.code }} yet.</p></div>
+{% endif %}
+{% endif %}
+
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+(function () {
+  var input = document.getElementById('glFilter');
+  var table = document.getElementById('glTable');
+  var countEl = document.getElementById('glCount');
+  if (!input || !table) return;
+  var rows = Array.prototype.slice.call(table.querySelectorAll('tbody tr'));
+  input.addEventListener('input', function () {
+    var q = input.value.trim().toLowerCase();
+    var shown = 0;
+    rows.forEach(function (tr) {
+      var hit = !q || tr.textContent.toLowerCase().indexOf(q) !== -1;
+      tr.hidden = !hit;
+      if (hit) shown++;
+    });
+    if (countEl) countEl.textContent = shown + ' of ' + rows.length + ' accounts shown';
+  });
+})();
+</script>
+{% endblock %}

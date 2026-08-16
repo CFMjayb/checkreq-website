@@ -262,3 +262,23 @@ table.simple-table th.sortable:hover { color: var(--color-ink); }
 table.simple-table th.sortable::after { content: '\2195'; opacity: 0.35; margin-left: 4px; font-size: 0.75em; }
 table.simple-table th.sort-asc::after { content: '\2191'; opacity: 1; }
 table.simple-table th.sort-desc::after { content: '\2193'; opacity: 1; }
+
+/* ---- Program Areas (Phase E, 2026-08-16, item 10: "tighten column
+   spacing") ---- */
+/* Scoped to .pa-table specifically, not a change to the shared
+   table.setup-table default -- GL Mapping/ART/Organizations already have
+   their own spacing tuned and shouldn't shift because of a change made for
+   this one screen. Program Areas' columns (GL Mappings/Approvers/
+   Submitters/Active/Manage) are all short numbers or single words, so a
+   tighter horizontal cell padding reads as a denser, less sprawling table
+   without losing legibility -- vertical padding is left alone, this isn't
+   about row height. */
+table.pa-table th, table.pa-table td { padding-left: var(--space-2); padding-right: var(--space-2); }
+table.pa-table .col-sort, table.pa-table .col-allow { width: 70px; text-align: center; }
+table.pa-table th:not(:first-child):not(:nth-child(2)) { white-space: nowrap; }
+
+/* ---- Users & Roles: entity-first assignment flow (Phase F, 2026-08-16,
+   items 17.2/18) -- the diocese-level/parish-level badge shown under the
+   "Choose an Entity" picker once a specific entity is selected. ---- */
+.entity-level-header { margin-top: var(--space-3); }
+.entity-level-header .badge { font-size: 0.85rem; }

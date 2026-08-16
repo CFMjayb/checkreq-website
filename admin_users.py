@@ -80,12 +80,13 @@ import registry
 router = APIRouter()
 
 _current_user = None
+_current_org = None
 _render = None
 
 
-def register(app, *, current_user, render) -> None:
-    global _current_user, _render
-    _current_user, _render = current_user, render
+def register(app, *, current_user, current_org, render) -> None:
+    global _current_user, _current_org, _render
+    _current_user, _current_org, _render = current_user, current_org, render
     app.include_router(router)
 
 
@@ -102,44 +103,98 @@ def _user_list_rows() -> list[dict]:
     """One row per app_users row, with role/program-area/entity DETAIL (not
        just a count -- 2026-08-02 feedback batch, Item 13: "if you click on
        that and you show me what the program area is, that's great") plus
-       the three inline flags described in Plan §6.2. A handful of extra
-       queries per user is fine at this table's real size (tens of rows,
-       not thousands)."""
+       the three inline flags described in Plan §6.2.
+
+       Fixed 2026-08-16 (Cornerstone Served Parishes Plan.md, Phase F, item
+       17.1): this used to run 3 extra queries PER USER (roles,
+       program-areas, unreachable-approver) -- fine at a handful of users,
+       but a real N+1 that would only get worse as parish-org users are
+       onboarded. Rewritten to a fixed 4 queries TOTAL regardless of user
+       count: one `user_id = ANY(%s)` fetch each for roles and program-area
+       assignments (grouped back onto each user in Python), plus one
+       set-based query for every user_id named as a live approver/backup
+       ANYWHERE (global_approvers or approval_rules) -- membership in that
+       set, combined with last_login_at IS NULL, reproduces the exact same
+       is_unreachable_approver boolean the old per-user subquery computed.
+       Output shape (keys per user dict, keys per role/program-area row) is
+       unchanged from before this fix -- verified by comparing field-for-field
+       against the original per-user queries."""
     users = db.query(
         "SELECT id, email, display_name, first_name, is_active, last_login_at, last_login_provider "
         "FROM checkreq.app_users ORDER BY email"
     )
+    if not users:
+        return users
+
+    user_ids = [u["id"] for u in users]
+
+    # Every (entity, role) pair for every user, one query -- same columns
+    # rbac.get_roles_for_user() selected per-user, plus ur.user_id so this
+    # batch can be grouped back onto the right user (stripped afterward so
+    # each row dict's key set matches the old shape exactly).
+    all_roles_rows = db.query(
+        """
+        SELECT ur.user_id, ur.id AS user_role_id, ur.org_id, o.code AS org_code, o.name AS org_name,
+               ur.role_key, r.label AS role_label, r.description AS role_description,
+               ur.granted_at, g.email AS granted_by_email, ur.note
+          FROM checkreq.user_roles ur
+          JOIN checkreq.organizations o ON o.id = ur.org_id
+          JOIN checkreq.roles r ON r.key = ur.role_key
+          LEFT JOIN checkreq.app_users g ON g.id = ur.granted_by_user_id
+         WHERE ur.user_id = ANY(%s) AND ur.revoked_at IS NULL
+         ORDER BY ur.user_id, o.name, r.sort_order
+        """,
+        (user_ids,),
+    )
+    roles_by_user: dict[int, list[dict]] = {uid: [] for uid in user_ids}
+    for r in all_roles_rows:
+        uid = r.pop("user_id")
+        roles_by_user[uid].append(r)
+
+    # Every program-area assignment for every user, one query.
+    all_pa_rows = db.query(
+        """
+        SELECT upa.user_id, pa.title AS program_area_title, o.code AS org_code
+          FROM checkreq.user_program_areas upa
+          JOIN checkreq.program_areas pa ON pa.id = upa.program_area_id
+          JOIN checkreq.organizations o ON o.id = pa.org_id
+         WHERE upa.user_id = ANY(%s)
+         ORDER BY upa.user_id, o.code, pa.title
+        """,
+        (user_ids,),
+    )
+    pas_by_user: dict[int, list[dict]] = {uid: [] for uid in user_ids}
+    for r in all_pa_rows:
+        uid = r.pop("user_id")
+        pas_by_user[uid].append(r)
+
+    # Every user_id named ANYWHERE as a live approver or backup approver
+    # (global_approvers or approval_rules) -- one query, not one per user.
+    # Combined with last_login_at IS NULL below to reproduce
+    # is_unreachable_approver exactly as the old per-user subquery did.
+    approver_uid_rows = db.query(
+        """
+        SELECT DISTINCT uid FROM (
+            SELECT approver_user_id AS uid FROM checkreq.global_approvers WHERE is_active
+            UNION SELECT backup_approver_id FROM checkreq.global_approvers WHERE backup_approver_id IS NOT NULL
+            UNION SELECT approver_user_id FROM checkreq.approval_rules WHERE is_active
+            UNION SELECT backup_approver_id FROM checkreq.approval_rules WHERE backup_approver_id IS NOT NULL
+        ) x WHERE x.uid IS NOT NULL
+        """
+    )
+    approver_uids = {r["uid"] for r in approver_uid_rows}
+
     for u in users:
-        u["roles"] = rbac.get_roles_for_user(u["id"])
+        u["roles"] = roles_by_user.get(u["id"], [])
         u["has_any_role"] = len(u["roles"]) > 0
-        u["program_areas"] = db.query(
-            """
-            SELECT pa.title AS program_area_title, o.code AS org_code
-              FROM checkreq.user_program_areas upa
-              JOIN checkreq.program_areas pa ON pa.id = upa.program_area_id
-              JOIN checkreq.organizations o ON o.id = pa.org_id
-             WHERE upa.user_id = %s
-             ORDER BY o.code, pa.title
-            """,
-            (u["id"],),
-        )
+        u["program_areas"] = pas_by_user.get(u["id"], [])
         u["pa_count"] = len(u["program_areas"])
         # Every entity this person has a live footprint in, role OR
         # program-area -- Item 13's "Entities" column.
         entity_codes = sorted({r["org_code"] for r in u["roles"]} |
                                {r["org_code"] for r in u["program_areas"]})
         u["entity_codes"] = entity_codes
-        u["is_unreachable_approver"] = (u["last_login_at"] is None) and bool(db.query_one(
-            """
-            SELECT 1 FROM (
-                SELECT approver_user_id AS uid FROM checkreq.global_approvers WHERE is_active
-                UNION SELECT backup_approver_id FROM checkreq.global_approvers WHERE backup_approver_id IS NOT NULL
-                UNION SELECT approver_user_id FROM checkreq.approval_rules WHERE is_active
-                UNION SELECT backup_approver_id FROM checkreq.approval_rules WHERE backup_approver_id IS NOT NULL
-            ) x WHERE x.uid = %s
-            """,
-            (u["id"],),
-        ))
+        u["is_unreachable_approver"] = (u["last_login_at"] is None) and (u["id"] in approver_uids)
     return users
 
 
@@ -269,7 +324,32 @@ def user_detail_page(user_id: int, request: Request):
         """,
         (user_id,),
     )
-    orgs = db.query("SELECT id, code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
+    orgs = db.query(
+        "SELECT id, code, name, cornerstone_served FROM checkreq.organizations "
+        "WHERE is_active ORDER BY name"
+    )
+    # Cornerstone Served Parishes Plan.md Phase F, item 17.2/18: "entity
+    # first, then Program Areas/Approval Rules only if that entity is
+    # cornerstone_served; a clear diocese-level vs. parish-level header."
+    # A served PARISH-org is distinguished from a top-level diocese that
+    # merely also carries cornerstone_served=TRUE by whether some
+    # portal.parishes row links TO it via linked_org_id -- same test
+    # cornerstone_mode.is_cornerstone_org() uses, reproduced here as a
+    # batched one-query lookup (not imported from cornerstone_mode.py,
+    # which is main.py-facing/session-oriented, not built for this kind of
+    # bulk per-org annotation) rather than one query per org.
+    parish_links = db.query(
+        """
+        SELECT p.linked_org_id AS org_id, p.name AS parish_name,
+               d.code AS diocese_org_code, d.name AS diocese_org_name
+          FROM portal.parishes p
+          JOIN checkreq.organizations d ON d.id = p.org_id
+         WHERE p.linked_org_id IS NOT NULL
+        """
+    )
+    parish_info_by_org = {r["org_id"]: r for r in parish_links}
+    for o in orgs:
+        o["parish_info"] = parish_info_by_org.get(o["id"])  # None => diocese-level entity
 
     # 2026-08-02 feedback batch, Item 14.2: which entities does this person
     # actually have SOMETHING in -- drives the dropdown's "multiple
@@ -298,7 +378,30 @@ def user_detail_page(user_id: int, request: Request):
     # same as how a plain app_users row is the only "invite" this app has
     # ever had) without waiting for a self-service parish-access-request.
     parish_role_grants = parish_roles.get_parish_roles_for_user(user_id)
-    all_parishes = registry.list_all_parishes()
+    # Cornerstone Served Parishes Plan.md Phase C, item 17.3: same "current
+    # entity only" restriction as item 13/21 (admin_setup.py's Program Area
+    # detail page, main.py's /admin/parish-mode picker) -- as served
+    # dioceses grow past today's handful, "every parish across every
+    # diocese in one flat picker" stops being usable and risks granting a
+    # parish role under the wrong diocese entirely. Scoped to the admin's
+    # OWN currently-selected entity (_current_org), not the target user's --
+    # this page is reached from wherever the admin happens to be working,
+    # same as every other entity-scoped admin action in this codebase.
+    # UI-only, per decision 7: parish_roles.grant_parish_role() has no org
+    # check of its own and this doesn't add one -- a crafted POST naming a
+    # parish outside the current diocese is still granted exactly as
+    # before. This does not prevent one user holding roles at parishes
+    # across several dioceses over time (the shared-bookkeeper case this
+    # module's own grant-parish-role docstring already describes) -- it
+    # only narrows the picker to one diocese at a time, matching how the
+    # admin would switch entities to work each one anyway.
+    #
+    # Falls back to [] (not an error, not a redirect) when no entity is
+    # currently selected -- this whole page is about one target USER across
+    # every entity they touch, so it must keep rendering even without a
+    # selected entity; only the parish-grant picker itself goes empty.
+    current_org = _current_org(request)
+    all_parishes = registry.list_parishes(current_org["id"]) if current_org else []
 
     return _render(request, "admin_users_detail.html", user, {
         "target": target,
@@ -306,6 +409,7 @@ def user_detail_page(user_id: int, request: Request):
         "roles": roles,
         "all_roles": rbac.all_roles(),
         "orgs": orgs,
+        "current_org": current_org,
         "entities_with_access": entities_with_access,
         "program_areas": program_areas,
         "all_program_areas": all_program_areas,

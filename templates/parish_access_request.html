@@ -60,31 +60,21 @@
 {% if request.query_params.get('approved') %}<div class="banner banner-success">Access granted.</div>{% endif %}
 {% if request.query_params.get('rejected') %}<div class="banner banner-info">Request rejected.</div>{% endif %}
 
-{% if is_beacon_admin_reviewer %}
-<form method="get" action="/parish-access-request" class="filter-bar">
-  <div class="field">
-    <label>Diocese</label>
-    <select name="entity" onchange="this.form.submit()">
-      <option value="">All</option>
-      {% for o in all_orgs_list %}
-      <option value="{{ o.code }}" {% if filter_entity == o.code %}selected{% endif %}>{{ o.name }}</option>
-      {% endfor %}
-    </select>
-  </div>
-</form>
-{% endif %}
+{# 2026-08-16, Jay (Phase I): the Diocese filter dropdown was removed
+   alongside the Diocese column it filtered -- a beacon_admin's queue here
+   is still genuinely cross-diocese (see the sub text above), this just
+   drops the one UI control for narrowing it down, per Jay's own call. #}
 
 <div class="card">
   <table class="simple-table">
     <thead>
-      <tr><th>Requested</th><th>User</th><th>Diocese</th><th>Parish</th><th>Role requested</th><th>Note</th><th></th></tr>
+      <tr><th>Requested</th><th>User</th><th>Parish</th><th>Role requested</th><th>Note</th><th></th></tr>
     </thead>
     <tbody>
       {% for r in requests %}
       <tr>
         <td>{{ r.requested_at }}</td>
         <td>{{ r.display_name or r.email }}<br><span class="muted">{{ r.email }}</span></td>
-        <td>{{ r.org_code }}</td>
         <td>{{ r.parish_name }}</td>
         <td>{{ r.role_label }}<br><span class="muted">{{ r.role_description }}</span></td>
         <td>{{ r.note or "—" }}</td>
@@ -98,7 +88,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7">No pending requests.</td></tr>
+      <tr><td colspan="6">No pending requests.</td></tr>
       {% endfor %}
     </tbody>
   </table>

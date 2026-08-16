@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Vendors — Beacon{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Vendors</h1>
+<p class="back-link"><a href="/admin/setup">&larr; Back to Setup Tables</a></p>
+<p class="sub">
+  {{ current_org.code }} &mdash; vendor list, synced nightly from QBO. Read-only — this list isn't
+  editable here; use QuickBooks Online itself to add or change a vendor, or "Add a new vendor" on
+  the New Request form for a vendor QBO doesn't have yet.
+</p>
+
+{% if error %}
+<div class="banner banner-error">Couldn't load vendors from qbo-mcp-server: {{ error }}</div>
+{% endif %}
+
+{% if rows %}
+<div class="card">
+  <p style="margin:0 0 12px;">
+    <input type="text" id="vendorFilter" placeholder="Filter by name or email&hellip;"
+           style="max-width:320px;">
+    <span class="sub" id="vendorCount">{{ rows|length }} vendor{{ '' if rows|length == 1 else 's' }}</span>
+  </p>
+  <div class="table-scroll">
+    <table class="simple-table" id="vendorTable">
+      <thead>
+        <tr>
+          <th>Display Name</th>
+          <th>Company Name</th>
+          <th>Address</th>
+          <th>Email</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.display_name }}</td>
+          <td>{{ r.company_name or "—" }}</td>
+          <td>{{ r.address or "—" }}</td>
+          <td>{{ r.email or "—" }}</td>
+          <td>{% if r.is_active %}Active{% else %}<span class="sub">Inactive</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+{% if not error %}
+<div class="card"><p class="sub">No vendors on file for {{ current_org.code }} yet.</p></div>
+{% endif %}
+{% endif %}
+
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+(function () {
+  var input = document.getElementById('vendorFilter');
+  var table = document.getElementById('vendorTable');
+  var countEl = document.getElementById('vendorCount');
+  if (!input || !table) return;
+  var rows = Array.prototype.slice.call(table.querySelectorAll('tbody tr'));
+  input.addEventListener('input', function () {
+    var q = input.value.trim().toLowerCase();
+    var shown = 0;
+    rows.forEach(function (tr) {
+      var hit = !q || tr.textContent.toLowerCase().indexOf(q) !== -1;
+      tr.hidden = !hit;
+      if (hit) shown++;
+    });
+    if (countEl) countEl.textContent = shown + ' of ' + rows.length + ' vendors shown';
+  });
+})();
+</script>
+{% endblock %}

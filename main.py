@@ -5782,6 +5782,18 @@ admin_setup.register(
     render=_render,
 )
 
+# Cornerstone Served Parishes Plan.md Phase J (item 16) -- two view-only
+# reference screens (GL Accounts, Vendors), same register()-injection
+# pattern and same entity-scoped setup_admin gate as admin_setup.py above.
+import gl_vendors_reference
+
+gl_vendors_reference.register(
+    app,
+    current_user=_current_user,
+    current_org=_current_org,
+    render=_render,
+)
+
 # RBAC (2026-08-01, Role-Based Access Control Plan.md §9/§6). Same
 # register()-injection pattern as admin_setup.py -- each module owns one
 # concern (self-service access requests vs. the Users & Roles admin screen)
@@ -5798,7 +5810,7 @@ import parish_access
 import account
 
 access_requests.register(app, current_user=_current_user, render=_render)
-admin_users.register(app, current_user=_current_user, render=_render)
+admin_users.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 admin_hub.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 # Parish Portal S3 (Parish Portal Plan.md Section 2/5) -- same register()
 # pattern as the three lines above, thin wiring only.

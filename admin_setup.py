@@ -144,11 +144,11 @@ SETUP_TABS = [
      "count_sql": "SELECT COUNT(*) AS n FROM checkreq.organizations"},
     {"key": "gl_accounts", "title": "GL Accounts (reference)",
      "desc": "Chart of accounts, synced nightly from QBO. Read-only.",
-     "url": None, "built": False, "entity_scoped": True,
+     "url": "/admin/setup/gl-accounts", "built": True, "entity_scoped": True,
      "count_sql": "SELECT COUNT(*) AS n FROM checkreq.gl_accounts WHERE org_id = %s"},
     {"key": "vendors", "title": "Vendors (reference)",
      "desc": "Vendor list, synced nightly from QBO. Read-only.",
-     "url": None, "built": False, "entity_scoped": True,
+     "url": "/admin/setup/vendors", "built": True, "entity_scoped": True,
      "count_sql": "SELECT COUNT(*) AS n FROM checkreq.vendors WHERE org_id = %s"},
     # Added 2026-08-01, RBAC build (admin_users.py) -- live since
     # migrations/019_rbac.sql was applied and admin_users.py wired in.
@@ -831,16 +831,23 @@ def program_area_detail_page(program_area_id: int, request: Request):
         (program_area_id,),
     )
     already_submitter_ids = {s["user_id"] for s in submitters}
-    available_users = db.query(
-        "SELECT id, email, display_name FROM checkreq.app_users WHERE is_active ORDER BY email"
-    )
+    # Cornerstone Served Parishes Plan.md Phase C, item 13: "only offer
+    # people who already have access to the current entity" -- narrows
+    # both the "Add a Submitter" picker and the "Who Approves" known-emails
+    # datalist below to users who already hold a live role OR a
+    # user_program_areas assignment at THIS org. UI-only, per decision 7 --
+    # program_area_grant_submitter()/program_area_approval_rules_save() are
+    # both unchanged and still honor a user_id/email submitted from outside
+    # this list exactly as before (an approver at a brand-new entity still
+    # needs to be addable before they have any other footprint there).
+    available_users = rbac.users_with_org_access(org["id"])
 
     approval_rules = db.query(_APPROVAL_RULES_SQL, (program_area_id,))
     for a in approval_rules:
         a["approval_limit"] = _money(a["approval_limit"])
         a["must_approve_threshold"] = _money(a["must_approve_threshold"])
 
-    known_emails = db.query("SELECT email FROM checkreq.app_users WHERE is_active ORDER BY email")
+    known_emails = rbac.users_with_org_access(org["id"])
 
     return _render(request, "admin_setup_program_area_detail.html", user, {
         "pa": pa,

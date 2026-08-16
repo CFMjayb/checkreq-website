@@ -146,6 +146,44 @@ def get_granted_org_ids(user_id: int, role_key: str) -> list[int]:
     return [r["org_id"] for r in rows]
 
 
+def users_with_org_access(org_id: int) -> list[dict]:
+    """Every active user with ANY real reason to already be in this org --
+       a live checkreq.roles grant there, or a checkreq.user_program_areas
+       assignment to one of its program areas. Mirrors main.py's own
+       _user_has_org_access() check (2026-08-16, Cornerstone Served Parishes
+       Plan.md decision 5's follow-up) as a batch list rather than a
+       per-user boolean -- the shared building block for narrowing a "pick
+       a person" list down to people who already have a reason to be in
+       this entity (Plan Phase C, item 13: the Program Area detail page's
+       "Add a Submitter" picker and "Who Approves" known-emails datalist).
+
+       UI-only, per Phase C decision 7 -- "no server-side enforcement
+       required": this never gates a write. A value submitted outside this
+       list (an email typed by hand, a user_id posted directly) must still
+       be honored exactly as it always was; callers must not add a new
+       rejection based on this list's membership."""
+    return db.query(
+        """
+        SELECT DISTINCT u.id, u.email, u.display_name
+          FROM checkreq.app_users u
+         WHERE u.is_active
+           AND (
+             EXISTS (
+               SELECT 1 FROM checkreq.user_roles ur
+                WHERE ur.user_id = u.id AND ur.org_id = %s AND ur.revoked_at IS NULL
+             )
+             OR EXISTS (
+               SELECT 1 FROM checkreq.user_program_areas upa
+               JOIN checkreq.program_areas pa ON pa.id = upa.program_area_id
+                WHERE upa.user_id = u.id AND pa.org_id = %s
+             )
+           )
+         ORDER BY u.display_name, u.email
+        """,
+        (org_id, org_id),
+    )
+
+
 def all_roles(include_inactive: bool = False) -> list[dict]:
     """The role picker's option list."""
     sql = "SELECT key, label, description, sort_order, is_active FROM checkreq.roles"

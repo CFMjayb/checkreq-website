@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Staff Roster — {{ parish.name }}{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Staff Roster</h1>
+<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+<p class="sub">Staff whose time is reported for {{ parish.name }}. Name and job title only — this
+table never stores pay rates, salary, or any other compensation data.</p>
+
+{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
+{% if request.query_params.get('added') %}<div class="banner banner-success">Staff member added.</div>{% endif %}
+{% if request.query_params.get('updated') %}<div class="banner banner-success">Updated.</div>{% endif %}
+{% if request.query_params.get('toggled') %}<div class="banner banner-success">Updated.</div>{% endif %}
+
+{% if can_manage %}
+<div class="card">
+<details>
+  <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ Add Staff Member</summary>
+  <form method="post" action="/timekeeping/roster/create" style="margin-top:12px">
+    <div class="field"><label>First Name</label><input type="text" name="first_name" required></div>
+    <div class="field"><label>Last Name</label><input type="text" name="last_name" required></div>
+    <div class="field"><label>Position</label><input type="text" name="position" placeholder="e.g. Sexton"></div>
+    <div class="field"><label>Employee # (optional)</label><input type="text" name="employee_number"></div>
+    <button type="submit" class="btn btn-sm">Add</button>
+  </form>
+</details>
+</div>
+{% endif %}
+
+<div class="card">
+{# 2026-08-16, Jay: filters at the top of the roster so a parish
+   admin/HR person can find someone quickly once the list gets long --
+   same client-side search-bar pattern as the GL Accounts/Vendors
+   reference screens. #}
+<p style="margin:0 0 12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+  <input type="text" id="rosterFilter" placeholder="Filter by name, position, or employee #&hellip;"
+         style="max-width:320px;">
+  <select id="rosterStatusFilter">
+    <option value="">All statuses</option>
+    <option value="active">Active only</option>
+    <option value="inactive">Inactive only</option>
+  </select>
+  <span class="sub" id="rosterCount">{{ staff|length }} staff member{{ '' if staff|length == 1 else 's' }}</span>
+</p>
+<div class="table-scroll">
+<table class="simple-table" id="rosterTable">
+  <tr>
+    <th>Name</th><th>Position</th><th>Employee #</th><th>Status</th>
+    {% if can_manage %}<th></th>{% endif %}
+  </tr>
+  {% for s in staff %}
+  <tr data-status="{{ 'active' if s.is_active else 'inactive' }}">
+    <td>{{ s.first_name }} {{ s.last_name }}</td>
+    <td>{{ s.position or "—" }}</td>
+    <td>{{ s.employee_number or "—" }}</td>
+    <td>
+      {% if s.is_active %}<span class="badge badge-confirmed">Active</span>
+      {% else %}<span class="sub">Inactive</span>{% endif %}
+    </td>
+    {% if can_manage %}
+    <td>
+      <details>
+        <summary class="btn btn-secondary btn-sm" style="display:inline-block;cursor:pointer">Edit&hellip;</summary>
+        <form method="post" action="/timekeeping/roster/{{ s.id }}/update" style="margin-top:8px">
+          <div class="field"><label>First Name</label><input type="text" name="first_name" value="{{ s.first_name }}" required></div>
+          <div class="field"><label>Last Name</label><input type="text" name="last_name" value="{{ s.last_name }}" required></div>
+          <div class="field"><label>Position</label><input type="text" name="position" value="{{ s.position or '' }}"></div>
+          <div class="field"><label>Employee #</label><input type="text" name="employee_number" value="{{ s.employee_number or '' }}"></div>
+          <button type="submit" class="btn btn-sm">Save</button>
+        </form>
+      </details>
+      <form method="post" action="/timekeeping/roster/{{ s.id }}/toggle-active" style="display:inline;margin-left:6px">
+        <button type="submit" class="btn btn-secondary btn-sm">{{ 'Deactivate' if s.is_active else 'Reactivate' }}</button>
+      </form>
+    </td>
+    {% endif %}
+  </tr>
+  {% endfor %}
+  {% if not staff %}
+  <tr><td colspan="5" class="sub">No staff on the roster yet.</td></tr>
+  {% endif %}
+</table>
+</div>
+</div>
+
+{% if parish.linked_org_id %}
+<p class="back-link"><a href="/timekeeping">Go to Time Entry &rarr;</a></p>
+{% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+(function () {
+  var input = document.getElementById('rosterFilter');
+  var statusSel = document.getElementById('rosterStatusFilter');
+  var table = document.getElementById('rosterTable');
+  var countEl = document.getElementById('rosterCount');
+  if (!table) return;
+  var rows = Array.prototype.slice.call(table.querySelectorAll('tr[data-status]'));
+
+  function apply() {
+    var q = (input ? input.value : '').trim().toLowerCase();
+    var status = statusSel ? statusSel.value : '';
+    var shown = 0;
+    rows.forEach(function (tr) {
+      var textHit = !q || tr.textContent.toLowerCase().indexOf(q) !== -1;
+      var statusHit = !status || tr.dataset.status === status;
+      var hit = textHit && statusHit;
+      tr.hidden = !hit;
+      if (hit) shown++;
+    });
+    if (countEl) countEl.textContent = shown + ' of ' + rows.length + ' staff member' + (rows.length === 1 ? '' : 's') + ' shown';
+  }
+  if (input) input.addEventListener('input', apply);
+  if (statusSel) statusSel.addEventListener('change', apply);
+})();
+</script>
+{% endblock %}

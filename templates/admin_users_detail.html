@@ -54,23 +54,50 @@
 </div>
 
 {% if orgs|length > 1 %}
-<div class="setup-toolbar" style="margin-top:24px;">
-  <div class="field" style="min-width:220px;">
-    <label for="entityFilter">Show Roles &amp; Program Areas for</label>
-    <select id="entityFilter">
-      <option value="">All entities</option>
-      {% for o in orgs %}
-      <option value="{{ o.id }}">
-        {{ o.name }}{% if o.id in entities_with_access %} &mdash; has access{% endif %}
-      </option>
-      {% endfor %}
-    </select>
+<!-- Cornerstone Served Parishes Plan.md Phase F, items 17.2/18: "entity
+     first, then Program Areas/Approval Rules only if that entity is
+     cornerstone_served; a clear diocese-level vs. parish-level header."
+     Picking a specific entity here (a) filters the Roles/Program
+     Areas/Approval Rules row tables below (unchanged from before), (b)
+     shows a diocese-level/parish-level badge for that one entity, and (c)
+     swaps the Program Areas/Approval Rules cards' content for a plain
+     explanatory note when the chosen entity isn't Cornerstone-served --
+     those two panels don't apply anywhere that isn't. "All entities" (the
+     default) keeps the historical behavior: every panel shown, no
+     single-entity label, since a mixed set can't honestly be called
+     diocese- or parish-level. -->
+<div class="card" style="margin-top:24px;">
+  <h2>Choose an Entity</h2>
+  <p class="muted">
+    Roles are always held per entity. Program Areas and Approval Rules only apply within
+    Cornerstone-served entities (the ones with full AP: GL coding, budgets, check requests) --
+    pick a specific entity below to see which kind it is and to hide those two panels when they
+    don't apply.
+  </p>
+  <div class="setup-toolbar">
+    <div class="field" style="min-width:260px;">
+      <label for="entityFilter">Entity</label>
+      <select id="entityFilter">
+        <option value="">All entities (overview)</option>
+        {% for o in orgs %}
+        <option value="{{ o.id }}"
+                data-served="{{ '1' if o.cornerstone_served else '0' }}"
+                data-parish="{{ '1' if o.parish_info else '0' }}"
+                {% if o.parish_info %}data-diocese-code="{{ o.parish_info.diocese_org_code|upper }}" data-diocese-name="{{ o.parish_info.diocese_org_name }}"{% endif %}>
+          {{ o.name }}{% if o.id in entities_with_access %} &mdash; has access{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    {% if entities_with_access|length > 1 %}
+    <span class="badge badge-approved" title="This person has a role or program-area assignment in more than one entity.">
+      Multiple entities
+    </span>
+    {% endif %}
   </div>
-  {% if entities_with_access|length > 1 %}
-  <span class="badge badge-approved" title="This person has a role or program-area assignment in more than one entity.">
-    Multiple entities
-  </span>
-  {% endif %}
+  <div id="entityLevelHeader" class="entity-level-header" hidden>
+    <span class="badge" id="entityLevelBadge"></span>
+  </div>
 </div>
 {% endif %}
 
@@ -151,6 +178,11 @@
   </table>
 
   <h3>Grant a Parish Role</h3>
+  {% if not current_org %}
+  <p class="muted">Select an entity (top of page) to see its parishes here.</p>
+  {% elif not all_parishes %}
+  <p class="muted">No parishes set up yet for {{ current_org.code|upper if current_org.code else current_org.name }}.</p>
+  {% endif %}
   <form method="post" action="/admin/setup/users/{{ target.id }}/grant-parish-role">
     <label for="parish_role_key">Role</label>
     <select id="parish_role_key" name="role_key" required>
@@ -158,28 +190,22 @@
       <option value="{{ r.key }}">{{ r.label }}</option>
       {% endfor %}
     </select>
-    <label for="parish_id">Parish</label>
-    <select id="parish_id" name="parish_id" required>
+    <label for="parish_id">Parish{% if current_org %} ({{ current_org.code|upper if current_org.code else current_org.name }}){% endif %}</label>
+    <select id="parish_id" name="parish_id" required {% if not all_parishes %}disabled{% endif %}>
       <option value="">Choose...</option>
-      {% set ns2 = namespace(current_org='') %}
       {% for p in all_parishes %}
-        {% if p.org_code != ns2.current_org %}
-          {% if ns2.current_org %}</optgroup>{% endif %}
-          <optgroup label="{{ p.org_code|upper }}">
-          {% set ns2.current_org = p.org_code %}
-        {% endif %}
-        <option value="{{ p.id }}">{{ p.name }}{% if p.city %} ({{ p.city }}){% endif %}</option>
+      <option value="{{ p.id }}">{{ p.name }}{% if p.city %} ({{ p.city }}){% endif %}</option>
       {% endfor %}
-      {% if ns2.current_org %}</optgroup>{% endif %}
     </select>
     <button type="submit" class="btn btn-primary">Grant</button>
   </form>
 </div>
 
-<div class="card">
+<div class="card" id="programAreasCard">
   <h2>Program Areas</h2>
   <p class="muted">Which budgets this person's spending is drawn against — a finer grain than
     entity.</p>
+  <div id="programAreasContent">
   <table class="simple-table">
     <thead><tr><th>Entity</th><th>Program Area</th><th></th></tr></thead>
     <tbody>
@@ -224,6 +250,7 @@
     </select>
     <button type="submit" class="btn btn-primary">Grant</button>
   </form>
+  </div><!-- /#programAreasContent -->
 </div>
 
 <!-- 2026-08-02: Approval Rules -- a per-person entry point onto the SAME
@@ -234,11 +261,18 @@
      (backup_approver_id) named on someone ELSE's rule. Removing an
      "Approver" row deletes the whole rule -- this person IS the rule.
      Removing a "Backup" row only clears backup_approver_id on that rule;
-     the rule itself (someone else's real approver assignment) must survive. -->
-<div class="card">
+     the rule itself (someone else's real approver assignment) must survive.
+
+     Same Cornerstone Served Parishes Plan.md Phase F treatment as Program
+     Areas above -- 2026-08-16, Jay: the whole card hides outright for a
+     selected entity that isn't Cornerstone-served (not a content-swapped
+     note), since approval routing doesn't exist for an entity with no
+     Program Areas to route by. -->
+<div class="card" id="approvalRulesCard">
   <h2>Approval Rules</h2>
   <p class="muted">Which program areas this person approves (or backs up) — the same rule you can
     also manage from a Program Area's own page under Setup Tables.</p>
+  <div id="approvalRulesContent">
   <table class="simple-table">
     <thead>
       <tr><th>Entity</th><th>Program Area</th><th>Role</th><th>Limit / Threshold</th><th>Serial Group</th><th></th></tr>
@@ -330,6 +364,7 @@
     </div>
     <div class="field"><button type="submit" class="btn btn-primary">Add</button></div>
   </form>
+  </div><!-- /#approvalRulesContent -->
 </div>
 
 </div>
