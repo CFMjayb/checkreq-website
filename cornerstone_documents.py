@@ -110,27 +110,23 @@ def _beacon_docs_root(entity_folder: str) -> str:
     return f"{CHURCH_FILES_ROOT}/{entity_folder}/{BEACON_DOCS_SUBFOLDER}"
 
 
-def _listed(entries: list[dict], area: str) -> list[dict]:
-    return [dict(e, rel_path=f"{area}/{e['name']}") for e in entries]
-
-
 def list_from_parish(entity_folder: str) -> list[dict]:
     token, site_id = _site_and_token()
-    entries = sharepoint_client.list_folder(token, site_id, f"{_beacon_docs_root(entity_folder)}/{FROM_PARISH_SUBFOLDER}")
-    return _listed(entries, FROM_PARISH_SUBFOLDER)
+    base = _beacon_docs_root(entity_folder)
+    return sharepoint_client.list_tree(token, site_id, f"{base}/{FROM_PARISH_SUBFOLDER}", FROM_PARISH_SUBFOLDER)
 
 
 def list_to_parish_readonly(entity_folder: str) -> list[dict]:
     token, site_id = _site_and_token()
     area = f"{TO_PARISH_SUBFOLDER}/{TO_PARISH_READONLY}"
-    entries = sharepoint_client.list_folder(token, site_id, f"{_beacon_docs_root(entity_folder)}/{area}")
-    return _listed(entries, area)
+    base = _beacon_docs_root(entity_folder)
+    return sharepoint_client.list_tree(token, site_id, f"{base}/{area}", area)
 
 
 def list_to_parish_readwrite(entity_folder: str) -> list[dict]:
     token, site_id = _site_and_token()
-    entries = sharepoint_client.list_folder(token, site_id, f"{_beacon_docs_root(entity_folder)}/{_TO_PARISH_RW_AREA}")
-    return _listed(entries, _TO_PARISH_RW_AREA)
+    base = _beacon_docs_root(entity_folder)
+    return sharepoint_client.list_tree(token, site_id, f"{base}/{_TO_PARISH_RW_AREA}", _TO_PARISH_RW_AREA)
 
 
 def upload_from_parish(entity_folder: str, filename: str, data: bytes, content_type: str) -> None:
@@ -220,7 +216,7 @@ async def cornerstone_documents_delete(request: Request):
 
 
 @router.get("/cornerstone-documents/download/{rel_path:path}")
-def cornerstone_documents_download(rel_path: str, request: Request):
+def cornerstone_documents_download(rel_path: str, request: Request, download: int = 0):
     user, org, entity_folder, err = _cornerstone_context(request)
     if err:
         return err
@@ -232,5 +228,5 @@ def cornerstone_documents_download(rel_path: str, request: Request):
     except RuntimeError:
         return JSONResponse({"error": "Not found"}, status_code=404)
     filename = rel_path.rsplit("/", 1)[-1]
-    return Response(content=data, media_type="application/octet-stream",
-                     headers={"Content-Disposition": f'inline; filename="{filename}"'})
+    return Response(content=data, media_type=sharepoint_client.guess_media_type(filename),
+                     headers={"Content-Disposition": sharepoint_client.content_disposition(filename, bool(download))})

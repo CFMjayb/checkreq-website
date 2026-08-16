@@ -79,7 +79,6 @@ force=True regardless of the value passed.
 from __future__ import annotations
 
 import difflib
-import mimetypes
 import re
 
 from fastapi import APIRouter, Request, UploadFile, File, Form
@@ -106,27 +105,6 @@ TO_DIOCESE_SUBFOLDER = "For the Diocese"
 _SPECIAL_SUBFOLDERS = {READONLY_SUBFOLDER, EDITABLE_SUBFOLDER, TO_DIOCESE_SUBFOLDER}
 _FUZZY_THRESHOLD = 0.72
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB -- generous for scanned documents
-
-
-def _content_disposition(filename: str, force_download: bool) -> str:
-    """2026-08-16, Jay: View should open in a new browser tab/window,
-    Download should be its own separate, real download button -- both hit
-    the same route, distinguished only by this one query flag."""
-    kind = "attachment" if force_download else "inline"
-    return f'{kind}; filename="{filename}"'
-
-
-def _guess_media_type(filename: str) -> str:
-    """2026-08-16, Jay: PDFs (and other common types) should open in the
-    browser's own built-in viewer, not force a download -- every download
-    route in this file used to hardcode application/octet-stream
-    regardless of Content-Disposition: inline, which makes every browser
-    download the file no matter what. mimetypes covers PDF/images/text
-    correctly out of the box; falls back to octet-stream (still a
-    download, but never a wrong/misleading Content-Type) for anything it
-    doesn't recognize."""
-    guessed, _ = mimetypes.guess_type(filename)
-    return guessed or "application/octet-stream"
 
 
 def register(app, *, current_user, current_org, render) -> None:
@@ -287,32 +265,17 @@ def _parish_root(org: dict, folder_name: str) -> str:
 # 2026-08-16, Jay's own direct correction of the click-into-a-folder /
 # breadcrumb design built earlier the same day ("the way you implemented
 # the dropdown is not workable... load the entire tree for the folder and
-# then let the user open the tree and select files"): each area's list_*
-# function now eagerly walks the WHOLE subtree in one call (via
-# _list_tree(), a handful of recursive Graph calls -- a parish's document
-# tree is small, a few subfolders and at most a few dozen files, so this
-# costs nothing meaningful) and returns a nested {name, is_folder,
-# rel_path, size, children} structure the template renders as a real
-# expand/collapse tree, instead of one flat page per subfolder depth.
-
-def _list_tree(token: str, site_id: str, path: str, rel_prefix: str = "") -> list[dict]:
-    """Recursively lists everything under `path`, returning nested nodes.
-    `rel_prefix` is prepended to every node's own rel_path so the caller
-    can anchor the tree at a subfolder (e.g. "Read Only Files") while every
-    node's rel_path still resolves correctly from the parish's own root --
-    the same addressing every delete/download route already expects.
-    Folders sort before files, both alphabetically, so a scan reads
-    top-down the way a real file browser does."""
-    nodes = []
-    for e in sharepoint_client.list_folder(token, site_id, path):
-        rel_path = f"{rel_prefix}/{e['name']}" if rel_prefix else e["name"]
-        node = {"name": e["name"], "is_folder": e["is_folder"], "rel_path": rel_path, "size": e.get("size", 0)}
-        if e["is_folder"]:
-            node["children"] = _list_tree(token, site_id, f"{path}/{e['name']}", rel_path)
-        nodes.append(node)
-    nodes.sort(key=lambda n: (not n["is_folder"], n["name"].lower()))
-    return nodes
-
+# then let the user open the tree and select files", then "we will need to
+# be consistent on ALL types"): each area's list_* function now eagerly
+# walks the WHOLE subtree in one call (sharepoint_client.list_tree() -- a
+# handful of recursive Graph calls, a parish's document tree is small, so
+# this costs nothing meaningful) and returns a nested {name, is_folder,
+# rel_path, size, children} structure the shared _doc_tree_macro.html
+# template renders as a real expand/collapse tree. list_tree() itself
+# lives in sharepoint_client.py, not here, so every document-browsing area
+# in this app (this file's 4 areas + cornerstone_documents.py's 3) shares
+# ONE implementation -- what actually guarantees the consistency Jay asked
+# for, not just visually similar hand-duplicated copies.
 
 def list_readonly(org: dict, folder_name: str) -> list[dict]:
     """The full "From the Diocese" tree: any pre-existing loose file
@@ -331,9 +294,9 @@ def list_readonly(org: dict, folder_name: str) -> list[dict]:
             continue
         node = {"name": e["name"], "is_folder": e["is_folder"], "rel_path": e["name"], "size": e.get("size", 0)}
         if e["is_folder"]:
-            node["children"] = _list_tree(token, site_id, f"{base}/{e['name']}", e["name"])
+            node["children"] = sharepoint_client.list_tree(token, site_id, f"{base}/{e['name']}", e["name"])
         out.append(node)
-    out.extend(_list_tree(token, site_id, f"{base}/{READONLY_SUBFOLDER}", READONLY_SUBFOLDER))
+    out.extend(sharepoint_client.list_tree(token, site_id, f"{base}/{READONLY_SUBFOLDER}", READONLY_SUBFOLDER))
     out.sort(key=lambda n: (not n["is_folder"], n["name"].lower()))
     return out
 
@@ -341,13 +304,13 @@ def list_readonly(org: dict, folder_name: str) -> list[dict]:
 def list_editable(org: dict, folder_name: str) -> list[dict]:
     token, site_id = _site_and_token(org)
     base = _parish_root(org, folder_name)
-    return _list_tree(token, site_id, f"{base}/{EDITABLE_SUBFOLDER}", EDITABLE_SUBFOLDER)
+    return sharepoint_client.list_tree(token, site_id, f"{base}/{EDITABLE_SUBFOLDER}", EDITABLE_SUBFOLDER)
 
 
 def list_to_diocese(org: dict, folder_name: str) -> list[dict]:
     token, site_id = _site_and_token(org)
     base = _parish_root(org, folder_name)
-    return _list_tree(token, site_id, f"{base}/{TO_DIOCESE_SUBFOLDER}", TO_DIOCESE_SUBFOLDER)
+    return sharepoint_client.list_tree(token, site_id, f"{base}/{TO_DIOCESE_SUBFOLDER}", TO_DIOCESE_SUBFOLDER)
 
 
 def upload_readonly(org: dict, folder_name: str, filename: str, data: bytes, content_type: str) -> None:
@@ -391,7 +354,7 @@ def _library_root(org: dict) -> str:
 
 def list_library(org: dict) -> list[dict]:
     token, site_id = _site_and_token(org)
-    return sharepoint_client.list_folder(token, site_id, _library_root(org))
+    return sharepoint_client.list_tree(token, site_id, _library_root(org))
 
 
 def upload_library(org: dict, filename: str, data: bytes, content_type: str) -> None:
@@ -610,8 +573,8 @@ def parish_documents_download(rel_path: str, request: Request, download: int = 0
     except RuntimeError:
         return JSONResponse({"error": "Not found"}, status_code=404)
     filename = rel_path.rsplit("/", 1)[-1]
-    return Response(content=data, media_type=_guess_media_type(filename),
-                     headers={"Content-Disposition": _content_disposition(filename, bool(download))})
+    return Response(content=data, media_type=sharepoint_client.guess_media_type(filename),
+                     headers={"Content-Disposition": sharepoint_client.content_disposition(filename, bool(download))})
 
 
 @router.get("/resource-library", response_class=HTMLResponse)
@@ -658,8 +621,8 @@ def resource_library_download(filename: str, request: Request, download: int = 0
     except RuntimeError:
         return JSONResponse({"error": "Not found"}, status_code=404)
     display_name = filename.rsplit("/", 1)[-1]
-    return Response(content=data, media_type=_guess_media_type(display_name),
-                     headers={"Content-Disposition": _content_disposition(display_name, bool(download))})
+    return Response(content=data, media_type=sharepoint_client.guess_media_type(display_name),
+                     headers={"Content-Disposition": sharepoint_client.content_disposition(display_name, bool(download))})
 
 
 # ── Diocesan admin routes ─────────────────────────────────────────────────────
@@ -751,8 +714,8 @@ def admin_parish_documents_download(parish_id: int, rel_path: str, request: Requ
     except RuntimeError:
         return JSONResponse({"error": "Not found"}, status_code=404)
     filename = rel_path.rsplit("/", 1)[-1]
-    return Response(content=data, media_type=_guess_media_type(filename),
-                     headers={"Content-Disposition": _content_disposition(filename, bool(download))})
+    return Response(content=data, media_type=sharepoint_client.guess_media_type(filename),
+                     headers={"Content-Disposition": sharepoint_client.content_disposition(filename, bool(download))})
 
 
 @router.post("/admin/parish-documents/{parish_id}/resolve")
@@ -840,7 +803,12 @@ async def admin_resource_library_delete(request: Request):
         "AND is_active ORDER BY id LIMIT 1"
     )
     form = await request.form()
-    filename = (form.get("filename") or "").strip()
-    if org and filename:
-        delete_library(org, filename)
+    # 2026-08-16: field renamed filename -> rel_path so this form matches
+    # the shared doc_tree macro's own hidden-input name (every other
+    # delete route in this app already expects "rel_path") -- the
+    # underlying delete_library() call is unchanged, a library item's
+    # rel_path IS its path relative to the library root either way.
+    rel_path = (form.get("rel_path") or "").strip()
+    if org and rel_path:
+        delete_library(org, rel_path)
     return RedirectResponse("/admin/resource-library?deleted=1", status_code=303)

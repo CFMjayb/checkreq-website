@@ -83,26 +83,7 @@
   <summary><h2>From Parish</h2></summary>
   <p class="sub">This entity's own outbox to CFM.{% if not cornerstone_section.can_edit %} (View only.){% endif %}</p>
   {% if cornerstone_section.from_parish_files %}
-  <table class="doc-table">
-    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
-    <tbody>
-      {% for f in cornerstone_section.from_parish_files %}
-      <tr>
-        <td>{{ f.name }}</td>
-        <td>{{ (f.size / 1024)|round(1) }} KB</td>
-        <td>
-          <a href="/cornerstone-documents/download/{{ f.rel_path|urlencode }}">View</a>
-          {% if cornerstone_section.can_edit %}
-          <form method="post" action="/cornerstone-documents/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
-            <input type="hidden" name="rel_path" value="{{ f.rel_path }}">
-            <button type="submit" class="btn-link">Remove</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {{ doc_tree(cornerstone_section.from_parish_files, '/cornerstone-documents/download/', '/cornerstone-documents/delete' if cornerstone_section.can_edit else None) }}
   {% else %}
   <p class="doc-empty">Nothing here yet.</p>
   {% endif %}
@@ -119,18 +100,7 @@
   <summary><h2>To Parish — Read-Only</h2></summary>
   <p class="sub">CFM/diocese-managed content. View only.</p>
   {% if cornerstone_section.to_parish_readonly_files %}
-  <table class="doc-table">
-    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
-    <tbody>
-      {% for f in cornerstone_section.to_parish_readonly_files %}
-      <tr>
-        <td>{{ f.name }}</td>
-        <td>{{ (f.size / 1024)|round(1) }} KB</td>
-        <td><a href="/cornerstone-documents/download/{{ f.rel_path|urlencode }}">View</a></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {{ doc_tree(cornerstone_section.to_parish_readonly_files, '/cornerstone-documents/download/') }}
   {% else %}
   <p class="doc-empty">Nothing here yet.</p>
   {% endif %}
@@ -140,26 +110,7 @@
   <summary><h2>To Parish — Read-Write</h2></summary>
   <p class="sub">Content this entity can also edit/collaborate on.{% if not cornerstone_section.can_edit %} (View only.){% endif %}</p>
   {% if cornerstone_section.to_parish_readwrite_files %}
-  <table class="doc-table">
-    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
-    <tbody>
-      {% for f in cornerstone_section.to_parish_readwrite_files %}
-      <tr>
-        <td>{{ f.name }}</td>
-        <td>{{ (f.size / 1024)|round(1) }} KB</td>
-        <td>
-          <a href="/cornerstone-documents/download/{{ f.rel_path|urlencode }}">View</a>
-          {% if cornerstone_section.can_edit %}
-          <form method="post" action="/cornerstone-documents/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
-            <input type="hidden" name="rel_path" value="{{ f.rel_path }}">
-            <button type="submit" class="btn-link">Remove</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {{ doc_tree(cornerstone_section.to_parish_readwrite_files, '/cornerstone-documents/download/', '/cornerstone-documents/delete' if cornerstone_section.can_edit else None) }}
   {% else %}
   <p class="doc-empty">Nothing here yet.</p>
   {% endif %}

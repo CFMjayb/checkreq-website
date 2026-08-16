@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_doc_tree_macro.html" import doc_tree %}
 {% block title %}Resource Library — Admin{% endblock %}
 {% block content %}
 <div class="page-shell">
@@ -15,26 +16,7 @@
 <div class="card doc-area">
   <p class="sub">Folder: <code>{{ org.sp_resource_library_folder or 'Resource Library' }}</code> ({{ org.sp_parish_hostname }}{{ org.sp_parish_site_path }})</p>
   {% if files %}
-  <table class="doc-table">
-    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
-    <tbody>
-      {% for f in files %}
-      {% if not f.is_folder %}
-      <tr>
-        <td>{{ f.name }}</td>
-        <td>{{ (f.size / 1024)|round(1) }} KB</td>
-        <td>
-          <a href="/resource-library/download/{{ f.name|urlencode }}">View</a>
-          <form method="post" action="/admin/resource-library/delete" style="display:inline" onsubmit="return confirm('Remove this file?');">
-            <input type="hidden" name="filename" value="{{ f.name }}">
-            <button type="submit" class="btn-link">Remove</button>
-          </form>
-        </td>
-      </tr>
-      {% endif %}
-      {% endfor %}
-    </tbody>
-  </table>
+  {{ doc_tree(files, '/resource-library/download/', '/admin/resource-library/delete') }}
   {% else %}
   <p class="doc-empty">Nothing here yet.</p>
   {% endif %}

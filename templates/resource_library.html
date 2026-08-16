@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_doc_tree_macro.html" import doc_tree %}
 {% block title %}Resources for Parishes — Beacon{% endblock %}
 {% block content %}
 <div class="page-shell">
@@ -10,20 +11,7 @@
 
 <div class="card doc-area">
   {% if files %}
-  <table class="doc-table">
-    <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
-    <tbody>
-      {% for f in files %}
-      {% if not f.is_folder %}
-      <tr>
-        <td>{{ f.name }}</td>
-        <td>{{ (f.size / 1024)|round(1) }} KB</td>
-        <td><a href="/resource-library/download/{{ f.name|urlencode }}">View</a></td>
-      </tr>
-      {% endif %}
-      {% endfor %}
-    </tbody>
-  </table>
+  {{ doc_tree(files, '/resource-library/download/') }}
   {% else %}
   <p class="doc-empty">Nothing has been shared here yet.</p>
   {% endif %}

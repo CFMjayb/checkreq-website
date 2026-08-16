@@ -20,6 +20,7 @@ different purpose.
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import time
 
@@ -149,6 +150,56 @@ def list_folder(token: str, site_id: str, folder_path: str) -> list[dict]:
             "last_modified": it.get("lastModifiedDateTime"),
         })
     return out
+
+
+def list_tree(token: str, site_id: str, path: str, rel_prefix: str = "") -> list[dict]:
+    """Recursively lists everything under `path`, returning nested
+    {name, is_folder, rel_path, size, children} nodes (children only
+    present on folders). Shared by every document-browsing area in this
+    app (parish_documents.py's 3 DioNet areas + Resource Library,
+    cornerstone_documents.py's 3 Church Files areas) -- 2026-08-16, Jay:
+    "we will need to be consistent on ALL types," after correcting the
+    original one-level-at-a-time click/breadcrumb design. One shared
+    implementation here (rather than each feature module copying its own)
+    is what actually guarantees that consistency, not just visual
+    similarity between hand-duplicated copies.
+
+    `rel_prefix` is prepended to every node's own rel_path so the caller
+    can anchor the tree at a subfolder while every node's rel_path still
+    resolves correctly from whatever root its own delete/download route
+    expects. A parish/entity document tree is small (a handful of
+    subfolders, at most a few dozen files), so eagerly walking the whole
+    subtree costs a small, fixed number of extra Graph calls -- not a real
+    performance concern for a low-traffic internal tool. Folders sort
+    before files, both alphabetically, so a scan reads top-down the way a
+    real file browser does."""
+    nodes = []
+    for e in list_folder(token, site_id, path):
+        rel_path = f"{rel_prefix}/{e['name']}" if rel_prefix else e["name"]
+        node = {"name": e["name"], "is_folder": e["is_folder"], "rel_path": rel_path, "size": e.get("size", 0)}
+        if e["is_folder"]:
+            node["children"] = list_tree(token, site_id, f"{path}/{e['name']}", rel_path)
+        nodes.append(node)
+    nodes.sort(key=lambda n: (not n["is_folder"], n["name"].lower()))
+    return nodes
+
+
+def guess_media_type(filename: str) -> str:
+    """2026-08-16, Jay: PDFs (and other common types) should open in the
+    browser's own built-in viewer, not force a download regardless of
+    Content-Disposition: inline -- every download route in this app used
+    to hardcode application/octet-stream, which makes every browser
+    download rather than render even a plain PDF."""
+    guessed, _ = mimetypes.guess_type(filename)
+    return guessed or "application/octet-stream"
+
+
+def content_disposition(filename: str, force_download: bool) -> str:
+    """2026-08-16, Jay: View should open in a new browser tab/window,
+    Download should be its own separate, real download button -- both hit
+    the same route, distinguished only by this one flag."""
+    kind = "attachment" if force_download else "inline"
+    return f'{kind}; filename="{filename}"'
 
 
 def ensure_folder(token: str, site_id: str, parent_path: str, name: str) -> None:
