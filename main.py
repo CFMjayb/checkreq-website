@@ -379,14 +379,21 @@ def _current_user(request: Request) -> dict | None:
 def _current_org(request: Request) -> dict | None:
     """The session-selected entity, re-validated against the live
     organizations table on every call (not just trusted from session).
-    Includes the sp_* columns (permanent per-entity SharePoint archive
-    location) needed by the attachment-archival flow."""
+    Selects every column (not a fixed subset) since callers across this
+    app -- the attachment-archival flow (sp_hostname/sp_site_path/
+    sp_library_folder), parish_documents.py's DioNet AND Cornerstone areas
+    (sp_parish_hostname/sp_parish_site_path/sp_parish_library_folder/
+    sp_resource_library_folder), cornerstone_mode.py, etc. -- each need a
+    different, growing slice of this row. A narrower hand-picked column
+    list here silently KeyErrors the moment a caller reads a column that
+    list doesn't happen to include (real incident, 2026-08-16:
+    admin_parish_documents_page crashed on org["sp_parish_hostname"] since
+    this SELECT never listed it)."""
     org_id = request.session.get("current_org_id")
     if not org_id:
         return None
     return db.query_one(
-        "SELECT id, code, name, sp_hostname, sp_site_path, sp_library_folder "
-        "FROM checkreq.organizations WHERE id = %s AND is_active",
+        "SELECT * FROM checkreq.organizations WHERE id = %s AND is_active",
         (org_id,),
     )
 
