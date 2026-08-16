@@ -254,7 +254,7 @@ MODULES = [
     {"key": "my_requests", "title": "My Requests", "desc": "Track requests you've submitted.", "url": "/my-requests", "enabled": True, "gate": None},
     # Flipped enabled 2026-08-02 (Invoice Processing Intake Plan.md, Tier 3) --
     # was a disabled "Coming Soon" placeholder. Same generic `m.gate in
-    # any_org_roles` mechanism every other gated tile already uses -- the
+    # entity_roles` mechanism every other gated tile already uses -- the
     # invoice_intake_submitter role is granted via the existing Users &
     # Roles "grant a role" UI, same as pre_approved_submitter, no new admin
     # screen needed.
@@ -262,9 +262,9 @@ MODULES = [
     # Replaced 2026-08-02 (feedback batch, Item 1) -- was a disabled "Vendor
     # Requests" placeholder; this is now the single consolidated entry point
     # for every admin-ish screen, gated on a synthetic pseudo-role
-    # (_render() adds "administrative_tasks" to any_org_roles whenever the
+    # (_render() adds "administrative_tasks" to entity_roles whenever the
     # real role set intersects ADMIN_TASK_ROLE_KEYS) so this tile uses the
-    # exact same generic `m.gate in any_org_roles` check as every other tile
+    # exact same generic `m.gate in entity_roles` check as every other tile
     # -- no template special-casing needed.
     {"key": "administrative_tasks", "title": "Administrative Tasks", "desc": "Setup tables, user roles, vendor approvals, and system administration.", "url": "/admin", "enabled": True, "gate": "administrative_tasks"},
     # Flipped enabled 2026-07-26 (was a disabled "Coming Soon" placeholder) --
@@ -393,36 +393,47 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     impersonating, since the impersonation banner/nav-link must gate on the
     REAL identity, not whichever identity `user` currently resolves to.
 
-    RBAC (2026-08-01): also injects `roles` (the CURRENT/impersonated
-    identity's role keys, scoped to the current entity -- for any
-    future entity-scoped UI decision), `any_org_roles` (the same identity's
-    role keys across ALL entities, org_id=None), and `real_roles` (the REAL
-    identity's, also cross-entity -- matches base.html's impersonation link,
-    which must gate on the real user regardless of entity). base.html's nav
-    uses `any_org_roles`, not `roles`: every route guard converted so far
-    (cfo/setup_admin/ap_reviewer/vendor_approver/beacon_admin) is
-    deliberately cross-entity "for now" (Plan §5.1/§8 q2/q3), so a nav link
-    scoped to the current entity only would hide a link the route itself
-    would still allow through -- not a security hole, but a confusing UX
-    bug. Templates should prefer these over reading user.is_cfo directly."""
+    RBAC (2026-08-01, revised 2026-08-16): also injects `roles` (an alias of
+    `entity_roles`, kept for template back-compat), `entity_roles` (the
+    CURRENT/impersonated identity's role keys, scoped to the current
+    entity), and `real_roles` (the REAL identity's, cross-entity by design
+    -- matches base.html's Parish/Diocese Mode toggle, which must gate on
+    the real user's `cfo` grant regardless of entity, same as
+    parish_mode.py's own `_require_real_cfo`).
+
+    2026-08-16: `entity_roles` replaces the old `any_org_roles` (was
+    cross-entity, "holds this role ANYWHERE"). Jay's explicit direction:
+    every role check becomes strictly entity-scoped, no exceptions --
+    including nav-tile visibility, not just data access. This also closes a
+    real bug the old design had baked in: `org_id = org["id"] if org else
+    None` fed straight into a role-check function where `org_id=None` means
+    "check every org" -- so whenever no entity happened to be selected
+    (never set at login; cleared on impersonation start/stop), nav
+    visibility silently reverted to the exact cross-entity behavior this
+    fix exists to remove. Never let that happen again: no selected entity
+    means no roles, full stop -- explicitly, not by accident of a None
+    falling through."""
     real = _real_user(request)
     org = _current_org(request)
     org_id = org["id"] if org else None
-    any_org_roles = _roles(request, user, None)
+    entity_roles = set() if org_id is None else _roles(request, user, org_id)
     # 2026-08-02 feedback batch, Item 1: synthetic pseudo-role so the
     # Administrative Tasks tile uses the same generic `m.gate in
-    # any_org_roles` check every other portal tile already uses, instead of
+    # entity_roles` check every other portal tile already uses, instead of
     # a one-off template special-case.
-    if any_org_roles & ADMIN_TASK_ROLE_KEYS:
-        any_org_roles = any_org_roles | {"administrative_tasks"}
+    if entity_roles & ADMIN_TASK_ROLE_KEYS:
+        entity_roles = entity_roles | {"administrative_tasks"}
     # Parish Portal S3 (2026-08-08): same synthetic-pseudo-role trick as
     # administrative_tasks above, so the Parish Access Requests tile uses
-    # the identical generic `m.gate in any_org_roles` check -- a beacon_admin
-    # (already in any_org_roles) OR anyone holding parish_admin for at least
-    # one parish (a separate grant system, portal.parish_user_roles, so it
-    # can't already be in any_org_roles) both count as a reviewer.
-    if "beacon_admin" in any_org_roles or parish_roles.get_parish_ids_with_role(user["id"], "parish_admin"):
-        any_org_roles = any_org_roles | {"parish_reviewer"}
+    # the identical generic `m.gate in entity_roles` check -- a beacon_admin
+    # AT THE CURRENT ENTITY (2026-08-16: was "anywhere") OR anyone holding
+    # parish_admin for at least one parish (a separate grant system,
+    # portal.parish_user_roles, entirely independent of checkreq.roles/
+    # entity_roles -- deliberately NOT entity-scoped here, since a parish
+    # doesn't belong to "the current entity" the same way a checkreq role
+    # does) both count as a reviewer.
+    if "beacon_admin" in entity_roles or parish_roles.get_parish_ids_with_role(user["id"], "parish_admin"):
+        entity_roles = entity_roles | {"parish_reviewer"}
     _parish_view, _parish_view_is_preview = parish_mode.effective_parish_mode(request, user)
     ctx = {
         "user": user,
@@ -431,8 +442,8 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
                           and bool(real and rbac.user_has_role(real["id"], "cfo", org_id=None)),
         "current_org": org,
         "all_orgs": db.query("SELECT id, code, name FROM checkreq.organizations WHERE is_active ORDER BY name"),
-        "roles": _roles(request, user, org_id),
-        "any_org_roles": any_org_roles,
+        "roles": entity_roles,  # back-compat alias, same value as entity_roles
+        "entity_roles": entity_roles,
         "real_roles": _roles(request, real, None),
         # In-App Notifications (2026-08-02): live-as-of-this-page-load
         # unread count for the header bell -- no push/websocket, just
@@ -2583,15 +2594,39 @@ async def new_request_submit(request: Request):
     description = form.get("description", "")
     special_instructions = form.get("special_instructions", "")
 
-    gl_account_ids = form.getlist("gl_account_id")
-    gl_amounts = form.getlist("gl_amount")
-    gl_memos = form.getlist("gl_memo")
-    gl_lines = [
-        (int(a), float(amt), memo)
-        for a, amt, memo in zip(gl_account_ids, gl_amounts, gl_memos)
-        if a and amt
-    ]
-    total_amount = round(sum(amt for _, amt, _ in gl_lines), 2)
+    # Ask My Accountant (2026-08-16, per Jay's revision of the original
+    # "Ask My Accountant" thread-log design): the submitter still picks a
+    # Program Area, but may skip GL Coding entirely if they don't know it --
+    # AP assigns the actual GL line(s) later, via the AP Review screen's own
+    # "Needs GL Coding" section (see _assign_gl_coding below), same
+    # role/screen Jay specified, not a new one. No schema change needed:
+    # checkreq.payment_request_gl_lines has no "at least one row" DB
+    # constraint, and payment_requests.amount is its own required field
+    # independent of GL lines -- confirmed directly against the schema
+    # before building this.
+    ask_my_accountant = form.get("ask_my_accountant") == "1"
+    if ask_my_accountant:
+        gl_lines: list[tuple[int, float, str]] = []
+        raw_amount = (form.get("ask_my_accountant_amount") or "").strip()
+        try:
+            total_amount = round(float(raw_amount), 2)
+        except ValueError:
+            total_amount = 0.0
+        if total_amount <= 0:
+            return JSONResponse(
+                {"error": "Please enter the amount to be paid."},
+                status_code=400,
+            )
+    else:
+        gl_account_ids = form.getlist("gl_account_id")
+        gl_amounts = form.getlist("gl_amount")
+        gl_memos = form.getlist("gl_memo")
+        gl_lines = [
+            (int(a), float(amt), memo)
+            for a, amt, memo in zip(gl_account_ids, gl_amounts, gl_memos)
+            if a and amt
+        ]
+        total_amount = round(sum(amt for _, amt, _ in gl_lines), 2)
 
     # Approval Workflow Corrections (2026-07-31): three-tier budget check,
     # runs BEFORE any database write, for both the new-submission and edit
@@ -2662,7 +2697,16 @@ async def new_request_submit(request: Request):
     vendor_art = (not using_new_vendor) and art_preapproval.vendor_preapproval_status(
         vendor_id, org_id, total_amount
     )
-    if is_self_payment:
+    if ask_my_accountant:
+        # Top precedence, deliberate: matches the original design's intent
+        # (thread log, 2026-08-15) that GL-coding-skip defers ANY chain
+        # computation -- including self-payment/pre-approved/ART -- until
+        # AP has assigned real GL line(s). Budget enforcement is also
+        # necessarily skipped until then (nothing to check against yet);
+        # _assign_gl_coding() re-derives all of this once coding is done.
+        chain = []
+        chain_summary = "Ask My Accountant -- awaiting GL coding from AP before the approval chain starts."
+    elif is_self_payment:
         chain = _self_payment_cfo_chain(user["id"], org_id)
         chain_summary = (
             "Self-payment -- requires CFO approval (any one), regardless of amount "
@@ -2748,7 +2792,11 @@ async def new_request_submit(request: Request):
     # pre_approved specifically, not on "chain is empty" in general, so this
     # doesn't change behavior for the (separate, pre-existing) case of a
     # program area with no approval_rules configured at all.
-    initial_status = "Approved" if ((pre_approved or vendor_art) and not chain) else "UnderReview"
+    initial_status = (
+        "AwaitingCoding" if ask_my_accountant else
+        "Approved" if ((pre_approved or vendor_art) and not chain) else
+        "UnderReview"
+    )
 
     imp_id = request.session.get("impersonating_user_id")
     impersonated_by = _real_user(request)["id"] if imp_id else None
@@ -3963,10 +4011,10 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
             LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
             LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
             LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
-            WHERE pr.status = 'UnderReview'
+            WHERE pr.status = 'UnderReview' AND pr.org_id = %s
             ORDER BY pr.created_at
             """,
-            (user["id"],),
+            (user["id"], org["id"]),
         )
 
     # Full-chain visibility (Decision 3): reuse My Requests' exact
@@ -4297,7 +4345,51 @@ async def send_daily_digest(request: Request):
         else:
             errors.append({"approver": a["email"], "error": result.get("error")})
 
-    return JSONResponse({"approvers_notified": sent, "skipped_empty": skipped_empty, "errors": errors})
+    # Ask My Accountant (2026-08-16): a new section on this SAME daily
+    # digest, per Jay's explicit answer in the thread log ("can be part of
+    # the daily mail, not an individual email") -- notifies each submitter
+    # whose request(s) had GL coding assigned by AP in roughly the last day
+    # (matching this digest's own once-daily cadence) and moved into the
+    # real approval chain. Sourced from audit_log's own "GL Coding Assigned"
+    # entries -- no new tracking table needed.
+    coded = db.query(
+        """
+        SELECT pr.submitter_user_id, u.email AS submitter_email, u.display_name AS submitter_name,
+               pr.request_number, pr.amount, pr.approval_chain_summary
+        FROM checkreq.audit_log al
+        JOIN checkreq.payment_requests pr ON pr.id = al.payment_request_id
+        JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
+        WHERE al.action_type = 'GL Coding Assigned' AND al.action_date > NOW() - INTERVAL '1 day'
+        ORDER BY u.email, pr.request_number
+        """
+    )
+    coding_notified = 0
+    by_submitter: dict[int, list[dict]] = {}
+    for r in coded:
+        by_submitter.setdefault(r["submitter_user_id"], []).append(r)
+    for submitter_id, items in by_submitter.items():
+        lines = "\n".join(f"- {i['request_number']} (${i['amount']:.2f}): {i['approval_chain_summary']}" for i in items)
+        body_text = (
+            f"AP has finished assigning GL coding to the following request(s) you submitted with "
+            f"\"Ask My Accountant\" -- they're now in the approval chain:\n\n{lines}"
+        )
+        try:
+            result = email_client.send_email(
+                to=items[0]["submitter_email"],
+                subject="Beacon: GL coding assigned -- your request(s) are now in review",
+                body_text=body_text,
+            )
+            if result.get("status") == "sent":
+                coding_notified += 1
+            else:
+                errors.append({"submitter": items[0]["submitter_email"], "error": result.get("error")})
+        except Exception as exc:
+            errors.append({"submitter": items[0]["submitter_email"], "error": str(exc)})
+
+    return JSONResponse({
+        "approvers_notified": sent, "skipped_empty": skipped_empty,
+        "gl_coding_submitters_notified": coding_notified, "errors": errors,
+    })
 
 
 # ── Feedback (Task 10, UI/UX batch, 2026-07-26; rebuilt into a real
@@ -4498,10 +4590,18 @@ async def test_mode_save(request: Request):
 
 # ── New Vendor Onboarding: vendor-approval queue ─────────────────────────────
 # Gated on is_vendor_approver (Section 6, decision 1) -- a new, dedicated
-# role, deliberately NOT folded into is_cfo or GlobalApprovers. No per-org
-# scoping table exists for this flag (the plan found no evidence it needs
-# one), so a vendor-approver sees every org's pending requests, same
-# blanket-access shape as is_cfo's own bypass elsewhere in this app.
+# role, deliberately NOT folded into is_cfo or GlobalApprovers.
+#
+# 2026-08-16: the gate below stays a plain existence check ("holds
+# vendor_approver somewhere") so someone granted it at several entities
+# keeps a real, current one-screen workflow -- but vendor_requests_list's
+# own query now filters to rbac.get_granted_org_ids(), the actual set of
+# orgs THIS user holds vendor_approver at (previously: every org's pending
+# requests, unconditionally, "same blanket-access shape as is_cfo's own
+# bypass" -- a real leak once a narrowly-granted parish-org approver can
+# exist). Also added the optional `entity=` filter every sibling cross-org
+# admin screen (All Requests/AP Review/Access Requests) already has --
+# this was the one screen in that family that never got one.
 
 def _require_vendor_approver(request: Request):
     """Returns (user, None) if allowed, or (None, error_response) if not --
@@ -4509,22 +4609,28 @@ def _require_vendor_approver(request: Request):
     user = _current_user(request)
     if not user:
         return None, RedirectResponse("/login")
-    # RBAC (2026-08-01): cross-entity for now, matching today's behavior --
-    # see Role-Based Access Control Plan.md §8 q2 (same deferred question as
-    # _require_ap_reviewer above).
     if not rbac.user_has_role(user["id"], "vendor_approver", org_id=None):
         return None, JSONResponse({"error": "Vendor-approver access required"}, status_code=403)
     return user, None
 
 
 @app.get("/admin/vendor-requests", response_class=HTMLResponse)
-def vendor_requests_list(request: Request, email_warning: str = ""):
+def vendor_requests_list(request: Request, email_warning: str = "", entity: str = ""):
     user, err = _require_vendor_approver(request)
     if err:
         return err
 
+    granted_org_ids = rbac.get_granted_org_ids(user["id"], "vendor_approver")
+    all_orgs_list = db.query("SELECT code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
+
+    where_sql = "WHERE vr.org_id = ANY(%s)"
+    params: tuple = (granted_org_ids,)
+    if entity:
+        where_sql += " AND o.code = %s"
+        params = (granted_org_ids, entity)
+
     rows = db.query(
-        """
+        f"""
         SELECT vr.id, vr.entity_type, vr.first_name, vr.last_name, vr.company_name,
                vr.dba_name, vr.contact_name, vr.contact_email, vr.requires_w9,
                vr.w9_email_sent_at, vr.w9_received, vr.status, vr.rejected_reason,
@@ -4532,13 +4638,18 @@ def vendor_requests_list(request: Request, email_warning: str = ""):
         FROM checkreq.vendor_requests vr
         JOIN checkreq.organizations o ON o.id = vr.org_id
         JOIN checkreq.payment_requests pr ON pr.id = vr.payment_request_id
+        {where_sql}
         ORDER BY (vr.status = 'pending_approval') DESC, vr.created_at DESC
-        """
+        """,
+        params,
     )
     for r in rows:
         r["display_name"] = _vendor_request_display_name(r)
 
-    return _render(request, "vendor_requests.html", user, {"rows": rows, "email_warning": email_warning})
+    return _render(request, "vendor_requests.html", user, {
+        "rows": rows, "email_warning": email_warning,
+        "all_orgs_list": all_orgs_list, "filter_entity": entity,
+    })
 
 
 @app.post("/admin/vendor-requests/{vr_id}/approve")
@@ -4649,12 +4760,24 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
     correct fix per the STANDING rule (Item 5, not Item 6) is an entity
     FILTER, keeping the column -- not removing it, which would make rows
     from different entities indistinguishable on a screen that genuinely
-    spans all of them."""
+    spans all of them.
+
+    2026-08-16, tightened further (critical-review finding): the gate above
+    still deliberately stays a plain existence check ("holds ap_reviewer
+    somewhere") so someone granted it at several entities keeps their real,
+    current one-screen workflow -- but the two queries below now ALSO
+    filter to `rbac.get_granted_org_ids()`, the actual set of orgs THIS
+    user holds ap_reviewer at. Before this, ANY ap_reviewer anywhere saw
+    EVERY org's pending/completed requests unconditionally -- a real leak
+    once a narrowly-granted parish-org approver can exist. The optional
+    `entity=` filter above still works as a convenience layered on top of
+    that set, same as before."""
     user, err = _require_ap_reviewer(request)
     if err:
         return err
     tile_badges.mark_viewed(user["id"], "ap_review")
 
+    granted_org_ids = rbac.get_granted_org_ids(user["id"], "ap_reviewer")
     all_orgs_list = db.query("SELECT code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
 
     # Jay, 2026-07-29: "some sort of need in the AP review to also have a
@@ -4662,11 +4785,11 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
     # posted (status flips to 'Posted to QBO') with no way to look back at
     # it from here -- same gap as My Approvals' own history request.
     if view == "completed":
-        where_sql = "WHERE pr.status = 'Posted to QBO'"
-        params: tuple = ()
+        where_sql = "WHERE pr.status = 'Posted to QBO' AND pr.org_id = ANY(%s)"
+        params: tuple = (granted_org_ids,)
         if entity:
             where_sql += " AND o.code = %s"
-            params = (entity,)
+            params = (granted_org_ids, entity)
         completed_rows = db.query(
             f"""
             SELECT pr.request_number, pr.request_type, pr.amount, pr.qbo_bill_id,
@@ -4701,11 +4824,11 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
             "rows": completed_rows, "all_orgs_list": all_orgs_list, "filter_entity": entity,
         })
 
-    pending_where = "WHERE pr.status = 'Approved'"
-    pending_params: tuple = ()
+    pending_where = "WHERE pr.status = 'Approved' AND pr.org_id = ANY(%s)"
+    pending_params: tuple = (granted_org_ids,)
     if entity:
         pending_where += " AND o.code = %s"
-        pending_params = (entity,)
+        pending_params = (granted_org_ids, entity)
 
     rows = db.query(
         f"""
@@ -4761,11 +4884,181 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
         else:
             r["vendor_gate_wait"] = None
 
+    # Ask My Accountant (2026-08-16): requests waiting on AP to assign GL
+    # coding before the approval chain can even start -- same screen/role
+    # as the rest of AP Review, per Jay's explicit answer ("the same people
+    # who already do AP Review... add a filter, not a new role"), scoped to
+    # the same granted_org_ids as the pending queue above.
+    coding_where = "WHERE pr.status = 'AwaitingCoding' AND pr.org_id = ANY(%s)"
+    coding_params: tuple = (granted_org_ids,)
+    if entity:
+        coding_where += " AND o.code = %s"
+        coding_params = (granted_org_ids, entity)
+    coding_rows = db.query(
+        f"""
+        SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount,
+               pr.created_at, o.code AS org_code,
+               COALESCE(pa.title, 'All Program Areas') AS program_area_title,
+               u.display_name AS submitter_name, u.email AS submitter_email,
+               v.display_name AS vendor_display_name,
+               vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
+               vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
+               vr.dba_name AS vr_dba_name
+        FROM checkreq.payment_requests pr
+        JOIN checkreq.organizations o ON o.id = pr.org_id
+        LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+        JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
+        LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+        LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+        {coding_where}
+        ORDER BY pr.created_at
+        """,
+        coding_params,
+    )
+    for r in coding_rows:
+        if r.get("vendor_display_name"):
+            r["vendor_name"] = r["vendor_display_name"]
+        elif r.get("vr_entity_type"):
+            r["vendor_name"] = _vendor_request_row_display_name(
+                r["vr_entity_type"], r["vr_company_name"], r["vr_dba_name"],
+                r["vr_first_name"], r["vr_last_name"],
+            )
+        else:
+            r["vendor_name"] = "—"
+
     return _render(request, "ap_review.html", user, {
-        "rows": rows, "posted": posted, "returned": returned,
+        "rows": rows, "coding_rows": coding_rows, "posted": posted, "returned": returned,
         "post_error": post_error, "email_warning": email_warning,
         "all_orgs_list": all_orgs_list, "filter_entity": entity,
     })
+
+
+@app.get("/requests/{request_number}/gl-account-options")
+def gl_account_options_for_request(request_number: str, request: Request):
+    """Tom Select's async data source for the GL Coding picker on the
+    Needs-Coding row below -- reuses the exact same /api/gl-accounts data
+    the New Request form's own picker already calls, just resolved from the
+    request's own org instead of the session's current one (an AP reviewer
+    coding a request may not have that entity selected)."""
+    user, err = _require_ap_reviewer(request)
+    if err:
+        return err
+    pr = db.query_one(
+        "SELECT org_id FROM checkreq.payment_requests WHERE request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    return api_gl_accounts(pr["org_id"], request, q=request.query_params.get("q", ""))
+
+
+@app.post("/requests/{request_number}/assign-gl-coding")
+async def assign_gl_coding(request_number: str, request: Request):
+    """Ask My Accountant, Stage 2: AP assigns the real GL line(s) to a
+    request that skipped GL Coding at submission -- the moment the approval
+    chain actually starts (approval_engine.build_approval_chain(), reused
+    completely unchanged, per the original thread-log design). Deliberately
+    does NOT re-derive self-payment/pre-approved/ART special-casing --
+    those are submission-time bypasses for a normal request; an Ask My
+    Accountant submitter didn't opt into any of them, so the plain,
+    ordinary chain is what's expected here. Budget IS evaluated now (there
+    was nothing to check before real GL lines existed), same tier-3
+    CFO-group append the normal submission path already does."""
+    user, err = _require_ap_reviewer(request)
+    if err:
+        return err
+
+    pr = db.query_one(
+        "SELECT * FROM checkreq.payment_requests WHERE request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if pr["status"] != "AwaitingCoding":
+        return JSONResponse({"error": "This request is not awaiting GL coding."}, status_code=400)
+    if pr["org_id"] not in rbac.get_granted_org_ids(user["id"], "ap_reviewer"):
+        return JSONResponse({"error": "Not authorized for this entity."}, status_code=403)
+
+    form = await request.form()
+    gl_account_ids = form.getlist("gl_account_id")
+    gl_amounts = form.getlist("gl_amount")
+    gl_memos = form.getlist("gl_memo")
+    gl_lines = [
+        (int(a), float(amt), memo)
+        for a, amt, memo in zip(gl_account_ids, gl_amounts, gl_memos)
+        if a and amt
+    ]
+    if not gl_lines:
+        return JSONResponse({"error": "Add at least one GL line."}, status_code=400)
+    coded_total = round(sum(amt for _, amt, _ in gl_lines), 2)
+    if abs(coded_total - float(pr["amount"])) > 0.01:
+        return JSONResponse(
+            {"error": f"GL lines must total ${pr['amount']:.2f} (the request's original amount) -- got ${coded_total:.2f}."},
+            status_code=400,
+        )
+
+    org = db.query_one("SELECT id, code, name FROM checkreq.organizations WHERE id = %s", (pr["org_id"],))
+    budget_result = _evaluate_gl_line_budgets(org, pr["program_area_id"], gl_lines)
+    overspend_flagged = bool(budget_result["buffer_notice"] or budget_result["cfo_required"])
+    overspend_detail = "\n".join(
+        e["detail"] for e in budget_result["buffer_notice"] + budget_result["cfo_required"]
+    ) or None
+
+    chain = approval_engine.build_approval_chain(pr["program_area_id"], pr["org_id"], float(pr["amount"]))
+    chain_summary = approval_engine.describe_chain(chain)
+    if budget_result["cfo_required"]:
+        next_group = (max((c["serial_group"] for c in chain), default=0)) + 1
+        cfo_budget_group = [
+            {"serial_group": next_group, "approver_user_id": u2["id"], "approver_email": u2["email"],
+             "approver_name": u2["display_name"], "backup_approver_id": None, "any_one_suffices": True}
+            for u2 in _cfo_approver_rows(user["id"], pr["org_id"])
+        ]
+        chain = chain + cfo_budget_group
+        chain_summary += "\n" + (
+            f"Group {next_group}: CFO approval required -- over budget beyond the account's allowed buffer."
+            if cfo_budget_group else
+            "Over budget beyond buffer -- no CFO configured to approve. Needs setup."
+        )
+    first_step = chain[0] if chain else None
+    first_display_approver = _serial_group_display_approver(chain, first_step["serial_group"] if first_step else None)
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            for acct_id, amt, memo in gl_lines:
+                cur.execute(
+                    "INSERT INTO checkreq.payment_request_gl_lines "
+                    "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
+                    (pr["id"], acct_id, amt, memo),
+                )
+            for tier, entries in (("buffer_notice", budget_result["buffer_notice"]),
+                                   ("cfo_required", budget_result["cfo_required"])):
+                for e in entries:
+                    cur.execute(
+                        "INSERT INTO checkreq.budget_overage_log "
+                        "(payment_request_id, gl_account_id, tier, annual_budget, projected_spend, buffer_amount) "
+                        "VALUES (%s, %s, %s, %s, %s, %s)",
+                        (pr["id"], e["gl_account_id"], tier, e["annual_budget"], e["projected"], e["buffer_amount"]),
+                    )
+            cur.execute(
+                """
+                UPDATE checkreq.payment_requests SET
+                    status = 'UnderReview', current_approver_id = %s, serial_group_current = %s,
+                    approval_chain_summary = %s, overspend_flagged = %s, overspend_detail = %s,
+                    budget_checked_at = NOW(), updated_at = NOW()
+                WHERE id = %s
+                """,
+                (first_display_approver, first_step["serial_group"] if first_step else None,
+                 chain_summary, overspend_flagged, overspend_detail, pr["id"]),
+            )
+            _materialize_approval_actions(cur, pr["id"], chain)
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, previous_status, new_status) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (pr["id"], user["id"], "GL Coding Assigned", chain_summary, "AwaitingCoding", "UnderReview"),
+            )
+
+    return RedirectResponse("/admin/ap-review?coded=1", status_code=303)
 
 
 @app.post("/requests/{request_number}/post-to-qbo")
@@ -5291,16 +5584,20 @@ def request_view(request_number: str, request: Request):
         "SELECT 1 FROM checkreq.approval_actions WHERE payment_request_id = %s AND approver_user_id = %s",
         (pr["id"], user["id"]),
     )
-    # RBAC (2026-08-01): cfo scoped to this request's own org; ap_reviewer/
-    # vendor_approver stay cross-entity (org_id=None) to match #2/#3 above --
-    # see Role-Based Access Control Plan.md §5.2 #11.
+    # RBAC (2026-08-01, tightened 2026-08-16): all four role checks scoped
+    # to this request's own org. ap_reviewer/vendor_approver used to be
+    # cross-entity (org_id=None) here -- a real, previously-unnoticed leak
+    # that let any ap_reviewer/vendor_approver at ANY org read any OTHER
+    # entity's voucher and attachment list. Matches request_pdf's own
+    # (already-correct) scoping, and Jay's direction that every role check
+    # is entity-scoped, no exceptions.
     allowed = (
         rbac.user_has_role(user["id"], "cfo", pr["org_id"])
         or pr["submitter_user_id"] == user["id"]
         or _user_can_submit_for(user, pr["program_area_id"], pr["org_id"])
         or bool(is_approver)
-        or rbac.user_has_role(user["id"], "ap_reviewer", org_id=None)
-        or rbac.user_has_role(user["id"], "vendor_approver", org_id=None)
+        or rbac.user_has_role(user["id"], "ap_reviewer", pr["org_id"])
+        or rbac.user_has_role(user["id"], "vendor_approver", pr["org_id"])
     )
     if not allowed:
         return JSONResponse({"error": "Not authorized to view this request"}, status_code=403)
@@ -5351,7 +5648,7 @@ import account
 
 access_requests.register(app, current_user=_current_user, render=_render)
 admin_users.register(app, current_user=_current_user, render=_render)
-admin_hub.register(app, current_user=_current_user, render=_render)
+admin_hub.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 # Parish Portal S3 (Parish Portal Plan.md Section 2/5) -- same register()
 # pattern as the three lines above, thin wiring only.
 parish_access.register(app, current_user=_current_user, render=_render)

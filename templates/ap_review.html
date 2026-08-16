@@ -23,6 +23,41 @@ that writes to QuickBooks.</p>
 </div>
 {% endif %}
 
+{% if coding_rows %}
+{# Ask My Accountant (2026-08-16): requests where the submitter picked a
+   Program Area but skipped GL Coding -- same screen/role as the rest of
+   AP Review, per Jay's explicit answer. Assigning GL line(s) here is what
+   starts the approval chain (approval_engine.build_approval_chain(),
+   reused unchanged). #}
+<div class="card">
+  <h2 style="padding:16px 16px 0">Needs GL Coding</h2>
+  <p class="sub" style="padding:0 16px">These requests skipped GL Coding at submission -- assign the real GL
+  line(s) below to start the approval chain.</p>
+  {% for r in coding_rows %}
+  <form method="post" action="/requests/{{ r.request_number }}/assign-gl-coding" class="coding-row" style="padding:16px;border-top:1px solid var(--border,#e0dccf)">
+    <div class="coding-row-head">
+      <b>{{ r.request_number }}</b> &middot; {{ r.org_code }} &middot; {{ r.vendor_name }} &middot;
+      ${{ "%.2f"|format(r.amount) }} &middot; {{ r.program_area_title }} &middot;
+      Submitted by {{ r.submitter_name or r.submitter_email }}
+    </div>
+    <div id="codingLines-{{ r.pr_id }}" class="gl-lines-scroll">
+      <div class="gl-line">
+        <div class="field">
+          <select name="gl_account_id" class="codingGlAccount" data-request-number="{{ r.request_number }}" required>
+            <option value="">Account...</option>
+          </select>
+        </div>
+        <div class="field"><input type="number" step="0.01" name="gl_amount" placeholder="0.00" required></div>
+        <div class="field"><input type="text" name="gl_memo" placeholder="Optional memo"></div>
+      </div>
+    </div>
+    <button type="button" class="btn btn-secondary btn-sm" onclick="addCodingLine({{ r.pr_id }}, '{{ r.request_number }}')">+ Add GL line</button>
+    <button type="submit" class="btn btn-sm">Assign &amp; Start Approval</button>
+  </form>
+  {% endfor %}
+</div>
+{% endif %}
+
 <div class="view-toggle" role="tablist" aria-label="AP Review view">
   <a href="/admin/ap-review{{ '?entity=' + filter_entity if filter_entity else '' }}" class="view-toggle-tab active">Pending</a>
   <a href="/admin/ap-review?view=completed{{ '&entity=' + filter_entity if filter_entity else '' }}" class="view-toggle-tab">Completed</a>
@@ -105,5 +140,41 @@ function promptReturnReason(form) {
   form.querySelector('input[name="return_reason"]').value = reason;
   return true;
 }
+
+// Ask My Accountant (2026-08-16): populate each "Needs GL Coding" row's
+// account picker(s) once, from that request's own org (not the session's
+// current one -- an AP reviewer coding a request may not have that entity
+// selected). Plain <select>, not Tom Select, to keep this addition small.
+async function loadCodingGlOptions(requestNumber, selectEl) {
+  try {
+    const r = await fetch(`/requests/${requestNumber}/gl-account-options`);
+    const data = await r.json();
+    (Array.isArray(data) ? data : (data.accounts || [])).forEach(a => {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = `${a.account_number} - ${a.account_name}`;
+      selectEl.appendChild(opt);
+    });
+  } catch (e) {
+    console.error('Could not load GL account options', e);
+  }
+}
+
+function addCodingLine(prId, requestNumber) {
+  const container = document.getElementById(`codingLines-${prId}`);
+  const line = document.createElement('div');
+  line.className = 'gl-line';
+  line.innerHTML = `
+    <div class="field"><select name="gl_account_id" class="codingGlAccount" required><option value="">Account...</option></select></div>
+    <div class="field"><input type="number" step="0.01" name="gl_amount" placeholder="0.00" required></div>
+    <div class="field"><input type="text" name="gl_memo" placeholder="Optional memo"></div>
+  `;
+  container.appendChild(line);
+  loadCodingGlOptions(requestNumber, line.querySelector('.codingGlAccount'));
+}
+
+document.querySelectorAll('.codingGlAccount').forEach(sel => {
+  loadCodingGlOptions(sel.dataset.requestNumber, sel);
+});
 </script>
 {% endblock %}

@@ -17,6 +17,21 @@ chain) is in.</p>
 </div>
 {% endif %}
 
+{# 2026-08-16: this screen is cross-entity, same as AP Review/All Requests --
+   gets the same standing entity filter those screens already have (it was
+   the one screen in that family without one). #}
+<form method="get" action="/admin/vendor-requests" class="filter-bar">
+  <div class="field">
+    <label>Entity</label>
+    <select name="entity" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for o in all_orgs_list %}
+      <option value="{{ o.code }}" {% if filter_entity == o.code %}selected{% endif %}>{{ o.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</form>
+
 <div class="card">
 <div class="table-scroll">
   <table class="simple-table approvals-table">

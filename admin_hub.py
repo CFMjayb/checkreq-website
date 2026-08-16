@@ -23,6 +23,7 @@ import rbac
 router = APIRouter()
 
 _current_user = None
+_current_org = None
 _render = None
 
 # Kept in sync with main.py's ADMIN_TASK_ROLE_KEYS -- not imported directly
@@ -32,9 +33,9 @@ _render = None
 _ADMIN_TASK_ROLE_KEYS = ["cfo", "setup_admin", "beacon_admin", "vendor_approver"]
 
 
-def register(app, *, current_user, render) -> None:
-    global _current_user, _render
-    _current_user, _render = current_user, render
+def register(app, *, current_user, current_org, render) -> None:
+    global _current_user, _current_org, _render
+    _current_user, _current_org, _render = current_user, current_org, render
     app.include_router(router)
 
 
@@ -78,18 +79,41 @@ _CARDS = [
 
 @router.get("/admin", response_class=HTMLResponse)
 def admin_hub(request: Request):
+    """2026-08-16 correction: a card's visibility must match its OWN
+    underlying route's actual gate, not be blanket-converted to
+    entity-scoped -- a first pass here did that uniformly and it was wrong.
+    Most of these routes are legitimately, deliberately cross-entity
+    (existence check: "holds the role somewhere"), either because the
+    screen itself manages data across every entity by design (Organizations/
+    Global Approvers, Users & Roles), because it's a functionally necessary
+    bootstrap mechanism (Access Requests -- a brand-new org has zero
+    existing role holders, so SOMEONE needs cross-entity power to grant its
+    first-ever role, or onboarding a new org could never get off the
+    ground), because the underlying setting is genuinely app-wide and not
+    per-entity at all (Test Mode -- app_settings has no org dimension), or
+    simply because that route hasn't been converted (Vendor Approvals'
+    QUERY is now scoped to granted orgs, per ap_review_list's fix, but its
+    GATE deliberately stayed an existence check -- the card must match the
+    gate, not the query). Only Setup Tables is genuinely entity-scoped data
+    underneath (Program Areas/GL Mapping require picking one entity at a
+    time already) -- its gate (admin_setup.py's _require_setup_admin) was
+    converted to match, so its card is the one real exception here."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
     if not rbac.user_has_any_role(user["id"], _ADMIN_TASK_ROLE_KEYS, org_id=None):
         return RedirectResponse("/portal")
 
+    org = _current_org(request)
+    org_id = org["id"] if org else None
     is_impersonating = bool(request.session.get("impersonating_user_id"))
     real_uid = request.session.get("user_id")
     cards = []
     for c in _CARDS:
         if c["role"] == "real_cfo":
             visible = (not is_impersonating) and real_uid and rbac.user_has_role(real_uid, "cfo", org_id=None)
+        elif c["title"] == "Setup Tables":
+            visible = org_id is not None and rbac.user_has_role(user["id"], "setup_admin", org_id=org_id)
         elif isinstance(c["role"], list):
             visible = rbac.user_has_any_role(user["id"], c["role"], org_id=None)
         else:

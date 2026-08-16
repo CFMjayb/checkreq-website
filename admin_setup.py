@@ -82,6 +82,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import art_completeness
 import db
+import rbac
 
 router = APIRouter()
 
@@ -162,15 +163,35 @@ SETUP_TABS = [
 ]
 
 
-def _require_cfo(request: Request):
-    """(user, None) when allowed, (None, response) when not — same shape and
-    same gate as main.py's own _require_vendor_approver/_require_ap_reviewer,
-    and the same is_cfo check /admin/all-requests and /admin/feedback use."""
+def _require_setup_admin(request: Request):
+    """(user, None) when allowed, (None, response) when not — same shape as
+    main.py's own _require_vendor_approver/_require_ap_reviewer.
+
+    2026-08-16 fix: this used to check the legacy app_users.is_cfo boolean,
+    which nothing has written to since the 2026-08-01 RBAC migration --
+    rbac.grant_role()/revoke_role() only ever touch checkreq.user_roles.
+    That meant anyone granted cfo/setup_admin through the modern Users &
+    Roles screen was silently locked out of this entire Setup Tables module,
+    while anyone with a legacy is_cfo=TRUE row kept standing access forever
+    even after their role was later revoked through RBAC.
+
+    Also entity-scoped (was org_id=None): unlike most of this app's other
+    admin screens (Organizations/Global Approvers/Users & Roles/Access
+    Requests/Vendor Approvals, all deliberately or necessarily cross-entity
+    -- see admin_hub.py's own docstring), the DATA underneath Setup Tables
+    (Program Areas, GL Mapping) is genuinely per-entity already -- every
+    query in this file already filters by the current session org. The
+    entry gate now matches that, so a setup_admin at Org A can't reach
+    Org B's setup screens just by having the role somewhere. No selected
+    entity means no access, explicitly -- never let org_id=None fall
+    through to rbac.py's "check every org" meaning."""
     user = _current_user(request)
     if not user:
         return None, RedirectResponse("/login")
-    if not user.get("is_cfo"):
-        return None, JSONResponse({"error": "CFO access required"}, status_code=403)
+    org = _current_org(request)
+    org_id = org["id"] if org else None
+    if org_id is None or not rbac.user_has_role(user["id"], "setup_admin", org_id=org_id):
+        return None, JSONResponse({"error": "Setup Admin access required"}, status_code=403)
     return user, None
 
 
@@ -223,7 +244,7 @@ class _RowSavepoint:
 
 @router.get("/admin/setup", response_class=HTMLResponse)
 def setup_index(request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -285,7 +306,7 @@ def _gl_mapping_groups(org_id: int) -> list[dict]:
 
 @router.get("/admin/setup/gl-mapping", response_class=HTMLResponse)
 def gl_mapping_page(request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -310,7 +331,7 @@ def api_unmapped_gl_accounts(request: Request, program_area_id: int, q: str = ""
     accounts ALREADY mapped to that area are excluded, so the silent
     ON CONFLICT DO NOTHING "unchanged" no-op the workbook reports on a
     duplicate simply can't be reached from the UI."""
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -351,7 +372,7 @@ async def gl_mapping_save(request: Request):
     `POST /admin/setup/gl-mapping/{row_id}/delete` route this replaced is
     removed entirely, not just unused, so that old immediate-delete
     behavior can never be hit again by accident."""
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -414,7 +435,7 @@ async def gl_mapping_save(request: Request):
 
 @router.post("/admin/setup/gl-mapping/add")
 async def gl_mapping_add(request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -509,7 +530,7 @@ def _global_approver_rows() -> list[dict]:
 
 @router.get("/admin/setup/organizations", response_class=HTMLResponse)
 def organizations_page(request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
 
@@ -539,7 +560,7 @@ def organizations_page(request: Request):
 
 @router.post("/admin/setup/organizations/save-orgs")
 async def organizations_save_orgs(request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     body = await request.json()
@@ -599,7 +620,7 @@ async def organizations_save_approvers(request: Request):
     Save-Changes rule as gl_mapping_save -- a row's `_delete: true` deletes it
     here too, batched with everything else. Standalone
     POST /admin/setup/global-approvers/{row_id}/delete removed entirely."""
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     body = await request.json()
@@ -711,7 +732,7 @@ _APPROVAL_RULES_SQL = """
 
 @router.get("/admin/setup/program-areas", response_class=HTMLResponse)
 def program_areas_page(request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -724,7 +745,7 @@ def program_areas_page(request: Request):
 
 @router.post("/admin/setup/program-areas/add")
 async def program_area_add(request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -781,7 +802,7 @@ def _program_area_for_org(program_area_id: int, org_id: int) -> dict | None:
 
 @router.get("/admin/setup/program-areas/{program_area_id}", response_class=HTMLResponse)
 def program_area_detail_page(program_area_id: int, request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -833,7 +854,7 @@ def program_area_detail_page(program_area_id: int, request: Request):
 
 @router.post("/admin/setup/program-areas/{program_area_id}/update")
 async def program_area_update(program_area_id: int, request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -876,7 +897,7 @@ async def program_area_update(program_area_id: int, request: Request):
 
 @router.post("/admin/setup/program-areas/{program_area_id}/submitters/grant")
 async def program_area_grant_submitter(program_area_id: int, request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -910,7 +931,7 @@ async def program_area_grant_submitter(program_area_id: int, request: Request):
 
 @router.post("/admin/setup/program-areas/{program_area_id}/submitters/revoke")
 async def program_area_revoke_submitter(program_area_id: int, request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -941,7 +962,7 @@ async def program_area_revoke_submitter(program_area_id: int, request: Request):
 
 @router.post("/admin/setup/program-areas/{program_area_id}/approval-rules/save")
 async def program_area_approval_rules_save(program_area_id: int, request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -1174,7 +1195,7 @@ def _art_list_groups(org_id: int) -> list[dict]:
 
 @router.get("/admin/setup/art", response_class=HTMLResponse)
 def art_list_page(request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -1193,7 +1214,7 @@ def api_art_vendors(request: Request, q: str = ""):
     org_id) constraint would just bounce a duplicate back as an error
     otherwise -- excluding it up front is the same "can't even pick a
     duplicate" precedent as GL Mapping's own unmapped-gl-accounts feed)."""
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -1223,7 +1244,7 @@ def api_art_gl_accounts(request: Request, q: str = ""):
     (unlike GL Mapping's picker, an ART entry's gl_account_id has no
     uniqueness constraint to respect -- more than one ART entry can
     reasonably code to the same account)."""
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -1241,7 +1262,7 @@ def api_art_gl_accounts(request: Request, q: str = ""):
 
 @router.post("/admin/setup/art/add")
 async def art_add(request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -1292,7 +1313,7 @@ async def art_save(request: Request):
     other real ART field is edited on the detail page's own single-POST
     form, not this grid -- there are simply too many fields (~20) to
     reasonably show inline per row."""
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -1364,7 +1385,7 @@ def _art_for_org(art_id: int, org_id: int) -> dict | None:
 
 @router.get("/admin/setup/art/{art_id}", response_class=HTMLResponse)
 def art_detail_page(art_id: int, request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -1421,7 +1442,7 @@ def _parse_date(form, key):
 
 @router.post("/admin/setup/art/{art_id}/update")
 async def art_update(art_id: int, request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -1537,7 +1558,7 @@ async def art_delete(art_id: int, request: Request):
     dirty rule (that rule targets a dense multi-row grid's accidental-click
     risk; this is one confirmed action on one record's own detail page,
     the same shape as Cancel-a-Check-Request)."""
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -1558,7 +1579,7 @@ async def art_delete(art_id: int, request: Request):
 
 @router.post("/admin/setup/art/{art_id}/check-completeness")
 def art_check_one(art_id: int, request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -1570,7 +1591,7 @@ def art_check_one(art_id: int, request: Request):
 
 @router.post("/admin/setup/art/check-all")
 def art_check_all(request: Request):
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)
@@ -1587,7 +1608,7 @@ async def art_period_resolve(art_id: int, period_id: int, request: Request):
     design, this is the only way a period's status becomes
     'manually_resolved', and check_one()'s own upsert deliberately never
     overwrites that status on a later automated re-check."""
-    user, err = _require_cfo(request)
+    user, err = _require_setup_admin(request)
     if err:
         return err
     org = _current_org(request)

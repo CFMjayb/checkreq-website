@@ -121,6 +121,31 @@ def get_users_with_role(role_key: str, org_id: int | None = None) -> list[dict]:
     )
 
 
+def get_granted_org_ids(user_id: int, role_key: str) -> list[int]:
+    """Every org_id where this user holds a LIVE grant of role_key --
+    2026-08-16, the building block for "scope this list to only the orgs
+    I'm actually authorized at" (AP Review / Vendor Requests / their badge
+    counts). This is the fix for a real gap: those screens used to show
+    every org's rows unconditionally, gated only by "does this user hold
+    the role ANYWHERE" -- which was fine while only 4 large, CFM-trusted
+    orgs existed, but would leak a parish-org's own AP data to every other
+    entity the moment a small, narrowly-granted parish approver exists.
+    Scoping the QUERY to this list (rather than the single current-session
+    entity) preserves today's real workflow for someone granted the role at
+    several entities (they still see everything they're authorized for, in
+    one screen, no entity-switching) while a narrowly-granted holder only
+    ever sees their own org(s). Returns [] if the user holds no live grant
+    of this role anywhere -- callers should treat that as "show nothing",
+    not "show everything" (never pass an empty list through as if it meant
+    unscoped)."""
+    rows = db.query(
+        "SELECT org_id FROM checkreq.user_roles "
+        "WHERE user_id = %s AND role_key = %s AND revoked_at IS NULL",
+        (user_id, role_key),
+    )
+    return [r["org_id"] for r in rows]
+
+
 def all_roles(include_inactive: bool = False) -> list[dict]:
     """The role picker's option list."""
     sql = "SELECT key, label, description, sort_order, is_active FROM checkreq.roles"

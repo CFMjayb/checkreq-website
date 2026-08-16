@@ -72,12 +72,18 @@ def get_badges(user_id: int, org_id: int | None) -> dict[str, dict]:
     if b:
         badges["approval_queue"] = b
 
-    # AP Review -- only meaningful for an actual AP reviewer; cross-entity,
-    # same scope ap_review_list() itself uses (org_id=None everywhere).
+    # AP Review -- only meaningful for an actual AP reviewer (existence
+    # check, cross-entity -- matches ap_review_list()'s own gate). The COUNT
+    # itself is scoped to rbac.get_granted_org_ids() (2026-08-16, matching
+    # ap_review_list()'s own fix) -- used to have no org filter at all,
+    # which would have made this badge disagree with the screen the moment
+    # a narrowly-granted parish-org approver exists.
     if rbac.user_has_role(user_id, "ap_reviewer", org_id=None):
+        granted_org_ids = rbac.get_granted_org_ids(user_id, "ap_reviewer")
         row = db.query_one(
             "SELECT count(*) AS n, max(updated_at) AS newest "
-            "FROM checkreq.payment_requests WHERE status = 'Approved'"
+            "FROM checkreq.payment_requests WHERE status = 'Approved' AND org_id = ANY(%s)",
+            (granted_org_ids,),
         )
         b = _badge(row["n"], row["newest"], _last_viewed(user_id, "ap_review"))
         if b:

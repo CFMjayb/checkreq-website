@@ -336,21 +336,42 @@ function setField(name, value) {
 }
 
 function updateVoucherGlTable() {
-  const rows = [...document.querySelectorAll('#glLines .gl-line')];
+  const askMyAccountantEl = document.getElementById('askMyAccountantCheckbox');
+  const askMyAccountant = askMyAccountantEl && askMyAccountantEl.checked;
   const tbody = document.querySelector('#voucherPreview [data-field="gl_lines"]');
   let total = 0;
-  tbody.innerHTML = rows.map(row => {
-    const acctSel = row.querySelector('.glAccount');
-    const acctText = acctSel.selectedIndex > 0 ? acctSel.options[acctSel.selectedIndex].text : '—';
-    const amt = parseFloat(row.querySelector('.glAmount').value) || 0;
-    const memo = row.querySelector('.glMemo').value;
-    total += amt;
-    return `<tr><td>${escapeHtml(acctText)}</td><td>${fmtMoney(amt)}</td><td>${escapeHtml(memo)}</td></tr>`;
-  }).join('');
+  if (askMyAccountant) {
+    total = parseFloat(document.getElementById('askMyAccountantAmount').value) || 0;
+    tbody.innerHTML = `<tr><td colspan="3"><em>Ask My Accountant -- GL coding to be assigned by AP</em></td></tr>`;
+  } else {
+    const rows = [...document.querySelectorAll('#glLines .gl-line')];
+    tbody.innerHTML = rows.map(row => {
+      const acctSel = row.querySelector('.glAccount');
+      const acctText = acctSel.selectedIndex > 0 ? acctSel.options[acctSel.selectedIndex].text : '—';
+      const amt = parseFloat(row.querySelector('.glAmount').value) || 0;
+      const memo = row.querySelector('.glMemo').value;
+      total += amt;
+      return `<tr><td>${escapeHtml(acctText)}</td><td>${fmtMoney(amt)}</td><td>${escapeHtml(memo)}</td></tr>`;
+    }).join('');
+  }
   setField('total', fmtMoney(total));
   setField('amount', fmtMoney(total));
   setField('amount_words', amountInWords(total));
   return total;
+}
+
+// Ask My Accountant (2026-08-16): swaps GL Coding entry for a single Amount
+// field. Toggling `required` explicitly, not just `hidden` -- a required
+// field inside a hidden section still blocks native form submission.
+function toggleAskMyAccountant() {
+  const checked = document.getElementById('askMyAccountantCheckbox').checked;
+  document.getElementById('glCodingSection').hidden = checked;
+  document.getElementById('askMyAccountantAmountSection').hidden = !checked;
+  document.querySelectorAll('#glLines .glAccount, #glLines .glAmount').forEach(el => {
+    el.required = !checked;
+  });
+  document.getElementById('askMyAccountantAmount').required = checked;
+  refreshPreview();
 }
 
 function scheduleChainPreview(programAreaId, total) {

@@ -28,7 +28,7 @@
       <div id="uploadStatus" class="upload-status"></div>
     </div>
 
-    {% if 'pre_approved_submitter' in any_org_roles %}
+    {% if 'pre_approved_submitter' in entity_roles %}
     <div class="field-disclosure" id="preApprovedRow">
       <label>
         <input type="checkbox" name="pre_approved" id="preApprovedCheckbox" value="1"
@@ -119,7 +119,19 @@
       <textarea name="special_instructions" id="specialInstructionsInput" rows="2">{{ edit_data.special_instructions if edit_data else '' }}</textarea>
     </details>
 
-    <div class="gl-section">
+    {# Ask My Accountant (2026-08-16): skip GL Coding, not Program Area --
+       Jay's direct revision of the original thread-log design. Checking
+       this hides the GL line entry and shows a single Amount field
+       instead; AP assigns the real GL line(s) later from AP Review. #}
+    <div class="field-disclosure" id="askMyAccountantRow">
+      <label>
+        <input type="checkbox" name="ask_my_accountant" id="askMyAccountantCheckbox" value="1"
+               onchange="toggleAskMyAccountant()">
+        Ask My Accountant (I don't know the GL coding -- let AP assign it)
+      </label>
+    </div>
+
+    <div class="gl-section" id="glCodingSection">
       <label>GL Coding</label>
       <div id="glLines" class="gl-lines-scroll">
         <div class="gl-line">
@@ -131,6 +143,11 @@
         </div>
       </div>
       <button type="button" class="btn btn-secondary btn-sm" onclick="addGlLine()">+ Add GL line</button>
+    </div>
+
+    <div class="gl-section" id="askMyAccountantAmountSection" hidden>
+      <label for="askMyAccountantAmount">Amount</label>
+      <input type="number" step="0.01" id="askMyAccountantAmount" name="ask_my_accountant_amount" placeholder="0.00" oninput="refreshPreview()">
     </div>
 
     {% if edit_data %}

@@ -24,10 +24,12 @@
     {# RBAC (2026-08-01): was `m.gate == 'ap_reviewer' and user.is_ap_reviewer`
        -- MODULES' own gate field already holds the exact role_key string
        (main.py), so this is now a direct set membership test against
-       any_org_roles (cross-entity, matching /admin/ap-review's own guard).
+       entity_roles (2026-08-16: scoped to the current entity, was
+       cross-entity `any_org_roles` -- Jay's direction, every role check
+       including nav visibility is entity-scoped, no exceptions).
        Any future tile can gate on any role with no template change. #}
     {% for m in modules %}
-      {% if not m.gate or m.gate in any_org_roles %}
+      {% if not m.gate or m.gate in entity_roles %}
         {% if m.enabled and current_org %}
         <a class="module-tile" href="{{ m.url }}">
           {% if tile_badges.get(m.key) %}
