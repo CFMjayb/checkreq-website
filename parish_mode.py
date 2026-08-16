@@ -67,12 +67,13 @@ import parish_roles
 router = APIRouter()
 
 _current_user = None
+_current_org = None
 _render = None
 
 
-def register(app, *, current_user, render) -> None:
-    global _current_user, _render
-    _current_user, _render = current_user, render
+def register(app, *, current_user, current_org, render) -> None:
+    global _current_user, _current_org, _render
+    _current_user, _current_org, _render = current_user, current_org, render
     app.include_router(router)
 
 
@@ -185,11 +186,24 @@ def effective_parish_mode(request: Request, user: dict | None) -> tuple[dict | N
 
 @router.get("/admin/parish-mode", response_class=HTMLResponse)
 def parish_mode_picker(request: Request):
+    """2026-08-16 fix (Cornerstone Served Parishes Plan.md, decision 5):
+    was registry.list_all_parishes() -- the SAME unscoped, cross-diocese
+    function the parish access-request dropdown uses -- so this picker
+    showed every diocese's parishes in one flat list, with each row's own
+    diocese name needed just to tell them apart. Scoped to the currently
+    selected entity instead: a beacon_admin reaches a different diocese's
+    parishes by switching entities first (top-nav), same as every other
+    screen in this app already works. list_all_parishes() itself is
+    untouched -- still unscoped for its other, genuinely cross-diocese
+    caller."""
     real_id, err = _require_real_cfo(request)
     if err:
         return err
+    org = _current_org(request)
+    parishes = registry.list_parishes(org["id"]) if org else []
     return _render(request, "parish_mode.html", _current_user(request), {
-        "parishes": registry.list_all_parishes(),
+        "parishes": parishes,
+        "current_org": org,
     })
 
 
@@ -204,12 +218,20 @@ def parish_mode_stop(request: Request):
 
 @router.post("/admin/parish-mode/{parish_id}")
 def parish_mode_start(parish_id: int, request: Request):
+    """2026-08-16: the picker above only ever SHOWS parishes under the
+    current entity, but that's a display-layer filter, not authorization --
+    a crafted POST could previously start Parish Mode for ANY parish_id
+    regardless of diocese, since _require_real_cfo checks cfo cross-entity
+    (org_id=None). Now independently re-verified against this SPECIFIC
+    parish's own org, matching the same "tile/action must match" discipline
+    applied elsewhere this session (parish_access.py's _authorize_for_request,
+    admin_hub.py's card-vs-route fix)."""
     real_id, err = _require_real_cfo(request)
     if err:
         return err
 
-    target = db.query_one("SELECT id FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
-    if not target:
+    target = db.query_one("SELECT id, org_id FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
+    if not target or not rbac.user_has_role(real_id, "cfo", target["org_id"]):
         return RedirectResponse("/admin/parish-mode")
 
     _close_open_parish_mode(real_id)

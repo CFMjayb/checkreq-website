@@ -4,16 +4,15 @@
 <div class="page-shell">
 <h1>Parish Mode</h1>
 <p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
-<p class="sub">Pick a parish to see its own (currently minimal) portal view — same idea as Impersonate a User, scoped to a parish instead of a person.</p>
+<p class="sub">Pick a parish in {{ current_org.name if current_org else "the current entity" }} to see its own (currently minimal) portal view — same idea as Impersonate a User, scoped to a parish instead of a person. Switch entities (top nav) to reach a different diocese's parishes.</p>
 
 <div class="card">
   <table class="simple-table">
-    <thead><tr><th>Parish</th><th>Diocese</th><th>City</th><th></th></tr></thead>
+    <thead><tr><th>Parish</th><th>City</th><th></th></tr></thead>
     <tbody>
       {% for p in parishes %}
       <tr>
         <td>{{ p.name }}</td>
-        <td>{{ p.org_code }}</td>
         <td>{{ p.city or "—" }}</td>
         <td>
           <form method="post" action="/admin/parish-mode/{{ p.id }}" style="display:inline">
@@ -22,7 +21,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="4">No parishes yet.</td></tr>
+      <tr><td colspan="3">No parishes yet in this entity.</td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Manage Parishes — Beacon{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Manage Parishes</h1>
+<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+<p class="sub">Parishes in {{ current_org.name }}. Designating a parish "Cornerstone Served" gives it
+its own full Check Request / Approval / GL process, on its own QBO realm — separate from its
+Parish Portal presence, which is unaffected either way.</p>
+
+<div class="banner banner-info" style="font-size:0.9em">
+  Before enabling a parish here, its QBO realm must already be registered with qbo-mcp-server
+  (the <code>add_company.py</code> OAuth flow) — this screen only records the resulting code and
+  realm ID, it doesn't create the QBO connection itself. Also: qbo-mcp-server's own company-code
+  list is a separate, hand-maintained registry (a known gap, same one DSW/DME hit) — a newly
+  enabled parish's Setup Tables/budget-status calls will need that list updated by hand too before
+  they work.
+</div>
+
+{% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+{% if request.query_params.get('enabled') %}<div class="banner banner-success">Cornerstone Served enabled.</div>{% endif %}
+{% if request.query_params.get('disabled') %}<div class="banner banner-info">Cornerstone Served disabled (soft — history preserved).</div>{% endif %}
+
+<div class="card">
+<div class="table-scroll">
+  <table class="simple-table">
+    <tr>
+      <th>Parish</th><th>City</th><th>Cornerstone Served</th><th>Code</th><th>QBO Realm ID</th><th></th>
+    </tr>
+    {% for p in parishes %}
+    <tr>
+      <td>{{ p.name }}</td>
+      <td>{{ p.city or "—" }}</td>
+      <td>
+        {% if p.linked_org and p.linked_org.is_active %}
+          <span class="badge badge-confirmed">Served</span>
+        {% else %}
+          <span class="sub">Not served</span>
+        {% endif %}
+      </td>
+      <td>{{ p.linked_org.code if p.linked_org else "—" }}</td>
+      <td>{{ p.linked_org.qbo_realm_id if p.linked_org else "—" }}</td>
+      <td>
+        {% if p.linked_org and p.linked_org.is_active %}
+        <form method="post" action="/admin/manage-parishes/{{ p.id }}/disable-cornerstone" style="display:inline">
+          <button type="submit" class="btn btn-secondary btn-sm">Disable</button>
+        </form>
+        {% else %}
+        <details>
+          <summary class="btn btn-secondary btn-sm" style="display:inline-block;cursor:pointer">Enable&hellip;</summary>
+          <form method="post" action="/admin/manage-parishes/{{ p.id }}/enable-cornerstone" style="margin-top:8px">
+            <div class="field"><label>Code</label>
+              <input type="text" name="code" value="{{ p.linked_org.code if p.linked_org else '' }}" required placeholder="e.g. MEC"></div>
+            <div class="field"><label>QBO Realm ID</label>
+              <input type="text" name="qbo_realm_id" value="{{ p.linked_org.qbo_realm_id if p.linked_org else '' }}" required></div>
+            <button type="submit" class="btn btn-sm">Save</button>
+          </form>
+        </details>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">No parishes yet in this entity.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+</div>
+</div>
+{% endblock %}

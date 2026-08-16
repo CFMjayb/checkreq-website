@@ -74,7 +74,17 @@ _CARDS = [
      "url": "/admin/parish-documents", "role": ["setup_admin", "beacon_admin"]},
     {"title": "Resource Library", "desc": "Manage the diocese-wide shared resource library.",
      "url": "/admin/resource-library", "role": ["setup_admin", "beacon_admin"]},
+    # Cornerstone Served Parishes Phase A (2026-08-16) -- entity-scoped, same
+    # reasoning as Setup Tables (see _ENTITY_SCOPED_TITLES below): this
+    # screen only ever shows/acts on the current diocese's own parishes.
+    {"title": "Manage Parishes", "desc": "Designate a parish Cornerstone Served, or view its status.",
+     "url": "/admin/manage-parishes", "role": "setup_admin"},
 ]
+
+# Titles whose underlying route is genuinely entity-scoped (not cross-entity
+# by design/necessity like everything else in this hub) -- see admin_hub()'s
+# own docstring for why this distinction matters.
+_ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes"}
 
 
 @router.get("/admin", response_class=HTMLResponse)
@@ -112,7 +122,7 @@ def admin_hub(request: Request):
     for c in _CARDS:
         if c["role"] == "real_cfo":
             visible = (not is_impersonating) and real_uid and rbac.user_has_role(real_uid, "cfo", org_id=None)
-        elif c["title"] == "Setup Tables":
+        elif c["title"] in _ENTITY_SCOPED_TITLES:
             visible = org_id is not None and rbac.user_has_role(user["id"], "setup_admin", org_id=org_id)
         elif isinstance(c["role"], list):
             visible = rbac.user_has_any_role(user["id"], c["role"], org_id=None)

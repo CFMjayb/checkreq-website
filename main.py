@@ -106,6 +106,7 @@ import parish_info
 import tile_badges
 import announcements
 import parish_requests
+import parish_org_admin
 import approval_engine
 import auth_routes
 import gcs_client
@@ -441,7 +442,17 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
         "impersonating": bool(request.session.get("impersonating_user_id"))
                           and bool(real and rbac.user_has_role(real["id"], "cfo", org_id=None)),
         "current_org": org,
-        "all_orgs": db.query("SELECT id, code, name FROM checkreq.organizations WHERE is_active ORDER BY name"),
+        # 2026-08-16 fix: used to list every active org regardless of the
+        # signed-in user's actual access (confirmed live: Caroline Bomgardner
+        # saw all 4 entities though she should only reach EDOM). Filtered to
+        # orgs _user_has_org_access() actually grants -- checkreq.roles OR
+        # checkreq.user_program_areas, no exceptions, matching the same
+        # explicit-grant-required rule select_entity now enforces. A handful
+        # of extra small queries per render is fine at this org count (a
+        # handful of entities, not hundreds).
+        "all_orgs": [o for o in db.query(
+            "SELECT id, code, name FROM checkreq.organizations WHERE is_active ORDER BY name"
+        ) if _user_has_org_access(user["id"], o["id"])],
         "roles": entity_roles,  # back-compat alias, same value as entity_roles
         "entity_roles": entity_roles,
         "real_roles": _roles(request, real, None),
@@ -516,6 +527,29 @@ def portal(request: Request):
     return _render(request, "portal.html", user, {"modules": MODULES})
 
 
+def _user_has_org_access(user_id: int, org_id: int) -> bool:
+    """Does this user have ANY real reason to be in this org's session
+    context -- a live checkreq.roles grant there, or a checkreq.
+    user_program_areas assignment to one of its program areas. No
+    exceptions for beacon_admin or any other role -- per Jay's explicit
+    2026-08-16 direction (Cornerstone Served Parishes Plan.md, decision 5's
+    follow-up question), an org is an org: access always requires an
+    explicit grant AT that org, never inherited from a role held
+    elsewhere. 2026-08-16 fix: `/select-entity/{org_id}` used to have NO
+    check at all beyond "does this org exist" -- any signed-in user could
+    URL-switch into any org regardless of the entity-switcher dropdown
+    being filtered (see the all_orgs fix in `_render()`'s context)."""
+    if rbac.get_role_keys(user_id, org_id):
+        return True
+    row = db.query_one(
+        "SELECT 1 FROM checkreq.user_program_areas upa "
+        "JOIN checkreq.program_areas pa ON pa.id = upa.program_area_id "
+        "WHERE upa.user_id = %s AND pa.org_id = %s LIMIT 1",
+        (user_id, org_id),
+    )
+    return row is not None
+
+
 @app.get("/select-entity/{org_id}")
 def select_entity(org_id: int, request: Request, next: str = "/portal"):
     user = _current_user(request)
@@ -525,7 +559,7 @@ def select_entity(org_id: int, request: Request, next: str = "/portal"):
     org = db.query_one(
         "SELECT id FROM checkreq.organizations WHERE id = %s AND is_active", (org_id,)
     )
-    if not org:
+    if not org or not _user_has_org_access(user["id"], org_id):
         return RedirectResponse("/portal")
 
     request.session["current_org_id"] = org_id
@@ -5656,7 +5690,10 @@ parish_access.register(app, current_user=_current_user, render=_render)
 account.register(app, current_user=_current_user, render=_render)
 # Parish Portal S4, "Diocese Mode / Parish Mode" (2026-08-08) -- same
 # register() pattern, thin wiring only.
-parish_mode.register(app, current_user=_current_user, render=_render)
+parish_mode.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+# Cornerstone Served Parishes Phase A (Cornerstone Served Parishes Plan.md) --
+# same register() pattern as everything else, thin wiring only.
+parish_org_admin.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 # Parish Portal S4+S5 (2026-08-08): announcements, document archive/library,
 # and parish feedback/general-requests -- three more new modules, same thin
 # register() wiring, no logic added here.

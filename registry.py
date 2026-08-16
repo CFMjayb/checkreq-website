@@ -124,6 +124,10 @@ def update_parish(parish_id: int, org_id: int, **fields) -> dict | None:
         # The CHURCH's own Databank contact record -- distinct from
         # databank_churchwebacct (migration 034; Jay is supplying these).
         "databank_contact_id",
+        # Cornerstone Served Parishes (migration 036, 2026-08-16): the
+        # parish's own linked checkreq.organizations row, once one exists --
+        # see parish_org_admin.py, the only real caller.
+        "linked_org_id",
     }
     sets = [f"{k} = %s" for k in fields if k in allowed]
     if not sets:
