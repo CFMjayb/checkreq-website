@@ -658,6 +658,22 @@ table.status-history-table th:nth-child(4), table.status-history-table td:nth-ch
 
 .doc-area { margin-bottom: var(--space-5); }
 .doc-area h2 { font-size: 1.05rem; margin-bottom: var(--space-2); }
+/* Collapsible Documents-page sections (2026-08-16, Jay: "allow for
+   collapsing the sections so you don't have to scroll so much") -- same
+   proven <details>/<summary> pattern as admin_setup.css's .setup-section,
+   reused rather than reinvented. Each .doc-area is now a <details>, its
+   <h2> moved inside a <summary>. Includes the same author-rule-beats-UA-
+   rule fix that pattern's own comment already documents: the browser's UA
+   stylesheet hides a closed <details>'s children for free, but ANY author
+   rule setting `display` on a child (e.g. .doc-upload-row{display:flex})
+   overrides that regardless of specificity -- re-asserting display:none as
+   an author rule of our own is what actually makes collapse work. */
+.doc-area > summary { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; list-style: none; padding: var(--space-1) 0; }
+.doc-area > summary::-webkit-details-marker { display: none; }
+.doc-area > summary::before { content: '\25be'; display: inline-block; transition: transform 0.15s ease; }
+.doc-area:not([open]) > summary::before { transform: rotate(-90deg); }
+.doc-area > summary h2 { margin: 0; }
+.doc-area:not([open]) > *:not(summary) { display: none !important; }
 table.doc-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 table.doc-table th { text-align: left; text-transform: uppercase; letter-spacing: 0.03em; font-size: 0.72rem; color: var(--color-text-muted); border-bottom: 2px solid var(--color-border); padding: var(--space-2) var(--space-3); }
 table.doc-table td { border-bottom: 1px solid var(--color-border); padding: var(--space-2) var(--space-3); vertical-align: middle; }

@@ -15,8 +15,8 @@
 <div class="card"><p class="sub">No SharePoint folder has been matched for this parish yet. Contact the diocesan office to have it set up.</p></div>
 {% else %}
 
-<div class="card doc-area">
-  <h2>From the Diocese</h2>
+<details class="card doc-area">
+  <summary><h2>From the Diocese</h2></summary>
   <p class="sub">Documents the diocese has shared with your parish. Read-only.</p>
   {% if readonly_files %}
   <table class="doc-table">
@@ -34,10 +34,10 @@
   {% else %}
   <p class="doc-empty">Nothing here yet.</p>
   {% endif %}
-</div>
+</details>
 
-<div class="card doc-area">
-  <h2>Our Parish Files</h2>
+<details class="card doc-area">
+  <summary><h2>Our Parish Files</h2></summary>
   <p class="sub">Your parish's own files.{% if not can_edit %} (View only — ask your Parish Admin for upload access.){% endif %}</p>
   {% if editable_files %}
   <table class="doc-table">
@@ -70,10 +70,10 @@
     <button type="submit" class="btn btn-secondary">Upload</button>
   </form>
   {% endif %}
-</div>
+</details>
 
-<div class="card doc-area">
-  <h2>For the Diocese</h2>
+<details class="card doc-area">
+  <summary><h2>For the Diocese</h2></summary>
   <p class="sub">Send a document to the diocesan office.{% if not can_edit %} (View only — ask your Parish Admin for upload access.){% endif %}</p>
   {% if to_diocese_files %}
   <table class="doc-table">
@@ -106,7 +106,7 @@
     <button type="submit" class="btn btn-secondary">Send to Diocese</button>
   </form>
   {% endif %}
-</div>
+</details>
 
 {% endif %}
 
@@ -123,8 +123,8 @@
 {% else %}
 {% if cornerstone_section.list_error %}<div class="banner banner-error">Couldn't load Cornerstone documents right now: {{ cornerstone_section.list_error }}</div>{% endif %}
 
-<div class="card doc-area">
-  <h2>From Parish</h2>
+<details class="card doc-area">
+  <summary><h2>From Parish</h2></summary>
   <p class="sub">This entity's own outbox to CFM.{% if not cornerstone_section.can_edit %} (View only.){% endif %}</p>
   {% if cornerstone_section.from_parish_files %}
   <table class="doc-table">
@@ -157,10 +157,10 @@
     <button type="submit" class="btn btn-secondary">Upload</button>
   </form>
   {% endif %}
-</div>
+</details>
 
-<div class="card doc-area">
-  <h2>To Parish — Read Only</h2>
+<details class="card doc-area">
+  <summary><h2>To Parish — Read-Only</h2></summary>
   <p class="sub">CFM/diocese-managed content. View only.</p>
   {% if cornerstone_section.to_parish_readonly_files %}
   <table class="doc-table">
@@ -178,10 +178,10 @@
   {% else %}
   <p class="doc-empty">Nothing here yet.</p>
   {% endif %}
-</div>
+</details>
 
-<div class="card doc-area">
-  <h2>To Parish — Read Write</h2>
+<details class="card doc-area">
+  <summary><h2>To Parish — Read-Write</h2></summary>
   <p class="sub">Content this entity can also edit/collaborate on.{% if not cornerstone_section.can_edit %} (View only.){% endif %}</p>
   {% if cornerstone_section.to_parish_readwrite_files %}
   <table class="doc-table">
@@ -214,7 +214,7 @@
     <button type="submit" class="btn btn-secondary">Upload</button>
   </form>
   {% endif %}
-</div>
+</details>
 {% endif %}
 {% endif %}
 

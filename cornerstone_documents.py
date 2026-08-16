@@ -34,9 +34,9 @@ this entity's own back office -- same reasoning parish_documents.py's own
 _can_edit_parish_docs() extension used for a cornerstone_employee grant):
   - From Parish: full manage (this entity's own outbox to send things TO
     CFM/the diocese).
-  - To Parish / Read Only: view + download only, no upload/delete -- CFM-
+  - To Parish / Read-Only: view + download only, no upload/delete -- CFM-
     diocese-managed content the entity can only see.
-  - To Parish / Read Write: full manage -- content the entity can also
+  - To Parish / Read-Write: full manage -- content the entity can also
     edit/collaborate on.
 Gated the same way parish_documents.py's own edit check is: beacon_admin,
 or a live cornerstone_employee grant at this specific served org.
@@ -60,8 +60,15 @@ CHURCH_FILES_ROOT = "Church Files"
 BEACON_DOCS_SUBFOLDER = "Beacon Documents"
 FROM_PARISH_SUBFOLDER = "From Parish"
 TO_PARISH_SUBFOLDER = "To Parish"
-TO_PARISH_READONLY = "Read Only"
-TO_PARISH_READWRITE = "Read Write"
+# 2026-08-16, Jay: live inspection of the real AHP folder (the one entity
+# that already had this structure set up) found the actual convention is
+# HYPHENATED -- "Read-Only"/"Read-Write" -- not "Read Only"/"Read Write" as
+# first assumed. Fixed to match the real existing folder, not the other way
+# around (Jay's own call: "you can change folder names if needed" refers to
+# fixing any OTHER inconsistent folder, e.g. a stray unhyphenated one this
+# module itself lazily created before this fix -- not renaming AHP's).
+TO_PARISH_READONLY = "Read-Only"
+TO_PARISH_READWRITE = "Read-Write"
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # matches parish_documents.py's own limit
 
 _TO_PARISH_RW_AREA = f"{TO_PARISH_SUBFOLDER}/{TO_PARISH_READWRITE}"
@@ -201,8 +208,8 @@ async def cornerstone_documents_delete(request: Request):
         return JSONResponse({"error": "You don't have permission to remove files here."}, status_code=403)
     form = await request.form()
     rel_path = (form.get("rel_path") or "").strip()
-    # Only From Parish / To Parish/Read Write are ever deletable -- never
-    # Read Only, even if a request were crafted by hand to try (mirrors
+    # Only From Parish / To Parish/Read-Write are ever deletable -- never
+    # Read-Only, even if a request were crafted by hand to try (mirrors
     # parish_documents.py's own delete-restriction pattern exactly).
     if not (rel_path.startswith(f"{FROM_PARISH_SUBFOLDER}/") or rel_path.startswith(f"{_TO_PARISH_RW_AREA}/")):
         return JSONResponse({"error": "You can't remove that file."}, status_code=403)
