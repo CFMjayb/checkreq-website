@@ -11,7 +11,16 @@
 <div class="split-pane split-form">
   <div class="form-header-row">
     <h1>{% if edit_data and edit_data.request_type == 'invoice_payment' %}Invoice Intake — Code &amp; Submit — {{ edit_data.editing_request_number }}{% elif edit_data %}Edit Check Request — {{ edit_data.editing_request_number }}{% else %}New Check Request{% endif %}</h1>
-    <button type="submit" form="reqForm" class="btn btn-primary btn-sm">{% if edit_data and edit_data.request_type == 'invoice_payment' %}Submit for Approval{% elif edit_data %}Save Changes{% else %}Submit Request{% endif %}</button>
+    <div class="form-header-actions">
+      {# 2026-08-16, Jay: a toggle next to Submit lets a fresh submitter
+         switch to Easy View -- only offered for a brand-new check_request
+         (Easy View has no edit-mode support, and Invoice Intake is its own
+         separate flow). #}
+      {% if not edit_data %}
+      <a href="/new-request-easy" class="btn btn-secondary btn-sm">Easy View</a>
+      {% endif %}
+      <button type="submit" form="reqForm" class="btn btn-primary btn-sm">{% if edit_data and edit_data.request_type == 'invoice_payment' %}Submit for Approval{% elif edit_data %}Save Changes{% else %}Submit Request{% endif %}</button>
+    </div>
   </div>
   <p class="back-link"><a href="{% if edit_data and edit_data.request_type == 'invoice_payment' %}/invoice-intake{% else %}/my-requests{% endif %}">&larr; Back to {% if edit_data and edit_data.request_type == 'invoice_payment' %}Invoice Intake{% else %}My Requests{% endif %}</a></p>
   <form method="post" action="/new-request" id="reqForm" enctype="multipart/form-data">

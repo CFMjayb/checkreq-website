@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}New Check Request — Easy View{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/vendor/tomselect/tom-select.default.min.css">
+{# Reuses the classic New Request page's own stylesheet for every shared
+   layout piece (split-shell, field-row, gl-line, new-vendor-panel, Tom
+   Select theming, etc.) -- new_request_easy.css only adds/overrides the
+   pieces that are genuinely different about this variant (the empty-state
+   right pane, the status-message panel, the doc-view toggle near Submit).
+   check_voucher.css is deliberately NOT loaded here -- this page never
+   renders the check_voucher.html fragment at all (Phase D: no live voucher
+   mirror during entry). #}
+<link rel="stylesheet" href="/static/css/new_request.css?v={{ asset_version('css/new_request.css') }}">
+<link rel="stylesheet" href="/static/css/new_request_easy.css?v={{ asset_version('css/new_request_easy.css') }}">
+{% endblock %}
+{% block content %}
+{#
+  Easy View (Phase D, Cornerstone Served Parishes Plan.md): a second,
+  alternate layout for the same /new-request submission that
+  new_request.html/new_request_submit already handle -- new-submission
+  only (no edit_data support here; editing an existing request still uses
+  the original two-pane page at /requests/{request_number}/edit).
+
+  Differences from the classic page, per the plan's own spec:
+    - Left = form (same fields/behavior as classic, minus the live-mirror
+      wiring).
+    - Right pane stays empty during entry -- no live-typing voucher mirror.
+    - A "View Uploaded Document" toggle sits near Submit (in the left
+      pane's header row), not at the top of the right pane.
+    - Extraction/status messages (upload result, vendor validation, the
+      pre-approved-attachment warning) render in a right-pane "Status &
+      Messages" panel instead of scattered inline in the left form.
+    - The completed voucher itself is shown "once done" -- i.e. after a
+      successful submission, which redirects to the existing
+      /requests/{request_number}/view page (same one My Approvals/AP
+      Review already link to) instead of straight to My Requests. See
+      main.py's new_request_submit -- the only wiring difference from the
+      classic path is the hidden ui_variant=easy field below.
+#}
+<div class="split-shell split-shell-easy">
+
+<div class="split-pane split-form">
+  <div class="form-header-row">
+    <h1>New Check Request <span class="easy-view-badge">Easy View</span></h1>
+    <div class="form-header-actions">
+      {# 2026-08-16, Jay: the same Standard/Easy toggle as the classic
+         page, next to Submit -- lets a submitter switch back without
+         hunting for it in the back-link row. #}
+      <a href="/new-request" class="btn btn-secondary btn-sm">Standard View</a>
+      <button type="button" id="viewDocToggleBtn" class="btn btn-secondary btn-sm" disabled>View Uploaded Document</button>
+      <button type="submit" form="reqForm" class="btn btn-primary btn-sm">Submit Request</button>
+    </div>
+  </div>
+  <p class="back-link"><a href="/my-requests">&larr; Back to My Requests</a></p>
+  <form method="post" action="/new-request" id="reqForm" enctype="multipart/form-data">
+    <input type="hidden" name="org_id" value="{{ current_org.id }}">
+    <input type="hidden" name="request_type" value="check_request">
+    {# The one piece of wiring new_request_submit needs to know this came
+       from Easy View -- see that route's redirect branch. #}
+    <input type="hidden" name="ui_variant" value="easy">
+
+    <div class="upload-row">
+      <label for="attachmentsInput">📎 Upload a document to prefill this form</label>
+      <input type="file" name="attachments" id="attachmentsInput" multiple
+             accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
+      {# No inline #uploadStatus here (unlike new_request.html) -- Easy
+         View's extraction status renders in the right-pane Status &
+         Messages panel instead. #}
+    </div>
+
+    {% if 'pre_approved_submitter' in entity_roles %}
+    <div class="field-disclosure" id="preApprovedRow">
+      <label>
+        <input type="checkbox" name="pre_approved" id="preApprovedCheckbox" value="1">
+        This request has already been approved outside Beacon — attach the approval
+        documentation above before submitting this way.
+      </label>
+    </div>
+    {% endif %}
+
+    <div class="field-row">
+      <div class="field">
+        <label>Program Area</label>
+        <select name="program_area_id" id="programAreaSelect" required>
+          <option value="">Loading...</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Pay Date</label>
+        <input type="date" name="requested_pay_date" id="payDateInput" value="{{ today }}" required>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Vendor</label>
+      <select name="vendor_id" id="vendorSelect" placeholder="Search vendors..."></select>
+      <a href="#" id="addNewVendorLink" class="add-vendor-link">Can't find this vendor? Add a new one.</a>
+      {# No inline #vendorConfirmedMsg/#vendorValidationMsg here -- both
+         render in the right-pane Status & Messages panel instead. #}
+    </div>
+
+    <input type="hidden" name="using_new_vendor" id="usingNewVendor" value="0">
+
+    <div class="new-vendor-panel" id="newVendorPanel" style="display:none;">
+      <div class="new-vendor-header">
+        <strong>Add a new vendor</strong>
+        <a href="#" id="cancelNewVendorLink">Use an existing vendor instead</a>
+      </div>
+
+      <div class="field-row">
+        <label><input type="radio" name="new_vendor_entity_type" value="individual" checked> Individual</label>
+        <label><input type="radio" name="new_vendor_entity_type" value="entity"> Entity</label>
+      </div>
+
+      <div id="newVendorIndividualFields" class="field-row">
+        <div class="field"><label>First Name*</label><input type="text" name="new_vendor_first_name" id="nvFirstName"></div>
+        <div class="field"><label>Last Name*</label><input type="text" name="new_vendor_last_name" id="nvLastName"></div>
+      </div>
+
+      <div id="newVendorEntityFields" class="field-row" style="display:none;">
+        <div class="field"><label>Company Name*</label><input type="text" name="new_vendor_company_name" id="nvCompanyName"></div>
+        <div class="field"><label>DBA (optional)</label><input type="text" name="new_vendor_dba_name" id="nvDbaName"></div>
+      </div>
+
+      <div class="field"><label>Address Line 1*</label><input type="text" name="new_vendor_address_line1" id="nvAddr1"></div>
+      <div class="field"><label>Address Line 2</label><input type="text" name="new_vendor_address_line2" id="nvAddr2"></div>
+      <div class="field-row">
+        <div class="field"><label>City*</label><input type="text" name="new_vendor_city" id="nvCity"></div>
+        <div class="field"><label>State*</label><input type="text" name="new_vendor_state" id="nvState" maxlength="2"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Zip*</label><input type="text" name="new_vendor_zip" id="nvZip"></div>
+        <div class="field"><label>Phone (optional)</label><input type="text" name="new_vendor_phone" id="nvPhone"></div>
+      </div>
+
+      <div class="field-row">
+        <div class="field"><label>Contact Name*</label><input type="text" name="new_vendor_contact_name" id="nvContactName"></div>
+        <div class="field"><label>Contact Email*</label><input type="email" name="new_vendor_contact_email" id="nvContactEmail"></div>
+      </div>
+      <p class="field-hint">We'll email this contact a request for a completed IRS Form W-9 once
+        this vendor is approved (payments over $2,000 require one on file before posting). No tax
+        ID / SSN / EIN is collected here -- that comes back separately via the W-9 itself.</p>
+    </div>
+
+    <div class="field">
+      <label>Description / Reason</label>
+      <input type="text" name="description" id="descriptionInput" required autocomplete="off">
+    </div>
+
+    <details class="field-disclosure">
+      <summary>+ Add special instructions</summary>
+      <textarea name="special_instructions" id="specialInstructionsInput" rows="2"></textarea>
+    </details>
+
+    <div class="field-disclosure" id="askMyAccountantRow">
+      <label>
+        <input type="checkbox" name="ask_my_accountant" id="askMyAccountantCheckbox" value="1"
+               onchange="toggleAskMyAccountant()">
+        Ask My Accountant (I don't know the GL coding -- let AP assign it)
+      </label>
+    </div>
+
+    <div class="gl-section" id="glCodingSection">
+      <label>GL Coding</label>
+      <div id="glLines" class="gl-lines-scroll">
+        <div class="gl-line">
+          <div class="field"><select class="glAccount" name="gl_account_id" required><option value="">Account...</option></select></div>
+          <div class="field"><input type="number" step="0.01" class="glAmount" name="gl_amount" placeholder="0.00" required></div>
+          <div class="field"><input type="text" class="glMemo" name="gl_memo" placeholder="Optional memo"></div>
+          <button type="button" class="remove-line" onclick="removeGlLine(this)">&times;</button>
+          <div class="gl-budget-status"></div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="addGlLine()">+ Add GL line</button>
+    </div>
+
+    <div class="gl-section" id="askMyAccountantAmountSection" hidden>
+      <label for="askMyAccountantAmount">Amount</label>
+      <input type="number" step="0.01" id="askMyAccountantAmount" name="ask_my_accountant_amount" placeholder="0.00">
+    </div>
+  </form>
+</div>
+
+<div class="split-pane split-preview split-preview-easy">
+  <div id="statusPanel" class="status-panel">
+    <div class="status-panel-title">Status &amp; Messages</div>
+    <div id="statusPanelBody" class="status-panel-body">
+      <p class="status-panel-empty">Nothing to report yet — upload a document or fill in the form on the left.</p>
+    </div>
+  </div>
+  <div id="previewBody" class="preview-body">
+    <div id="previewEmptyState" class="preview-empty-state">
+      <div class="preview-empty-icon" aria-hidden="true">🧾</div>
+      <p>Your completed Check Request will appear here once you submit.</p>
+      <p class="sub">Use <strong>View Uploaded Document</strong> near Submit to check an
+        uploaded file against what's on the form.</p>
+    </div>
+    <div id="documentPreviewWrap" style="display:none;"></div>
+  </div>
+</div>
+
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+const CURRENT_ORG_ID = {{ current_org.id }};
+</script>
+<script src="/static/vendor/tomselect/tom-select.complete.min.js"></script>
+<script src="/static/js/action_modal.js?v={{ asset_version('js/action_modal.js') }}"></script>
+<script src="/static/js/new_request_easy.js?v={{ asset_version('js/new_request_easy.js') }}"></script>
+{% endblock %}

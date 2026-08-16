@@ -119,15 +119,60 @@ def _normalize(s: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
 
 
+def _split_folder_label(name: str) -> tuple[str, str | None]:
+    """Splits a real folder name's own "{Name}, {City}" suffix (the leading
+    numeric code prefix is already stripped by the caller) into
+    (name_part, city_part) -- city_part is None if there's no comma."""
+    if "," in name:
+        head, _, tail = name.rpartition(",")
+        return head.strip(), tail.strip()
+    return name, None
+
+
 def _fuzzy_match_folder(parish: dict, folder_names: list[str]) -> str | None:
-    target = _normalize(parish["name"])
-    best, best_score = None, 0.0
+    """2026-08-16 fix (Phase G diagnosis, live production bug): scoring on
+    the parish's NAME alone can't distinguish two same-named parishes in
+    different towns -- confirmed live, parish 352 ("All Saints Episcopal
+    Church, Baltimore") wrongly matched folder "002. All Saints Episcopal
+    Church, Reisterstown" (a real, different parish's folder) at 0.80.
+    Simply appending the city to the scored string doesn't fix this --
+    verified live that "AllSaintsEpiscopalChurch...Baltimore" vs
+    "...Reisterstown" still scores well above threshold, since the long
+    shared name dominates the ratio regardless of the city suffix. Instead,
+    the city is checked as its own, separate signal: split each real
+    folder's own "{Name}, {City}" label, and whenever BOTH the parish and
+    the folder have a city on record, require a strong city match (>=0.8)
+    before the folder is even considered -- a strong name-only match is
+    exactly what produces a false positive between two same-named
+    parishes, so it can never override a clear city mismatch. A folder
+    with no city portion at all (no comma) is scored on name alone, same
+    as before, since there's no city signal to check either way."""
+    parish_name = _normalize(parish["name"])
+    parish_city = _normalize(parish.get("city") or "") or None
+    best, best_score, best_threshold = None, 0.0, _FUZZY_THRESHOLD
     for name in folder_names:
         stripped = re.sub(r"^\d+\.\s*", "", name)
-        score = difflib.SequenceMatcher(None, _normalize(stripped), target).ratio()
-        if score > best_score:
-            best, best_score = name, score
-    return best if best_score >= _FUZZY_THRESHOLD else None
+        folder_name_part, folder_city_part = _split_folder_label(stripped)
+        threshold = _FUZZY_THRESHOLD
+        if parish_city and folder_city_part:
+            city_score = difflib.SequenceMatcher(None, _normalize(folder_city_part), parish_city).ratio()
+            if city_score < 0.8:
+                continue
+            # Live-verified: two DIFFERENT real parishes sharing a generic
+            # suffix ("...Episcopal Church") can still score 0.78+ on name
+            # alone (e.g. "All Saints Episcopal Church" vs "St Johns
+            # Episcopal Church") -- confirmed against real production data,
+            # this exact pair nearly produced a second false positive once
+            # the city gate alone let every same-city folder through.
+            # Requiring a tighter name bar once city has already narrowed
+            # the field keeps a real match (typically ~1.0, an exact or
+            # near-exact name) while rejecting a same-city, different-name
+            # coincidence.
+            threshold = max(_FUZZY_THRESHOLD, 0.85)
+        score = difflib.SequenceMatcher(None, _normalize(folder_name_part), parish_name).ratio()
+        if score >= threshold and score > best_score:
+            best, best_score, best_threshold = name, score, threshold
+    return best if best_score >= best_threshold else None
 
 
 def _site_and_token(org: dict) -> tuple[str, str]:

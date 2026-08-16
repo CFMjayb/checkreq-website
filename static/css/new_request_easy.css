@@ -1,0 +1,106 @@
+/* Easy View (Phase D, Cornerstone Served Parishes Plan.md) -- layout for
+   the alternate New Check Request entry screen. Loaded ALONGSIDE
+   new_request.css (not instead of it): every shared piece -- .split-shell,
+   .split-pane, .field-row, .gl-line, .new-vendor-panel, Tom Select theming,
+   etc. -- comes from that stylesheet unchanged. This file only adds/
+   overrides what's genuinely different about this variant: the badge next
+   to the title, the header-row toggle+submit button pair, the empty-state
+   right pane, and the new Status & Messages panel. */
+
+.easy-view-badge {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-franciscan-green);
+  background: var(--color-gold-light);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  vertical-align: middle;
+  margin-left: var(--space-2);
+}
+
+/* The classic page's .form-header-row holds just a title + one Submit
+   button; Easy View adds the doc-view toggle next to it (per the plan:
+   "document-view toggle near Submit"), so the action group needs its own
+   wrapper to stay a tidy right-aligned pair instead of stretching apart. */
+.form-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+#viewDocToggleBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Right pane: empty during entry, no live voucher mirror (unlike the
+   classic page, check_voucher.html is never included here at all). */
+.split-preview-easy { gap: var(--space-3); }
+
+.preview-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.preview-empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--color-text-muted);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-6);
+  min-height: 280px;
+}
+.preview-empty-icon { font-size: 2.5rem; margin-bottom: var(--space-3); opacity: 0.6; }
+.preview-empty-state p { margin: 0 0 var(--space-2) 0; max-width: 32em; }
+.preview-empty-state p.sub { font-size: 0.82rem; }
+.preview-empty-state p:last-child { margin-bottom: 0; }
+
+/* ---- Status & Messages panel ----
+   Consolidates the messages that live inline in the classic page
+   (#uploadStatus under the upload row, #vendorConfirmedMsg/
+   #vendorValidationMsg under the Vendor field, the pre-approved-attachment
+   warning) into one place on the right, per the plan's "extraction/status
+   messages move to the right pane instead of the left." Per-GL-line budget
+   status stays inline under its own row (.gl-budget-status, unchanged from
+   the classic page) -- deliberately NOT moved here, since detaching it from
+   its row would make it harder to tell which line a warning is about; see
+   CLAUDE.md's open-question note on this judgment call. */
+.status-panel {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.status-panel-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  background: #f9f7f0;
+}
+.status-panel-body {
+  padding: var(--space-3);
+  max-height: 260px;
+  overflow-y: auto;
+}
+.status-panel-empty { margin: 0; font-size: 0.85rem; color: var(--color-text-muted); }
+.status-msg {
+  font-size: 0.85rem;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+.status-msg:last-child { border-bottom: none; }
+.status-msg strong { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--color-text-muted); margin-bottom: 2px; }
+.status-msg.success { color: var(--color-success); }
+.status-msg.error { color: var(--color-danger); }
+.status-msg.warning { color: var(--color-warning); }
+.status-msg .caveat { display: block; font-style: italic; color: var(--color-warning); margin-top: 2px; }

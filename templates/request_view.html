@@ -10,6 +10,7 @@
   <h1>{{ request_number }}</h1>
   <span class="badge badge-{{ pr_status|lower|replace(' ', '-') }}">{{ pr_status }}</span>
 </div>
+{% if request.query_params.get('submitted') %}<div class="banner banner-success">Submitted.</div>{% endif %}
 <p class="sub">
   <a href="/portal" onclick="history.back(); return false;">&larr; Back</a>
   · <a href="/requests/{{ request_number }}/pdf" target="_blank">Open as PDF</a>

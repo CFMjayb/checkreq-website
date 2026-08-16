@@ -772,6 +772,24 @@ def new_request_form(request: Request):
     })
 
 
+@app.get("/new-request-easy", response_class=HTMLResponse)
+def new_request_easy_form(request: Request):
+    """Phase D (Cornerstone Served Parishes Plan.md): an alternate, simpler
+    New Request layout for a brand-new check_request submission only -- no
+    edit_data support (editing an existing request still uses the classic
+    /requests/{request_number}/edit page). Posts to the same /new-request
+    route as the classic form; new_request_submit's own ui_variant=easy
+    branch (see that route) is the only difference in what happens after
+    submit."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    org = _current_org(request)
+    if not org:
+        return RedirectResponse("/portal")
+    return _render(request, "new_request_easy.html", user, {"today": date.today().isoformat()})
+
+
 @app.get("/requests/{request_number}/edit", response_class=HTMLResponse)
 def edit_request_form(request_number: str, request: Request, add_error: str = ""):
     """Renders the SAME new_request.html template used for a brand-new
@@ -3454,7 +3472,14 @@ async def new_request_submit(request: Request):
     except Exception as exc:
         archive_warning = str(exc)
 
-    redirect_url = f"/my-requests?submitted={request_number}"
+    # Phase D (Easy View): lands on the request's own detail page instead
+    # of My Requests -- Easy View's whole point is a simpler on-ramp, and
+    # seeing exactly what was just submitted is a more useful confirmation
+    # than a list row. The classic form's redirect is unchanged.
+    if form.get("ui_variant") == "easy":
+        redirect_url = f"/requests/{request_number}/view?submitted=1"
+    else:
+        redirect_url = f"/my-requests?submitted={request_number}"
     if archive_warning:
         from urllib.parse import quote
         redirect_url += f"&archive_warning={quote(archive_warning)}"
