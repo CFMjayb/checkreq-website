@@ -192,8 +192,21 @@ def _require_diocese_admin(request: Request):
     org_id = org["id"] if org else None
     if org_id is None or cornerstone_mode.is_cornerstone_org(org_id):
         return None, None, RedirectResponse("/portal")
-    if not rbac.user_has_any_role(user["id"], ["setup_admin", "beacon_admin"], org_id=org_id):
-        return None, None, JSONResponse({"error": "Setup Admin access required"}, status_code=403)
+    # hr_admin added 2026-08-17. Jay, asked who moves a period from 'future' to
+    # 'open' each fortnight: "Payroll diocesan admin" -- and confirmed that is
+    # the existing hr_admin role, not a new one. Opening and closing a payroll
+    # period is payroll OPERATIONS, not setup-table configuration, and the
+    # alternative (giving a payroll clerk setup_admin) would also hand them
+    # Program Areas, GL account mapping, approval rules and entity settings.
+    #
+    # This gate covers Payroll Periods and Time Categories ONLY. HR Activation
+    # deliberately stays setup_admin -- Jay's explicit choice when asked -- and
+    # is unaffected because timekeeping_activation.py carries its own copy of
+    # this check rather than importing this one (see its docstring).
+    if not rbac.user_has_any_role(user["id"], ["setup_admin", "beacon_admin", "hr_admin"],
+                                  org_id=org_id):
+        return None, None, JSONResponse(
+            {"error": "Setup Admin or HR Admin access required"}, status_code=403)
     return user, org, None
 
 

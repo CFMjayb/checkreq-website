@@ -124,10 +124,15 @@ _CARDS = [
     # operations, unlike Payroll Periods / Time Categories / HR Activation.
     {"title": "Employees", "desc": "Add, change or inactivate staff across every parish, with an as-of date.",
      "url": "/admin/timekeeping/employees", "role": ["hr_admin", "beacon_admin"], "group": "hr", "feature_key": "timekeeping"},
-    {"title": "Payroll Periods", "desc": "Define diocese payroll periods for Timekeeping-enabled parishes.",
-     "url": "/admin/timekeeping/periods", "role": "setup_admin", "group": "hr", "feature_key": "timekeeping"},
+    # role widened to include hr_admin 2026-08-17 (Jay: the "Payroll diocesan
+    # admin" who opens each period IS hr_admin) -- must stay in step with
+    # timekeeping._require_diocese_admin(), since a visible tile whose route
+    # 403s, or a hidden tile whose route works, is the mismatch this project's
+    # own "tile must match its route's gate" principle exists to prevent.
+    {"title": "Payroll Periods", "desc": "Define diocese payroll periods, and open or close each one.",
+     "url": "/admin/timekeeping/periods", "role": ["setup_admin", "hr_admin"], "group": "hr", "feature_key": "timekeeping"},
     {"title": "Time Categories", "desc": "Configure the categories parishes report hours against.",
-     "url": "/admin/timekeeping/categories", "role": "setup_admin", "group": "hr", "feature_key": "timekeeping"},
+     "url": "/admin/timekeeping/categories", "role": ["setup_admin", "hr_admin"], "group": "hr", "feature_key": "timekeeping"},
     # Timekeeping HR Roster Review Plan.md (2026-08-16) -- Stage 4's
     # diocese-side review screen. Entity-scoped like the two cards above
     # (same DIOCESE org_id, never a served parish's own linked org -- see
