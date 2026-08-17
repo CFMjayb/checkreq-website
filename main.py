@@ -113,6 +113,7 @@ import timekeeping
 import timekeeping_roster
 import timekeeping_entries
 import timekeeping_review
+import timekeeping_status
 import approval_engine
 import auth_routes
 import gcs_client
@@ -5847,15 +5848,23 @@ parish_requests.register(app, current_user=_current_user, render=_render)
 parish_info.register(app, current_user=_current_user, render=_render)
 
 # Timekeeping HR Roster Review Plan.md (2026-08-16), finished and wired live
-# same day it was gated on the new org_features "timekeeping" flag --
-# timekeeping_roster.register()/timekeeping_entries.register() take ONLY
-# `render` (no current_user/current_org kwarg -- they resolve the parish
-# context internally via timekeeping.served_parish_context()); passing
-# either extra kwarg to those two raises TypeError at import time.
+# same day it was gated on the new org_features "timekeeping" flag (any
+# parish under a diocese with the flag on, not just Cornerstone-served --
+# see timekeeping.py's own docstring) -- timekeeping_roster.register()/
+# timekeeping_entries.register() take ONLY `render` (no current_user/
+# current_org kwarg -- they resolve the parish context internally via
+# timekeeping.timekeeping_context()); passing either extra kwarg to those
+# two raises TypeError at import time.
 timekeeping.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 timekeeping_roster.register(app, render=_render)
 timekeeping_entries.register(app, render=_render)
 timekeeping_review.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+# Diocese status board / "enter missing data" backfill / Excel export
+# (2026-08-16, per Jay's direct request) -- new sibling module, same
+# current_user/current_org/render signature as timekeeping.py/
+# timekeeping_review.py (it needs _current_org() to resolve the diocese,
+# unlike the two parish-context-only modules above).
+timekeeping_status.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 
 # In-App Notifications (2026-08-02, In-App Notifications Plan.md).
 # create_notification()/get_unread_count() are already in use above (this

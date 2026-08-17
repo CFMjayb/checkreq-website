@@ -121,6 +121,16 @@ _CARDS = [
     # ones.
     {"title": "Timekeeping Review", "desc": "Approve or reject proposed staff roster changes; see submitted hours awaiting review.",
      "url": "/admin/timekeeping/review", "role": ["hr_admin", "beacon_admin"], "group": "hr", "feature_key": "timekeeping"},
+    # Added 2026-08-16, same session as the Roster Review screen above --
+    # Jay: "screens to check the status of submissions for a period, and
+    # the ability to enter missing data, and to generate a spreadsheet with
+    # the data submitted for a period." Same gate/group/feature_key as
+    # Timekeeping Review (both are timekeeping_status.py's own
+    # _require_hr_admin(), a deliberate small duplicate of the same check,
+    # matching this codebase's established per-module permission-check
+    # precedent) -- entity-scoped like every other HR card.
+    {"title": "Timekeeping Status", "desc": "See every parish's submission status for a period, enter missing hours, and export the period to Excel.",
+     "url": "/admin/timekeeping/status", "role": ["hr_admin", "beacon_admin"], "group": "hr", "feature_key": "timekeeping"},
 ]
 
 # Fixed display order + section headings -- per Jay's explicit request,
@@ -138,7 +148,7 @@ _CARD_GROUPS = [
 # by design/necessity like everything else in this hub) -- see admin_hub()'s
 # own docstring for why this distinction matters.
 _ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes", "Payroll Periods", "Time Categories",
-                          "Timekeeping Review"}
+                          "Timekeeping Review", "Timekeeping Status"}
 
 
 @router.get("/admin", response_class=HTMLResponse)

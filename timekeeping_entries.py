@@ -38,6 +38,22 @@ timekeeping_roster_changes.submit_pending_for_parish()) -- the plan's own
 completely independent (plan decision 2): a roster change still pending
 diocese review from an earlier period never blocks this period's own
 Submit, and Submit never blocks on anything the roster side is waiting on.
+
+DIOCESE-SIDE STATUS BOARD + BACKFILL (added 2026-08-16, per Jay's direct
+request: "screens to check the status of submissions for a period, and the
+ability to enter missing data, and to generate a spreadsheet with the data
+submitted for a period"): build_grid_context()/apply_hours_from_form()
+below are the two pieces of this file's own logic extracted so
+timekeeping_status.py (new sibling module -- the status board, the
+diocese-side backfill screen, and the Excel export) can reuse the EXACT
+same grid-building and hours-writing code the parish's own /timekeeping and
+/timekeeping/save routes use, instead of a second, drift-prone copy.
+entry_page()/entry_save() below are now thin wrappers around these two
+functions with parish-side authorization/locking; timekeeping_status.py's
+own backfill routes call the same two functions with diocese-side
+authorization/locking instead (see that module's own docstring for the one
+real behavioral difference: a diocese-side save may override an
+already-'submitted' submission, never a 'processed' period).
 """
 from __future__ import annotations
 
@@ -75,7 +91,12 @@ def get_submission(period_id: int, parish_id: int) -> dict | None:
     )
 
 
-def _get_or_create_submission(period_id: int, parish_id: int) -> dict:
+def get_or_create_submission(period_id: int, parish_id: int) -> dict:
+    """Public (no longer underscore-prefixed) since 2026-08-16 -- also called
+    from timekeeping_status.py's diocese-side backfill save route, which
+    needs the exact same "make sure a submission row exists before writing
+    hours against it" behavior the parish's own /timekeeping/save already
+    has, not a second copy."""
     existing = get_submission(period_id, parish_id)
     if existing:
         return existing
@@ -136,59 +157,67 @@ def list_submitted_periods_for_org(org_id: int) -> list[dict]:
     )
 
 
-# ── Routes ───────────────────────────────────────────────────────────────────
+def build_grid_context(parish: dict, diocese_org_id: int, period: dict | None,
+                        can_enter: bool, bypass_submission_lock: bool = False) -> dict:
+    """The shared "grid data for one parish/period" builder (extracted
+    2026-08-16 so timekeeping_status.py's diocese-side backfill screen can
+    reuse it -- see the module docstring's "DIOCESE-SIDE STATUS BOARD +
+    BACKFILL" section). Used by both the parish's own GET /timekeeping
+    (period is always the diocese's current OPEN one) and the diocese-side
+    backfill screen (period is whichever specific one an hr_admin picked
+    from the status board -- open, closed, or even processed, for viewing).
 
-@router.get("/timekeeping", response_class=HTMLResponse)
-def entry_page(request: Request):
-    user, parish, diocese_org, err = timekeeping.served_parish_context(request)
-    if err:
-        return err
+    Caller does ALL authorization -- this function only assembles data,
+    given an already-decided `can_enter` (the parish route derives it from
+    timekeeping.can_manage_timekeeping(); the diocese route already gated on
+    hr_admin/beacon_admin at the route level, so it just passes True).
 
-    period = timekeeping.get_current_open_period(diocese_org["id"])
-    can_enter = timekeeping.can_manage_timekeeping(user, parish)
+    bypass_submission_lock=True is the diocese's own "enter missing data on
+    an already-submitted period" override -- an hr_admin can still view/edit
+    a parish's grid even once that parish has submitted it (locked normally
+    computes True in that case). It does NOT bypass a genuinely 'processed'
+    period, which always locks regardless of this flag -- a processed
+    period is diocese-wide read-only per PP-807, not something any one
+    screen should quietly reopen."""
     if not period:
-        return _render(request, "timekeeping_entry.html", user, {
+        return {
             "parish": parish, "period": None, "staff": [], "categories": [],
             "dates": [], "entries": {}, "can_enter": can_enter, "submission": None,
-        })
-
+            "locked": False,
+        }
     staff = timekeeping_roster.list_staff(parish["id"])
-    categories = timekeeping.list_categories(diocese_org["id"])
+    categories = timekeeping.list_categories(diocese_org_id)
     dates = _dates_in_range(period["period_start"], period["period_end"])
     entries = get_entries_map(period["id"], parish["id"])
     submission = get_submission(period["id"], parish["id"])
-    return _render(request, "timekeeping_entry.html", user, {
+    locked = period["status"] == "processed"
+    if not locked and not bypass_submission_lock and submission and submission["status"] == "submitted":
+        locked = True
+    return {
         "parish": parish, "period": period, "staff": staff, "categories": categories,
-        "dates": dates, "entries": entries, "can_enter": can_enter, "submission": submission,
-    })
+        "dates": dates, "entries": entries, "can_enter": can_enter,
+        "submission": submission, "locked": locked,
+    }
 
 
-@router.post("/timekeeping/save")
-async def entry_save(request: Request):
-    user, parish, diocese_org, err = timekeeping.served_parish_context(request)
-    if err:
-        return err
-    if not timekeeping.can_manage_timekeeping(user, parish):
-        return JSONResponse(
-            {"error": "You don't have permission to enter time for this parish."}, status_code=403
-        )
+def apply_hours_from_form(period: dict, parish: dict, diocese_org_id: int, user: dict,
+                           form, edit_source: str = "parish") -> int:
+    """Writes hours_<staff>_<cat>_<date> fields from a submitted form into
+    portal.time_entries, with a portal.time_entry_edits audit row per real
+    change (extracted 2026-08-16, see the module docstring). edit_source
+    distinguishes the parish's own entry from a diocese-side backfill/
+    override -- portal.time_entry_edits.edit_source's CHECK constraint
+    already allows both 'parish' and 'diocese' (migration 038), no schema
+    change needed for this. Shared by the parish's own /timekeeping/save
+    route (edit_source='parish') and timekeeping_status.py's diocese-side
+    backfill save route (edit_source='diocese'), so the two never drift.
 
-    period = timekeeping.get_current_open_period(diocese_org["id"])
-    if not period:
-        return RedirectResponse("/timekeeping?error=noperiod", status_code=303)
-    if period["status"] == "processed":
-        return RedirectResponse("/timekeeping?error=processed", status_code=303)
-
-    submission = _get_or_create_submission(period["id"], parish["id"])
-    if submission and submission["status"] not in ("draft", "reopened"):
-        # No UI path reaches 'submitted' yet (Stage 3 isn't built), but this
-        # guard stays live regardless -- it's the rule the schema exists to
-        # enforce, not just the paths this pass happens to expose.
-        return RedirectResponse("/timekeeping?error=locked", status_code=303)
-
-    form = await request.form()
+    Caller must have already performed every authorization/lock check --
+    this function only ever validates that a given (staff, category, date)
+    cell is REAL and belongs to this parish/period, never who is allowed to
+    write it."""
     staff_ids = {s["id"] for s in timekeeping_roster.list_staff(parish["id"])}
-    category_ids = {c["id"] for c in timekeeping.list_categories(diocese_org["id"])}
+    category_ids = {c["id"] for c in timekeeping.list_categories(diocese_org_id)}
     valid_dates = set(_dates_in_range(period["period_start"], period["period_end"]))
 
     saved = 0
@@ -209,7 +238,7 @@ async def entry_save(request: Request):
                 # Never trust a client-supplied id/date outside this
                 # parish's own roster / this period's own real date range --
                 # a crafted field name could otherwise write into another
-                # parish's staff row or a date outside the open period.
+                # parish's staff row or a date outside the period.
                 if staff_id not in staff_ids or category_id not in category_ids or work_date not in valid_dates:
                     continue
 
@@ -252,11 +281,52 @@ async def entry_save(request: Request):
                 cur.execute(
                     "INSERT INTO portal.time_entry_edits "
                     "(time_entry_id, old_hours, new_hours, edited_by_user_id, edit_source) "
-                    "VALUES (%s, %s, %s, %s, 'parish')",
-                    (entry_id, old_hours, hours, user["id"]),
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (entry_id, old_hours, hours, user["id"], edit_source),
                 )
                 saved += 1
+    return saved
 
+
+# ── Routes ───────────────────────────────────────────────────────────────────
+
+@router.get("/timekeeping", response_class=HTMLResponse)
+def entry_page(request: Request):
+    user, parish, diocese_org, err = timekeeping.timekeeping_context(request)
+    if err:
+        return err
+
+    period = timekeeping.get_current_open_period(diocese_org["id"])
+    can_enter = timekeeping.can_manage_timekeeping(user, parish)
+    ctx = build_grid_context(parish, diocese_org["id"], period, can_enter)
+    return _render(request, "timekeeping_entry.html", user, ctx)
+
+
+@router.post("/timekeeping/save")
+async def entry_save(request: Request):
+    user, parish, diocese_org, err = timekeeping.timekeeping_context(request)
+    if err:
+        return err
+    if not timekeeping.can_manage_timekeeping(user, parish):
+        return JSONResponse(
+            {"error": "You don't have permission to enter time for this parish."}, status_code=403
+        )
+
+    period = timekeeping.get_current_open_period(diocese_org["id"])
+    if not period:
+        return RedirectResponse("/timekeeping?error=noperiod", status_code=303)
+    if period["status"] == "processed":
+        return RedirectResponse("/timekeeping?error=processed", status_code=303)
+
+    submission = get_or_create_submission(period["id"], parish["id"])
+    if submission and submission["status"] not in ("draft", "reopened"):
+        # No UI path reaches 'submitted' yet (Stage 3 isn't built), but this
+        # guard stays live regardless -- it's the rule the schema exists to
+        # enforce, not just the paths this pass happens to expose.
+        return RedirectResponse("/timekeeping?error=locked", status_code=303)
+
+    form = await request.form()
+    saved = apply_hours_from_form(period, parish, diocese_org["id"], user, form, edit_source="parish")
     return RedirectResponse(f"/timekeeping?saved={saved}", status_code=303)
 
 
@@ -269,7 +339,7 @@ def entry_submit(request: Request):
     design. No reopen mechanism exists yet (that's still Stage 4) -- an
     already-'submitted' period can't be resubmitted through this route
     today; the parish has to ask the diocese."""
-    user, parish, diocese_org, err = timekeeping.served_parish_context(request)
+    user, parish, diocese_org, err = timekeeping.timekeeping_context(request)
     if err:
         return err
     if not timekeeping.can_manage_timekeeping(user, parish):
@@ -283,7 +353,7 @@ def entry_submit(request: Request):
     if period["status"] == "processed":
         return RedirectResponse("/timekeeping?error=processed", status_code=303)
 
-    submission = _get_or_create_submission(period["id"], parish["id"])
+    submission = get_or_create_submission(period["id"], parish["id"])
     if submission and submission["status"] == "submitted":
         return RedirectResponse("/timekeeping?error=already_submitted", status_code=303)
 

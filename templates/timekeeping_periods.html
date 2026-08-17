@@ -26,17 +26,18 @@ diocese shares the same periods — opening one here is what lets those parishes
 <div class="card">
 <div class="table-scroll">
 <table class="simple-table">
-  <tr><th>Period</th><th>Dates</th><th>Deadline</th><th>Status</th></tr>
+  <tr><th>Period</th><th>Dates</th><th>Deadline</th><th>Status</th><th></th></tr>
   {% for p in periods %}
   <tr>
     <td>{{ p.label or "—" }}</td>
     <td>{{ p.period_start }} to {{ p.period_end }}</td>
     <td>{{ p.submission_deadline or "—" }}</td>
     <td><span class="badge">{{ p.status }}</span></td>
+    <td><a class="btn btn-sm" href="/admin/timekeeping/status/{{ p.id }}">View Status</a></td>
   </tr>
   {% endfor %}
   {% if not periods %}
-  <tr><td colspan="4" class="sub">No payroll periods yet.</td></tr>
+  <tr><td colspan="5" class="sub">No payroll periods yet.</td></tr>
   {% endif %}
 </table>
 </div>

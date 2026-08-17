@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Timekeeping Status — {{ current_org.name }}{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Timekeeping Status</h1>
+<p class="back-link"><a href="/admin/timekeeping/periods">&larr; Back to Payroll Periods</a></p>
+<p class="sub">
+  Every active parish under {{ current_org.name }} for
+  <strong>{{ period.label or (period.period_start|string ~ " to " ~ period.period_end|string) }}</strong>
+  ({{ period.period_start }} to {{ period.period_end }}{% if period.submission_deadline %}, submit by
+  {{ period.submission_deadline }}{% endif %}) &middot;
+  <span class="badge {{ 'badge-cancelled' if period.status == 'processed' else 'badge-submitted' if period.status == 'closed' else 'badge-draft' }}">{{ period.status|capitalize }}</span>
+</p>
+
+{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
+{% if request.query_params.get('saved') %}<div class="banner banner-success">Saved {{ request.query_params.get('saved') }} cell(s).</div>{% endif %}
+
+<p style="margin:12px 0">
+  <a class="btn btn-sm" href="/admin/timekeeping/status/{{ period.id }}/export">Download Excel (Summary + Detail)</a>
+</p>
+
+<div class="card">
+<div class="table-scroll">
+<table class="simple-table">
+  <tr>
+    <th>Parish</th><th>Status</th><th>Total Hours</th><th>Submitted By</th><th>Submitted</th><th></th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.parish_name }}{% if r.parish_code %} <span class="sub">({{ r.parish_code }})</span>{% endif %}</td>
+    <td>
+      {% if not r.submission_id %}
+        <span class="badge badge-cancelled">Not Started</span>
+      {% elif r.submission_status == 'submitted' %}
+        <span class="badge badge-submitted">Submitted</span>
+      {% elif r.submission_status == 'reopened' %}
+        <span class="badge badge-pending">Reopened</span>
+      {% else %}
+        <span class="badge badge-draft">Draft</span>
+      {% endif %}
+    </td>
+    <td>{{ "%.2f"|format(r.total_hours) }}</td>
+    <td>{{ r.submitted_by_name or r.submitted_by_email or "—" }}</td>
+    <td>{{ r.submitted_at.strftime("%Y-%m-%d %H:%M") if r.submitted_at else "—" }}</td>
+    <td><a class="btn btn-sm" href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">
+      {{ "Enter Missing Data" if not r.submission_id else "View / Edit" }}
+    </a></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="sub">No active parishes found for this diocese.</td></tr>
+  {% endfor %}
+</table>
+</div>
+</div>
+</div>
+{% endblock %}
