@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Employees — HR{% endblock %}
+{#
+  admin_setup.css is loaded for .setup-section / .setup-toolbar / tr.row-dirty,
+  all already proven on the GL Mapping and Global Approvers screens. base.html
+  does not load it by default, and reusing it is strictly better than copying
+  those rules into a second place where they could drift.
+#}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+<style>
+  /* Page-specific: a pending DEACTIVATION deserves to look different from an
+     ordinary pending edit, since it is the consequential one. Kept here rather
+     than added to the shared stylesheet because no other screen has this
+     state. Struck-through name cells mirror how GL Mapping shows a row marked
+     for deletion. */
+  tr.row-deactivating { background: #fdecea !important; box-shadow: inset 3px 0 0 #b3261e; }
+  tr.row-deactivating input[type=text] { text-decoration: line-through; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Employees</h1>
+<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+<p class="sub">{{ current_org.name }} staff roster across every parish. Every add, change and
+inactivation takes an <strong>as-of date</strong> and is recorded in the roster's change history.
+{{ totals.active }} active of {{ totals.total }} total; {{ totals.hourly }} of the active ones
+report hours.</p>
+
+{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
+{% if request.query_params.get('saved') %}<div class="banner banner-success">{{ request.query_params.get('saved') }}</div>{% endif %}
+
+{# --- Add panel: its own form, outside the table, so no nesting problem --- #}
+<div class="card">
+<details class="setup-section">
+  <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ Add an employee</summary>
+  <form method="post" action="/admin/timekeeping/employees/add" style="margin-top:12px">
+    <div class="field"><label>Parish / department *</label>
+      <select name="parish_id" required>
+        <option value="">Choose&hellip;</option>
+        {% for p in parishes %}
+        <option value="{{ p.id }}"{% if p.id == f_parish_id %} selected{% endif %}>{{ p.code or '—' }} — {{ p.label }}</option>
+        {% endfor %}
+      </select></div>
+    <div class="field"><label>Last name *</label><input type="text" name="last_name" required></div>
+    <div class="field"><label>First name *</label><input type="text" name="first_name" required></div>
+    <div class="field"><label>Position</label><input type="text" name="position"></div>
+    <div class="field"><label>Employee number</label><input type="text" name="employee_number"
+      placeholder="must be unique — the payroll register keys on it"></div>
+    <div class="field"><label><input type="checkbox" name="captures_hours" value="1" checked>
+      Reports hours (leave unchecked for salaried / housing-only clergy)</label></div>
+    <div class="field"><label>As of *</label><input type="date" name="as_of_date" value="{{ today }}" required></div>
+    <button type="submit" class="btn btn-sm">Add Employee</button>
+  </form>
+</details>
+</div>
+
+{# --- Filters: a GET form, also outside the edit form --- #}
+<div class="card">
+<form method="get" action="/admin/timekeeping/employees" class="setup-toolbar">
+  <label>Parish
+    <select name="parish_id" onchange="this.form.submit()">
+      <option value="">All parishes</option>
+      {% for p in parishes %}
+      <option value="{{ p.id }}"{% if p.id == f_parish_id %} selected{% endif %}>{{ p.code or '—' }} — {{ p.label }}</option>
+      {% endfor %}
+    </select></label>
+  <label>Status
+    <select name="show" onchange="this.form.submit()">
+      <option value="active"{% if f_show == 'active' %} selected{% endif %}>Active</option>
+      <option value="inactive"{% if f_show == 'inactive' %} selected{% endif %}>Inactive</option>
+      <option value="all"{% if f_show == 'all' %} selected{% endif %}>All</option>
+    </select></label>
+  <label>Hours
+    <select name="hours" onchange="this.form.submit()">
+      <option value="all"{% if f_hours == 'all' %} selected{% endif %}>Any</option>
+      <option value="yes"{% if f_hours == 'yes' %} selected{% endif %}>Reports hours</option>
+      <option value="no"{% if f_hours == 'no' %} selected{% endif %}>Does not report hours</option>
+    </select></label>
+  <label>Search <input type="text" name="q" value="{{ f_q }}" placeholder="name or employee #"></label>
+  <button type="submit" class="btn btn-sm">Filter</button>
+</form>
+</div>
+
+{#
+  ONE form wrapping the whole table -- deliberately not a form per row, which
+  is invalid HTML (a <form> may not be a child of <tr>) and gets mangled by
+  the browser. Batched save also matches the pattern Jay asked for on
+  2026-08-02 after an accidental GL-mapping delete: a destructive action marks
+  the row and waits for Save Changes.
+#}
+<form method="post" action="/admin/timekeeping/employees/save">
+<div class="card">
+<div class="table-scroll">
+<table class="simple-table">
+  <tr>
+    <th style="min-width:60px">Dept</th>
+    <th style="min-width:140px">Parish</th>
+    <th style="min-width:130px">Last</th>
+    <th style="min-width:110px">First</th>
+    <th style="min-width:120px">Position</th>
+    <th style="min-width:90px">Emp #</th>
+    <th style="min-width:60px">Hours</th>
+    <th style="min-width:95px">Effective</th>
+    <th style="min-width:95px">Inactive</th>
+    <th style="min-width:120px">As of</th>
+    <th style="min-width:150px">Then</th>
+  </tr>
+  {% for e in employees %}
+  <tr data-row="{{ e.id }}">
+    <td>{{ e.parish_code or '—' }}
+        <input type="hidden" name="present_{{ e.id }}" value="1"></td>
+    <td>{{ e.parish_label }}</td>
+    <td><input type="text" name="last_name_{{ e.id }}" value="{{ e.last_name }}"></td>
+    <td><input type="text" name="first_name_{{ e.id }}" value="{{ e.first_name }}"></td>
+    <td><input type="text" name="position_{{ e.id }}" value="{{ e.position or '' }}"></td>
+    <td><input type="text" name="employee_number_{{ e.id }}" value="{{ e.employee_number or '' }}"></td>
+    <td style="text-align:center"><input type="checkbox" name="captures_hours_{{ e.id }}" value="1"
+           {% if e.captures_hours %}checked{% endif %} aria-label="Reports hours"></td>
+    <td>{{ e.effective_date or '—' }}</td>
+    <td>{% if e.is_active %}<span class="sub">active</span>{% else %}{{ e.inactive_as_of or '—' }}{% endif %}</td>
+    <td><input type="date" name="as_of_{{ e.id }}" value="{{ today }}"
+               aria-label="As-of date for this row's change"></td>
+    <td>
+      <select name="action_{{ e.id }}" aria-label="Status change">
+        <option value="">— no status change —</option>
+        {% if e.is_active %}
+        <option value="deactivate">Deactivate</option>
+        {% else %}
+        <option value="reactivate">Reactivate</option>
+        {% endif %}
+      </select>
+    </td>
+  </tr>
+  {% endfor %}
+  {% if not employees %}
+  <tr><td colspan="11" class="sub">No employees match these filters.</td></tr>
+  {% endif %}
+</table>
+</div>
+{% if employees %}
+<div style="margin-top:12px"><button type="submit" class="btn btn-sm">Save Changes</button></div>
+{% endif %}
+</div>
+</form>
+
+<p class="sub">An employee who does not report hours still belongs on this roster — they simply get
+no row on the time entry grid. Deactivating never deletes anyone: the row stays, with the as-of date
+recorded, so history and past periods keep making sense. Nothing is written until you click
+<strong>Save Changes</strong>; only rows you actually altered are touched.</p>
+</div>
+
+<script>
+// Visually mark a row the moment anything in it changes, so a batch of edits
+// is reviewable before Save Changes -- same dirty-row affordance the GL
+// Mapping and Global Approvers screens use.
+document.querySelectorAll('tr[data-row]').forEach(function (tr) {
+  tr.addEventListener('input', function () { tr.classList.add('row-dirty'); });
+  tr.addEventListener('change', function () {
+    tr.classList.add('row-dirty');
+    var sel = tr.querySelector('select[name^=action_]');
+    // A pending deactivation is worth showing differently from an ordinary
+    // edit, since it is the consequential one.
+    if (sel) { tr.classList.toggle('row-deactivating', sel.value === 'deactivate'); }
+  });
+});
+</script>
+{% endblock %}

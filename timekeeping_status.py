@@ -34,10 +34,11 @@ duplication precedent for permission-check helpers):
      "Enter missing data" -- the diocese-side backfill grid for ONE
      specific parish/period, reusing timekeeping_entries.build_grid_context()/
      apply_hours_from_form() with diocese-side authorization instead of the
-     parish's own can_manage_timekeeping() check. LOCK RULE (Jay's own
-     wording, this session): period.status == 'processed' always refuses
-     (never bypassed); an already-'submitted' parish submission does NOT
-     block the diocese -- "enter missing data" implies overriding a stuck
+     parish's own can_manage_timekeeping() check. LOCK RULE (tightened
+     2026-08-17 to Jay's three-state model): any period that is not 'open'
+     refuses, diocese-side included and never bypassed; an already-'submitted'
+     parish submission does NOT block the diocese -- "enter missing data"
+     implies overriding a stuck
      state, so bypass_submission_lock=True is passed through. Every write
      is stamped edit_source='diocese' in portal.time_entry_edits (the CHECK
      constraint already allows this value, migration 038 -- no schema
@@ -383,11 +384,19 @@ async def backfill_entry_save(period_id: int, parish_id: int, request: Request):
             f"/admin/timekeeping/status/{period_id}?error=That+parish+was+not+found+for+this+diocese.",
             status_code=303,
         )
-    if period["status"] == "processed":
-        # The one lock this route can never override -- a processed period
-        # is diocese-wide read-only (PP-807), full stop.
+    if period["status"] != "open":
+        # The one lock this route can never override -- only an 'open' period
+        # is writable, diocese-side included (Jay, 2026-08-17: "only 'open' is
+        # available for data entry and submission"). Tightened from the old
+        # `== "processed"` test, which left 'closed'/'future' periods writable
+        # through this backfill route. NOTE this is a deliberate narrowing of
+        # what the diocese can do: an hr_admin can no longer backfill hours
+        # into a closed period at all. If that turns out to be needed for a
+        # genuine late correction, this is the one line to revisit -- it is
+        # called out in this session's write-up rather than left as a surprise.
         return RedirectResponse(
-            f"/admin/timekeeping/status/{period_id}/{parish_id}?error=processed", status_code=303
+            f"/admin/timekeeping/status/{period_id}/{parish_id}?error=notopen",
+            status_code=303,
         )
     # Make sure a submission row exists before writing hours against it --
     # same reason the parish's own /timekeeping/save does this (so the

@@ -57,15 +57,30 @@ def register(app, *, render) -> None:
 
 # ── Data access ──────────────────────────────────────────────────────────────
 
-def list_staff(parish_id: int, include_inactive: bool = False) -> list[dict]:
-    if include_inactive:
-        return db.query(
-            "SELECT * FROM portal.staff_roster WHERE parish_id = %s ORDER BY last_name, first_name",
-            (parish_id,),
-        )
+def list_staff(parish_id: int, include_inactive: bool = False,
+               only_hours_capturing: bool = False) -> list[dict]:
+    """The parish's staff roster.
+
+    only_hours_capturing=True restricts to people whose hours are actually
+    collected (portal.staff_roster.captures_hours, migration 047). The TIME
+    ENTRY GRID passes this; the ROSTER SCREEN deliberately does not, because a
+    salaried person is still a real roster member you need to see, edit and
+    deactivate -- they just don't get a row to type hours into. Without this
+    split the grid would list every salaried employee with nothing to enter
+    (122 of DME's 205 on the initial load), which is the noise Jay asked to
+    avoid: "Some employees are salaried so we won't be capturing hours for
+    those folks."
+    """
+    where = ["parish_id = %s"]
+    params: list = [parish_id]
+    if not include_inactive:
+        where.append("is_active")
+    if only_hours_capturing:
+        where.append("captures_hours")
     return db.query(
-        "SELECT * FROM portal.staff_roster WHERE parish_id = %s AND is_active ORDER BY last_name, first_name",
-        (parish_id,),
+        "SELECT * FROM portal.staff_roster WHERE " + " AND ".join(where)
+        + " ORDER BY last_name, first_name",
+        tuple(params),
     )
 
 

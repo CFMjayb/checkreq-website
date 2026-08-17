@@ -318,13 +318,36 @@ def list_periods(org_id: int) -> list[dict]:
 
 
 def get_current_open_period(org_id: int) -> dict | None:
-    """The most recent 'open'-status period for this diocese -- the period
-    the parish entry grid (timekeeping_entries.py) targets. None if the
-    diocese hasn't opened one yet, or every period is currently
-    closed/processed."""
+    """The open period the parish entry grid (timekeeping_entries.py) targets.
+    None if the diocese has no open period at all.
+
+    DATE-DRIVEN as of 2026-08-17 (Jay approved the change): prefers the open
+    period whose date range CONTAINS today, and only falls back to "most
+    recent open" when today sits outside every open period's range.
+
+    Why this changed. The original version was purely "most recent open",
+    which silently assumed at most ONE period is ever open. That assumption
+    broke the moment a real published pay calendar was loaded: DME's 26
+    periods for 2026 all exist up front, so "most recent" meant December, and
+    keeping it correct would have required someone to remember to flip the
+    next period open every two weeks forever -- a standing manual chore whose
+    only failure mode is silent (staff enter hours against the wrong period).
+    Ordering by "does today fall inside this period" makes the calendar itself
+    the source of truth.
+
+    The fallback still matters and is deliberate, not a leftover: between a
+    period ending Sunday and the next one starting, or for a diocese that
+    hand-opens a single catch-up period well after the fact, there may be no
+    open period containing today -- returning the most recent open one is the
+    behaviour that was already relied on, so it is preserved rather than
+    replaced.
+    """
     return db.query_one(
-        "SELECT * FROM portal.payroll_periods WHERE org_id = %s AND status = 'open' "
-        "ORDER BY period_start DESC LIMIT 1",
+        "SELECT * FROM portal.payroll_periods "
+        "WHERE org_id = %s AND status = 'open' "
+        "ORDER BY (CURRENT_DATE BETWEEN period_start AND period_end) DESC, "
+        "         period_start DESC "
+        "LIMIT 1",
         (org_id,),
     )
 

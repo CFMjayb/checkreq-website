@@ -22,11 +22,12 @@ session's own build-plan write-up):
     READ-ONLY visibility list for the new hr_admin review screen
     (timekeeping_review.py), not adjustment/finalization.
   - Deadline reminders/escalation (PP-805).
-A save is still correctly REFUSED once the period is 'processed' or the
-parish's own submission has moved past 'draft'/'reopened' (checked below) --
-this now covers a REAL reachable state ('submitted', via the new /submit
-route immediately below), not just a guard against paths that didn't exist
-yet.
+A save is REFUSED unless the period is 'open' AND the parish's own submission
+is still 'draft'/'reopened' (both checked below). The period half was
+tightened 2026-08-17: it used to refuse only a 'processed' period, which meant
+'closed' (and later 'future') periods were still writable -- with 25 of DME's
+26 periods sitting at 'closed', that was every period but one. Now the rule is
+Jay's own: "only 'open' is available for data entry and submission".
 
 SUBMIT / LOCK (Stage 3, added 2026-08-16, Timekeeping HR Roster Review
 Plan.md): POST /timekeeping/submit stamps the parish's own
@@ -53,7 +54,7 @@ functions with parish-side authorization/locking; timekeeping_status.py's
 own backfill routes call the same two functions with diocese-side
 authorization/locking instead (see that module's own docstring for the one
 real behavioral difference: a diocese-side save may override an
-already-'submitted' submission, never a 'processed' period).
+already-'submitted' submission, but still never a period that is not 'open').
 """
 from __future__ import annotations
 
@@ -175,22 +176,33 @@ def build_grid_context(parish: dict, diocese_org_id: int, period: dict | None,
     bypass_submission_lock=True is the diocese's own "enter missing data on
     an already-submitted period" override -- an hr_admin can still view/edit
     a parish's grid even once that parish has submitted it (locked normally
-    computes True in that case). It does NOT bypass a genuinely 'processed'
-    period, which always locks regardless of this flag -- a processed
-    period is diocese-wide read-only per PP-807, not something any one
-    screen should quietly reopen."""
+    computes True in that case). It does NOT bypass a period that is not
+    'open', which always locks regardless of this flag -- a closed or future
+    period is diocese-wide read-only, not something any one screen should
+    quietly reopen."""
     if not period:
         return {
             "parish": parish, "period": None, "staff": [], "categories": [],
             "dates": [], "entries": {}, "can_enter": can_enter, "submission": None,
             "locked": False,
         }
-    staff = timekeeping_roster.list_staff(parish["id"])
+    # only_hours_capturing: salaried / housing-only people are real roster
+    # members but have no hours to enter, so they get no grid row (see
+    # timekeeping_roster.list_staff's own docstring).
+    staff = timekeeping_roster.list_staff(parish["id"], only_hours_capturing=True)
     categories = timekeeping.list_categories(diocese_org_id)
     dates = _dates_in_range(period["period_start"], period["period_end"])
     entries = get_entries_map(period["id"], parish["id"])
     submission = get_submission(period["id"], parish["id"])
-    locked = period["status"] == "processed"
+    # Only an 'open' period is writable (Jay, 2026-08-17: "a pay period is
+    # either 'open', 'closed', or 'future' - only 'open' is available for data
+    # entry and submission"). Inverted from the old `== "processed"` test, which
+    # refused writes for exactly one status and therefore left BOTH 'closed'
+    # and (once migration 048 added it) 'future' periods writable -- with 25 of
+    # DME's 26 periods sitting at 'closed', that was every period but one.
+    # Written as "allow only open" rather than "deny this list" so a status
+    # value added later can never accidentally become writable.
+    locked = period["status"] != "open"
     if not locked and not bypass_submission_lock and submission and submission["status"] == "submitted":
         locked = True
     return {
@@ -216,7 +228,10 @@ def apply_hours_from_form(period: dict, parish: dict, diocese_org_id: int, user:
     this function only ever validates that a given (staff, category, date)
     cell is REAL and belongs to this parish/period, never who is allowed to
     write it."""
-    staff_ids = {s["id"] for s in timekeeping_roster.list_staff(parish["id"])}
+    # Same restriction as the grid itself -- a posted cell for someone whose
+    # hours are not collected must not be accepted, not merely hidden.
+    staff_ids = {s["id"] for s in timekeeping_roster.list_staff(
+        parish["id"], only_hours_capturing=True)}
     category_ids = {c["id"] for c in timekeeping.list_categories(diocese_org_id)}
     valid_dates = set(_dates_in_range(period["period_start"], period["period_end"]))
 
@@ -315,8 +330,11 @@ async def entry_save(request: Request):
     period = timekeeping.get_current_open_period(diocese_org["id"])
     if not period:
         return RedirectResponse("/timekeeping?error=noperiod", status_code=303)
-    if period["status"] == "processed":
-        return RedirectResponse("/timekeeping?error=processed", status_code=303)
+    # Only an 'open' period accepts writes -- see the comment on `locked` in
+    # build_grid_context() for why this is "allow only open", not "deny
+    # processed".
+    if period["status"] != "open":
+        return RedirectResponse("/timekeeping?error=notopen", status_code=303)
 
     submission = get_or_create_submission(period["id"], parish["id"])
     if submission and submission["status"] not in ("draft", "reopened"):
@@ -350,8 +368,11 @@ def entry_submit(request: Request):
     period = timekeeping.get_current_open_period(diocese_org["id"])
     if not period:
         return RedirectResponse("/timekeeping?error=noperiod", status_code=303)
-    if period["status"] == "processed":
-        return RedirectResponse("/timekeeping?error=processed", status_code=303)
+    # Only an 'open' period accepts writes -- see the comment on `locked` in
+    # build_grid_context() for why this is "allow only open", not "deny
+    # processed".
+    if period["status"] != "open":
+        return RedirectResponse("/timekeeping?error=notopen", status_code=303)
 
     submission = get_or_create_submission(period["id"], parish["id"])
     if submission and submission["status"] == "submitted":

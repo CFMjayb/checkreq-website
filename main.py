@@ -113,6 +113,7 @@ import cornerstone_mode
 import timekeeping
 import timekeeping_activation
 import timekeeping_roster
+import timekeeping_employees
 import timekeeping_entries
 import timekeeping_review
 import timekeeping_status
@@ -5867,6 +5868,9 @@ timekeeping.register(app, current_user=_current_user, current_org=_current_org, 
 # (2026-08-17). Same current_user/current_org/render signature as
 # timekeeping.py itself, since its screen is diocese-scoped the same way.
 timekeeping_activation.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+# Diocese-side HR employee management (2026-08-17). Same signature as its
+# timekeeping_* siblings; its own _require_hr_admin() does the gating.
+timekeeping_employees.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 timekeeping_roster.register(app, render=_render)
 timekeeping_entries.register(app, render=_render)
 timekeeping_review.register(app, current_user=_current_user, current_org=_current_org, render=_render)

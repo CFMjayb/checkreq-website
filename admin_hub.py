@@ -117,6 +117,13 @@ _CARDS = [
     # chosen (and why widening to hr_admin is the deliberately-open direction).
     {"title": "HR Activation", "desc": "Choose which parishes use Timekeeping / HR.",
      "url": "/admin/timekeeping/parishes", "role": "setup_admin", "group": "hr", "feature_key": "timekeeping"},
+    # Added 2026-08-17 (Jay: "where do I load the employees for HR? ... create a
+    # screen card that allows adds/mods/and inactivations with a as-of date").
+    # hr_admin/beacon_admin -- the OPERATIONAL half of this group's gate split,
+    # not the setup_admin configuration half: day-to-day employee maintenance is
+    # operations, unlike Payroll Periods / Time Categories / HR Activation.
+    {"title": "Employees", "desc": "Add, change or inactivate staff across every parish, with an as-of date.",
+     "url": "/admin/timekeeping/employees", "role": ["hr_admin", "beacon_admin"], "group": "hr", "feature_key": "timekeeping"},
     {"title": "Payroll Periods", "desc": "Define diocese payroll periods for Timekeeping-enabled parishes.",
      "url": "/admin/timekeeping/periods", "role": "setup_admin", "group": "hr", "feature_key": "timekeeping"},
     {"title": "Time Categories", "desc": "Configure the categories parishes report hours against.",
@@ -157,7 +164,8 @@ _CARD_GROUPS = [
 # by design/necessity like everything else in this hub) -- see admin_hub()'s
 # own docstring for why this distinction matters.
 _ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes", "Payroll Periods", "Time Categories",
-                          "Timekeeping Review", "Timekeeping Status", "HR Activation"}
+                          "Timekeeping Review", "Timekeeping Status", "HR Activation",
+                          "Employees"}
 
 
 @router.get("/admin", response_class=HTMLResponse)
