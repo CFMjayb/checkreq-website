@@ -64,6 +64,11 @@ import rbac
 import registry
 import parish_roles
 import cornerstone_mode
+import org_features
+# Parish-level half of the Timekeeping gate (2026-08-17). Safe one-way import:
+# timekeeping_activation.py imports only cornerstone_mode/db/rbac, never this
+# module, so there is no cycle.
+import timekeeping_activation
 
 router = APIRouter()
 
@@ -324,6 +329,21 @@ def parish_view_page(request: Request):
         "parish": parish, "is_preview": is_preview, "can_review": can_review,
         "can_switch": is_preview or has_other_native_parishes,
         "switch_url": "/admin/parish-mode" if is_preview else "/parish-view/switch",
+        # Timekeeping tile gate revised 2026-08-16: diocese-wide org_features
+        # flag, not Cornerstone-served status -- mirrors timekeeping.py's own
+        # timekeeping_context() check exactly, so the tile and the route it
+        # links to never disagree.
+        # Extended 2026-08-17 for the second half of that same gate: the
+        # per-parish HR activation flag. Both halves are required here for the
+        # same reason the comment above gives -- checking only the diocese flag
+        # would show the tile to a parish that is NOT HR-activated, whose only
+        # possible destination is timekeeping_unavailable.html. This project's
+        # own standing principle (see the 2026-08-16 RBAC entry in CLAUDE.md):
+        # a tile's visibility must match its underlying route's actual gate.
+        "timekeeping_enabled": (
+            org_features.is_enabled(parish["org_id"], "timekeeping")
+            and timekeeping_activation.parish_hr_enabled(parish)
+        ),
     })
 
 

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}HR Activation — Timekeeping{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>HR Activation</h1>
+<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+<p class="sub">Choose which {{ current_org.name }} parishes use Timekeeping / HR. A parish that isn't
+activated here has no time entry grid and no staff roster, even though Timekeeping is turned on for
+the diocese as a whole. Currently activated: <strong>{{ enabled_count }}</strong> of
+{{ parishes|length }}.</p>
+
+{% if request.query_params.get('saved') is not none %}
+  {% set n = request.query_params.get('saved')|int %}
+  <div class="banner banner-success">
+    {% if n == 0 %}No changes to save.{% elif n == 1 %}1 parish updated.{% else %}{{ n }} parishes updated.{% endif %}
+  </div>
+{% endif %}
+
+<form method="post" action="/admin/timekeeping/parishes">
+<div class="card">
+<div class="table-scroll">
+<table class="simple-table">
+  <tr>
+    <th style="min-width:60px">HR</th>
+    <th style="min-width:70px">Dept</th>
+    <th style="min-width:220px">Parish</th>
+    <th style="min-width:130px">Town</th>
+    <th style="min-width:150px">Type</th>
+  </tr>
+  {% for p in parishes %}
+  <tr>
+    <td>
+      <input type="hidden" name="present_{{ p.id }}" value="1">
+      <input type="checkbox" name="hr_{{ p.id }}" value="1"{% if p.hr_enabled %} checked{% endif %}
+             aria-label="Timekeeping for {{ p.short_name or p.name }}">
+    </td>
+    <td>{{ p.code or "—" }}</td>
+    <td>{{ p.name }}</td>
+    <td>{{ p.city or p.short_name or "—" }}</td>
+    <td>
+      {% if p.is_congregation %}<span class="badge">Congregation</span>
+      {% else %}<span class="badge badge-skipped">Non-congregational</span>{% endif %}
+      {% if not p.code %}<span class="sub"> &middot; no payroll dept</span>{% endif %}
+      {% if not p.is_active %}<span class="sub"> &middot; inactive</span>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  {% if not parishes %}
+  <tr><td colspan="5" class="sub">No parishes for this diocese yet.</td></tr>
+  {% endif %}
+</table>
+</div>
+<div style="margin-top:12px"><button type="submit" class="btn btn-sm">Save Changes</button></div>
+</div>
+</form>
+
+<p class="sub">A <strong>non-congregational</strong> row is an entity the diocese runs payroll for
+without it being a congregation — the diocese itself, a camp, a thrift shop, a child care center, a
+pantry, a ministry program, or a payroll umbrella such as the Aroostook Cluster. These can be
+HR-activated like any other row. Rows with <strong>no payroll dept</strong> came from the parochial
+report and have no diocesan payroll, so they start deactivated.</p>
+</div>
+{% endblock %}

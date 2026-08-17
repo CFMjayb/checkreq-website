@@ -4,10 +4,24 @@
 <div class="page-shell">
 <h1>Timekeeping</h1>
 <p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+{#
+  Two-level gate (see timekeeping.timekeeping_context()): `reason` says which
+  level is off, because the two have different fixes and pointing someone at
+  the wrong screen costs a round trip. `reason` is only absent if an older
+  caller renders this template without it -- the else branch keeps that case
+  honest and non-crashing rather than asserting a cause it doesn't know.
+#}
 <div class="banner banner-info">
-  Timekeeping isn't available for {{ parish.name }} — it's only enabled for parishes designated
-  Cornerstone Served. Ask your diocese if this parish should be enabled (Administrative Tasks &rarr;
-  Manage Parishes).
+  {% if reason == 'parish' %}
+    Timekeeping isn't turned on for {{ parish.name }}. It's enabled per parish — ask your diocese to
+    activate it (Administrative Tasks &rarr; HR &rarr; HR Activation).
+  {% elif reason == 'diocese' %}
+    Timekeeping isn't available for {{ parish.name }} yet — it's a diocese-wide feature that hasn't
+    been turned on. Ask your diocese to enable it (Administrative Tasks &rarr; Diocese Features).
+  {% else %}
+    Timekeeping isn't available for {{ parish.name }} right now. Ask your diocese to check whether
+    it's enabled for the diocese (Diocese Features) and activated for this parish (HR Activation).
+  {% endif %}
 </div>
 </div>
 {% endblock %}

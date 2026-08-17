@@ -8,7 +8,7 @@ portal.").
 
 New, single-purpose file per this project's standing modular-file
 convention -- delegates all context resolution/authorization to
-timekeeping.py (parish_context/served_parish_context/can_manage_timekeeping)
+timekeeping.py (parish_context/timekeeping_context/can_manage_timekeeping)
 rather than duplicating it, so this file is ONLY the roster's own CRUD
 routes + queries.
 
@@ -21,7 +21,7 @@ mistake this comment exists to prevent.
 
 Reachable both from a parish's own login/Parish-Mode-preview AND from
 Cornerstone Mode (PP-803's "diocese can maintain a roster on a parish's
-behalf") -- served_parish_context() resolves the right parish either way,
+behalf") -- timekeeping_context() resolves the right parish either way,
 with no separate diocese-side screen needed.
 
 ROSTER REVIEW & APPROVAL (Timekeeping HR Roster Review Plan.md, approved
@@ -116,7 +116,7 @@ def update_staff(staff_id: int, parish_id: int, **fields) -> dict | None:
 
 @router.get("/timekeeping/roster", response_class=HTMLResponse)
 def roster_page(request: Request):
-    user, parish, diocese_org, err = timekeeping.served_parish_context(request)
+    user, parish, diocese_org, err = timekeeping.timekeeping_context(request)
     if err:
         return err
     staff = list_staff(parish["id"], include_inactive=True)
@@ -133,7 +133,7 @@ def roster_page(request: Request):
 
 @router.post("/timekeeping/roster/create")
 async def roster_create(request: Request):
-    user, parish, diocese_org, err = timekeeping.served_parish_context(request)
+    user, parish, diocese_org, err = timekeeping.timekeeping_context(request)
     if err:
         return err
     if not timekeeping.can_manage_timekeeping(user, parish):
@@ -161,7 +161,7 @@ async def roster_create(request: Request):
 
 @router.post("/timekeeping/roster/{staff_id}/update")
 async def roster_update(staff_id: int, request: Request):
-    user, parish, diocese_org, err = timekeeping.served_parish_context(request)
+    user, parish, diocese_org, err = timekeeping.timekeeping_context(request)
     if err:
         return err
     if not timekeeping.can_manage_timekeeping(user, parish):
@@ -195,7 +195,7 @@ async def roster_update(staff_id: int, request: Request):
 
 @router.post("/timekeeping/roster/{staff_id}/toggle-active")
 def roster_toggle_active(staff_id: int, request: Request):
-    user, parish, diocese_org, err = timekeeping.served_parish_context(request)
+    user, parish, diocese_org, err = timekeeping.timekeeping_context(request)
     if err:
         return err
     if not timekeeping.can_manage_timekeeping(user, parish):

@@ -10,6 +10,10 @@ it: `timekeeping_roster.py` (Stage 1's staff roster CRUD) and
 `timekeeping_entries.py` (Stage 2's entry grid) -- both import this module
 rather than duplicating context resolution, same small-file-per-concern
 discipline as parish_documents.py/cornerstone_documents.py/cornerstone_mode.py.
+`timekeeping_context()` was named `served_parish_context()` until the
+2026-08-16 gating revision below -- renamed since it no longer requires
+Cornerstone-served status, only that the parish's own diocese has the
+`org_features` "timekeeping" flag on.
 
 STATUS (this build pass): Stage 1 (this file's diocese-side admin +
 timekeeping_roster.py's roster CRUD) is fully built. Stage 2
@@ -19,22 +23,27 @@ period's grid and save a draft -- but does NOT implement submit/lock
 (Stage 4/5). See the project's own Timekeeping build-plan write-up (in this
 session's report) for the full staged breakdown and what's left.
 
-GATING (decision 6, supersedes Parish Portal Plan.md/PRD PP-801's original
-"optional per-parish module enabled via a registry flag" framing):
-Timekeeping is available for a parish ONLY when that specific parish is
-itself Cornerstone-served (portal.parishes.linked_org_id IS NOT NULL --
-_served_parish_context() below is the one place this is checked). PP-801's
-OTHER half -- "only to authorized roles (Parish Finance; configurable)" --
-is a separate, still-real constraint: _can_manage_timekeeping() gates on
-parish_finance/parish_admin (plus the diocese-side equivalents, PP-803's
-"the diocese can maintain a roster on a parish's behalf" -- beacon_admin,
-setup_admin at the parish's own diocese, or a genuine cornerstone_employee
-grant at the parish's linked AP org, same three-way pattern
-parish_documents._can_edit_parish_docs()/cornerstone_documents.can_edit()
-already use for "CFM staff acting as this entity's own back office"). The
-PRD's "(configurable)" qualifier on the authorized-role rule is NOT built
-in this pass -- flagged as an open question in this session's report rather
-than guessed at.
+GATING (revised 2026-08-16, per Jay's direct decision -- supersedes the
+original decision-6 framing below): Timekeeping is available to ANY parish
+under a diocese that has the `org_features` "timekeeping" flag turned on
+(checkreq.org_features, see org_features.py) -- NOT gated on the parish
+itself being Cornerstone-served. A diocese can turn Timekeeping on for
+every one of its parishes with one admin toggle (Diocese Features on
+/admin/setup/organizations), regardless of whether any of them have their
+own linked AP org. `timekeeping_context()` below is the one place this is
+checked. PP-801's OTHER half -- "only to authorized roles (Parish Finance;
+configurable)" -- is unchanged, a separate, still-real constraint:
+_can_manage_timekeeping() gates on parish_finance/parish_admin (plus the
+diocese-side equivalents, PP-803's "the diocese can maintain a roster on a
+parish's behalf" -- beacon_admin, setup_admin at the parish's own diocese,
+or a genuine cornerstone_employee grant at the parish's linked AP org, same
+three-way pattern parish_documents._can_edit_parish_docs()/
+cornerstone_documents.can_edit() already use for "CFM staff acting as this
+entity's own back office" -- this one branch still only applies to a
+served parish, since a non-served parish has no linked AP org to hold that
+grant at). The PRD's "(configurable)" qualifier on the authorized-role rule
+is NOT built in this pass -- flagged as an open question in this session's
+report rather than guessed at.
 
 SCOPING, mirrors 038_timekeeping.sql's own header comment exactly:
 Payroll Periods and Time Categories are scoped to the DIOCESE's own
@@ -55,6 +64,12 @@ import rbac
 import parish_mode
 import parish_roles
 import cornerstone_mode
+import org_features
+# Parish-level half of the two-level Timekeeping gate (2026-08-17). One-way
+# import only: timekeeping_activation.py deliberately does NOT import this
+# module back, which is why its own _require_diocese_admin() is a documented
+# duplicate of the one below rather than a shared import.
+import timekeeping_activation
 
 router = APIRouter()
 
@@ -97,16 +112,40 @@ def parish_context(request: Request):
 
 
 def served_parish_context(request: Request):
-    """Same as parish_context() but additionally requires THIS SPECIFIC
-    parish to be Cornerstone-served (decision 6). Renders a clear, honest
-    "not available" page rather than a bare redirect when the parish is
-    real but simply isn't served -- distinct from the /parish-view bounce a
-    genuinely-missing parish context gets in parish_context() itself."""
+    """Deprecated alias, kept only so an old import site can't silently
+    break -- see timekeeping_context() below, the real function since the
+    2026-08-16 gating revision."""
+    return timekeeping_context(request)
+
+
+def timekeeping_context(request: Request):
+    """Same as parish_context() but additionally requires Timekeeping to be
+    on at BOTH levels of the two-level gate:
+
+      1. DIOCESE -- checkreq.org_features key 'timekeeping' (org_features.py,
+         2026-08-16 gating revision, see the module docstring).
+      2. PARISH  -- portal.parishes.modules->>'timekeeping' (added 2026-08-17,
+         owned by timekeeping_activation.py). Jay: "not all parishes will be
+         HR-activated - that needs to be a feature toggle somewhere."
+
+    Renders a clear, honest "not available" page naming WHICH level is off,
+    rather than a bare redirect -- distinct from the /parish-view bounce a
+    genuinely-missing parish context gets in parish_context() itself. The two
+    reasons need different wording because they have different fixes: the
+    diocese-level one is Diocese Features, the parish-level one is HR
+    Activation, and telling someone to go ask for the wrong one wastes a
+    round trip."""
     user, parish, diocese_org, err = parish_context(request)
     if err:
         return None, None, None, err
-    if not parish.get("linked_org_id"):
-        return None, None, None, _render(request, "timekeeping_unavailable.html", user, {"parish": parish})
+    if not org_features.is_enabled(parish["org_id"], "timekeeping"):
+        return None, None, None, _render(
+            request, "timekeeping_unavailable.html", user,
+            {"parish": parish, "reason": "diocese"})
+    if not timekeeping_activation.parish_hr_enabled(parish):
+        return None, None, None, _render(
+            request, "timekeeping_unavailable.html", user,
+            {"parish": parish, "reason": "parish"})
     return user, parish, diocese_org, None
 
 

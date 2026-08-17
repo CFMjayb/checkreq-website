@@ -108,6 +108,15 @@ _CARDS = [
     # for a diocese that hasn't had Timekeeping/HR turned on, DME being the
     # first and currently only one. feature_key is checked generically in
     # the loop below, same pattern as the role/entity-scoped checks.
+    # Added 2026-08-17 (Jay: "not all parishes will be HR-activated - that
+    # needs to be a feature toggle somewhere"). Sits FIRST in the HR group
+    # because it is the prerequisite for everything else here -- a parish that
+    # isn't activated has no roster and no entry grid. `setup_admin`, matching
+    # the two configuration cards below rather than the hr_admin operational
+    # ones; see timekeeping_activation.py's docstring for why that split was
+    # chosen (and why widening to hr_admin is the deliberately-open direction).
+    {"title": "HR Activation", "desc": "Choose which parishes use Timekeeping / HR.",
+     "url": "/admin/timekeeping/parishes", "role": "setup_admin", "group": "hr", "feature_key": "timekeeping"},
     {"title": "Payroll Periods", "desc": "Define diocese payroll periods for Timekeeping-enabled parishes.",
      "url": "/admin/timekeeping/periods", "role": "setup_admin", "group": "hr", "feature_key": "timekeeping"},
     {"title": "Time Categories", "desc": "Configure the categories parishes report hours against.",
@@ -148,7 +157,7 @@ _CARD_GROUPS = [
 # by design/necessity like everything else in this hub) -- see admin_hub()'s
 # own docstring for why this distinction matters.
 _ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes", "Payroll Periods", "Time Categories",
-                          "Timekeeping Review", "Timekeeping Status"}
+                          "Timekeeping Review", "Timekeeping Status", "HR Activation"}
 
 
 @router.get("/admin", response_class=HTMLResponse)
