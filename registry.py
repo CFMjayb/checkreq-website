@@ -82,12 +82,16 @@ def create_parish(org_id: int, name: str, **fields) -> dict:
     qbo_ar_customer_id, qbo_ap_vendor_id, served_tier, modules, contacts,
     parochial_report_id, pr_name, legal_name, ein (2026-08-08 -- the
     identifiers a parish's own Annual Parochial Report uses, distinct from
-    this app's own `name` and from QBO's Customer/Vendor display names)."""
+    this app's own `name` and from QBO's Customer/Vendor display names),
+    short_name (migration 043 -- a diocese's own payroll/HR "Department"
+    label for this parish, e.g. DME's "Wilton", which often isn't the same
+    string as the parish's formal church name)."""
     allowed = {
         "code", "city", "status", "databank_churchwebacct",
         "qbo_ar_customer_id", "qbo_ap_vendor_id", "served_tier",
         "modules", "contacts",
         "parochial_report_id", "pr_name", "legal_name", "ein",
+        "short_name",
     }
     cols = ["org_id", "name"] + [k for k in fields if k in allowed]
     vals = [org_id, name] + [fields[k] for k in fields if k in allowed]
@@ -128,6 +132,20 @@ def update_parish(parish_id: int, org_id: int, **fields) -> dict | None:
         # parish's own linked checkreq.organizations row, once one exists --
         # see parish_org_admin.py, the only real caller.
         "linked_org_id",
+        # Migration 043 (2026-08-16): the diocese's own payroll/HR
+        # "Department" label for this parish -- see create_parish()'s
+        # docstring above.
+        "short_name",
+        # Migration 044 (2026-08-16, Parish Portal Plan.md S6/S7 addendum):
+        # Shared Ministry Allocation direct-debit enrollment status
+        # ('not_enrolled'/'requested'/'enrolled' -- Beacon never collects
+        # bank details, this only tracks whether the diocese has completed
+        # a real enrollment through its own separate process) and a manual
+        # mapping to this parish's own Middendorf loan GL account (e.g.
+        # "1210.01") -- deliberately set by a diocese admin, never matched
+        # by name against loan_accounts.xlsx (that file's own known-issues
+        # section documents a real live name ambiguity).
+        "sma_direct_debit_status", "middendorf_gl_account",
     }
     sets = [f"{k} = %s" for k in fields if k in allowed]
     if not sets:

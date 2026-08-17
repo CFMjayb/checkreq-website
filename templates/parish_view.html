@@ -29,6 +29,14 @@
     <h3>Parish Information</h3>
     <p class="desc">Contact details and diocese info for this parish, from Databank.</p>
   </a>
+  {# Parish Portal Plan.md S6/S7 addendum (2026-08-16) -- always shown; the
+     page itself shows a clear "no permission" message for a viewer without
+     the Parish Finance role (parish_finance.can_view_finance()), same
+     pattern as this page's own can_review gating elsewhere. #}
+  <a class="module-tile" href="/parish-finance">
+    <h3>Finance</h3>
+    <p class="desc">Shared Ministry Allocation status, Middendorf loan, and AP payments.</p>
+  </a>
   <a class="module-tile" href="/parish-documents">
     <h3>Documents</h3>
     <p class="desc">What the diocese has shared with you, and your own parish's files.</p>
@@ -37,6 +45,17 @@
     <h3>Resources for Parishes</h3>
     <p class="desc">Shared diocese-wide resources.</p>
   </a>
+  {# Timekeeping, gate revised 2026-08-16: available to any parish under a
+     diocese with the org_features "timekeeping" flag on -- NOT gated on
+     Cornerstone-served status. `timekeeping_enabled` is computed by
+     parish_mode.py's parish_view_page(), matching timekeeping.py's own
+     timekeeping_context() check. #}
+  {% if timekeeping_enabled %}
+  <a class="module-tile" href="/timekeeping">
+    <h3>Timekeeping</h3>
+    <p class="desc">Enter and submit staff hours for the current payroll period.</p>
+  </a>
+  {% endif %}
   <a class="module-tile" href="/parish-requests">
     <h3>Feedback &amp; Requests</h3>
     <p class="desc">Send feedback or ask for something, and see your own history.</p>

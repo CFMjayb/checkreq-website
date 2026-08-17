@@ -166,6 +166,86 @@ def get_vendor_last_bill(company: str, qbo_vendor_id: str) -> tuple[dict | None,
     )
 
 
+def get_gl_accounts(company: str) -> tuple[dict | None, str | None]:
+    """GET /api/checkreq/gl-accounts/{company}. JSON (not the TSV fast-load
+    format the Setup Tables workbook uses -- this is a server-side call, not
+    a VBA regex parser working around JSON's own slowness, so plain JSON is
+    fine). Cornerstone Served Parishes Plan.md, Phase J (item 16): the GL
+    Accounts view screen's first and only caller.
+
+    Returns ({"company", "count", "rows": [{"id", "account_number",
+    "account_name", "account_type", "is_active", "annual_budget"}]}, None)
+    on success, or (None, "error text") on failure. annual_budget is a live
+    QBO Budget lookup layered on top of this otherwise-Postgres reference
+    data server-side (qbo-mcp-server's checkreq_api.get_gl_accounts()'s own
+    docstring) -- None/blank for an account with no budget data, never a
+    misleading 0.0."""
+    return _get("/api/checkreq/gl-accounts/{company}", company, {})
+
+
+def get_vendors(company: str) -> tuple[dict | None, str | None]:
+    """GET /api/checkreq/vendors/{company}. JSON. Cornerstone Served
+    Parishes Plan.md, Phase J (item 16): the Vendors view screen's first
+    and only caller.
+
+    Returns ({"company", "count", "rows": [{"id", "qbo_vendor_id",
+    "display_name", "company_name", "address", "email", "is_active"}]},
+    None) on success, or (None, "error text") on failure."""
+    return _get("/api/checkreq/vendors/{company}", company, {})
+
+
+def get_parish_invoices(company: str, qbo_customer_id: str) -> tuple[dict | None, str | None]:
+    """GET /api/checkreq/parish-invoices/{company}?qbo_customer_id=...
+
+    Parish Portal Plan.md S6/S7 addendum (2026-08-16): every real QBO
+    Invoice for a parish's AR Customer record -- parish_finance.py filters
+    the returned list down to Shared Ministry Allocation invoices
+    (DocNumber matching ^\\d{4}SMA-\\d{6}) itself; this just returns the raw
+    list.
+
+    Returns ({"qbo_customer_id", "invoices": [{"txn_id", "doc_number",
+    "txn_date", "total_amt", "balance"}]}, None) on success, or
+    (None, "error text") on failure."""
+    return _get(
+        "/api/checkreq/parish-invoices/{company}", company,
+        {"qbo_customer_id": qbo_customer_id},
+    )
+
+
+def get_parish_bill_payments(company: str, qbo_vendor_id: str) -> tuple[dict | None, str | None]:
+    """GET /api/checkreq/parish-bill-payments/{company}?qbo_vendor_id=...
+
+    Parish Portal Plan.md S6/S7 addendum (2026-08-16): real QBO BillPayment
+    history for a parish's AP Vendor record -- the "payments processed"
+    view.
+
+    Returns ({"qbo_vendor_id", "payments": [{"txn_id", "txn_date",
+    "total_amt", "ref_number"}]}, None) on success, or (None, "error text")
+    on failure."""
+    return _get(
+        "/api/checkreq/parish-bill-payments/{company}", company,
+        {"qbo_vendor_id": qbo_vendor_id},
+    )
+
+
+def get_account_balance(company: str, acct_num: str) -> tuple[dict | None, str | None]:
+    """GET /api/checkreq/account-balance/{company}?acct_num=...
+
+    Parish Portal Plan.md S6/S7 addendum (2026-08-16): a Middendorf loan's
+    live current balance (the GL account IS the loan; CurrentBalance IS the
+    outstanding principal) -- see qbo-mcp-server's qbo_client.get_account_balance()
+    docstring for why this is read directly from QBO's own Account entity
+    rather than derived from summed GL-detail transactions.
+
+    Returns ({"acct_num", "found": bool, "account": {"acct_num",
+    "acct_name", "current_balance"}|None}, None) on success, or
+    (None, "error text") on failure."""
+    return _get(
+        "/api/checkreq/account-balance/{company}", company,
+        {"acct_num": acct_num},
+    )
+
+
 def create_vendor(
     company: str,
     display_name: str,

@@ -20,12 +20,13 @@ Parish Portal presence, which is unaffected either way.</p>
 {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
 {% if request.query_params.get('enabled') %}<div class="banner banner-success">Cornerstone Served enabled.</div>{% endif %}
 {% if request.query_params.get('disabled') %}<div class="banner banner-info">Cornerstone Served disabled (soft — history preserved).</div>{% endif %}
+{% if request.query_params.get('finance_saved') %}<div class="banner banner-success">Finance settings saved.</div>{% endif %}
 
 <div class="card">
 <div class="table-scroll">
   <table class="simple-table">
     <tr>
-      <th>Parish</th><th>City</th><th>Cornerstone Served</th><th>Code</th><th>QBO Realm ID</th><th></th>
+      <th>Parish</th><th>City</th><th>Cornerstone Served</th><th>Code</th><th>QBO Realm ID</th><th></th><th>Finance Settings</th>
     </tr>
     {% for p in parishes %}
     <tr>
@@ -58,9 +59,29 @@ Parish Portal presence, which is unaffected either way.</p>
         </details>
         {% endif %}
       </td>
+      <td>
+        <details>
+          <summary class="btn btn-secondary btn-sm" style="display:inline-block;cursor:pointer">Edit&hellip;</summary>
+          <form method="post" action="/admin/manage-parishes/{{ p.id }}/finance-settings" style="margin-top:8px">
+            <div class="field"><label>Middendorf Loan GL Account</label>
+              <input type="text" name="middendorf_gl_account" value="{{ p.middendorf_gl_account or '' }}"
+                     placeholder="e.g. 1210.01 — blank if none">
+              <p class="sub" style="margin-top:2px">Leave blank if this parish has no Middendorf loan.</p>
+            </div>
+            <div class="field"><label>SMA Direct Debit Status</label>
+              <select name="sma_direct_debit_status">
+                <option value="not_enrolled" {% if p.sma_direct_debit_status == 'not_enrolled' or not p.sma_direct_debit_status %}selected{% endif %}>Not enrolled</option>
+                <option value="requested" {% if p.sma_direct_debit_status == 'requested' %}selected{% endif %}>Requested</option>
+                <option value="enrolled" {% if p.sma_direct_debit_status == 'enrolled' %}selected{% endif %}>Enrolled</option>
+              </select>
+            </div>
+            <button type="submit" class="btn btn-sm">Save</button>
+          </form>
+        </details>
+      </td>
     </tr>
     {% else %}
-    <tr><td colspan="6">No parishes yet in this entity.</td></tr>
+    <tr><td colspan="7">No parishes yet in this entity.</td></tr>
     {% endfor %}
   </table>
 </div>

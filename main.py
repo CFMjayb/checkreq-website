@@ -104,6 +104,7 @@ import parish_mode
 import parish_documents
 import cornerstone_documents
 import parish_info
+import parish_finance
 import tile_badges
 import announcements
 import parish_requests
@@ -5846,6 +5847,11 @@ parish_requests.register(app, current_user=_current_user, render=_render)
 # 2026-08-08 feedback batch: live Databank contact info, replacing the plain
 # Diocese/City/Served Tier/Status card on parish_view.html.
 parish_info.register(app, current_user=_current_user, render=_render)
+# Parish Portal Plan.md S6/S7 addendum (2026-08-16): SMA status/statement,
+# Middendorf loan progress, AP payments processed, Ask the Business Office,
+# SMA direct-debit enrollment. Thin wiring only -- all logic lives in
+# parish_finance.py itself.
+parish_finance.register(app, current_user=_current_user, render=_render)
 
 # Timekeeping HR Roster Review Plan.md (2026-08-16), finished and wired live
 # same day it was gated on the new org_features "timekeeping" flag (any

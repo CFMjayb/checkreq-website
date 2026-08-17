@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Finance — {{ parish.name }}{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Finance</h1>
+<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+
+{% if not can_view %}
+<div class="banner banner-info">You don't have permission to view this parish's finances. Ask your
+diocese for the Parish Finance role if you need access.</div>
+{% else %}
+
+{% if request.query_params.get('asked') %}<div class="banner banner-success">Your question was sent to the Business Office.</div>{% endif %}
+{% if request.query_params.get('error') == 'empty_question' %}<div class="banner banner-error">Please enter a question before sending.</div>{% endif %}
+{% if request.query_params.get('requested') %}<div class="banner banner-success">Direct debit enrollment requested — the Business Office will follow up to complete it.</div>{% endif %}
+{% if request.query_params.get('error') == 'already_requested' %}<div class="banner banner-info">A direct debit request is already on file for this parish.</div>{% endif %}
+
+<div class="card">
+  <h2 style="margin-bottom:4px">Shared Ministry Allocation</h2>
+  {% if not has_ar %}
+  <p class="sub">No AR account is on file for this parish yet — ask your diocese to set one up.</p>
+  {% elif sma_error %}
+  <p class="sub">Couldn't load this parish's SMA history right now: {{ sma_error }}</p>
+  {% elif not sma_years %}
+  <p class="sub">No Shared Ministry Allocation invoices found for this parish yet.</p>
+  {% else %}
+  <div class="table-scroll">
+    <table class="simple-table">
+      <tr><th>Year</th><th>Original Amount</th><th>Payments Posted</th><th>Current Balance</th></tr>
+      {% for y in sma_years %}
+      <tr>
+        <td>{{ y.year }}</td>
+        <td>${{ "%.2f"|format(y.original_amount) }}</td>
+        <td>${{ "%.2f"|format(y.paid_to_date) }}</td>
+        <td>${{ "%.2f"|format(y.current_balance) }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  <p class="sub" style="margin-top:8px">
+    <strong>Direct Debit:</strong>
+    {% if parish.sma_direct_debit_status == 'enrolled' %}
+      <span class="badge badge-confirmed">Enrolled</span>
+    {% elif parish.sma_direct_debit_status == 'requested' %}
+      <span class="badge badge-pending">Requested — awaiting setup</span>
+    {% else %}
+      <span class="sub">Not enrolled</span>
+      <form method="post" action="/parish-finance/request-direct-debit" style="display:inline; margin-left:8px">
+        <button type="submit" class="btn btn-sm btn-secondary">Request Enrollment</button>
+      </form>
+    {% endif %}
+  </p>
+  <p style="margin-top:8px"><a href="/parish-finance/sma-statement.pdf" class="btn btn-sm">Print Statement (PDF)</a></p>
+  {% endif %}
+</div>
+
+{% if has_loan_mapping %}
+<div class="card">
+  <h2 style="margin-bottom:4px">Middendorf Loan</h2>
+  {% if loan_error %}
+  <p class="sub">Couldn't load this parish's loan balance right now: {{ loan_error }}</p>
+  {% elif loan %}
+  <p class="sub">{{ loan.acct_name }} ({{ loan.acct_num }})</p>
+  <p style="font-size:1.4em; margin:4px 0"><strong>${{ "%.2f"|format(loan.current_balance) }}</strong> current balance</p>
+  {% else %}
+  <p class="sub">No matching QBO account found for this parish's loan mapping — ask your diocese to check.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h2 style="margin-bottom:4px">AP — Payments Processed</h2>
+  {% if not has_ap %}
+  <p class="sub">No AP vendor account is on file for this parish yet — ask your diocese to set one up.</p>
+  {% elif payments_error %}
+  <p class="sub">Couldn't load this parish's payment history right now: {{ payments_error }}</p>
+  {% elif not payments %}
+  <p class="sub">No payments on record yet.</p>
+  {% else %}
+  <div class="table-scroll">
+    <table class="simple-table">
+      <tr><th>Date</th><th>Amount</th><th>Reference</th></tr>
+      {% for p in payments %}
+      <tr>
+        <td>{{ p.txn_date }}</td>
+        <td>${{ "%.2f"|format(p.total_amt) }}</td>
+        <td>{{ p.ref_number or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-bottom:4px">Ask the Business Office</h2>
+  <form method="post" action="/parish-finance/ask-business-office">
+    <div class="field">
+      <textarea name="message" rows="3" style="width:100%" placeholder="What would you like to ask?"></textarea>
+    </div>
+    <button type="submit" class="btn btn-sm">Send</button>
+  </form>
+</div>
+
+{% endif %}
+</div>
+{% endblock %}

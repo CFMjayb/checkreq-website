@@ -1,0 +1,25 @@
+{#
+sma_statement.html -- a fragment, NOT a full page (no {% extends %}).
+Rendered standalone by parish_finance.render_sma_statement_pdf(), wrapped in
+a minimal <html><head><style>...inlined tokens.css...</style> and fed to
+the real headless-Chromium PDF renderer, same pattern as check_voucher.html.
+#}
+<h1>{{ diocese_org.name }}</h1>
+<h2 style="margin-top:0">Shared Ministry Allocation Statement</h2>
+<p><strong>{{ parish.name }}</strong>{% if parish.city %} — {{ parish.city }}{% endif %}</p>
+
+{% if not sma_years %}
+<p>No Shared Ministry Allocation invoices found for this parish.</p>
+{% else %}
+<table>
+  <tr><th>Year</th><th>Original Amount</th><th>Payments Posted</th><th>Current Balance</th></tr>
+  {% for y in sma_years %}
+  <tr>
+    <td>{{ y.year }}</td>
+    <td>${{ "%.2f"|format(y.original_amount) }}</td>
+    <td>${{ "%.2f"|format(y.paid_to_date) }}</td>
+    <td>${{ "%.2f"|format(y.current_balance) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
