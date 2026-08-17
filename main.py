@@ -110,6 +110,11 @@ import announcements
 import parish_requests
 import parish_org_admin
 import cornerstone_mode
+# Needed by _render()'s synthetic "timekeeping_reviewer" gate (2026-08-17) --
+# main.py had never imported this directly before; admin_hub.py was the only
+# consumer. A missing import here is a runtime NameError, not a compile error,
+# so it is worth stating why it exists.
+import org_features
 import timekeeping
 import timekeeping_activation
 import timekeeping_roster
@@ -300,6 +305,27 @@ MODULES = [
     # checkreq.roles grant at all) needs to reach this without the
     # Administrative Tasks hub's own top-level gate blocking them.
     {"key": "parish_requests_review", "title": "Parish Requests", "desc": "Review parish feedback and general requests.", "url": "/admin/parish-requests", "enabled": True, "gate": "parish_reviewer"},
+    # 2026-08-17, Jay: "I think there needs to be a main menu items on the
+    # Diocese for Time Review and Time Status, and appear according to the
+    # personal RBAC." Moved OUT of the Administrative Tasks HR group (which
+    # keeps only the four configuration cards: HR Activation, Employees,
+    # Payroll Periods, Time Categories) because these two are day-to-day
+    # operational queues, not setup.
+    #
+    # Gated on the synthetic "timekeeping_reviewer" pseudo-role injected in
+    # _render() below -- the same trick administrative_tasks/parish_reviewer
+    # already use. It has to be synthetic because a tile's `gate` is a single
+    # role key, while the real condition is TWO things at once: the diocese
+    # has the timekeeping feature flag on AND the person holds hr_admin or
+    # beacon_admin there. Encoding that in one place keeps the tile check as
+    # the same generic `m.gate in entity_roles` as every other tile.
+    #
+    # Deliberately absent from CORNERSTONE_MODULE_KEYS: these are diocese-wide
+    # review screens and their routes reject a Cornerstone-Mode-selected entity
+    # outright. This is also NOT the Parish Mode timekeeping grid -- Jay:
+    # "This is different from Parish Mode Timekeeping."
+    {"key": "time_review", "title": "Time Review", "desc": "Approve roster changes and see submitted hours awaiting review.", "url": "/admin/timekeeping/review", "enabled": True, "gate": "timekeeping_reviewer"},
+    {"key": "time_status", "title": "Time Status", "desc": "Track each parish's submissions, open or close a period, enter missing hours, and export.", "url": "/admin/timekeeping/status", "enabled": True, "gate": "timekeeping_reviewer"},
 ]
 
 # The union of roles that unlock the "Administrative Tasks" tile/hub (2026-08-02
@@ -487,6 +513,15 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # does) both count as a reviewer.
     if "beacon_admin" in entity_roles or parish_roles.get_parish_ids_with_role(user["id"], "parish_admin"):
         entity_roles = entity_roles | {"parish_reviewer"}
+    # 2026-08-17: synthetic gate for the two new diocese Time Review / Time
+    # Status tiles. BOTH conditions must hold, which is why this can't be a
+    # plain role gate: the current entity must have Timekeeping turned on
+    # (checkreq.org_features) AND the person must hold hr_admin or
+    # beacon_admin there. org_features.is_enabled() returns False for a NULL
+    # org and for a served parish-org (the flag lives on the diocese row), so
+    # this also keeps the tiles out of Cornerstone Mode without a second check.
+    if org_id is not None and entity_roles & {"hr_admin", "beacon_admin"}             and org_features.is_enabled(org_id, "timekeeping"):
+        entity_roles = entity_roles | {"timekeeping_reviewer"}
     _parish_view, _parish_view_is_preview = parish_mode.effective_parish_mode(request, user)
     # Cornerstone Served Parishes Phase B (2026-08-16): True whenever the
     # currently-selected entity is a served parish-org -- drives the

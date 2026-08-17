@@ -133,25 +133,13 @@ _CARDS = [
      "url": "/admin/timekeeping/periods", "role": ["setup_admin", "hr_admin"], "group": "hr", "feature_key": "timekeeping"},
     {"title": "Time Categories", "desc": "Configure the categories parishes report hours against.",
      "url": "/admin/timekeeping/categories", "role": ["setup_admin", "hr_admin"], "group": "hr", "feature_key": "timekeeping"},
-    # Timekeeping HR Roster Review Plan.md (2026-08-16) -- Stage 4's
-    # diocese-side review screen. Entity-scoped like the two cards above
-    # (same DIOCESE org_id, never a served parish's own linked org -- see
-    # timekeeping_review.py's own _require_hr_admin()). `role` is a LIST
-    # (hr_admin OR beacon_admin) -- see the visibility check below, which
-    # now handles a list for entity-scoped cards too, not just cross-entity
-    # ones.
-    {"title": "Timekeeping Review", "desc": "Approve or reject proposed staff roster changes; see submitted hours awaiting review.",
-     "url": "/admin/timekeeping/review", "role": ["hr_admin", "beacon_admin"], "group": "hr", "feature_key": "timekeeping"},
-    # Added 2026-08-16, same session as the Roster Review screen above --
-    # Jay: "screens to check the status of submissions for a period, and
-    # the ability to enter missing data, and to generate a spreadsheet with
-    # the data submitted for a period." Same gate/group/feature_key as
-    # Timekeeping Review (both are timekeeping_status.py's own
-    # _require_hr_admin(), a deliberate small duplicate of the same check,
-    # matching this codebase's established per-module permission-check
-    # precedent) -- entity-scoped like every other HR card.
-    {"title": "Timekeeping Status", "desc": "See every parish's submission status for a period, enter missing hours, and export the period to Excel.",
-     "url": "/admin/timekeeping/status", "role": ["hr_admin", "beacon_admin"], "group": "hr", "feature_key": "timekeeping"},
+    # Timekeeping Review and Timekeeping Status USED to live here. Moved to
+    # the diocese MAIN MENU 2026-08-17 at Jay's direction -- "I think there
+    # needs to be a main menu items on the Diocese for Time Review and Time
+    # Status, and appear according to the personal RBAC" -- because they are
+    # operational queues, whereas this HR group is deliberately the four
+    # CONFIGURATION screens only (HR Activation, Employees, Payroll Periods,
+    # Time Categories). See MODULES in main.py, gate "timekeeping_reviewer".
 ]
 
 # Fixed display order + section headings -- per Jay's explicit request,
@@ -169,8 +157,7 @@ _CARD_GROUPS = [
 # by design/necessity like everything else in this hub) -- see admin_hub()'s
 # own docstring for why this distinction matters.
 _ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes", "Payroll Periods", "Time Categories",
-                          "Timekeeping Review", "Timekeeping Status", "HR Activation",
-                          "Employees"}
+                          "HR Activation", "Employees"}
 
 
 @router.get("/admin", response_class=HTMLResponse)

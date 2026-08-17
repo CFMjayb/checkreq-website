@@ -66,6 +66,7 @@ staff before treating this as the final shape.
 """
 from __future__ import annotations
 
+import datetime as dt
 import io
 
 from fastapi import APIRouter, Request, Response
@@ -193,9 +194,85 @@ def status_board(period_id: int, request: Request):
             status_code=303,
         )
     rows = list_parish_status_for_period(org["id"], period_id)
+    # Other periods currently 'open' in this diocese. Surfaced rather than
+    # silently prevented: the parish entry grid resolves ONE period via
+    # timekeeping.get_current_open_period(), which prefers the open period
+    # containing today, so a second open period is reachable by nobody. That is
+    # confusing rather than harmful, and the honest response is to say so on
+    # the screen instead of quietly closing someone else's period as a side
+    # effect of opening this one.
+    other_open = db.query(
+        "SELECT id, label, period_start, period_end FROM portal.payroll_periods "
+        "WHERE org_id = %s AND status = 'open' AND id <> %s ORDER BY period_start",
+        (org["id"], period_id))
     return _render(request, "timekeeping_status.html", user, {
         "current_org": org, "period": period, "rows": rows,
+        "other_open": other_open, "today": dt.date.today().isoformat(),
     })
+
+
+@router.post("/admin/timekeeping/status/{period_id}/set-status")
+async def status_set_status(period_id: int, request: Request):
+    """Open or close a payroll period (Jay, 2026-08-17: "The Time Status will
+    also have the ability to close and open a period - that makes sense to me").
+
+    Deliberately lives here rather than on Payroll Periods: this is the screen
+    where someone can actually SEE whether every parish has submitted, which is
+    the information you need in order to decide a period is finished.
+
+    Guards, in order:
+      - the period must belong to the current diocese (_get_period is scoped)
+      - the target must be one of the three real states (migration 048)
+      - 'future' is refused for a period that has already started, which is the
+        one transition that would make the stored status a lie. Reopening a past
+        period as 'open' IS allowed -- that is a legitimate late correction, and
+        it is the whole reason "closed" is not a one-way door.
+    """
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    period = _get_period(period_id, org["id"])
+    if not period:
+        return RedirectResponse(
+            "/admin/timekeeping/periods?error=That+payroll+period+was+not+found+for+this+diocese.",
+            status_code=303)
+    form = await request.form()
+    target = (form.get("status") or "").strip()
+    back = f"/admin/timekeeping/status/{period_id}"
+    if target not in ("open", "closed", "future"):
+        return RedirectResponse(f"{back}?error=Unknown+status.", status_code=303)
+    if target == period["status"]:
+        return RedirectResponse(f"{back}?saved=Already+{target}.", status_code=303)
+    if target == "future" and period["period_start"] <= dt.date.today():
+        return RedirectResponse(
+            f"{back}?error=This+period+has+already+started,+so+it+cannot+be+"
+            "marked+Future.", status_code=303)
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            # processed_by_user_id/processed_at record WHO closed a period and
+            # when -- kept from the pre-048 vocabulary because that is still
+            # real audit information. Stamped on close, cleared on reopen so
+            # the pair never claims a period is closed by someone when it is
+            # open again.
+            if target == "closed":
+                cur.execute(
+                    "UPDATE portal.payroll_periods SET status = 'closed', "
+                    "  processed_by_user_id = %s, processed_at = now(), "
+                    "  updated_at = now() WHERE id = %s AND org_id = %s",
+                    (user["id"], period_id, org["id"]))
+            else:
+                cur.execute(
+                    "UPDATE portal.payroll_periods SET status = %s, "
+                    "  processed_by_user_id = NULL, processed_at = NULL, "
+                    "  updated_at = now() WHERE id = %s AND org_id = %s",
+                    (target, period_id, org["id"]))
+        conn.commit()
+
+    label = {"open": "Opened", "closed": "Closed", "future": "Marked Future"}[target]
+    return RedirectResponse(
+        f"{back}?saved={label}+{(period['label'] or 'this period').replace(' ', '+')}.",
+        status_code=303)
 
 
 # ── Excel export ─────────────────────────────────────────────────────────────

@@ -9,11 +9,48 @@
   <strong>{{ period.label or (period.period_start|string ~ " to " ~ period.period_end|string) }}</strong>
   ({{ period.period_start }} to {{ period.period_end }}{% if period.submission_deadline %}, submit by
   {{ period.submission_deadline }}{% endif %}) &middot;
-  <span class="badge {{ 'badge-cancelled' if period.status == 'processed' else 'badge-submitted' if period.status == 'closed' else 'badge-draft' }}">{{ period.status|capitalize }}</span>
+  {# Status vocabulary is open/closed/future since migration 048 -- 'processed'
+     was retired, so the old three-way check on it could never match. #}
+  <span class="badge {{ 'badge-draft' if period.status == 'open' else 'badge-submitted' if period.status == 'closed' else 'badge-skipped' }}">{{ period.status|capitalize }}</span>
+  {% if period.pay_date %}&middot; pay date {{ period.pay_date }}{% endif %}
 </p>
 
 {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
-{% if request.query_params.get('saved') %}<div class="banner banner-success">Saved {{ request.query_params.get('saved') }} cell(s).</div>{% endif %}
+{# Renders the message as-is. The old wording ("Saved N cell(s).") assumed a
+   cell count, but the backfill save redirects to the per-parish screen, not
+   here -- so it was never reachable, and this banner now carries real text. #}
+{% if request.query_params.get('saved') %}<div class="banner banner-success">{{ request.query_params.get('saved') }}</div>{% endif %}
+
+{# Open / close control (2026-08-17, Jay: "The Time Status will also have the
+   ability to close and open a period"). Placed here because this is the screen
+   that shows whether every parish has actually submitted, which is the
+   information you need to decide a period is finished. #}
+<div class="card">
+  <p class="sub" style="margin-top:0">Only an <strong>Open</strong> period accepts hours entry or
+  submission — from a parish or from this screen. <strong>Closed</strong> and <strong>Future</strong>
+  are both read-only.</p>
+  {% if other_open %}
+  <div class="banner banner-info">
+    {% for o in other_open %}<strong>{{ o.label }}</strong> ({{ o.period_start }} to {{ o.period_end }}){% if not loop.last %}, {% endif %}{% endfor %}
+    {{ 'is' if other_open|length == 1 else 'are' }} also open. A parish's entry grid only ever targets
+    one period — the open one containing today — so any other open period is reachable by nobody.
+    Consider closing {{ 'it' if other_open|length == 1 else 'them' }}.
+  </div>
+  {% endif %}
+  <form method="post" action="/admin/timekeeping/status/{{ period.id }}/set-status"
+        style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <label>Set this period to
+      <select name="status">
+        <option value="open"{% if period.status == 'open' %} selected{% endif %}>Open — accepting hours</option>
+        <option value="closed"{% if period.status == 'closed' %} selected{% endif %}>Closed — read-only</option>
+        <option value="future"{% if period.status == 'future' %} selected{% endif %}
+                {% if period.period_start and period.period_start|string <= today %}disabled{% endif %}>
+          Future — not started yet{% if period.period_start and period.period_start|string <= today %} (unavailable: already started){% endif %}
+        </option>
+      </select></label>
+    <button type="submit" class="btn btn-sm">Apply</button>
+  </form>
+</div>
 
 <p style="margin:12px 0">
   <a class="btn btn-sm" href="/admin/timekeeping/status/{{ period.id }}/export">Download Excel (Summary + Detail)</a>
