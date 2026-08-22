@@ -19,6 +19,20 @@
       {% if not edit_data %}
       <a href="/new-request-easy" class="btn btn-secondary btn-sm">Easy View</a>
       {% endif %}
+      {# 2026-08-17, Jay: "add a feature that allows a Check Request to be saved
+         as a Draft (like you do for Invoice upload)". formnovalidate is
+         essential -- a draft is deliberately allowed to be incomplete, and
+         without it the browser's own HTML5 `required` checks on Program Area /
+         Pay Date / vendor would block the save before the request is even
+         sent. The server-side branch in new_request_submit relaxes the same
+         completeness rules (but never the access checks).
+         Offered only for a brand-new request or an existing Draft: turning a
+         live request back into a draft is refused server-side, so showing the
+         button there would be a dead control. #}
+      {% if (not edit_data) or edit_data.status == 'Draft' %}
+      <button type="submit" form="reqForm" name="save_as_draft" value="1" formnovalidate
+              class="btn btn-secondary btn-sm">Save as Draft</button>
+      {% endif %}
       <button type="submit" form="reqForm" class="btn btn-primary btn-sm">{% if edit_data and edit_data.request_type == 'invoice_payment' %}Submit for Approval{% elif edit_data %}Save Changes{% else %}Submit Request{% endif %}</button>
     </div>
   </div>
@@ -60,7 +74,7 @@
       </div>
       <div class="field">
         <label>Pay Date</label>
-        <input type="date" name="requested_pay_date" id="payDateInput" value="{{ edit_data.requested_pay_date if edit_data else today }}" required>
+        <input type="date" name="requested_pay_date" id="payDateInput" value="{{ (edit_data.requested_pay_date or today) if edit_data else today }}" required>
       </div>
     </div>
 

@@ -48,6 +48,11 @@
          hunting for it in the back-link row. #}
       <a href="/new-request" class="btn btn-secondary btn-sm">Standard View</a>
       <button type="button" id="viewDocToggleBtn" class="btn btn-secondary btn-sm" disabled>View Uploaded Document</button>
+      {# Same Save as Draft control as the standard form -- see that template
+         for why formnovalidate is required here. Easy View has no edit mode,
+         so this is always the brand-new case. #}
+      <button type="submit" form="reqForm" name="save_as_draft" value="1" formnovalidate
+              class="btn btn-secondary btn-sm">Save as Draft</button>
       <button type="submit" form="reqForm" class="btn btn-primary btn-sm">Submit Request</button>
     </div>
   </div>

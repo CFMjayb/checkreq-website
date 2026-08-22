@@ -2716,6 +2716,138 @@ async def new_request_submit(request: Request):
                 status_code=400,
             )
 
+    # -- SAVE AS DRAFT (2026-08-17) ------------------------------------------
+    # Jay: "add a feature that allows a Check Request to be saved as a Draft
+    # (like you do for Invoice upload)."
+    #
+    # Placed HERE, before every submit-time validation below, on purpose. A
+    # draft is unfinished work, so it must not be held to the rules that exist
+    # to make a SUBMISSION sound: vendor required, pay date required, a
+    # positive amount, the tier-3 budget block. Putting this branch after those
+    # checks would mean you could only save a draft that was already complete
+    # enough to submit, which defeats the point.
+    #
+    # It therefore skips, deliberately, every one of:
+    #   - the "select a vendor" / "Pay Date is required" 400s
+    #   - _evaluate_gl_line_budgets (a draft is not being submitted, so it is
+    #     neither blocked nor flagged and nothing hits budget_overage_log)
+    #   - build_approval_chain / _materialize_approval_actions (no approver
+    #     should see or be notified about a draft)
+    #   - _archive_attachments (the archived PDF is a point-in-time SUBMISSION
+    #     snapshot; archiving on every draft save would litter SharePoint with
+    #     versions of an unfinished request)
+    #
+    # No migration was needed: payment_requests.status already DEFAULTS to
+    # 'Draft' and has no CHECK constraint, and program_area_id / vendor_id /
+    # requested_pay_date / description are all nullable -- verified against the
+    # live schema before building. Invoice Intake has written 'Draft' rows since
+    # 2026-08-02, and this function's own DRAFT FINALIZE branch below is keyed
+    # on status alone rather than request_type, so a check_request draft
+    # finalizes through that same already-proven code with no change to it.
+    if form.get("save_as_draft") == "1":
+        # Only an unsaved request or an existing DRAFT may be saved as a draft.
+        # This guard is the important one: pulling an UnderReview row back to
+        # Draft would orphan its approval_actions and silently withdraw it from
+        # approvers' queues.
+        if existing_pr and existing_pr["status"] != "Draft":
+            return JSONResponse(
+                {"error": "This request is already " + str(existing_pr["status"])
+                          + " and cannot be returned to draft. Edit and resubmit it instead."},
+                status_code=400,
+            )
+
+        d_program_area_id = int(form["program_area_id"]) if form.get("program_area_id") else None
+        if d_program_area_id is not None and not _user_can_submit_for(user, d_program_area_id, org_id):
+            # Authorization still applies to a draft -- it is a real row in a
+            # real entity, and this is the same gate the submit path uses. Only
+            # the COMPLETENESS rules are relaxed here, never access.
+            return JSONResponse(
+                {"error": "You don't have access to that program area."}, status_code=403)
+
+        d_using_new_vendor = form.get("using_new_vendor") == "1"
+        d_vendor_id = (int(form["vendor_id"])
+                       if (not d_using_new_vendor and form.get("vendor_id")) else None)
+        d_pay_date = form.get("requested_pay_date") or None
+        d_description = form.get("description", "")
+        d_special = form.get("special_instructions", "")
+
+        # Tolerant GL parse: a blank or half-typed row is skipped rather than
+        # rejected, which is the whole point of a draft.
+        d_gl_lines = []
+        d_accounts = form.getlist("gl_account_id")
+        d_amounts = form.getlist("gl_amount")
+        d_memos = form.getlist("gl_memo")
+        for idx, acct in enumerate(d_accounts):
+            if not (acct or "").strip():
+                continue
+            try:
+                amt = round(float((d_amounts[idx] or "0").strip() or 0), 2)
+            except (ValueError, IndexError):
+                amt = 0.0
+            d_gl_lines.append((int(acct), amt,
+                               d_memos[idx] if idx < len(d_memos) else ""))
+        if d_gl_lines:
+            d_total = round(sum(a for _, a, _ in d_gl_lines), 2)
+        else:
+            try:
+                d_total = round(float((form.get("ask_my_accountant_amount") or "0").strip() or 0), 2)
+            except ValueError:
+                d_total = 0.0
+
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                if existing_pr:
+                    d_request_number = existing_pr["request_number"]
+                    d_pr_id = existing_pr["id"]
+                    cur.execute(
+                        "UPDATE checkreq.payment_requests SET program_area_id = %s, "
+                        "  vendor_id = %s, amount = %s, requested_pay_date = %s, "
+                        "  description = %s, special_instructions = %s, updated_at = NOW() "
+                        "WHERE id = %s AND org_id = %s",
+                        (d_program_area_id, d_vendor_id, d_total, d_pay_date,
+                         d_description, d_special, d_pr_id, org_id))
+                else:
+                    d_request_number = _next_request_number("check_request")
+                    cur.execute(
+                        "INSERT INTO checkreq.payment_requests "
+                        "(request_number, request_type, org_id, program_area_id, "
+                        " submitter_user_id, vendor_id, amount, requested_pay_date, "
+                        " description, special_instructions, status) "
+                        "VALUES (%s, 'check_request', %s, %s, %s, %s, %s, %s, %s, %s, 'Draft') "
+                        "RETURNING id",
+                        (d_request_number, org_id, d_program_area_id, user["id"],
+                         d_vendor_id, d_total, d_pay_date, d_description, d_special))
+                    d_pr_id = cur.fetchone()["id"]
+
+                # Replace coding lines wholesale, matching the edit path's own
+                # settled approach -- simpler than diffing, and a draft's lines
+                # carry no downstream state.
+                cur.execute("DELETE FROM checkreq.payment_request_gl_lines "
+                            "WHERE payment_request_id = %s", (d_pr_id,))
+                for acct_id, amt, memo in d_gl_lines:
+                    cur.execute(
+                        "INSERT INTO checkreq.payment_request_gl_lines "
+                        "(payment_request_id, gl_account_id, amount, memo) "
+                        "VALUES (%s, %s, %s, %s)", (d_pr_id, acct_id, amt, memo))
+
+                cur.execute(
+                    "INSERT INTO checkreq.audit_log "
+                    "(payment_request_id, action_by_user_id, action_type, new_status, comment) "
+                    "VALUES (%s, %s, 'Draft Saved', 'Draft', %s)",
+                    (d_pr_id, user["id"],
+                     "Saved as draft -- not submitted, no approvers notified."))
+            conn.commit()
+
+        # A draft cannot carry an in-progress NEW vendor: checkreq.vendor_requests
+        # is CHECK-constrained to pending_approval/approved/rejected/posted_to_qbo
+        # with no draft state, and the Vendor Approvals queue lists every row
+        # regardless of status -- creating one here would put an unfinished
+        # request in front of a vendor approver. Reported in the banner rather
+        # than dropped silently, which would be a data-loss bug.
+        extra = "&new_vendor_dropped=1" if d_using_new_vendor else ""
+        return RedirectResponse(
+            "/my-requests?draft_saved=" + d_request_number + extra, status_code=303)
+
     # New Vendor Onboarding (New Vendor Onboarding Plan.md, Section 2): the
     # "Add new vendor" panel and the existing-vendor Tom Select are mutually
     # exclusive -- using_new_vendor (a hidden field set by new_request.js

@@ -16,6 +16,21 @@
   <a href="/requests/{{ submitted }}/pdf" target="_blank">View / Download PDF</a>
 </div>
 {% endif %}
+{# Draft saved (2026-08-17). Deliberately says what a draft is NOT -- nobody
+   has been asked to approve anything yet -- because "saved" on its own reads
+   like "submitted" to someone who just filled in a request form. #}
+{% if request.query_params.get('draft_saved') %}
+<div class="banner banner-info">
+  Draft saved: <strong>{{ request.query_params.get('draft_saved') }}</strong> —
+  not submitted, and no approvers have been notified. Open it from the list
+  below to finish and submit it.
+  {% if request.query_params.get('new_vendor_dropped') %}
+  <br><strong>Note:</strong> the new-vendor details you had started were not
+  kept. A new vendor is created when the request is submitted, not when it is
+  drafted — please re-enter them then, or pick an existing vendor.
+  {% endif %}
+</div>
+{% endif %}
 {% if edited %}
 <div class="banner banner-success">
   Updated: {{ edited }} —
