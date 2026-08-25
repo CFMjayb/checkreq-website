@@ -6,6 +6,15 @@ junk... can't you use the standard API to poll the contact information?")
 with a real, live Databank lookup keyed on the parish's own
 databank_contact_id (populated the same session this page was requested).
 
+Clergy listing added 2026-08-25, once 26-120's ClergyDirectory vendor
+blocker closed: the church-level /contacts lookup below already returns
+Databank's "internal_contact_id" field, which turns out to be the SAME id
+space ClergyDirectory calls "webacct"/"churchwebacct" -- confirmed live,
+not assumed (contactid 206 / internal_contact_id 3050504 for All Hallows
+Parish, Davidsonville, matches its churchwebacct in the live clergy data
+exactly). So the existing contact lookup bridges straight into a clergy
+lookup with no new matching/sync step needed.
+
 New file per NFR-11 / the standing main.py rule. Read-only, no writes.
 """
 from __future__ import annotations
@@ -38,11 +47,16 @@ def parish_information_page(request: Request):
         return RedirectResponse("/parish-view")
 
     contact, error = None, None
+    clergy, clergy_error = None, None
     if parish.get("databank_contact_id"):
         contact, error = databank_mcp_client.get_contact(parish["databank_contact_id"])
+        church_webacct = contact.get("internal_contact_id") if contact else None
+        if church_webacct:
+            clergy, clergy_error = databank_mcp_client.get_clergy_for_church(church_webacct)
     else:
         error = "This parish isn't linked to a Databank record yet — contact the diocesan office."
 
     return _render(request, "parish_information.html", user, {
         "parish": parish, "contact": contact, "error": error,
+        "clergy": clergy, "clergy_error": clergy_error,
     })

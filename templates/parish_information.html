@@ -27,7 +27,24 @@
 </div>
 
 <div class="card">
-  <p class="sub"><em>Coming soon: congregation and clergy directory (pending TheDataBank vendor's ClergyDirectory endpoint).</em></p>
+  <h2>Clergy</h2>
+  {% if clergy_error %}
+    <p class="sub"><em>Clergy information isn't available right now ({{ clergy_error }}).</em></p>
+  {% elif clergy %}
+    <ul class="clergy-list">
+      {% for c in clergy %}
+      <li>
+        <strong>{{ c.title1 }} {{ c.FIRST1 }} {{ c.MI1 }} {{ c.LAST1 }}{% if c.suffix1 %} {{ c.suffix1 }}{% endif %}</strong>
+        — {{ c.clergyrole or "Clergy" }}
+        {% if c.email %}<br><a href="mailto:{{ c.email }}">{{ c.email }}</a>{% endif %}
+        {% if c.MOBILEPHONE %} · {{ c.MOBILEPHONE }}{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="sub"><em>No clergy currently on file for this parish.</em></p>
+  {% endif %}
+  <p class="sub"><em>Coming soon: full congregation directory.</em></p>
 </div>
 </div>
 {% endblock %}

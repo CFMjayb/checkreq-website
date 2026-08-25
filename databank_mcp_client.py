@@ -72,6 +72,35 @@ def get_contact(contact_id: str, timeout: int = 15) -> tuple[dict | None, str | 
         return None, str(exc)
 
 
+def get_clergy_for_church(churchwebacct, timeout: int = 30) -> tuple[list[dict] | None, str | None]:
+    """GET /api/clergy-directory?churchwebacct=X -- clergy assigned to one
+    church (name/role/email/mobile). churchwebacct here is Databank's
+    "internal_contact_id" -- NOT the small "contactid" get_contact() takes.
+    A caller who only has a parish's databank_contact_id (a contactid)
+    gets internal_contact_id for free: it's already in get_contact()'s own
+    response dict. Returns (rows_or_None, error_str_or_None) -- never
+    raises, same contract as get_congregations()."""
+    url = f"{DATABANK_MCP_URL}/api/clergy-directory"
+    try:
+        resp = requests.get(
+            url,
+            headers={"X-API-Key": _get_api_key()},
+            params={"churchwebacct": churchwebacct},
+            timeout=timeout,
+        )
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+        if not resp.ok:
+            return None, data.get("error") or f"HTTP {resp.status_code}: {resp.text[:300]}"
+        if "error" in data:
+            return None, data["error"]
+        return data.get("clergy", []), None
+    except Exception as exc:
+        return None, str(exc)
+
+
 def get_congregations(timeout: int = 30) -> tuple[list[dict] | None, str | None]:
     """GET /api/clergy-directory?congregations=true — the registry-seed shape
     (clergy_directory.congregations_from()): distinct churches keyed by
