@@ -34,15 +34,33 @@
     <ul class="clergy-list">
       {% for c in clergy %}
       <li>
-        <strong>{{ c.title1 }} {{ c.FIRST1 }} {{ c.MI1 }} {{ c.LAST1 }}{% if c.suffix1 %} {{ c.suffix1 }}{% endif %}</strong>
-        — {{ c.clergyrole or "Clergy" }}
+        <strong>{{ c.title }} {{ c.first_name }} {{ c.middle_name }} {{ c.last_name }}{% if c.suffix %} {{ c.suffix }}{% endif %}</strong>
+        — {{ c.role or "Clergy" }}
       </li>
       {% endfor %}
     </ul>
+    {% if clergy_from_cache %}
+      <p class="sub"><em>Showing the most recent saved information{% if clergy_as_of %} (as of {{ clergy_as_of }}){% endif %} — live lookup is temporarily unavailable{% if clergy_live_error %} ({{ clergy_live_error }}){% endif %}.</em></p>
+    {% elif clergy_as_of %}
+      <p class="sub"><em>Updated {{ clergy_as_of }}.</em></p>
+    {% endif %}
   {% else %}
     <p class="sub"><em>No clergy currently on file for this parish.</em></p>
   {% endif %}
-  <p class="sub"><em>Coming soon: full congregation directory.</em></p>
+  <p class="sub"><em>Coming soon: full congregation directory (wardens, vestry, and other lay leadership), once Databank provides it.</em></p>
+
+  {% if request.query_params.get('correction_submitted') %}
+    <p class="banner banner-success">Thanks — your correction was sent to the diocesan office.</p>
+  {% elif request.query_params.get('correction_error') %}
+    <p class="banner banner-error">Please describe the correction before submitting.</p>
+  {% endif %}
+  <details class="correction-details">
+    <summary>Report a correction</summary>
+    <form method="post" action="/parish-information/correction">
+      <textarea name="message" rows="3" placeholder="What needs to be corrected or added?" required></textarea>
+      <button type="submit" class="btn btn-sm">Submit correction</button>
+    </form>
+  </details>
 </div>
 </div>
 {% endblock %}

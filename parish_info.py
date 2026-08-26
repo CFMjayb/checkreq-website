@@ -15,7 +15,20 @@ Parish, Davidsonville, matches its churchwebacct in the live clergy data
 exactly). So the existing contact lookup bridges straight into a clergy
 lookup with no new matching/sync step needed.
 
-New file per NFR-11 / the standing main.py rule. Read-only, no writes.
+Rebuilt onto congregation.py 2026-08-26 (Parish Portal S6, Jay: "Build the
+real S6 now... make sure your postgres tables have the ability to store
+all leadership contacts for a parish"). This page no longer calls
+databank_mcp_client.get_clergy_for_church() directly -- congregation.py
+owns the live-fetch/cache/fallback logic (portal.congregation_cache,
+migration 049), so a Databank hiccup degrades to "data as of X" instead of
+an empty page. Also gained a "Report a correction" submit, reusing
+parish_requests.py's existing submission path (kind='general_request',
+same pattern as Parish Finance's Ask-the-Business-Office/SMA-direct-debit
+requests) rather than inventing a new request type.
+
+New file per NFR-11 / the standing main.py rule. Read-only except for the
+one correction-request POST, which itself only ever writes to the
+already-existing portal.parish_requests table.
 """
 from __future__ import annotations
 
@@ -24,6 +37,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 import parish_mode
 import databank_mcp_client
+import congregation
+import parish_requests
 
 router = APIRouter()
 
@@ -47,16 +62,38 @@ def parish_information_page(request: Request):
         return RedirectResponse("/parish-view")
 
     contact, error = None, None
-    clergy, clergy_error = None, None
     if parish.get("databank_contact_id"):
         contact, error = databank_mcp_client.get_contact(parish["databank_contact_id"])
-        church_webacct = contact.get("internal_contact_id") if contact else None
-        if church_webacct:
-            clergy, clergy_error = databank_mcp_client.get_clergy_for_church(church_webacct)
     else:
         error = "This parish isn't linked to a Databank record yet — contact the diocesan office."
 
+    church_webacct = contact.get("internal_contact_id") if contact else None
+    congregation_info = congregation.get_congregation(parish["id"], church_webacct)
+
     return _render(request, "parish_information.html", user, {
         "parish": parish, "contact": contact, "error": error,
-        "clergy": clergy, "clergy_error": clergy_error,
+        "clergy": congregation_info["rows"],
+        "clergy_as_of": congregation_info["as_of"],
+        "clergy_from_cache": congregation_info["from_cache"],
+        "clergy_error": congregation_info["error"],
+        "clergy_live_error": congregation_info["live_error"],
     })
+
+
+@router.post("/parish-information/correction")
+async def parish_information_correction_submit(request: Request):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    parish, _is_preview = parish_mode.effective_parish_mode(request, user)
+    if not parish:
+        return RedirectResponse("/parish-view")
+    form = await request.form()
+    message = (form.get("message") or "").strip()
+    if not message:
+        return RedirectResponse("/parish-information?correction_error=1", status_code=303)
+    parish_requests.create_request(
+        parish["id"], user["id"], "general_request",
+        f"Congregation info correction — {parish['name']}", message,
+    )
+    return RedirectResponse("/parish-information?correction_submitted=1", status_code=303)
