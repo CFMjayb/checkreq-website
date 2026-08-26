@@ -72,15 +72,25 @@ def get_contact(contact_id: str, timeout: int = 15) -> tuple[dict | None, str | 
         return None, str(exc)
 
 
-def get_clergy_for_church(churchwebacct, timeout: int = 30) -> tuple[list[dict] | None, str | None]:
-    """GET /api/clergy-directory?churchwebacct=X -- clergy assigned to one
-    church (name/role/email/mobile). churchwebacct here is Databank's
-    "internal_contact_id" -- NOT the small "contactid" get_contact() takes.
-    A caller who only has a parish's databank_contact_id (a contactid)
-    gets internal_contact_id for free: it's already in get_contact()'s own
-    response dict. Returns (rows_or_None, error_str_or_None) -- never
-    raises, same contract as get_congregations()."""
-    url = f"{DATABANK_MCP_URL}/api/clergy-directory"
+def get_clergy_for_church(churchwebacct, timeout: int = 15) -> tuple[list[dict] | None, str | None]:
+    """GET /api/church-directory?churchwebacct=X -- clergy assigned to one
+    church (name/title/role only, no email/mobile -- ChurchDirectory's own
+    Clergy array doesn't carry personal contact info; see 26-120's
+    church_directory.py for why this endpoint, not the ClergyDirectory-
+    backed one, is the right tool here: confirmed live ~0.6-1s vs
+    ClergyDirectory's ~21s for the same lookup, since ChurchDirectory is a
+    materially lighter vendor query, not just a client-side filter over
+    the same slow one. Switched here 2026-08-26 after Jay caught the
+    original ClergyDirectory-backed version pulling the whole diocese just
+    to show one parish.
+
+    churchwebacct here is Databank's "internal_contact_id" -- NOT the small
+    "contactid" get_contact() takes. A caller who only has a parish's
+    databank_contact_id (a contactid) gets internal_contact_id for free:
+    it's already in get_contact()'s own response dict. Returns
+    (rows_or_None, error_str_or_None) -- never raises, same contract as
+    get_congregations()."""
+    url = f"{DATABANK_MCP_URL}/api/church-directory"
     try:
         resp = requests.get(
             url,

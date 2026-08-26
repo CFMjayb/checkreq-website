@@ -36,8 +36,6 @@
       <li>
         <strong>{{ c.title1 }} {{ c.FIRST1 }} {{ c.MI1 }} {{ c.LAST1 }}{% if c.suffix1 %} {{ c.suffix1 }}{% endif %}</strong>
         — {{ c.clergyrole or "Clergy" }}
-        {% if c.email %}<br><a href="mailto:{{ c.email }}">{{ c.email }}</a>{% endif %}
-        {% if c.MOBILEPHONE %} · {{ c.MOBILEPHONE }}{% endif %}
       </li>
       {% endfor %}
     </ul>
