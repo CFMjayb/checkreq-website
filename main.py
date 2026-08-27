@@ -186,6 +186,17 @@ app = FastAPI(title="Beacon")
 # unconditional.
 ON_CLOUD_RUN = bool(os.environ.get("INSTANCE_CONNECTION_NAME"))
 
+# Dev/Prod Split Plan.md (2026-07-31): distinguishes today's only real
+# environment (checkreq-website-dev) from the future production service
+# (checkreq-website, BEACON_ENV=prod set explicitly at deploy time). Defaults
+# to "dev" when unset -- the safe direction, since a misconfigured deploy
+# then still shows every dev safeguard (the QBO-posting confirmation, the
+# red banner) rather than silently behaving like production with none of
+# them. See email_client.py's _apply_test_mode() for the matching prod-only
+# Test Mode hard lock, and the post_to_qbo route below for the QBO-posting
+# confirmation this flag gates.
+BEACON_ENV = os.environ.get("BEACON_ENV", "dev")
+
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.environ.get("SESSION_SECRET", "dev-only-not-secure"),
@@ -236,6 +247,7 @@ def _asset_version(rel_path: str) -> int:
 
 
 templates.env.globals["asset_version"] = _asset_version
+templates.env.globals["BEACON_ENV"] = BEACON_ENV
 
 if os.environ.get("ENABLE_DEV_AUTH_BYPASS") == "1":
     print("*** DEV AUTH BYPASS ENABLED — LOCAL ONLY — /dev/auth-as/{email} is live ***")
@@ -4904,6 +4916,19 @@ async def test_mode_save(request: Request):
     enabled = form.get("enabled") == "1"
     address = (form.get("address") or "").strip()
 
+    # Dev/Prod Split Plan.md (2026-07-31), Decision 5: Test Mode is a
+    # real code-level lock in production, not just a policy -- refuse to
+    # even SAVE an "enabled" toggle here, not only at send time
+    # (_apply_test_mode() has its own independent lock too -- defense in
+    # depth, since this route and that function are two different places a
+    # future change could otherwise drift apart).
+    if enabled and BEACON_ENV == "prod":
+        return _render(
+            request, "admin_test_mode.html", user,
+            {"enabled": False, "address": address,
+             "error": "Test Mode cannot be enabled in production."},
+        )
+
     # An enabled toggle with no address configured would leave
     # _apply_test_mode() with nothing to redirect to -- it falls back to
     # sending real emails unchanged in that case (fail-open), but that's a
@@ -5395,7 +5420,7 @@ async def assign_gl_coding(request_number: str, request: Request):
 
 
 @app.post("/requests/{request_number}/post-to-qbo")
-def post_to_qbo(request_number: str, request: Request):
+async def post_to_qbo(request_number: str, request: Request):
     """AP Review Workflow Plan.md, Section 4 -- sequencing and failure
     handling, implemented exactly per that section's own numbered steps:
 
@@ -5439,6 +5464,22 @@ def post_to_qbo(request_number: str, request: Request):
     user, err = _require_ap_reviewer(request)
     if err:
         return err
+
+    # Dev/Prod Split Plan.md (2026-07-31), Decision 4: dev is allowed to post
+    # real Bills/Vendors to the real, live production QuickBooks company --
+    # there is no QBO sandbox to test against safely -- but only behind an
+    # explicit, hard-to-miss confirmation naming the real company, never a
+    # bare click. ap_review.html's confirm() dialog is the real UX; this is
+    # the server-side backstop, so a replayed/direct POST that never showed
+    # the dialog is refused rather than silently honored.
+    if BEACON_ENV == "dev":
+        form = await request.form()
+        if form.get("dev_confirmed") != "1":
+            return RedirectResponse(
+                f"/admin/ap-review?post_error="
+                f"{quote(request_number + ': dev-environment confirmation required before posting to the real, live QuickBooks.')}",
+                status_code=303,
+            )
 
     pr = db.query_one(
         "SELECT pr.*, o.code AS org_code FROM checkreq.payment_requests pr "

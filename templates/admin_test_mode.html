@@ -20,6 +20,9 @@ have gone to.</p>
 {% else %}
 <div class="banner banner-info">Test Mode is currently <strong>OFF</strong> — emails go to their real recipients.</div>
 {% endif %}
+{% if BEACON_ENV == 'prod' %}
+<div class="banner banner-info">This is the production environment — Test Mode cannot be enabled here, as a hard lock, regardless of this setting.</div>
+{% endif %}
 
 <div class="card">
   <form method="post" action="/admin/test-mode">

@@ -29,6 +29,13 @@
      every existing rule retints automatically, no new rules needed. */
   --color-cornerstone-blue: #14294d;
   --color-cornerstone-blue-dark: #0b1830;
+  /* Dev/Prod Split Plan.md (2026-07-31): the dev environment's own persistent
+     warning banner -- deliberately a bright hazard red, not sampled from
+     anywhere in the app's own earthy palette, and deliberately distinct from
+     --color-parish-red (a deep maroon) so the two signals are never confused
+     with each other. This must look jarring, not aesthetic -- that's the
+     whole point. */
+  --color-dev-env: #e0201f;
   --color-gold: #c9a227;
   --color-gold-light: #e8c766;
   --color-card-bg: #ffffff;

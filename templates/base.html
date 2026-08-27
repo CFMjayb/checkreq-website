@@ -10,7 +10,12 @@
   <link rel="stylesheet" href="/static/css/base.css?v={{ asset_version('css/base.css') }}">
   {% block extra_css %}{% endblock %}
 </head>
-<body{% if parish_view %} class="parish-mode"{% elif cornerstone_context %} class="cornerstone-mode"{% endif %}>
+<body class="{% if parish_view %}parish-mode {% elif cornerstone_context %}cornerstone-mode {% endif %}{% if BEACON_ENV == 'dev' %}beacon-env-dev{% endif %}">
+  {% if BEACON_ENV == 'dev' %}
+  <div class="dev-env-banner">
+    DEV ENVIRONMENT — actions here (including "Post to QBO") affect the real, live production QuickBooks. There is no QBO sandbox.
+  </div>
+  {% endif %}
   {% if impersonating %}
   <div class="impersonation-bar">
     Viewing as <strong>{{ user.display_name or user.email }}</strong> — impersonated by {{ real_user.display_name or real_user.email }}

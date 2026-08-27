@@ -114,7 +114,15 @@ that writes to QuickBooks.</p>
       </td>
       <td class="col-actions">
         <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
-        · <form method="post" action="/requests/{{ r.request_number }}/post-to-qbo" style="display:inline">
+        {# Dev/Prod Split Plan.md (2026-07-31), Decision 4: dev is allowed to
+           post real Bills to the real, live production QuickBooks -- there
+           is no QBO sandbox -- but only behind an explicit, hard-to-miss
+           confirmation naming the real company, never a bare click. The
+           server-side check in main.py's post_to_qbo() is the real
+           backstop; this dialog is the actual UX Jay asked for. #}
+        · <form method="post" action="/requests/{{ r.request_number }}/post-to-qbo" style="display:inline"
+                {% if BEACON_ENV == 'dev' %}onsubmit="return confirm('DEV ENVIRONMENT: this will create a REAL Vendor/Bill in the live, production {{ r.org_code }} QuickBooks company. There is no dev/test QuickBooks -- this is not a drill. Continue?')"{% endif %}>
+            <input type="hidden" name="dev_confirmed" value="1">
             <button type="submit" class="btn btn-primary btn-sm"
                     {% if r.vendor_gate_wait %}disabled title="{{ r.vendor_gate_wait }}"{% endif %}>Post to QBO</button>
           </form>

@@ -34,6 +34,12 @@ EMAIL_SERVER_URL = os.environ.get(
 _SECRET_PROJECT = os.environ.get("FIRESTORE_PROJECT", "cfm-qbo-mcp")
 _cached_api_key: str | None = None
 
+# Dev/Prod Split Plan.md (2026-07-31), Decision 5: same BEACON_ENV flag
+# main.py reads -- defaults to "dev" so a misconfigured deploy fails safe
+# into "still enforces the prod lock below is a no-op, harmless" rather than
+# silently behaving like production with no lock at all.
+_BEACON_ENV = os.environ.get("BEACON_ENV", "dev")
+
 
 def _apply_test_mode(to: str, subject: str) -> tuple[str, str]:
     """Test Mode (Jay, 2026-07-28): when on, EVERY outgoing email -- from any
@@ -45,7 +51,16 @@ def _apply_test_mode(to: str, subject: str) -> tuple[str, str]:
 
     Fails open to "off" (sends to the real recipient unchanged) on any
     settings-read error -- a DB hiccup must never silently swallow a real
-    email that was never meant to be redirected."""
+    email that was never meant to be redirected.
+
+    Dev/Prod Split Plan.md (2026-07-31), Decision 5: Test Mode must NEVER be
+    active in production, as a real code-level lock -- not just a policy to
+    remember. Checked FIRST, before checkreq.app_settings is even read, so a
+    stale 'on' value left over from dev testing (or someone flipping it on
+    by mistake) can never redirect a real production email, regardless of
+    what the database says."""
+    if _BEACON_ENV == "prod":
+        return to, subject
     if app_settings.get_setting("email_test_mode", "false") != "true":
         return to, subject
     test_address = app_settings.get_setting("email_test_mode_address")
