@@ -17,14 +17,18 @@ lookup with no new matching/sync step needed.
 
 Rebuilt onto congregation.py 2026-08-26 (Parish Portal S6, Jay: "Build the
 real S6 now... make sure your postgres tables have the ability to store
-all leadership contacts for a parish"). This page no longer calls
-databank_mcp_client.get_clergy_for_church() directly -- congregation.py
-owns the live-fetch/cache/fallback logic (portal.congregation_cache,
-migration 049), so a Databank hiccup degrades to "data as of X" instead of
-an empty page. Also gained a "Report a correction" submit, reusing
-parish_requests.py's existing submission path (kind='general_request',
-same pattern as Parish Finance's Ask-the-Business-Office/SMA-direct-debit
-requests) rather than inventing a new request type.
+all leadership contacts for a parish"). This page originally called
+databank_mcp_client.get_clergy_for_church() live on every page view;
+Jay corrected that design the same day ("doesn't the real S6 access a
+Postgres table to provide the parish and leadership information to
+Beacon?") to match every other Databank-sourced table in this codebase --
+Postgres-primary, refreshed nightly by `26-124 GCP Daily Jobs\
+congregation_sync_job.py`. This page now only reads
+congregation.get_congregation() -- a plain Postgres query, no Databank call
+in the request path at all. Also gained a "Report a correction" submit,
+reusing parish_requests.py's existing submission path
+(kind='general_request', same pattern as Parish Finance's Ask-the-Business-
+Office/SMA-direct-debit requests) rather than inventing a new request type.
 
 New file per NFR-11 / the standing main.py rule. Read-only except for the
 one correction-request POST, which itself only ever writes to the
@@ -67,16 +71,12 @@ def parish_information_page(request: Request):
     else:
         error = "This parish isn't linked to a Databank record yet — contact the diocesan office."
 
-    church_webacct = contact.get("internal_contact_id") if contact else None
-    congregation_info = congregation.get_congregation(parish["id"], church_webacct)
+    congregation_info = congregation.get_congregation(parish["id"])
 
     return _render(request, "parish_information.html", user, {
         "parish": parish, "contact": contact, "error": error,
         "clergy": congregation_info["rows"],
         "clergy_as_of": congregation_info["as_of"],
-        "clergy_from_cache": congregation_info["from_cache"],
-        "clergy_error": congregation_info["error"],
-        "clergy_live_error": congregation_info["live_error"],
     })
 
 

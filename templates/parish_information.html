@@ -28,9 +28,7 @@
 
 <div class="card">
   <h2>Clergy</h2>
-  {% if clergy_error %}
-    <p class="sub"><em>Clergy information isn't available right now ({{ clergy_error }}).</em></p>
-  {% elif clergy %}
+  {% if clergy %}
     <ul class="clergy-list">
       {% for c in clergy %}
       <li>
@@ -39,9 +37,7 @@
       </li>
       {% endfor %}
     </ul>
-    {% if clergy_from_cache %}
-      <p class="sub"><em>Showing the most recent saved information{% if clergy_as_of %} (as of {{ clergy_as_of }}){% endif %} — live lookup is temporarily unavailable{% if clergy_live_error %} ({{ clergy_live_error }}){% endif %}.</em></p>
-    {% elif clergy_as_of %}
+    {% if clergy_as_of %}
       <p class="sub"><em>Updated {{ clergy_as_of }}.</em></p>
     {% endif %}
   {% else %}
