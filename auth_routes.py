@@ -64,6 +64,39 @@ REDIRECT_URI = os.environ.get("AZURE_REDIRECT_URI", "http://localhost:8123/auth/
 # Must exactly match an authorized redirect URI on the Google OAuth 2.0 Client ID.
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8123/auth/google/callback")
 
+# EDOM's own branded hostname (production only -- unset everywhere else, so
+# this whole feature is inert by default). Jay, 2026-08-27: "when people
+# access our beacon with beacon.episcopalmaryland.org, it uses the SSO that
+# is auth'd for that domain" -- confirmed via AskUserQuestion that this means
+# skip the email-entry step on THIS hostname specifically and go straight to
+# Microsoft sign-in (the existing multi-tenant Azure AD flow, not a new SAML
+# integration -- that idea stays shelved per the standing SAML SSO Plan.md).
+SSO_AUTO_HOSTNAME = os.environ.get("SSO_AUTO_HOSTNAME", "").strip().lower()
+
+
+def _request_host(request: Request) -> str:
+    return (request.headers.get("host") or "").split(":")[0].strip().lower()
+
+
+def _microsoft_redirect_uri(request: Request) -> str:
+    """The redirect_uri used for BOTH the initial Microsoft auth request and
+    the token exchange -- Azure requires these to match exactly, so this is
+    the one place that decision gets made. Defaults to the per-environment
+    REDIRECT_URI env var (unchanged behavior everywhere). When the incoming
+    request's own Host is SSO_AUTO_HOSTNAME, Azure must redirect back to
+    THAT hostname instead -- the session cookie the callback response sets
+    is scoped to whichever domain the browser is actually on, so completing
+    the flow against the wrong hostname would leave the user signed in on a
+    domain they never navigated back to. Requires
+    https://{SSO_AUTO_HOSTNAME}/auth/callback to also be registered as a
+    redirect URI on the same Azure AD app registration (client id
+    a7f89cbd-0d41-457d-a090-ee367fda4f65, tenant cfmins.org) -- additive,
+    Jay can do this himself since it's Cornerstone's own app registration."""
+    host = _request_host(request)
+    if SSO_AUTO_HOSTNAME and host == SSO_AUTO_HOSTNAME:
+        return f"https://{host}/auth/callback"
+    return REDIRECT_URI
+
 _NOT_REGISTERED_MESSAGE = (
     "This email address isn't set up in Beacon yet. Contact your "
     "administrator to be added, then try signing in again."
@@ -217,6 +250,12 @@ def create_router(templates) -> APIRouter:
         GET query param can spoof."""
         if request.session.get("user_id"):
             return RedirectResponse("/portal")
+        # EDOM's own branded hostname skips email-entry entirely -- straight
+        # to Microsoft sign-in. Not applied when `error` is set (a failed
+        # Microsoft attempt redirects back here) -- looping straight back
+        # into another attempt with no visibility would hide the failure.
+        if SSO_AUTO_HOSTNAME and _request_host(request) == SSO_AUTO_HOSTNAME and not error:
+            return RedirectResponse("/auth/start")
         remembered_email = "" if switch else (request.cookies.get(_REMEMBER_COOKIE) or "")
         return templates.TemplateResponse(request, "login.html", {
             "error": error, "email": email, "remembered_email": remembered_email, "mode": mode,
@@ -253,7 +292,7 @@ def create_router(templates) -> APIRouter:
     @router.get("/auth/start")
     def auth_start(request: Request, email: str = ""):
         state = pysecrets.token_urlsafe(24)
-        resp = RedirectResponse(auth_azure.get_auth_url(REDIRECT_URI, state, login_hint=email or None))
+        resp = RedirectResponse(auth_azure.get_auth_url(_microsoft_redirect_uri(request), state, login_hint=email or None))
         _set_oauth_state_cookie(resp, state)
         return resp
 
@@ -267,7 +306,7 @@ def create_router(templates) -> APIRouter:
             return templates.TemplateResponse(request, "login.html", {"error": "Login state mismatch — please try signing in again."})
 
         try:
-            result = auth_azure.acquire_token(code, REDIRECT_URI)
+            result = auth_azure.acquire_token(code, _microsoft_redirect_uri(request))
         except ValueError as exc:
             return templates.TemplateResponse(request, "login.html", {"error": str(exc)})
 
