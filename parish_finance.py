@@ -100,10 +100,16 @@ def get_sma_years(company: str, qbo_customer_id: str) -> tuple[list[dict], str |
     by the 4-digit year encoded in its own DocNumber (^\\d{4}A-, e.g.
     "2026A-ASTFRE") — not every invoice under the customer, since that
     record isn't SMA-only.
-    Returns ([{year, original_amount, paid_to_date, current_balance}], error)
-    sorted by year descending — error is None on success (an empty list is
-    a valid, non-error result: this parish simply has no SMA invoices yet,
-    or none matching the pattern)."""
+    Returns ([{year, original_amount, paid_to_date, current_balance,
+    invoice_txn_ids}], error) sorted by year descending — error is None on
+    success (an empty list is a valid, non-error result: this parish simply
+    has no SMA invoices yet, or none matching the pattern). invoice_txn_ids
+    (2026-08-27) is the list of real QBO Invoice internal ids behind this
+    year's total — normally just one, kept as a list since nothing here
+    guarantees exactly one SMA invoice per year — needed by
+    get_sma_year_payments()/the statement PDF to pull real payment history
+    for this specific year, since Payment has no direct link to "a year,"
+    only to the specific Invoice(s) it was applied against."""
     data, error = qbo_mcp_client.get_parish_invoices(company, qbo_customer_id)
     if error:
         return [], error
@@ -114,13 +120,63 @@ def get_sma_years(company: str, qbo_customer_id: str) -> tuple[list[dict], str |
             continue
         year = m.group(1)
         row = years.setdefault(year, {"year": year, "original_amount": 0.0,
-                                       "paid_to_date": 0.0, "current_balance": 0.0})
+                                       "paid_to_date": 0.0, "current_balance": 0.0,
+                                       "invoice_txn_ids": []})
         total = float(inv.get("total_amt") or 0)
         balance = float(inv.get("balance") or 0)
         row["original_amount"] += total
         row["current_balance"] += balance
         row["paid_to_date"] += (total - balance)
+        if inv.get("txn_id"):
+            row["invoice_txn_ids"].append(inv["txn_id"])
     return sorted(years.values(), key=lambda r: r["year"], reverse=True), None
+
+
+def get_sma_year_payments(
+    company: str, qbo_customer_id: str, invoice_txn_ids: list[str],
+) -> tuple[list[dict], str | None]:
+    """Every real QBO Payment applied against a given SMA year's invoice(s)
+    (normally just one), merged and sorted ascending by date — the data
+    behind both the "click on Payments Posted, see the list" drill-down
+    (sma_payments_page) and the printable statement's payment-history
+    table (render_sma_statement_pdf). error is None on success — an empty
+    list is a valid, non-error result (no payments posted yet this year)."""
+    all_payments: list[dict] = []
+    for txn_id in invoice_txn_ids:
+        data, error = qbo_mcp_client.get_invoice_payments(company, qbo_customer_id, txn_id)
+        if error:
+            return [], error
+        all_payments.extend((data or {}).get("payments", []))
+    all_payments.sort(key=lambda p: p.get("txn_date") or "")
+    return all_payments, None
+
+
+def _display_date(iso_date: str) -> str:
+    """QBO's TxnDate ('YYYY-MM-DD') reformatted to 'MM/DD/YYYY' for display —
+    matches the Diocese's own Excel statement's date formatting. Falls back
+    to the raw string on anything unexpected rather than raising, since this
+    is presentation-only."""
+    import datetime
+    try:
+        return datetime.datetime.strptime(iso_date or "", "%Y-%m-%d").strftime("%m/%d/%Y")
+    except ValueError:
+        return iso_date or ""
+
+
+def _payments_with_running_balance(original_amount: float, payments: list[dict]) -> list[dict]:
+    """Walks a year's payments (already ascending by date) subtracting each
+    from the invoice's original amount, so every row can show the same
+    "Total Remaining" running balance the Diocese's own hand-built Excel
+    statement shows — matches that reference format exactly (Congregational
+    Allocations\\{year}\\Statements\\{parish}.xlsx, the "{year}" tab). Also
+    stamps a human-formatted display_date, used by both the in-app
+    drill-down (sma_payments.html) and the printable statement."""
+    remaining = original_amount
+    rows = []
+    for p in payments:
+        remaining -= float(p.get("amount_applied") or 0)
+        rows.append({**p, "remaining": remaining, "display_date": _display_date(p.get("txn_date"))})
+    return rows
 
 
 # ── Routes: the finance page ─────────────────────────────────────────────────
@@ -165,6 +221,44 @@ def parish_finance_page(request: Request):
     })
 
 
+@router.get("/parish-finance/sma-payments/{year}", response_class=HTMLResponse)
+def sma_payments_page(year: str, request: Request):
+    """The "click on Payments Posted, see the list" drill-down (Jay's
+    direct request, 2026-08-27): every real QBO Payment applied against
+    this one allocation year's SMA invoice(s), with a running "remaining
+    balance" column matching the Diocese's own hand-built Excel statement's
+    own Payments section."""
+    user, parish, diocese_org, err = _parish_context(request)
+    if err:
+        return err
+    if not can_view_finance(user, parish):
+        return _render(request, "sma_payments.html", user, {
+            "parish": parish, "year": year, "can_view": False,
+        })
+
+    company = _company_code(diocese_org)
+    sma_years, sma_error = ([], None)
+    if parish.get("qbo_ar_customer_id"):
+        sma_years, sma_error = get_sma_years(company, parish["qbo_ar_customer_id"])
+    year_row = next((y for y in sma_years if y["year"] == year), None)
+
+    if sma_error or not year_row:
+        return _render(request, "sma_payments.html", user, {
+            "parish": parish, "year": year, "can_view": True,
+            "year_row": None, "sma_error": sma_error,
+        })
+
+    payments, pay_error = get_sma_year_payments(
+        company, parish["qbo_ar_customer_id"], year_row["invoice_txn_ids"])
+    rows = _payments_with_running_balance(year_row["original_amount"], payments) if not pay_error else []
+
+    return _render(request, "sma_payments.html", user, {
+        "parish": parish, "year": year, "can_view": True,
+        "year_row": year_row, "sma_error": None,
+        "payments": rows, "pay_error": pay_error,
+    })
+
+
 @router.get("/parish-finance/sma-statement.pdf")
 def sma_statement_pdf(request: Request):
     user, parish, diocese_org, err = _parish_context(request)
@@ -178,27 +272,97 @@ def sma_statement_pdf(request: Request):
     if parish.get("qbo_ar_customer_id"):
         sma_years, _ = get_sma_years(company, parish["qbo_ar_customer_id"])
 
-    pdf_bytes = render_sma_statement_pdf(parish, diocese_org, sma_years)
-    filename = f"{parish['name']} SMA Statement.pdf".replace("/", "-")
+    if not sma_years:
+        return JSONResponse(
+            {"error": "No Shared Ministry Allocation invoices found for this parish."}, status_code=404)
+
+    year = request.query_params.get("year", "").strip()
+    year_row = next((y for y in sma_years if y["year"] == year), None) if year else sma_years[0]
+    if not year_row:
+        return JSONResponse({"error": f"No SMA invoice found for {year}."}, status_code=404)
+
+    payments, _pay_error = get_sma_year_payments(
+        company, parish["qbo_ar_customer_id"], year_row["invoice_txn_ids"])
+    payment_rows = _payments_with_running_balance(year_row["original_amount"], payments)
+
+    customer = None
+    if parish.get("qbo_ar_customer_id"):
+        customer, _cust_error = qbo_mcp_client.get_customer_raw(company, parish["qbo_ar_customer_id"])
+
+    pdf_bytes = render_sma_statement_pdf(parish, diocese_org, year_row, payment_rows, customer)
+    filename = f"{parish['name']} SMA Statement {year_row['year']}.pdf".replace("/", "-")
     return Response(
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
-def render_sma_statement_pdf(parish: dict, diocese_org: dict, sma_years: list[dict]) -> bytes:
+def _image_data_uri(filename: str) -> str:
+    """Base64 data: URI for a static image under Website/static/img/ —
+    required because main.py's _html_to_pdf_bytes() calls
+    page.set_content() with no base_url, so a relative/absolute file path
+    in an <img src=...> would never resolve inside headless Chromium.
+    Read fresh on every render, matching this module's existing pattern
+    for tokens.css (this is a low-traffic internal tool — one PDF per
+    statement print, never a hot path — so no caching is needed)."""
+    import base64
+    import os
+    path = os.path.join(os.path.dirname(__file__), "static", "img", filename)
+    with open(path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def render_sma_statement_pdf(
+    parish: dict, diocese_org: dict, year_row: dict,
+    payment_rows: list[dict], customer: dict | None,
+) -> bytes:
     """Renders sma_statement.html + inlined tokens.css and hands it to
     main.py's real-headless-Chromium PDF renderer — same two-step pattern
     render_check_voucher_pdf() already uses (fragment render, then wrap
     with tokens.css + a Google Fonts <link> so a real browser resolves
     var(--token) natively). Local imports from main.py to avoid a circular
     import at module-load time (main.py imports this module) — resolved
-    lazily, by which point main.py is fully loaded."""
+    lazily, by which point main.py is fully loaded.
+
+    Rebuilt 2026-08-27 to match the Diocese's own hand-built Excel
+    statement format exactly (Congregational Allocations\\{year}\\
+    Statements\\{parish}.xlsx, the "{year}" tab, per Jay's direct
+    request) — a real letterhead header/footer, a customer mailing block
+    (sourced live from the parish's own QBO Customer record — see
+    qbo_mcp_client.get_customer_raw()'s docstring for why this is read
+    live rather than duplicated into Postgres), the allocation line item,
+    every real payment for this one year with a running "Total Remaining"
+    balance, and Total Paid / Total Due — one statement per allocation
+    year, not the old all-years summary table."""
+    import datetime
     import os
     from main import templates as _templates, _html_to_pdf_bytes as _to_pdf
 
+    bill_addr = (customer or {}).get("BillAddr") or {}
+    address_line1 = bill_addr.get("Line1") or ""
+    city = bill_addr.get("City") or ""
+    state = bill_addr.get("CountrySubDivisionCode") or ""
+    zip_code = bill_addr.get("PostalCode") or ""
+    city_state_zip = ", ".join(p for p in [city, state] if p)
+    if zip_code:
+        city_state_zip = f"{city_state_zip} {zip_code}".strip()
+    customer_email = ((customer or {}).get("PrimaryEmailAddr") or {}).get("Address") or ""
+
+    monthly_amount = (year_row["original_amount"] / 12) if year_row["original_amount"] else 0.0
+
+    # payment_rows already carries display_date + remaining, stamped by
+    # _payments_with_running_balance() at the call site.
     fragment = _templates.env.get_template("sma_statement.html").render(
-        parish=parish, diocese_org=diocese_org, sma_years=sma_years,
+        parish=parish, diocese_org=diocese_org, year=year_row["year"], year_row=year_row,
+        payments=payment_rows, monthly_amount=monthly_amount,
+        total_paid=year_row["paid_to_date"], total_due=year_row["current_balance"],
+        statement_date=datetime.date.today().strftime("%m/%d/%Y"),
+        business_office_email=BUSINESS_OFFICE_EMAIL,
+        customer_address_line1=address_line1, customer_city_state_zip=city_state_zip,
+        customer_email=customer_email,
+        header_data_uri=_image_data_uri("edom_statement_header.png"),
+        footer_data_uri=_image_data_uri("edom_statement_footer.png"),
     )
     static_css_dir = os.path.join(os.path.dirname(__file__), "static", "css")
     with open(os.path.join(static_css_dir, "tokens.css"), encoding="utf-8") as f:
@@ -206,14 +370,10 @@ def render_sma_statement_pdf(parish: dict, diocese_org: dict, sma_years: list[di
 
     html = f"""<!doctype html><html><head><meta charset="utf-8">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 {tokens_css}
-body {{ font-family: 'Inter', sans-serif; margin: 0; padding: 24px; background: #fff; color: var(--color-ink); }}
-h1 {{ font-family: 'Merriweather', serif; }}
-table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
-th, td {{ padding: 6px 10px; text-align: left; border-bottom: 1px solid #ddd; }}
-th {{ background: var(--color-franciscan-green); color: #fff; }}
+body {{ font-family: 'Inter', sans-serif; margin: 0; padding: 0; background: #fff; color: #1a1a1a; }}
 </style>
 </head><body>{fragment}</body></html>"""
 

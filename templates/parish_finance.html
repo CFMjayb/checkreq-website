@@ -26,13 +26,14 @@ diocese for the Parish Finance role if you need access.</div>
   {% else %}
   <div class="table-scroll">
     <table class="simple-table">
-      <tr><th>Year</th><th>Original Amount</th><th>Payments Posted</th><th>Current Balance</th></tr>
+      <tr><th>Year</th><th>Original Amount</th><th>Payments Posted</th><th>Current Balance</th><th>Statement</th></tr>
       {% for y in sma_years %}
       <tr>
         <td>{{ y.year }}</td>
         <td>${{ "%.2f"|format(y.original_amount) }}</td>
-        <td>${{ "%.2f"|format(y.paid_to_date) }}</td>
+        <td><a href="/parish-finance/sma-payments/{{ y.year }}">${{ "%.2f"|format(y.paid_to_date) }}</a></td>
         <td>${{ "%.2f"|format(y.current_balance) }}</td>
+        <td><a href="/parish-finance/sma-statement.pdf?year={{ y.year }}" class="btn btn-sm">PDF</a></td>
       </tr>
       {% endfor %}
     </table>
@@ -50,7 +51,6 @@ diocese for the Parish Finance role if you need access.</div>
       </form>
     {% endif %}
   </p>
-  <p style="margin-top:8px"><a href="/parish-finance/sma-statement.pdf" class="btn btn-sm">Print Statement (PDF)</a></p>
   {% endif %}
 </div>
 

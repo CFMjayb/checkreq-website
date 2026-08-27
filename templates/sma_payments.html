@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}SMA Payments {{ year }} — {{ parish.name }}{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Shared Ministry Allocation Payments — {{ year }}</h1>
+<p class="back-link"><a href="/parish-finance">&larr; Back to Finance</a></p>
+
+{% if not can_view %}
+<div class="banner banner-info">You don't have permission to view this parish's finances.</div>
+{% elif sma_error %}
+<div class="card"><p class="sub">Couldn't load this parish's SMA history right now: {{ sma_error }}</p></div>
+{% elif not year_row %}
+<div class="card"><p class="sub">No Shared Ministry Allocation invoice found for {{ year }} for {{ parish.name }}.</p></div>
+{% else %}
+
+<div class="card">
+  <h2 style="margin-bottom:4px">{{ parish.name }}</h2>
+  <p class="sub">
+    Original Amount: <strong>${{ "%.2f"|format(year_row.original_amount) }}</strong>
+    &nbsp;·&nbsp; Payments Posted: <strong>${{ "%.2f"|format(year_row.paid_to_date) }}</strong>
+    &nbsp;·&nbsp; Current Balance: <strong>${{ "%.2f"|format(year_row.current_balance) }}</strong>
+  </p>
+
+  {% if pay_error %}
+  <p class="sub">Couldn't load payment history right now: {{ pay_error }}</p>
+  {% elif not payments %}
+  <p class="sub">No payments posted yet for {{ year }}.</p>
+  {% else %}
+  <div class="table-scroll">
+    <table class="simple-table">
+      <tr><th>Date</th><th>Check / Reference #</th><th>Amount</th><th>Remaining Balance</th></tr>
+      {% for p in payments %}
+      <tr>
+        <td>{{ p.display_date or p.txn_date }}</td>
+        <td>{{ p.ref_number or "—" }}</td>
+        <td>${{ "%.2f"|format(p.amount_applied) }}</td>
+        <td>${{ "%.2f"|format(p.remaining) }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  <p style="margin-top:12px">
+    <a href="/parish-finance/sma-statement.pdf?year={{ year }}" class="btn btn-sm">Print Statement (PDF)</a>
+  </p>
+</div>
+
+{% endif %}
+</div>
+{% endblock %}

@@ -1,25 +1,119 @@
 {#
 sma_statement.html -- a fragment, NOT a full page (no {% extends %}).
 Rendered standalone by parish_finance.render_sma_statement_pdf(), wrapped in
-a minimal <html><head><style>...inlined tokens.css...</style> and fed to
-the real headless-Chromium PDF renderer, same pattern as check_voucher.html.
-#}
-<h1>{{ diocese_org.name }}</h1>
-<h2 style="margin-top:0">Shared Ministry Allocation Statement</h2>
-<p><strong>{{ parish.name }}</strong>{% if parish.city %} — {{ parish.city }}{% endif %}</p>
+a minimal <html><head><style>...inlined tokens.css...</style> and fed to the
+real headless-Chromium PDF renderer, same pattern as check_voucher.html.
 
-{% if not sma_years %}
-<p>No Shared Ministry Allocation invoices found for this parish.</p>
-{% else %}
-<table>
-  <tr><th>Year</th><th>Original Amount</th><th>Payments Posted</th><th>Current Balance</th></tr>
-  {% for y in sma_years %}
-  <tr>
-    <td>{{ y.year }}</td>
-    <td>${{ "%.2f"|format(y.original_amount) }}</td>
-    <td>${{ "%.2f"|format(y.paid_to_date) }}</td>
-    <td>${{ "%.2f"|format(y.current_balance) }}</td>
-  </tr>
-  {% endfor %}
-</table>
-{% endif %}
+Rebuilt 2026-08-27 to match the Diocese's own hand-built Excel statement
+format exactly -- Congregational Allocations\{year}\Statements\{parish}.xlsx,
+the "{year}" tab -- per Jay's direct request. header_data_uri/footer_data_uri
+are base64 data: URIs of the Diocese's own real letterhead images (see
+static/img/CREDITS.md); page.set_content() has no base_url, so a relative
+image path would never resolve inside headless Chromium.
+#}
+<style>
+.stmt { font-family: 'Inter', Arial, sans-serif; font-size: 10.5pt; color: #1a1a1a; max-width: 760px; margin: 0 auto; }
+.stmt-header { display: flex; justify-content: space-between; align-items: flex-start; }
+.stmt-header img { height: 62px; }
+.stmt-title { font-size: 20pt; font-weight: 700; letter-spacing: 0.04em; text-align: right; }
+.stmt-date-row { margin-top: 6px; font-size: 10pt; text-align: right; }
+.stmt-date-row span:first-child { font-weight: 700; margin-right: 8px; }
+.stmt-from-email { font-size: 8.5pt; color: #555; margin-top: 4px; }
+.stmt-customer { margin-top: 18px; }
+.stmt-customer-label { font-weight: 700; font-size: 9.5pt; letter-spacing: 0.05em; margin-bottom: 4px; }
+.stmt-customer-table td { padding: 1px 0; }
+.stmt-customer-table td.lbl { color: #555; padding-right: 10px; width: 100px; }
+table.stmt-main { width: 100%; border-collapse: collapse; margin-top: 18px; }
+table.stmt-main th, table.stmt-main td { padding: 4px 8px; text-align: left; }
+table.stmt-main th { font-weight: 700; border-bottom: 2px solid #1a1a1a; }
+table.stmt-main .amt, table.stmt-main th.amt { text-align: right; }
+table.stmt-main .qty, table.stmt-main th.qty { text-align: center; width: 32px; }
+table.stmt-main .check, table.stmt-main th.check { width: 155px; font-size: 9pt; }
+tr.stmt-payments-header td { font-weight: 700; border-bottom: 1px solid #1a1a1a; padding-top: 10px; }
+tr.stmt-total-paid td { font-weight: 700; border-top: 2px solid #1a1a1a; padding-top: 6px; }
+.stmt-due-row { display: flex; justify-content: space-between; align-items: flex-start; margin-top: 14px; }
+.stmt-thanks { font-weight: 700; font-style: italic; }
+.stmt-total-due { font-weight: 700; font-size: 12pt; }
+.stmt-total-due span:first-child { margin-right: 14px; }
+.stmt-remit, .stmt-contact-note { margin-top: 18px; font-size: 9.5pt; }
+.stmt-remit p, .stmt-contact-note p { margin: 1px 0; }
+.stmt-footer { margin-top: 26px; text-align: center; }
+.stmt-footer img { width: 100%; max-width: 480px; }
+.stmt-no-invoices { margin-top: 24px; font-style: italic; }
+</style>
+
+<div class="stmt">
+  <div class="stmt-header">
+    <img src="{{ header_data_uri }}" alt="{{ diocese_org.name }}">
+    <div>
+      <div class="stmt-title">STATEMENT</div>
+      <div class="stmt-date-row"><span>Date</span><span>{{ statement_date }}</span></div>
+    </div>
+  </div>
+  <div class="stmt-from-email">{{ business_office_email }}</div>
+
+  <div class="stmt-customer">
+    <div class="stmt-customer-label">CUSTOMER</div>
+    <table class="stmt-customer-table">
+      <tr><td class="lbl">Name</td><td>{{ parish.name }}</td></tr>
+      {% if customer_address_line1 %}<tr><td class="lbl">Address</td><td>{{ customer_address_line1 }}</td></tr>{% endif %}
+      {% if customer_city_state_zip %}<tr><td class="lbl">City, State, Zip</td><td>{{ customer_city_state_zip }}</td></tr>{% endif %}
+      {% if customer_email %}<tr><td></td><td>{{ customer_email }}</td></tr>{% endif %}
+    </table>
+  </div>
+
+  {% if not year_row %}
+  <p class="stmt-no-invoices">No Shared Ministry Allocation invoice found for {{ year }}.</p>
+  {% else %}
+  <table class="stmt-main">
+    <tr>
+      <th class="qty">Qty</th><th>Description</th><th class="check">Check #</th>
+      <th class="amt">Monthly</th><th class="amt">Total</th>
+    </tr>
+    <tr>
+      <td class="qty">1</td>
+      <td>Congregational Allocation - {{ year }}</td>
+      <td class="check"></td>
+      <td class="amt">${{ "%.2f"|format(monthly_amount) }}</td>
+      <td class="amt">${{ "%.2f"|format(year_row.original_amount) }}</td>
+    </tr>
+    <tr class="stmt-payments-header">
+      <td colspan="3"></td><td class="amt">Payments</td><td class="amt">Total Remaining</td>
+    </tr>
+    {% for p in payments %}
+    <tr>
+      <td class="qty"></td>
+      <td>{{ p.display_date or p.txn_date }}</td>
+      <td class="check">{{ p.ref_number or "" }}</td>
+      <td class="amt">${{ "%.2f"|format(p.amount_applied) }}</td>
+      <td class="amt">${{ "%.2f"|format(p.remaining) }}</td>
+    </tr>
+    {% endfor %}
+    {% if not payments %}
+    <tr><td colspan="5" style="font-style:italic; color:#555; padding-top:8px">No payments posted yet for {{ year }}.</td></tr>
+    {% endif %}
+    <tr class="stmt-total-paid">
+      <td colspan="3" class="check">TOTAL PAID</td>
+      <td class="amt">${{ "%.2f"|format(total_paid) }}</td>
+      <td class="amt">${{ "%.2f"|format(total_due) }}</td>
+    </tr>
+  </table>
+
+  <div class="stmt-due-row">
+    <div class="stmt-thanks">Balance Due Upon Receipt.  Thank you!</div>
+    <div class="stmt-total-due"><span>TOTAL DUE</span><span>${{ "%.2f"|format(total_due) }}</span></div>
+  </div>
+
+  <div class="stmt-remit">
+    <p>Please make your check payable to:</p>
+    <p><strong>{{ diocese_org.name }}</strong></p>
+    <p>and mail to the address below.</p>
+  </div>
+  <div class="stmt-contact-note">
+    <p>For questions, corrections, or to change your email address, please send a message to:</p>
+    <p>{{ business_office_email }}</p>
+  </div>
+  {% endif %}
+
+  <div class="stmt-footer"><img src="{{ footer_data_uri }}" alt=""></div>
+</div>

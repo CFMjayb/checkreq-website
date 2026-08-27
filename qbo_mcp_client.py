@@ -212,6 +212,43 @@ def get_parish_invoices(company: str, qbo_customer_id: str) -> tuple[dict | None
     )
 
 
+def get_invoice_payments(
+    company: str, qbo_customer_id: str, invoice_txn_id: str,
+) -> tuple[dict | None, str | None]:
+    """GET /api/checkreq/parish-invoice-payments/{company}?qbo_customer_id=...&invoice_txn_id=...
+
+    2026-08-27: every real QBO Payment applied against one specific SMA
+    Invoice, ascending by date -- backs the "click on Payments Posted, see
+    the list" drill-down and the printable statement's payment-history
+    table (both parish_finance.py).
+
+    Returns ({"invoice_txn_id", "payments": [{"txn_id", "txn_date",
+    "ref_number", "amount_applied"}]}, None) on success, or (None, "error
+    text") on failure."""
+    return _get(
+        "/api/checkreq/parish-invoice-payments/{company}", company,
+        {"qbo_customer_id": qbo_customer_id, "invoice_txn_id": invoice_txn_id},
+    )
+
+
+def get_customer_raw(company: str, qbo_customer_id: str) -> tuple[dict | None, str | None]:
+    """GET /api/entity/{company}/customer/{qbo_customer_id}/raw
+
+    2026-08-27: the parish's real QBO Customer record (billing address,
+    email) for the SMA statement's mailing block -- deliberately read live
+    from QBO rather than duplicated into a Postgres column (this codebase's
+    own "don't build a second copy of a fact another system already owns"
+    lesson). Reuses qbo-mcp-server's existing generic raw-entity diagnostic
+    endpoint (added 2026-07-24) instead of adding a narrower new one, since
+    this is plain read-only QBO reference data.
+
+    Returns (the raw QBO Customer entity dict, None) on success, or (None,
+    "error text") on failure."""
+    from urllib.parse import quote
+    safe_id = quote(str(qbo_customer_id), safe="")
+    return _get("/api/entity/{company}/customer/" + safe_id + "/raw", company, {})
+
+
 def get_parish_bill_payments(company: str, qbo_vendor_id: str) -> tuple[dict | None, str | None]:
     """GET /api/checkreq/parish-bill-payments/{company}?qbo_vendor_id=...
 
