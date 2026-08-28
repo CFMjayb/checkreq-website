@@ -39,6 +39,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+import json
+
 import parish_mode
 import databank_mcp_client
 import congregation
@@ -48,6 +50,39 @@ router = APIRouter()
 
 _current_user = None
 _render = None
+
+CHURCH_CONTACT_ROLE = "church_office"
+
+
+def _church_office_contact(parish: dict) -> dict | None:
+    """Non-EDOM parishes have no Databank record, ever -- but for DME
+    specifically, 26-138's load_dme_church_contacts.py already loaded the
+    church's own address/phone/email (from Realm) into
+    portal.parishes.contacts under role='church_office', using the SAME
+    field names (company/address/address2/city/state/zip/wphone/email/
+    recordtype) get_contact() already returns for a Databank contact -- so
+    this can feed the exact same template card with no branching there.
+    Returns None (card simply doesn't render) if nothing's been loaded yet
+    for this parish, same "empty is a normal state" contract as
+    congregation.get_congregation()."""
+    contacts = parish.get("contacts") or {}
+    if isinstance(contacts, str):
+        contacts = json.loads(contacts)
+    for entry in contacts.get("contacts") or []:
+        if entry.get("role") == CHURCH_CONTACT_ROLE:
+            return entry
+    return None
+
+
+def _display_name(row: dict) -> str:
+    """Join name parts skipping any that are missing -- congregation_cache's
+    middle_name/suffix are frequently NULL (Realm-sourced rows never
+    populate middle_name at all), and Jinja stringifies a bare None as the
+    literal word "None" rather than an empty string. Real bug found live
+    2026-08-28 (Jay: "adding 'none' in the name makes no sense") from the
+    template concatenating {{ c.middle_name }} directly."""
+    parts = [row.get("first_name"), row.get("middle_name"), row.get("last_name"), row.get("suffix")]
+    return " ".join(p for p in parts if p)
 
 
 def register(app, *, current_user, render) -> None:
@@ -65,18 +100,32 @@ def parish_information_page(request: Request):
     if not parish:
         return RedirectResponse("/parish-view")
 
+    # Databank is EDOM-only -- Databank itself is "an EDOM-owned CRM" (see
+    # 26-124's CLAUDE.md), and every other served org (DME/Realm, Claggett,
+    # the Cornerstone-served parish-orgs) will NEVER have a
+    # databank_contact_id, ever, by design -- showing "not linked yet, contact
+    # the diocesan office" there is not a transient gap, it's a permanently
+    # wrong message for an integration that will never exist for that org.
+    # Real bug found live 2026-08-28 (Jay: "you need to remove the not
+    # connected to databank - that will never apply") -- confirmed via
+    # checkreq.organizations that only org_id 1 (EDOM) is Databank-integrated.
     contact, error = None, None
-    if parish.get("databank_contact_id"):
-        contact, error = databank_mcp_client.get_contact(parish["databank_contact_id"])
+    if parish.get("org_code") == "EDOM":
+        if parish.get("databank_contact_id"):
+            contact, error = databank_mcp_client.get_contact(parish["databank_contact_id"])
+        else:
+            error = "This parish isn't linked to a Databank record yet — contact the diocesan office."
     else:
-        error = "This parish isn't linked to a Databank record yet — contact the diocesan office."
+        contact = _church_office_contact(parish)
 
     congregation_info = congregation.get_congregation(parish["id"])
+    rows = [dict(r, display_name=_display_name(r)) for r in congregation_info["rows"]]
 
     return _render(request, "parish_information.html", user, {
         "parish": parish, "contact": contact, "error": error,
-        "clergy": congregation_info["rows"],
-        "clergy_as_of": congregation_info["as_of"],
+        "clergy": [r for r in rows if r.get("role_category") == "clergy"],
+        "lay_leadership": [r for r in rows if r.get("role_category") != "clergy"],
+        "congregation_as_of": congregation_info["as_of"],
     })
 
 

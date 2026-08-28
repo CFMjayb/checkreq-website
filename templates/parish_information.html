@@ -21,29 +21,36 @@
 {% endif %}
 
 <div class="card">
-  <p><strong>Diocese:</strong> {{ parish.org_name }} ({{ parish.org_code }})</p>
-  <p><strong>Served Tier:</strong> {{ parish.served_tier or "—" }}</p>
-  <p><strong>Status:</strong> {{ parish.status }}</p>
-</div>
-
-<div class="card">
   <h2>Clergy</h2>
   {% if clergy %}
     <ul class="clergy-list">
       {% for c in clergy %}
       <li>
-        <strong>{{ c.title }} {{ c.first_name }} {{ c.middle_name }} {{ c.last_name }}{% if c.suffix %} {{ c.suffix }}{% endif %}</strong>
+        <strong>{% if c.title %}{{ c.title }} {% endif %}{{ c.display_name }}</strong>
         — {{ c.role or "Clergy" }}
       </li>
       {% endfor %}
     </ul>
-    {% if clergy_as_of %}
-      <p class="sub"><em>Updated {{ clergy_as_of }}.</em></p>
-    {% endif %}
   {% else %}
     <p class="sub"><em>No clergy currently on file for this parish.</em></p>
   {% endif %}
-  <p class="sub"><em>Coming soon: full congregation directory (wardens, vestry, and other lay leadership), once Databank provides it.</em></p>
+
+  <h2>Parish Leadership</h2>
+  {% if lay_leadership %}
+    <ul class="clergy-list">
+      {% for c in lay_leadership %}
+      <li>
+        <strong>{% if c.title %}{{ c.title }} {% endif %}{{ c.display_name }}</strong>
+        — {{ c.role or "Parish Leadership" }}
+      </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="sub"><em>No wardens, vestry, or other lay leadership currently on file for this parish.</em></p>
+  {% endif %}
+  {% if congregation_as_of %}
+    <p class="sub"><em>Updated {{ congregation_as_of }}.</em></p>
+  {% endif %}
 
   {% if request.query_params.get('correction_submitted') %}
     <p class="banner banner-success">Thanks — your correction was sent to the diocesan office.</p>
