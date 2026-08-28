@@ -1,5 +1,24 @@
 {% extends "base.html" %}
 {% block title %}Parish Information — {{ parish.name }}{% endblock %}
+{% block extra_css %}
+<style>
+  /* Contact info to the left, Clergy/Leadership to the right -- Jay,
+     2026-08-28: "The Contact information for the Parish should be to the
+     left and the Contacts for Priest / Leadership right next to it to the
+     right - scrolling the list is not appropriate." No internal scroll
+     container on the leadership list -- it just flows to whatever height
+     it needs; the grid only controls the two columns' widths. */
+  .parish-info-grid {
+    display: grid;
+    grid-template-columns: minmax(260px, 340px) 1fr;
+    gap: var(--space-5);
+    align-items: start;
+  }
+  @media (max-width: 800px) {
+    .parish-info-grid { grid-template-columns: 1fr; }
+  }
+</style>
+{% endblock %}
 {% block content %}
 <div class="page-shell">
 <h1>{{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</h1>
@@ -7,63 +26,67 @@
 
 {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
 
-{% if contact %}
-<div class="card">
-  <h2>{{ contact.company or parish.name }}</h2>
-  <p><strong>Address:</strong>
-    {% if contact.address %}{{ contact.address }}{% if contact.address2 %}, {{ contact.address2 }}{% endif %}<br>{% endif %}
-    {{ contact.city or "—" }}{% if contact.state %}, {{ contact.state }}{% endif %} {{ contact.zip or "" }}
-  </p>
-  <p><strong>Phone:</strong> {{ contact.wphone or contact.hphone or "—" }}</p>
-  <p><strong>Email:</strong> {% if contact.email %}<a href="mailto:{{ contact.email }}">{{ contact.email }}</a>{% else %}—{% endif %}</p>
-  <p><strong>Record type:</strong> {{ contact.recordtype or "—" }}</p>
-</div>
-{% endif %}
+<div class="parish-info-grid">
+  <div>
+    {% if contact %}
+    <div class="card">
+      <h2>{{ contact.company or parish.name }}</h2>
+      <p><strong>Address:</strong>
+        {% if contact.address %}{{ contact.address }}{% if contact.address2 %}, {{ contact.address2 }}{% endif %}<br>{% endif %}
+        {{ contact.city or "—" }}{% if contact.state %}, {{ contact.state }}{% endif %} {{ contact.zip or "" }}
+      </p>
+      <p><strong>Phone:</strong> {{ contact.wphone or contact.hphone or "—" }}</p>
+      <p><strong>Email:</strong> {% if contact.email %}<a href="mailto:{{ contact.email }}">{{ contact.email }}</a>{% else %}—{% endif %}</p>
+      <p><strong>Record type:</strong> {{ contact.recordtype or "—" }}</p>
+    </div>
+    {% endif %}
+  </div>
 
-<div class="card">
-  <h2>Clergy</h2>
-  {% if clergy %}
-    <ul class="clergy-list">
-      {% for c in clergy %}
-      <li>
-        <strong>{% if c.title %}{{ c.title }} {% endif %}{{ c.display_name }}</strong>
-        — {{ c.role or "Clergy" }}
-      </li>
-      {% endfor %}
-    </ul>
-  {% else %}
-    <p class="sub"><em>No clergy currently on file for this parish.</em></p>
-  {% endif %}
+  <div class="card">
+    <h2>Clergy</h2>
+    {% if clergy %}
+      <ul class="clergy-list">
+        {% for c in clergy %}
+        <li>
+          <strong>{% if c.title %}{{ c.title }} {% endif %}{{ c.display_name }}</strong>
+          — {{ c.role or "Clergy" }}
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="sub"><em>No clergy currently on file for this parish.</em></p>
+    {% endif %}
 
-  <h2>Parish Leadership</h2>
-  {% if lay_leadership %}
-    <ul class="clergy-list">
-      {% for c in lay_leadership %}
-      <li>
-        <strong>{% if c.title %}{{ c.title }} {% endif %}{{ c.display_name }}</strong>
-        — {{ c.role or "Parish Leadership" }}
-      </li>
-      {% endfor %}
-    </ul>
-  {% else %}
-    <p class="sub"><em>No wardens, vestry, or other lay leadership currently on file for this parish.</em></p>
-  {% endif %}
-  {% if congregation_as_of %}
-    <p class="sub"><em>Updated {{ congregation_as_of }}.</em></p>
-  {% endif %}
+    <h2>Parish Leadership</h2>
+    {% if lay_leadership %}
+      <ul class="clergy-list">
+        {% for c in lay_leadership %}
+        <li>
+          <strong>{% if c.title %}{{ c.title }} {% endif %}{{ c.display_name }}</strong>
+          — {{ c.role or "Parish Leadership" }}
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="sub"><em>No wardens, vestry, or other lay leadership currently on file for this parish.</em></p>
+    {% endif %}
+    {% if congregation_as_of %}
+      <p class="sub"><em>Updated {{ congregation_as_of }}.</em></p>
+    {% endif %}
 
-  {% if request.query_params.get('correction_submitted') %}
-    <p class="banner banner-success">Thanks — your correction was sent to the diocesan office.</p>
-  {% elif request.query_params.get('correction_error') %}
-    <p class="banner banner-error">Please describe the correction before submitting.</p>
-  {% endif %}
-  <details class="correction-details">
-    <summary>Report a correction</summary>
-    <form method="post" action="/parish-information/correction">
-      <textarea name="message" rows="3" placeholder="What needs to be corrected or added?" required></textarea>
-      <button type="submit" class="btn btn-sm">Submit correction</button>
-    </form>
-  </details>
+    {% if request.query_params.get('correction_submitted') %}
+      <p class="banner banner-success">Thanks — your correction was sent to the diocesan office.</p>
+    {% elif request.query_params.get('correction_error') %}
+      <p class="banner banner-error">Please describe the correction before submitting.</p>
+    {% endif %}
+    <details class="correction-details">
+      <summary>Report a correction</summary>
+      <form method="post" action="/parish-information/correction">
+        <textarea name="message" rows="3" placeholder="What needs to be corrected or added?" required></textarea>
+        <button type="submit" class="btn btn-sm">Submit correction</button>
+      </form>
+    </details>
+  </div>
 </div>
 </div>
 {% endblock %}

@@ -29,12 +29,32 @@ today's clergy-only rows with no schema change. See
 """
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo
+
 import db
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _format_as_of(dt) -> str:
+    """Human-readable Eastern time, matching this codebase's established
+    convention (summary_job.py etc.) -- e.g. "August 28, 2026 at 5:20 PM
+    ET". Real bug fixed 2026-08-28: this used to be a bare
+    `dt.isoformat()`, which rendered a raw UTC string like
+    "2026-08-28T21:20:21.413987+00:00" directly on the page -- correct data,
+    unreadable to a human, and not even in the right timezone."""
+    # %-d/%-I (no leading zero) are Linux-only strftime flags -- this
+    # codebase has been bitten by that once already (summary_job.py, see
+    # 26-124's CLAUDE.md). Use %B/plain int day-year and lstrip("0") on the
+    # 12-hour time instead, which works identically on Windows and Linux.
+    local = dt.astimezone(_ET)
+    time_str = local.strftime("%I:%M %p").lstrip("0")
+    return f"{local.strftime('%B')} {local.day}, {local.year} at {time_str} ET"
 
 
 def get_congregation(parish_id: int) -> dict:
     """Read-only. Returns:
-    {"rows": [...], "as_of": iso_str_or_None}
+    {"rows": [...], "as_of": human_readable_et_str_or_None}
 
     `rows` is [] and `as_of` is None when this parish has never been
     refreshed (not yet synced, or genuinely has no clergy on file in
@@ -51,4 +71,4 @@ def get_congregation(parish_id: int) -> dict:
     )
     if not rows:
         return {"rows": [], "as_of": None}
-    return {"rows": rows, "as_of": rows[0]["as_of"].isoformat()}
+    return {"rows": rows, "as_of": _format_as_of(rows[0]["as_of"])}
