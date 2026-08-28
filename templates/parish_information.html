@@ -17,6 +17,9 @@
   @media (max-width: 800px) {
     .parish-info-grid { grid-template-columns: 1fr; }
   }
+  /* Correction card spans both columns, below the two info cards -- Jay,
+     2026-08-28: keep it out of the leadership card, give it its own row. */
+  .correction-card { grid-column: 1 / -1; }
 </style>
 {% endblock %}
 {% block content %}
@@ -30,7 +33,6 @@
   <div>
     {% if contact %}
     <div class="card">
-      <h2>{{ contact.company or parish.name }}</h2>
       <p><strong>Address:</strong>
         {% if contact.address %}{{ contact.address }}{% if contact.address2 %}, {{ contact.address2 }}{% endif %}<br>{% endif %}
         {{ contact.city or "—" }}{% if contact.state %}, {{ contact.state }}{% endif %} {{ contact.zip or "" }}
@@ -73,7 +75,9 @@
     {% if congregation_as_of %}
       <p class="sub"><em>Updated {{ congregation_as_of }}.</em></p>
     {% endif %}
+  </div>
 
+  <div class="card correction-card">
     {% if request.query_params.get('correction_submitted') %}
       <p class="banner banner-success">Thanks — your correction was sent to the diocesan office.</p>
     {% elif request.query_params.get('correction_error') %}
