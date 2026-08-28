@@ -39,7 +39,6 @@
       </p>
       <p><strong>Phone:</strong> {{ contact.wphone or contact.hphone or "—" }}</p>
       <p><strong>Email:</strong> {% if contact.email %}<a href="mailto:{{ contact.email }}">{{ contact.email }}</a>{% else %}—{% endif %}</p>
-      <p><strong>Record type:</strong> {{ contact.recordtype or "—" }}</p>
     </div>
     {% endif %}
   </div>
