@@ -6,9 +6,22 @@
    main content area -- distinct from a diocese's logo in the header bar
    (base.html, migration 051). parish is parish_mode.py's own row (p.*
    plus the diocese's own aliased columns), so parish.logo_gcs_path is
-   THIS parish's own (migration 052), never the diocese's. #}
+   THIS parish's own (migration 052), never the diocese's.
+
+   2026-08-29 correction, found while investigating what looked like a
+   big gap next to a logo: several real parish logos are deliberately
+   WHITE/reversed art meant for a dark header bar (confirmed by checking
+   the alpha channel directly, not by eye -- the "gap" was real content,
+   white text rendering white-on-near-white against this page's own pale
+   background). The header stays background-free (it's already a colored
+   bar); THIS spot is a plain page, so the logo gets its own small dark
+   backing chip so a reversed-color asset still reads here too. #}
 <h1 style="display:flex; align-items:center; gap:12px;">
-  {% if parish.logo_gcs_path %}<img src="/parish-logo/{{ parish.id }}" alt="{{ parish.name }} logo" style="height:1.4em; width:auto;">{% endif %}
+  {% if parish.logo_gcs_path %}
+  <span style="display:inline-flex; align-items:center; background:var(--color-ink); border-radius:6px; padding:4px 10px;">
+    <img src="/parish-logo/{{ parish.id }}" alt="{{ parish.name }} logo" style="height:1.2em; width:auto; display:block;">
+  </span>
+  {% endif %}
   <span>{{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</span>
 </h1>
 {% if can_switch %}
