@@ -68,18 +68,26 @@
   {% if user %}
   <header class="site-header">
     <div class="brand-group">
-      {# A diocese's own logo (2026-08-29, Jay), to the left of the wordmark
-         -- logo_info is computed once in _render() for whichever mode is
-         active (Diocesan/Parish/Cornerstone), so this needs no branching
-         here beyond "is there one to show." #}
-      {% if logo_info.has_logo %}<img src="/org-logo/{{ logo_info.org_id }}" alt="{{ logo_info.name }} logo" class="brand-logo">{% endif %}
       <a href="{{ '/parish-view' if parish_view else '/portal' }}" class="brand">Beacon</a>
       {# Jay, 2026-08-16: "the banner should also show what entity you are
          working in to the right of Beacon... in all modes" -- parish_view
          already showed the diocese name (unchanged, existing behavior);
          the elif is the missing case, Diocese Mode and Cornerstone Mode
-         both populate current_org whenever an entity is selected. #}
-      {% if parish_view %}<span class="brand-diocese">{{ parish_view.org_name }}</span>{% elif current_org %}<span class="brand-diocese">{{ current_org.name }}</span>{% endif %}
+         both populate current_org whenever an entity is selected.
+
+         2026-08-29 correction, Jay: the diocese's own logo was sitting
+         BEFORE "Beacon," reading as if it were Beacon's own app icon --
+         it belongs after the wordmark and its vertical separator, right
+         before the diocese's name (logo_info is computed once in
+         _render() for whichever mode is active). Beacon's own icon (a
+         lighthouse, per Jay) is a separate, not-yet-supplied asset --
+         not this. #}
+      {% if parish_view or current_org %}
+      <span class="brand-diocese">
+        {% if logo_info.has_logo %}<img src="/org-logo/{{ logo_info.org_id }}" alt="{{ logo_info.name }} logo" class="brand-logo">{% endif %}
+        <span class="brand-diocese-name">{{ parish_view.org_name if parish_view else current_org.name }}</span>
+      </span>
+      {% endif %}
     </div>
     <nav>
       {# 2026-08-02 feedback batch, Items 1 & 2: the top nav had gotten too

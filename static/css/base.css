@@ -829,30 +829,43 @@ a.module-tile:hover { box-shadow: var(--shadow-card-hover); transform: translate
    (base.css .site-header .brand rule, and below), unaffected by the
    stretch. */
 .brand-group { display: flex; align-items: stretch; }
-/* A diocese's own uploaded logo (2026-08-29), to the left of the wordmark.
-   2026-08-29 correction, Jay: the uploaded crests are transparent PNGs --
-   a white backing box made them look like a sticker, and a small fixed
-   height made the artwork illegible. Fixed: no background/padding (the
-   transparency sits directly on the header's own mode color, which is
-   the whole point of supplying a transparent file), and height:100% of
-   .brand-group -- which now spans the FULL un-padded bar (see
-   .site-header's own 2026-08-29 note) -- so the logo fills the bar
-   vertically, edge to edge, whatever width that implies for its own
-   aspect ratio. */
+/* 2026-08-29 correction, Jay: the diocese's own logo was sitting BEFORE
+   "Beacon," reading as if it were Beacon's own app icon (a lighthouse,
+   still to come, separate from any of this). It belongs after the
+   wordmark's own vertical separator, right before the diocese's name --
+   so .brand-diocese itself is now the flex/stretch container (logo +
+   name as its two children), not .brand-group directly. No vertical
+   padding here (unlike .brand's own rule above) -- that's what lets
+   .brand-logo's height:100% resolve against this element's FULL
+   stretched height instead of a padding-shrunk one; .brand-diocese-name
+   carries its own padding instead, so the TEXT still sits comfortably
+   spaced while the logo fills the bar edge to edge. */
+.brand-diocese {
+  margin-left: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 1px solid rgba(255,255,255,0.35);
+  display: flex;
+  align-items: stretch;
+}
+.brand-diocese-name {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: rgba(255,255,255,0.85);
+  display: flex;
+  align-items: center;
+  padding: var(--space-3) 0;
+}
+/* A diocese's own uploaded logo (2026-08-29). The uploaded crests are
+   transparent PNGs -- no background/padding here, the transparency sits
+   directly on the header's own mode color, which is the whole point of
+   supplying a transparent file. height:100% of .brand-diocese (itself
+   stretched to .site-header's own explicit height, see that rule's
+   2026-08-29 note) so the logo fills the bar vertically, edge to edge,
+   whatever width that implies for its own aspect ratio. */
 .brand-logo {
   height: 100%;
   width: auto;
   margin-right: var(--space-2);
   display: block;
-}
-.brand-diocese {
-  font-family: var(--font-body);
-  font-size: 0.95rem;
-  font-weight: 500;
-  color: rgba(255,255,255,0.85);
-  margin-left: var(--space-3);
-  padding: var(--space-3) 0 var(--space-3) var(--space-3);
-  border-left: 1px solid rgba(255,255,255,0.35);
-  display: flex;
-  align-items: center;
 }
