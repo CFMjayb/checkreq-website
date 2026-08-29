@@ -569,7 +569,15 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
                      "has_logo": bool(_parish_view.get("diocese_logo_gcs_path"))}
     elif cornerstone_context:
         theme_style = org_branding.theme_style_block(mode="cornerstone", org=None)
-        logo_info = {"org_id": None, "name": None, "has_logo": False}
+        # 2026-08-29 correction, live-caught: a served client's own logo
+        # (uploaded via the same Entities screen, same org-level columns)
+        # was being suppressed here on the reasoning that "a client org
+        # isn't a diocese" -- wrong the moment real client logos actually
+        # exist. It's still the CURRENT org's own row either way (org ==
+        # the served client's own organizations row while inside its AP
+        # context), so this just needed to match the diocesan branch below.
+        logo_info = {"org_id": org["id"] if org else None, "name": org["name"] if org else None,
+                     "has_logo": bool(org and org.get("logo_gcs_path"))}
     else:
         theme_style = org_branding.theme_style_block(mode="diocesan", org=org)
         logo_info = {"org_id": org["id"] if org else None, "name": org["name"] if org else None,
