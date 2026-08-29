@@ -26,12 +26,30 @@ Parish Portal presence, which is unaffected either way.</p>
 <div class="table-scroll">
   <table class="simple-table">
     <tr>
-      <th>Parish</th><th>City</th><th>Cornerstone Served</th><th>Code</th><th>QBO Realm ID</th><th></th><th>Finance Settings</th>
+      <th>Parish</th><th>City</th><th>Logo</th><th>Cornerstone Served</th><th>Code</th><th>QBO Realm ID</th><th></th><th>Finance Settings</th>
     </tr>
     {% for p in parishes %}
     <tr>
       <td>{{ p.name }}</td>
       <td>{{ p.city or "—" }}</td>
+      <td>
+        {# 2026-08-29, Jay: shown next to the parish's own name on
+           parish_view.html (Parish Mode), NOT the header bar -- that's
+           the diocese's own logo (Entities screen, migration 051). #}
+        {% if p.logo_gcs_path %}
+        <img src="/parish-logo/{{ p.id }}" alt="{{ p.name }} logo"
+             style="height:24px;width:auto;background:#fff;border-radius:2px;padding:1px;display:block;margin-bottom:4px;">
+        <form method="post" action="/admin/manage-parishes/{{ p.id }}/remove-logo" style="display:inline">
+          <button type="submit" class="btn btn-secondary btn-sm">Remove</button>
+        </form>
+        {% else %}
+        <form method="post" action="/admin/manage-parishes/{{ p.id }}/upload-logo" enctype="multipart/form-data">
+          <input type="file" name="logo" accept="image/png,image/jpeg,image/svg+xml,image/webp" required
+                 style="max-width:120px;">
+          <button type="submit" class="btn btn-secondary btn-sm">Upload</button>
+        </form>
+        {% endif %}
+      </td>
       <td>
         {% if p.linked_org and p.linked_org.is_active %}
           <span class="badge badge-confirmed">Served</span>
@@ -81,7 +99,7 @@ Parish Portal presence, which is unaffected either way.</p>
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="7">No parishes yet in this entity.</td></tr>
+    <tr><td colspan="8">No parishes yet in this entity.</td></tr>
     {% endfor %}
   </table>
 </div>

@@ -150,20 +150,34 @@ def current_parish_view(request: Request) -> dict | None:
 
 
 def _parish_row(parish_id: int) -> dict | None:
-    """2026-08-29: also carries the diocese's own parish_mode_color/
-    logo_gcs_path/logo_content_type (org_branding.py reads these off
-    whatever this function returns) -- but this runs on EVERY Parish Mode
-    render, including real production parish logins, so it must never
-    hard-crash just because migration 051 hasn't been applied yet on a
-    given environment (unlike a plain SELECT *, naming these columns
-    explicitly means an UndefinedColumn error, not a silently-missing key,
-    the moment they don't exist). Falls back to the pre-051 query shape on
-    ANY error and fills the three new keys in as None, matching
-    org_branding.theme_style_block()'s own "missing == not set" reading."""
+    """2026-08-29: also carries the diocese's own parish_mode_color and
+    header logo (aliased diocese_logo_gcs_path/diocese_logo_content_type
+    -- deliberately NOT the bare column names, which would collide with
+    this SAME dict's `p.*`-sourced logo_gcs_path/logo_content_type once
+    migration 052 adds those to portal.parishes itself: THIS parish's own
+    logo, shown next to its name on parish_view.html, a completely
+    different thing from the diocese's header logo). org_branding.py's
+    theme_style_block() reads the diocese-prefixed keys; parish_view.html
+    reads the bare ones directly off `parish` (== this function's return
+    value).
+
+    Runs on EVERY Parish Mode render, including real production parish
+    logins, so the EXPLICIT o.* column names here must never hard-crash
+    just because migration 051 hasn't been applied yet on a given
+    environment (unlike a plain SELECT *, naming these columns explicitly
+    means an UndefinedColumn error, not a silently-missing key, the moment
+    they don't exist) -- falls back to the pre-051 query shape on ANY
+    error and fills the keys in as None. portal.parishes' OWN new columns
+    (migration 052) need no equivalent fallback: `p.*` simply won't
+    include them pre-migration, which read()s as a missing dict key
+    (None via .get()) exactly like every other not-yet-applied column in
+    this app, not a query error."""
     try:
         return db.query_one(
             "SELECT p.*, o.code AS org_code, o.name AS org_name, "
-            "o.parish_mode_color, o.logo_gcs_path, o.logo_content_type "
+            "o.parish_mode_color, "
+            "o.logo_gcs_path AS diocese_logo_gcs_path, "
+            "o.logo_content_type AS diocese_logo_content_type "
             "FROM portal.parishes p JOIN checkreq.organizations o ON o.id = p.org_id "
             "WHERE p.id = %s",
             (parish_id,),
@@ -177,8 +191,8 @@ def _parish_row(parish_id: int) -> dict | None:
         )
         if row:
             row.setdefault("parish_mode_color", None)
-            row.setdefault("logo_gcs_path", None)
-            row.setdefault("logo_content_type", None)
+            row.setdefault("diocese_logo_gcs_path", None)
+            row.setdefault("diocese_logo_content_type", None)
         return row
 
 

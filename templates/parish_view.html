@@ -2,7 +2,15 @@
 {% block title %}{{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %} — Beacon{% endblock %}
 {% block content %}
 <div class="page-shell">
-<h1>{{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</h1>
+{# 2026-08-29, Jay: the parish's own logo, next to its name here in the
+   main content area -- distinct from a diocese's logo in the header bar
+   (base.html, migration 051). parish is parish_mode.py's own row (p.*
+   plus the diocese's own aliased columns), so parish.logo_gcs_path is
+   THIS parish's own (migration 052), never the diocese's. #}
+<h1 style="display:flex; align-items:center; gap:12px;">
+  {% if parish.logo_gcs_path %}<img src="/parish-logo/{{ parish.id }}" alt="{{ parish.name }} logo" style="height:1.4em; width:auto;">{% endif %}
+  <span>{{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</span>
+</h1>
 {% if can_switch %}
 <p class="back-link"><a href="{{ switch_url }}">&larr; Choose a different parish</a></p>
 {% endif %}

@@ -566,7 +566,7 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     if _parish_view:
         theme_style = org_branding.theme_style_block(mode="parish", org=_parish_view)
         logo_info = {"org_id": _parish_view.get("org_id"), "name": _parish_view.get("org_name"),
-                     "has_logo": bool(_parish_view.get("logo_gcs_path"))}
+                     "has_logo": bool(_parish_view.get("diocese_logo_gcs_path"))}
     elif cornerstone_context:
         theme_style = org_branding.theme_style_block(mode="cornerstone", org=None)
         logo_info = {"org_id": None, "name": None, "has_logo": False}
@@ -779,6 +779,28 @@ def org_logo(org_id: int, request: Request):
         return JSONResponse({"error": "Logo file missing."}, status_code=404)
     data, _ = result
     return Response(content=data, media_type=org["logo_content_type"] or "application/octet-stream")
+
+
+@app.get("/parish-logo/{parish_id}")
+def parish_logo(parish_id: int, request: Request):
+    """2026-08-29, Jay: a parish's own logo, shown next to its name in the
+    Parish Mode main content area (parish_view.html) -- distinct from
+    org_logo() above, which is the DIOCESE's logo in the header bar. Same
+    reasoning on the access check: not sensitive, no need to verify the
+    caller is actually looking at this specific parish."""
+    if not _current_user(request):
+        return RedirectResponse("/login")
+    parish = db.query_one(
+        "SELECT logo_gcs_path, logo_content_type FROM portal.parishes WHERE id = %s",
+        (parish_id,),
+    )
+    if not parish or not parish.get("logo_gcs_path"):
+        return JSONResponse({"error": "No logo set for this parish."}, status_code=404)
+    result = gcs_client.download_bytes(org_branding.LOGO_BUCKET, parish["logo_gcs_path"])
+    if not result:
+        return JSONResponse({"error": "Logo file missing."}, status_code=404)
+    data, _ = result
+    return Response(content=data, media_type=parish["logo_content_type"] or "application/octet-stream")
 
 
 @app.get("/admin/impersonate", response_class=HTMLResponse)

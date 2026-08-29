@@ -98,9 +98,24 @@ def theme_style_block(*, mode: str, org: dict | None) -> str:
     )
 
 
-def logo_path(org_id: int, content_type: str) -> str:
-    ext = {
+def _logo_ext(content_type: str) -> str:
+    return {
         "image/png": "png", "image/jpeg": "jpg",
         "image/svg+xml": "svg", "image/webp": "webp",
     }.get(content_type, "bin")
-    return f"{LOGO_GCS_PREFIX}/{org_id}/logo.{ext}"
+
+
+def logo_path(org_id: int, content_type: str) -> str:
+    return f"{LOGO_GCS_PREFIX}/{org_id}/logo.{_logo_ext(content_type)}"
+
+
+# A PARISH's own logo (2026-08-29, Jay) -- shown next to its name on
+# parish_view.html, distinct from a diocese's header logo above. Same
+# bucket, own prefix, so the two never collide even for a Cornerstone-
+# served parish that has both a diocese-level org row AND its own
+# portal.parishes row.
+PARISH_LOGO_GCS_PREFIX = "parish-logos"
+
+
+def parish_logo_path(parish_id: int, content_type: str) -> str:
+    return f"{PARISH_LOGO_GCS_PREFIX}/{parish_id}/logo.{_logo_ext(content_type)}"

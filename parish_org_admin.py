@@ -32,10 +32,12 @@ isn't a silent trap.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import db
+import gcs_client
+import org_branding
 import rbac
 import registry
 
@@ -165,3 +167,49 @@ def disable_cornerstone(parish_id: int, request: Request):
             )
 
     return RedirectResponse("/admin/manage-parishes?disabled=1", status_code=303)
+
+
+@router.post("/admin/manage-parishes/{parish_id}/upload-logo")
+async def upload_parish_logo(parish_id: int, request: Request, logo: UploadFile):
+    """2026-08-29, Jay: a parish's own logo, shown next to its name in the
+    Parish Mode main content area (parish_view.html) -- distinct from a
+    diocese's own header logo (admin_setup.py's equivalent route, migration
+    051). Same validation/storage pattern (org_branding.py), own GCS
+    prefix (parish_logo_path) and own column pair (portal.parishes,
+    migration 052) so the two never collide."""
+    user, org, err = _require_setup_admin(request)
+    if err:
+        return err
+    parish = registry.get_parish(parish_id, org["id"])
+    if not parish:
+        return RedirectResponse("/admin/manage-parishes?error=Unknown+parish.", status_code=303)
+    content_type = logo.content_type or ""
+    if content_type not in org_branding.ALLOWED_LOGO_CONTENT_TYPES:
+        return RedirectResponse(
+            "/admin/manage-parishes?error=Logo+must+be+a+PNG,+JPEG,+SVG,+or+WebP+image.",
+            status_code=303,
+        )
+    data = await logo.read()
+    if len(data) > org_branding.MAX_LOGO_BYTES:
+        return RedirectResponse("/admin/manage-parishes?error=Logo+file+is+too+large+(2MB+max).", status_code=303)
+    blob_path = org_branding.parish_logo_path(parish_id, content_type)
+    gcs_client.upload_bytes(org_branding.LOGO_BUCKET, blob_path, data, content_type)
+    registry.update_parish(parish_id, org["id"], logo_gcs_path=blob_path, logo_content_type=content_type)
+    return RedirectResponse("/admin/manage-parishes?saved=1", status_code=303)
+
+
+@router.post("/admin/manage-parishes/{parish_id}/remove-logo")
+def remove_parish_logo(parish_id: int, request: Request):
+    user, org, err = _require_setup_admin(request)
+    if err:
+        return err
+    parish = registry.get_parish(parish_id, org["id"])
+    if not parish:
+        return RedirectResponse("/admin/manage-parishes")
+    if parish.get("logo_gcs_path"):
+        try:
+            gcs_client.delete_blob(org_branding.LOGO_BUCKET, parish["logo_gcs_path"])
+        except Exception:
+            pass  # best-effort -- clearing the DB pointer is what actually stops it from showing
+    registry.update_parish(parish_id, org["id"], logo_gcs_path=None, logo_content_type=None)
+    return RedirectResponse("/admin/manage-parishes?saved=1", status_code=303)
