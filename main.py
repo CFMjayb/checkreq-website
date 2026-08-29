@@ -373,6 +373,17 @@ CORNERSTONE_ONLY_MODULES = [
     {"key": "parish_resource_library", "title": "Resources",
      "desc": "Diocese-wide reference library.", "url": "/resource-library",
      "enabled": True, "gate": None},
+    # 2026-08-29, Jay: "when a cornerstone_employee enters into a parish
+    # that they/we serve, there will also be a new menu option on that
+    # organization's page for the Cornerstone Employee to use labeled 'CFM
+    # Items' -- we will be building these items in the days ahead." A
+    # placeholder landing page for now (cornerstone_mode.py owns the
+    # route/template, since it's Cornerstone-specific, not a general
+    # portal concern) -- no gate needed beyond already being inside this
+    # served client's own context, same reasoning as the two tiles above.
+    {"key": "cfm_items", "title": "CFM Items",
+     "desc": "Cornerstone-specific tools for this client (more coming soon).",
+     "url": "/admin/cfm-items", "enabled": True, "gate": None},
 ]
 
 
@@ -6046,7 +6057,8 @@ parish_mode.register(app, current_user=_current_user, current_org=_current_org, 
 # Cornerstone Served Parishes Phase A (Cornerstone Served Parishes Plan.md) --
 # same register() pattern as everything else, thin wiring only.
 parish_org_admin.register(app, current_user=_current_user, current_org=_current_org, render=_render)
-cornerstone_mode.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+cornerstone_mode.register(app, current_user=_current_user, current_org=_current_org, render=_render,
+                           accessible_diocese_orgs=_accessible_diocese_orgs)
 # Parish Portal S4+S5 (2026-08-08): announcements, document archive/library,
 # and parish feedback/general-requests -- three more new modules, same thin
 # register() wiring, no logic added here.

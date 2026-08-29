@@ -4,9 +4,28 @@
 <div class="page-shell">
 <h1>Cornerstone Mode</h1>
 <p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
-<p class="sub">Parishes you're set up to work with as a Cornerstone Franciscan Ministries employee. Picking one switches your entity there — same as the usual entity switcher, just scoped to the parishes you actually work with.</p>
+<p class="sub">Your Cornerstone Franciscan Ministries staff menu — pick a diocese to work on, or go straight into one of our served parish clients. This menu will keep growing with more Cornerstone-specific tools over time.</p>
 
 <div class="card">
+  <h2>Enter a Diocese</h2>
+  <table class="simple-table">
+    <thead><tr><th>Diocese</th><th>Code</th><th></th></tr></thead>
+    <tbody>
+      {% for o in dioceses %}
+      <tr>
+        <td>{{ o.name }}</td>
+        <td>{{ o.code|upper }}</td>
+        <td><a href="/select-entity/{{ o.id }}" class="btn btn-secondary btn-sm">Enter</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3">No diocese-level access set up for you yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Enter a Client</h2>
   <table class="simple-table">
     <thead><tr><th>Parish</th><th>Diocese</th><th>City</th><th></th></tr></thead>
     <tbody>
@@ -26,6 +45,10 @@
       {% endfor %}
     </tbody>
   </table>
+</div>
+
+<div class="card">
+  <p class="sub">More Cornerstone tools will appear here over time.</p>
 </div>
 </div>
 {% endblock %}

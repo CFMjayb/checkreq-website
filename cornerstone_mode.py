@@ -41,11 +41,13 @@ router = APIRouter()
 _current_user = None
 _current_org = None
 _render = None
+_accessible_diocese_orgs = None
 
 
-def register(app, *, current_user, current_org, render) -> None:
-    global _current_user, _current_org, _render
+def register(app, *, current_user, current_org, render, accessible_diocese_orgs) -> None:
+    global _current_user, _current_org, _render, _accessible_diocese_orgs
     _current_user, _current_org, _render = current_user, current_org, render
+    _accessible_diocese_orgs = accessible_diocese_orgs
     app.include_router(router)
 
 
@@ -116,15 +118,20 @@ def _parish_preview_active(request: Request) -> bool:
     return bool(request.session.get("parish_view_id"))
 
 
-def get_cornerstone_picker_orgs(user_id: int, diocese_org_id: int) -> list[dict]:
+def get_cornerstone_picker_orgs(user_id: int) -> list[dict]:
     """Served parish-orgs where this user actually holds cornerstone_employee
     -- their own real grants, not every served parish (same "explicit grant
-    required, no inheritance" rule as everything else in this app) --
-    scoped to the CURRENT diocese only. Jay, 2026-08-16, live test:
-    "Cornerstone Mode is available to Diocese Mode only and only relates to
-    parishes served for that Diocese" -- not a cross-diocese list of every
-    parish this person might work at anywhere. Fails closed (empty list) if
-    migrations 036/037 haven't landed yet."""
+    required, no inheritance" rule as everything else in this app).
+
+    2026-08-29, Jay's direct correction: Cornerstone Mode used to require
+    already being inside a specific diocese's Diocese Mode before this list
+    would show anything (scoped to `WHERE pdio.id = current_org`) -- a real
+    chicken-and-egg problem for the new standing Cornerstone Menu landing
+    page (see the router below), which must be reachable BEFORE any diocese
+    is selected at all. Now returns every served client this user holds the
+    grant at, across every diocese -- `diocese_name` stays in the SELECT so
+    the picker can still show which diocese each client belongs to. Fails
+    closed (empty list) if migrations 036/037 haven't landed yet."""
     try:
         return db.query(
             """
@@ -136,10 +143,9 @@ def get_cornerstone_picker_orgs(user_id: int, diocese_org_id: int) -> list[dict]
             JOIN portal.parishes p ON p.linked_org_id = o.id
             JOIN checkreq.organizations pdio ON pdio.id = p.org_id
             WHERE ur.user_id = %s AND ur.role_key = 'cornerstone_employee' AND ur.revoked_at IS NULL
-              AND pdio.id = %s
-            ORDER BY p.name
+            ORDER BY pdio.name, p.name
             """,
-            (user_id, diocese_org_id),
+            (user_id,),
         )
     except Exception:
         return []
@@ -147,38 +153,78 @@ def get_cornerstone_picker_orgs(user_id: int, diocese_org_id: int) -> list[dict]
 
 @router.get("/admin/cornerstone-mode", response_class=HTMLResponse)
 def cornerstone_mode_picker(request: Request):
-    """Jay, 2026-08-16, live test: "Cornerstone Mode is available to Diocese
-    Mode only" -- reachable only from a plain diocese context, never
-    stacked on top of an active Parish Mode preview or an already-active
-    Cornerstone Mode session; the one way out of either of those is
-    "Diocese Mode" first (base.html's user-menu already only shows this
-    link in that state, this is the matching server-side gate -- same
-    "tile visibility must match its route's own gate" discipline as
-    admin_hub.py's earlier self-correction)."""
+    """2026-08-29, rebuilt per Jay's direct request into a standing
+    "Cornerstone Menu" landing page for anyone holding cornerstone_employee
+    ANYWHERE (the nav link in base.html already gates on exactly that,
+    org_id=None -- "holds it anywhere" -- Jay's own confirmed answer to
+    "should this menu appear for anyone with the grant at any one client").
+    Two entry points from one page: pick a diocese (Diocesan Mode) or pick a
+    served client (the original Cornerstone Mode picker) -- Jay's own
+    framing was "enter diocesan mode and work on a diocese, [or] enter and
+    work on any one of our cornerstone clients", not one gated behind the
+    other.
+
+    This closes the real chicken-and-egg gap the OLD gate had: it required
+    `org` (an already-selected diocese) before this page would render at
+    all, but the whole point of the new landing page is to be reachable
+    BEFORE any diocese has been picked -- e.g. a pure Cornerstone employee
+    who holds no diocese-level role at all, only cornerstone_employee at a
+    handful of clients, would otherwise never have anywhere to land.
+
+    Still bounces to /portal in the two cases that remain genuinely
+    incompatible with this page, unchanged from before: an active Parish
+    Mode preview (must exit to Diocese Mode first, same "the only switcher
+    is back to Diocese Mode" rule as everywhere else), and already sitting
+    inside a served client's own AP context (is_cornerstone_org(current
+    org) -- same reasoning, re-checked here as defense in depth even though
+    base.html's nav no longer shows this link in that state either)."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
     org = _current_org(request)
-    if _parish_preview_active(request) or not org or is_cornerstone_org(org["id"]):
+    if _parish_preview_active(request) or (org and is_cornerstone_org(org["id"])):
         return RedirectResponse("/portal")
-    orgs = get_cornerstone_picker_orgs(user["id"], org["id"])
-    return _render(request, "cornerstone_mode.html", user, {"orgs": orgs})
+    orgs = get_cornerstone_picker_orgs(user["id"])
+    dioceses = _accessible_diocese_orgs(user["id"])
+    return _render(request, "cornerstone_mode.html", user, {"orgs": orgs, "dioceses": dioceses})
 
 
 @router.post("/admin/cornerstone-mode/{org_id}")
 def cornerstone_mode_select(org_id: int, request: Request):
-    """Same Diocese-Mode-only gate as the picker above, re-checked
-    independently (a direct POST must not bypass what the picker's own
-    display already enforces) -- then a normal entity-switch, reusing
-    /select-entity's own authorization check (_user_has_org_access() in
-    main.py) so a crafted org_id this user doesn't actually hold
-    cornerstone_employee at, or that isn't even a served parish-org, is
-    rejected the identical way any other unauthorized entity-switch
-    attempt would be."""
+    """Same relaxed gate as the picker above, re-checked independently (a
+    direct POST must not bypass what the picker's own display already
+    enforces) -- then a normal entity-switch, reusing /select-entity's own
+    authorization check (_user_has_org_access() in main.py) so a crafted
+    org_id this user doesn't actually hold cornerstone_employee at, or that
+    isn't even a served parish-org, is rejected the identical way any other
+    unauthorized entity-switch attempt would be."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
     org = _current_org(request)
-    if _parish_preview_active(request) or not org or is_cornerstone_org(org["id"]):
+    if _parish_preview_active(request) or (org and is_cornerstone_org(org["id"])):
         return RedirectResponse("/portal")
     return RedirectResponse(f"/select-entity/{org_id}", status_code=303)
+
+
+@router.get("/admin/cfm-items", response_class=HTMLResponse)
+def cfm_items(request: Request):
+    """2026-08-29, Jay: a new menu option on a served client's own org page,
+    labeled "CFM Items" -- a growing home for Cornerstone-specific tools
+    while working inside that client's context (CORNERSTONE_ONLY_MODULES in
+    main.py is what actually surfaces the tile). Placeholder only for now
+    ("we will be building these items in the days ahead") -- nothing to
+    show yet beyond the client's own name and a plain "coming soon" note.
+
+    Only makes sense inside a served client's own context -- bounces to
+    /portal otherwise, same reasoning as the is_cornerstone_org checks
+    above (reachable in practice only via the tile, which itself only
+    renders under that same condition, but re-checked here as the route's
+    own independent gate, not just trusting the tile's visibility)."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    org = _current_org(request)
+    if not org or not is_cornerstone_org(org["id"]):
+        return RedirectResponse("/portal")
+    return _render(request, "cfm_items.html", user, {})
