@@ -30,8 +30,11 @@
   <summary><h2>Entities</h2></summary>
   <p class="setup-hint">
     Code and Name are reference data, set when an entity is onboarded.
-    <strong>You can modify the Global Approval Threshold below</strong> &mdash; it&rsquo;s the only
-    editable field on this table.
+    <strong>You can modify the Global Approval Threshold and the two banner colors below</strong>
+    &mdash; those, plus the logo (its own Upload button, saved immediately), are this table&rsquo;s
+    only editable fields. A color always shows a real value, even before you&rsquo;ve customized
+    it &mdash; that starting value is Beacon&rsquo;s own stock color, not something already saved
+    for this entity.
   </p>
   <div class="setup-toolbar" style="margin-top:0;">
     <div class="spacer"></div>
@@ -46,6 +49,9 @@
           <th class="col-entity">Code</th>
           <th>Name</th>
           <th class="col-buffer">Global Approval Threshold ($)</th>
+          <th>Diocesan Mode Color</th>
+          <th>Parish Mode Color</th>
+          <th>Logo</th>
           <th>Effect</th>
         </tr>
       </thead>
@@ -58,14 +64,53 @@
             <input type="number" class="num" data-field="global_approval_threshold"
                    step="0.01" min="0" value="{{ '%.2f'|format(o.global_approval_threshold) }}">
           </td>
+          <td><input type="color" data-field="diocesan_mode_color" value="{{ o.diocesan_mode_color_display }}"></td>
+          <td><input type="color" data-field="parish_mode_color" value="{{ o.parish_mode_color_display }}"></td>
+          <td>
+            {% if o.logo_gcs_path %}
+            <img src="/org-logo/{{ o.id }}" alt="{{ o.name }} logo"
+                 style="height:24px;width:auto;background:#fff;border-radius:2px;padding:1px;display:block;margin-bottom:4px;">
+            <form method="post" action="/admin/setup/organizations/{{ o.id }}/remove-logo" style="display:inline">
+              <button type="submit" class="btn btn-secondary btn-sm">Remove</button>
+            </form>
+            {% else %}
+            <form method="post" action="/admin/setup/organizations/{{ o.id }}/upload-logo" enctype="multipart/form-data">
+              <input type="file" name="logo" accept="image/png,image/jpeg,image/svg+xml,image/webp" required
+                     style="max-width:140px;">
+              <button type="submit" class="btn btn-secondary btn-sm">Upload</button>
+            </form>
+            {% endif %}
+          </td>
           <td class="sub">
             Requests of this amount or more pick up {{ o.code }}&rsquo;s global approvers below.
           </td>
         </tr>
-        <tr class="msg-row" data-msg-for="{{ o.id }}" hidden><td colspan="4"><div class="row-msg"></div></td></tr>
+        <tr class="msg-row" data-msg-for="{{ o.id }}" hidden><td colspan="7"><div class="row-msg"></div></td></tr>
         {% endfor %}
       </tbody>
     </table>
+  </div>
+</details>
+
+<!-- ── Cornerstone Mode Color ───────────────────────────────────────────── -->
+<!-- 2026-08-29: unlike the two mode colors above, this ONE value is shared
+     across every diocese/client (checkreq.app_settings, not a column on
+     any one organizations row) -- there's no per-entity dimension to it,
+     since Cornerstone Mode is CFM's own work mode, not a diocese's. Its
+     own tiny immediate-submit form, matching the Diocese Features
+     checkboxes below rather than the batched grid above. -->
+<details class="setup-section" open>
+  <summary><h2>Cornerstone Mode Color</h2></summary>
+  <p class="setup-hint">
+    Shared across every diocese and served client &mdash; there&rsquo;s only ever one value, so it
+    isn&rsquo;t part of the per-entity table above.
+  </p>
+  <div class="card">
+    <form method="post" action="/admin/setup/organizations/save-cornerstone-color"
+          style="display:flex; align-items:center; gap:12px;">
+      <input type="color" name="cornerstone_mode_color" value="{{ cornerstone_color }}">
+      <button type="submit" class="btn btn-primary btn-sm">Save Color</button>
+    </form>
   </div>
 </details>
 

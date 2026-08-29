@@ -124,6 +124,7 @@ import timekeeping_review
 import timekeeping_status
 import approval_engine
 import auth_routes
+import org_branding
 import gcs_client
 import sharepoint_client
 import document_extract
@@ -552,10 +553,33 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # session state to track (see cornerstone_mode.py's own docstring) --
     # this is just a live check against whichever org is currently selected.
     cornerstone_context = bool(org and cornerstone_mode.is_cornerstone_org(org["id"]))
+    # Per-diocese banner colors + logo (2026-08-29, Jay). Exactly one of
+    # these three modes is ever active on a given render, so exactly one
+    # branch below fires -- theme_style_block() itself no-ops (returns '')
+    # for a diocese/parish that hasn't picked a custom color, letting
+    # base.css's own static default apply unchanged. logo_info.org_id is
+    # deliberately the DIOCESE's own org id (never the parish row's own id
+    # -- portal.parishes.id and checkreq.organizations.id are different
+    # numbers), since /org-logo/{org_id} always looks up an organizations
+    # row; None in Cornerstone Mode, since a served client's own org row
+    # isn't "a diocese" with its own logo the way EDOM/DSW/etc. are.
+    if _parish_view:
+        theme_style = org_branding.theme_style_block(mode="parish", org=_parish_view)
+        logo_info = {"org_id": _parish_view.get("org_id"), "name": _parish_view.get("org_name"),
+                     "has_logo": bool(_parish_view.get("logo_gcs_path"))}
+    elif cornerstone_context:
+        theme_style = org_branding.theme_style_block(mode="cornerstone", org=None)
+        logo_info = {"org_id": None, "name": None, "has_logo": False}
+    else:
+        theme_style = org_branding.theme_style_block(mode="diocesan", org=org)
+        logo_info = {"org_id": org["id"] if org else None, "name": org["name"] if org else None,
+                     "has_logo": bool(org and org.get("logo_gcs_path"))}
     ctx = {
         "user": user,
         "real_user": real,
         "cornerstone_context": cornerstone_context,
+        "theme_style": theme_style,
+        "logo_info": logo_info,
         "impersonating": bool(request.session.get("impersonating_user_id"))
                           and bool(real and rbac.user_has_role(real["id"], "cfo", org_id=None)),
         "current_org": org,
@@ -732,6 +756,29 @@ def select_entity(org_id: int, request: Request, next: str = "/portal"):
     # as an open redirect target.
     target = next if next.startswith("/") and not next.startswith("//") else "/portal"
     return RedirectResponse(target, status_code=303)
+
+
+@app.get("/org-logo/{org_id}")
+def org_logo(org_id: int, request: Request):
+    """Streams a diocese's own uploaded logo (base.html's header, to the
+    left of the "Beacon" wordmark). Requires login like everything else in
+    this app, but deliberately does NOT re-check that org_id matches the
+    caller's own current entity -- a logo is not sensitive content, and
+    every other org's is exactly as visible to any signed-in user as its
+    own name already is in the entity switcher."""
+    if not _current_user(request):
+        return RedirectResponse("/login")
+    org = db.query_one(
+        "SELECT logo_gcs_path, logo_content_type FROM checkreq.organizations WHERE id = %s",
+        (org_id,),
+    )
+    if not org or not org.get("logo_gcs_path"):
+        return JSONResponse({"error": "No logo set for this entity."}, status_code=404)
+    result = gcs_client.download_bytes(org_branding.LOGO_BUCKET, org["logo_gcs_path"])
+    if not result:
+        return JSONResponse({"error": "Logo file missing."}, status_code=404)
+    data, _ = result
+    return Response(content=data, media_type=org["logo_content_type"] or "application/octet-stream")
 
 
 @app.get("/admin/impersonate", response_class=HTMLResponse)

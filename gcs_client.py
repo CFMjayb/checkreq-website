@@ -29,6 +29,19 @@ def upload_bytes(bucket_name: str, blob_path: str, data: bytes, content_type: st
     blob.upload_from_string(data, content_type=content_type)
 
 
+def download_bytes(bucket_name: str, blob_path: str) -> tuple[bytes, str] | None:
+    """Returns (data, content_type), or None if the blob doesn't exist. Used
+    by main.py's /org-logo/{org_id} route to stream a diocese-uploaded logo
+    back out -- the only current reader of a previously-uploaded blob in
+    this codebase (every other caller of this module only ever uploads or
+    deletes)."""
+    blob = _get_client().bucket(bucket_name).blob(blob_path)
+    if not blob.exists():
+        return None
+    blob.reload()
+    return blob.download_as_bytes(), (blob.content_type or "application/octet-stream")
+
+
 def delete_blob(bucket_name: str, blob_path: str) -> None:
     """Best-effort delete -- used both for cleanup-on-QBO-post (not yet wired,
     see cleanup_gcs_attachment() in main.py) and to unwind a GCS upload that

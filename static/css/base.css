@@ -806,6 +806,21 @@ a.module-tile:hover { box-shadow: var(--shadow-card-hover); transform: translate
    "it is rendering, just too far to the right" -- .site-header's flex
    children were .brand/.brand-diocese/nav as 3 separate items). */
 .brand-group { display: flex; align-items: center; }
+/* A diocese's own uploaded logo (2026-08-29), to the left of the wordmark.
+   Height-capped, not width-capped, so a wide or a square logo both sit at
+   the same visual weight next to "Beacon" rather than one dwarfing it. A
+   small white backing keeps a logo with a transparent or dark background
+   legible against the header's own dark green/red/blue -- no per-diocese
+   file treatment required. */
+.brand-logo {
+  height: 28px;
+  max-height: 28px;
+  width: auto;
+  margin-right: var(--space-2);
+  border-radius: 3px;
+  background: #fff;
+  padding: 2px;
+}
 .brand-diocese {
   font-family: var(--font-body);
   font-size: 0.95rem;

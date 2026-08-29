@@ -141,12 +141,7 @@ def current_parish_view(request: Request) -> dict | None:
         request.session.pop("parish_view_id", None)
         _close_open_parish_mode(real_id)
         return None
-    parish = db.query_one(
-        "SELECT p.*, o.code AS org_code, o.name AS org_name "
-        "FROM portal.parishes p JOIN checkreq.organizations o ON o.id = p.org_id "
-        "WHERE p.id = %s",
-        (parish_id,),
-    )
+    parish = _parish_row(parish_id)
     if not parish:
         request.session.pop("parish_view_id", None)
         _close_open_parish_mode(real_id)
@@ -155,12 +150,36 @@ def current_parish_view(request: Request) -> dict | None:
 
 
 def _parish_row(parish_id: int) -> dict | None:
-    return db.query_one(
-        "SELECT p.*, o.code AS org_code, o.name AS org_name "
-        "FROM portal.parishes p JOIN checkreq.organizations o ON o.id = p.org_id "
-        "WHERE p.id = %s",
-        (parish_id,),
-    )
+    """2026-08-29: also carries the diocese's own parish_mode_color/
+    logo_gcs_path/logo_content_type (org_branding.py reads these off
+    whatever this function returns) -- but this runs on EVERY Parish Mode
+    render, including real production parish logins, so it must never
+    hard-crash just because migration 051 hasn't been applied yet on a
+    given environment (unlike a plain SELECT *, naming these columns
+    explicitly means an UndefinedColumn error, not a silently-missing key,
+    the moment they don't exist). Falls back to the pre-051 query shape on
+    ANY error and fills the three new keys in as None, matching
+    org_branding.theme_style_block()'s own "missing == not set" reading."""
+    try:
+        return db.query_one(
+            "SELECT p.*, o.code AS org_code, o.name AS org_name, "
+            "o.parish_mode_color, o.logo_gcs_path, o.logo_content_type "
+            "FROM portal.parishes p JOIN checkreq.organizations o ON o.id = p.org_id "
+            "WHERE p.id = %s",
+            (parish_id,),
+        )
+    except Exception:
+        row = db.query_one(
+            "SELECT p.*, o.code AS org_code, o.name AS org_name "
+            "FROM portal.parishes p JOIN checkreq.organizations o ON o.id = p.org_id "
+            "WHERE p.id = %s",
+            (parish_id,),
+        )
+        if row:
+            row.setdefault("parish_mode_color", None)
+            row.setdefault("logo_gcs_path", None)
+            row.setdefault("logo_content_type", None)
+        return row
 
 
 def _native_parish_ids(user_id: int) -> list[int]:

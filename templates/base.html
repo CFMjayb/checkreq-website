@@ -9,6 +9,13 @@
   <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version('css/tokens.css') }}">
   <link rel="stylesheet" href="/static/css/base.css?v={{ asset_version('css/base.css') }}">
   {% block extra_css %}{% endblock %}
+  {# Per-diocese banner colors (2026-08-29) -- placed last so it wins the
+     specificity tie against base.css's own static default rule for
+     whichever mode is active (:root / body.parish-mode / body.cornerstone-
+     mode, matched exactly in org_branding.theme_style_block()) purely on
+     source order. Empty string whenever this diocese/mode hasn't set a
+     custom color, which correctly leaves the static default in charge. #}
+  {% if theme_style %}{{ theme_style | safe }}{% endif %}
 </head>
 <body class="{% if parish_view %}parish-mode {% elif cornerstone_context %}cornerstone-mode {% endif %}{% if BEACON_ENV == 'dev' %}beacon-env-dev{% endif %}">
   {% if BEACON_ENV == 'dev' %}
@@ -61,6 +68,11 @@
   {% if user %}
   <header class="site-header">
     <div class="brand-group">
+      {# A diocese's own logo (2026-08-29, Jay), to the left of the wordmark
+         -- logo_info is computed once in _render() for whichever mode is
+         active (Diocesan/Parish/Cornerstone), so this needs no branching
+         here beyond "is there one to show." #}
+      {% if logo_info.has_logo %}<img src="/org-logo/{{ logo_info.org_id }}" alt="{{ logo_info.name }} logo" class="brand-logo">{% endif %}
       <a href="{{ '/parish-view' if parish_view else '/portal' }}" class="brand">Beacon</a>
       {# Jay, 2026-08-16: "the banner should also show what entity you are
          working in to the right of Beacon... in all modes" -- parish_view

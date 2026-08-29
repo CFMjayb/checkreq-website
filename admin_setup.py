@@ -15,9 +15,14 @@ Built so far (real, working, wired to live checkreq Postgres):
   POST /admin/setup/gl-mapping/add               — create one mapping (JSON)
   GET  /admin/setup/api/unmapped-gl-accounts     — dependent GL picker feed (Tom Select)
   GET  /admin/setup/organizations                — Organizations + GlobalApprovers (workbook tabs: Organizations, GlobalApprovers)
-  POST /admin/setup/organizations/save-orgs      — per-entity Global Approval Threshold (JSON)
+  POST /admin/setup/organizations/save-orgs      — per-entity Global Approval Threshold + the
+                                                    two per-diocese banner colors (JSON)
   POST /admin/setup/organizations/save-approvers — global approver rows (JSON); a row's
                                                     `_delete: true` flag deletes it here too
+  POST /admin/setup/organizations/save-cornerstone-color — the one shared, app-wide Cornerstone
+                                                    Mode banner color (checkreq.app_settings)
+  POST /admin/setup/organizations/{id}/upload-logo — a diocese's own logo (GCS, multipart)
+  POST /admin/setup/organizations/{id}/remove-logo — clears it
 
   Program Areas / Approval Rules / User-Program-Area Assignments -- three
   workbook tabs folded into ONE screen pair per Admin Module Plan.md's own
@@ -77,11 +82,14 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, UploadFile
+
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import art_completeness
 import db
+import gcs_client
+import org_branding
 import org_features
 import rbac
 
@@ -535,12 +543,35 @@ def organizations_page(request: Request):
     if err:
         return err
 
-    orgs = db.query(
-        "SELECT id, code, name, is_active, global_approval_threshold "
-        "FROM checkreq.organizations ORDER BY code"
-    )
+    # 2026-08-29: also selects the branding columns (migration 051) --
+    # explicit column names mean this raises UndefinedColumn, not a
+    # silently-missing key, on an environment where that migration hasn't
+    # been applied yet. This IS the screen an admin would use to actually
+    # apply the feature, so it degrades to the pre-051 shape (branding
+    # fields filled in as None) rather than 500ing this whole page.
+    try:
+        orgs = db.query(
+            "SELECT id, code, name, is_active, global_approval_threshold, "
+            "diocesan_mode_color, parish_mode_color, logo_gcs_path, logo_content_type "
+            "FROM checkreq.organizations ORDER BY code"
+        )
+    except Exception:
+        orgs = db.query(
+            "SELECT id, code, name, is_active, global_approval_threshold "
+            "FROM checkreq.organizations ORDER BY code"
+        )
+        for o in orgs:
+            o["diocesan_mode_color"] = o["parish_mode_color"] = None
+            o["logo_gcs_path"] = o["logo_content_type"] = None
     for o in orgs:
         o["global_approval_threshold"] = _money(o["global_approval_threshold"])
+        # Color inputs always show a real color (never blank) -- NULL reads
+        # as "hasn't customized yet," so the picker defaults to the app's
+        # own stock color rather than an empty/undefined swatch. Saving
+        # without changing it just re-stores that same literal value,
+        # which is harmless -- functionally identical to still being NULL.
+        o["diocesan_mode_color_display"] = o["diocesan_mode_color"] or org_branding.DEFAULT_DIOCESAN_COLOR
+        o["parish_mode_color_display"] = o["parish_mode_color"] or org_branding.DEFAULT_PARISH_COLOR
 
     approvers = _global_approver_rows()
     # A row with no entity is never appended to any chain by
@@ -573,6 +604,7 @@ def organizations_page(request: Request):
         "diocese_orgs": diocese_orgs,
         "known_features": org_features.KNOWN_FEATURES,
         "feature_matrix": feature_matrix,
+        "cornerstone_color": org_branding.get_cornerstone_color(),
     })
 
 
@@ -620,17 +652,108 @@ async def organizations_save_orgs(request: Request):
                             raise ValueError("Threshold must be a number.")
                         if threshold < 0:
                             raise ValueError("Threshold can't be negative.")
+                        # 2026-08-29: diocesan_mode_color/parish_mode_color
+                        # (Jay: each diocese sets its own banner colors).
+                        # The <input type="color"> control always sends a
+                        # real #rrggbb value (browsers don't offer a blank
+                        # color-input state), so there's no "clear back to
+                        # NULL" path here by design -- see
+                        # admin_setup_organizations.html's own note.
+                        diocesan_color = (r.get("diocesan_mode_color") or "").strip()
+                        parish_color = (r.get("parish_mode_color") or "").strip()
+                        if not org_branding.is_valid_hex(diocesan_color):
+                            raise ValueError("Diocesan Mode color must be a real color value.")
+                        if not org_branding.is_valid_hex(parish_color):
+                            raise ValueError("Parish Mode color must be a real color value.")
                         # code/name are reference data, same as the workbook —
-                        # global_approval_threshold is the only writable field.
+                        # global_approval_threshold and the two mode colors
+                        # are this table's only writable fields (the logo is
+                        # its own separate upload route, not part of this
+                        # batched JSON save).
                         cur.execute(
-                            "UPDATE checkreq.organizations SET global_approval_threshold = %s WHERE id = %s",
-                            (threshold, row_id),
+                            "UPDATE checkreq.organizations SET global_approval_threshold = %s, "
+                            "diocesan_mode_color = %s, parish_mode_color = %s WHERE id = %s",
+                            (threshold, diocesan_color, parish_color, row_id),
                         )
                     results.append({"id": row_id, "ok": True})
                 except Exception as exc:
                     results.append({"id": row_id, "ok": False, "error": str(exc)})
     saved = sum(1 for x in results if x["ok"])
     return {"saved": saved, "failed": len(results) - saved, "results": results}
+
+
+@router.post("/admin/setup/organizations/save-cornerstone-color")
+async def organizations_save_cornerstone_color(request: Request):
+    """2026-08-29: the one shared, app-wide Cornerstone Mode banner color --
+    a single immediate-submit control, not a batched-grid row, since
+    there's exactly one value system-wide (checkreq.app_settings, same
+    store Test Mode already uses), matching the toggle-feature route
+    above's own "this is a single value that should apply the moment it's
+    clicked" reasoning."""
+    user, err = _require_setup_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    color = (form.get("cornerstone_mode_color") or "").strip()
+    if not org_branding.is_valid_hex(color):
+        return RedirectResponse("/admin/setup/organizations?error=Cornerstone+Mode+color+must+be+a+real+color+value.", status_code=303)
+    org_branding.set_cornerstone_color(color, user["id"])
+    return RedirectResponse("/admin/setup/organizations?saved=1", status_code=303)
+
+
+@router.post("/admin/setup/organizations/{org_id}/upload-logo")
+async def organizations_upload_logo(org_id: int, request: Request, logo: UploadFile):
+    """A diocese's own logo, shown next to the "Beacon" wordmark whenever
+    that diocese (or one of its parishes, in Parish Mode) is the active
+    context -- see org_branding.py and base.html. Immediate-submit, like
+    the feature toggles and the Cornerstone-color control above -- an
+    upload either works or it doesn't, there's nothing to batch."""
+    user, err = _require_setup_admin(request)
+    if err:
+        return err
+    org = db.query_one("SELECT id FROM checkreq.organizations WHERE id = %s", (org_id,))
+    if not org:
+        return RedirectResponse("/admin/setup/organizations?error=Unknown+entity.", status_code=303)
+    content_type = logo.content_type or ""
+    if content_type not in org_branding.ALLOWED_LOGO_CONTENT_TYPES:
+        return RedirectResponse(
+            "/admin/setup/organizations?error=Logo+must+be+a+PNG,+JPEG,+SVG,+or+WebP+image.",
+            status_code=303,
+        )
+    data = await logo.read()
+    if len(data) > org_branding.MAX_LOGO_BYTES:
+        return RedirectResponse("/admin/setup/organizations?error=Logo+file+is+too+large+(2MB+max).", status_code=303)
+    blob_path = org_branding.logo_path(org_id, content_type)
+    gcs_client.upload_bytes(org_branding.LOGO_BUCKET, blob_path, data, content_type)
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.organizations SET logo_gcs_path = %s, logo_content_type = %s WHERE id = %s",
+                (blob_path, content_type, org_id),
+            )
+    return RedirectResponse("/admin/setup/organizations?saved=1", status_code=303)
+
+
+@router.post("/admin/setup/organizations/{org_id}/remove-logo")
+async def organizations_remove_logo(org_id: int, request: Request):
+    user, err = _require_setup_admin(request)
+    if err:
+        return err
+    org = db.query_one(
+        "SELECT logo_gcs_path FROM checkreq.organizations WHERE id = %s", (org_id,)
+    )
+    if org and org.get("logo_gcs_path"):
+        try:
+            gcs_client.delete_blob(org_branding.LOGO_BUCKET, org["logo_gcs_path"])
+        except Exception:
+            pass  # best-effort -- clearing the DB pointer is what actually stops it from showing
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.organizations SET logo_gcs_path = NULL, logo_content_type = NULL WHERE id = %s",
+                (org_id,),
+            )
+    return RedirectResponse("/admin/setup/organizations?saved=1", status_code=303)
 
 
 def _get_or_create_user(cur, email: str) -> int:
