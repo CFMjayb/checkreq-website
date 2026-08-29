@@ -15,9 +15,24 @@ p { margin: 0 0 var(--space-3); }
 .site-header {
   background: var(--color-franciscan-green);
   color: #f4f1e8;
-  padding: var(--space-3) var(--space-5);
+  /* 2026-08-29: vertical padding moved OFF the bar itself and onto .brand/
+     nav individually (same total space, just applied one level down) so
+     .brand-logo -- a direct child of .brand-group, which now stretches --
+     can span the bar's full, un-padded height edge to edge. Horizontal
+     padding stays here, it never affected the logo's height problem.
+
+     height is now EXPLICIT, not left to size itself from content -- a
+     real bug found live: .brand-logo's height:100% needs a DEFINITE
+     ancestor height to resolve against, and with no fixed height here the
+     browser instead sized the whole bar around the logo's own raw pixel
+     dimensions (a 160px-tall source file blew the header up to 164px
+     tall). Fixing the bar's height first is what lets the logo actually
+     scale INTO it instead of dictating it, whatever the uploaded file's
+     native size is. */
+  height: 56px;
+  padding: 0 var(--space-5);
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
   /* 2026-08-16, item 9: the green top bar should never scroll out of
@@ -36,8 +51,11 @@ p { margin: 0 0 var(--space-3); }
   color: #f4f1e8;
   text-decoration: none;
   letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  padding: var(--space-3) 0;
 }
-.site-header nav { display: flex; align-items: center; gap: var(--space-4); }
+.site-header nav { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-3) 0; }
 .site-header nav a { color: #d8d2c0; text-decoration: none; font-size: 0.92rem; }
 .site-header nav a:hover { color: var(--color-gold-light); }
 
@@ -805,21 +823,27 @@ a.module-tile:hover { box-shadow: var(--shadow-card-hover); transform: translate
    treats them as ONE item, not two spread across the row (real bug, Jay:
    "it is rendering, just too far to the right" -- .site-header's flex
    children were .brand/.brand-diocese/nav as 3 separate items). */
-.brand-group { display: flex; align-items: center; }
+/* align-items: stretch (was center) so .brand-logo, the one child that
+   wants the bar's full height, can actually reach it -- .brand/.brand-
+   diocese keep themselves vertically centered via their OWN padding
+   (base.css .site-header .brand rule, and below), unaffected by the
+   stretch. */
+.brand-group { display: flex; align-items: stretch; }
 /* A diocese's own uploaded logo (2026-08-29), to the left of the wordmark.
-   Height-capped, not width-capped, so a wide or a square logo both sit at
-   the same visual weight next to "Beacon" rather than one dwarfing it. A
-   small white backing keeps a logo with a transparent or dark background
-   legible against the header's own dark green/red/blue -- no per-diocese
-   file treatment required. */
+   2026-08-29 correction, Jay: the uploaded crests are transparent PNGs --
+   a white backing box made them look like a sticker, and a small fixed
+   height made the artwork illegible. Fixed: no background/padding (the
+   transparency sits directly on the header's own mode color, which is
+   the whole point of supplying a transparent file), and height:100% of
+   .brand-group -- which now spans the FULL un-padded bar (see
+   .site-header's own 2026-08-29 note) -- so the logo fills the bar
+   vertically, edge to edge, whatever width that implies for its own
+   aspect ratio. */
 .brand-logo {
-  height: 28px;
-  max-height: 28px;
+  height: 100%;
   width: auto;
   margin-right: var(--space-2);
-  border-radius: 3px;
-  background: #fff;
-  padding: 2px;
+  display: block;
 }
 .brand-diocese {
   font-family: var(--font-body);
@@ -827,6 +851,8 @@ a.module-tile:hover { box-shadow: var(--shadow-card-hover); transform: translate
   font-weight: 500;
   color: rgba(255,255,255,0.85);
   margin-left: var(--space-3);
-  padding-left: var(--space-3);
+  padding: var(--space-3) 0 var(--space-3) var(--space-3);
   border-left: 1px solid rgba(255,255,255,0.35);
+  display: flex;
+  align-items: center;
 }
