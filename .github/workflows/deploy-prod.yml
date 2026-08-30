@@ -98,7 +98,7 @@ jobs:
             --memory                 1Gi \
             --cpu                    2 \
             --timeout                30 \
-            --min-instances          0 \
+            --min-instances          1 \
             --max-instances          2 \
             --port                   8080
 
