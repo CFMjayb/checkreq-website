@@ -150,6 +150,10 @@ def update_parish(parish_id: int, org_id: int, **fields) -> dict | None:
         # next to its name on parish_view.html -- set via
         # parish_org_admin.py's upload/remove routes, not typed by hand.
         "logo_gcs_path", "logo_content_type",
+        # Migration 053 (2026-08-29, Jay): the parish's own official
+        # website, captured alongside logo-sourcing so the source of a
+        # logo is on record, not just the image itself.
+        "website_url",
     }
     sets = [f"{k} = %s" for k in fields if k in allowed]
     if not sets:
