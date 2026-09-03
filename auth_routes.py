@@ -64,18 +64,81 @@ REDIRECT_URI = os.environ.get("AZURE_REDIRECT_URI", "http://localhost:8123/auth/
 # Must exactly match an authorized redirect URI on the Google OAuth 2.0 Client ID.
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8123/auth/google/callback")
 
-# EDOM's own branded hostname (production only -- unset everywhere else, so
-# this whole feature is inert by default). Jay, 2026-08-27: "when people
-# access our beacon with beacon.episcopalmaryland.org, it uses the SSO that
-# is auth'd for that domain" -- confirmed via AskUserQuestion that this means
-# skip the email-entry step on THIS hostname specifically and go straight to
-# Microsoft sign-in (the existing multi-tenant Azure AD flow, not a new SAML
-# integration -- that idea stays shelved per the standing SAML SSO Plan.md).
-SSO_AUTO_HOSTNAME = os.environ.get("SSO_AUTO_HOSTNAME", "").strip().lower()
-
-
+# Per-hostname auto-SSO-redirect (production only -- an unmapped/unknown
+# host is inert, same as this whole feature was when it was a single unset
+# env var). Originally EDOM-only, hardcoded to Microsoft AND unconditional
+# for every visitor to that hostname (Jay, 2026-08-27: "when people access
+# our beacon with beacon.episcopalmaryland.org, it uses the SSO that is
+# auth'd for that domain"). Redesigned 2026-09-03, generalizing for DME's
+# own branded hostname (Google Workspace, not Microsoft) AND fixing a real
+# scoping gap Jay caught before DME went live: a hostname-only skip would
+# force EVERY visitor to that URL through one provider, including a
+# non-diocesan-office person (a DME/EDOM parish-level login, someone on a
+# personal address, etc.) who has no account with that provider at all --
+# "for all diocese, it has to be smarter and just skip to the SSO login for
+# email addresses for that domain." checkreq.sso_auto_hostnames now stores
+# each branded hostname's own expected_email_domain (not a raw provider) --
+# the provider itself is still resolved via the existing
+# checkreq.identity_provider_domains table (same source of truth
+# gmail.com/outlook.com/etc. already use), so there is exactly one place a
+# domain's provider is recorded, not two. The skip-email-entry decision
+# additionally requires the visitor's own remembered-email cookie (from a
+# PRIOR sign-in on this browser) to match that hostname's own domain -- a
+# first-time visitor, or one remembered on a different domain, always sees
+# the normal email-first screen with every option, regardless of which
+# hostname they're on. This is a skip-email-entry convenience only, same as
+# before -- checkreq.app_users (via _complete_login) remains the only real
+# access gate. Still not a new SAML integration -- that idea stays shelved
+# per the standing SAML SSO Plan.md.
 def _request_host(request: Request) -> str:
     return (request.headers.get("host") or "").split(":")[0].strip().lower()
+
+
+def _sso_hostname_provider(host: str) -> str | None:
+    """Which OAuth provider THIS branded hostname belongs to, if any --
+    used only to decide whether Azure/Google must redirect back to this
+    exact hostname (vs the default per-environment callback URL), for
+    whichever provider's flow a visitor ends up in (auto-skipped or by
+    manually clicking a button). A pure hostname->domain->provider lookup,
+    with no email/cookie involved -- see _sso_auto_login_target() below for
+    the separate (much narrower) "should we skip the email-entry screen"
+    decision."""
+    if not host:
+        return None
+    row = db.query_one(
+        "SELECT expected_email_domain FROM checkreq.sso_auto_hostnames "
+        "WHERE hostname = %s AND is_active",
+        (host,),
+    )
+    return _provider_for_domain(row["expected_email_domain"]) if row else None
+
+
+def _sso_auto_login_target(request: Request) -> tuple[str, str] | None:
+    """(provider, email) if this hostname's own expected_email_domain
+    matches the visitor's remembered email's domain -- meaning skip
+    email-entry and redirect straight into that provider's flow, pre-filled
+    with the remembered email. Returns None (show the normal /login screen)
+    for a first-time visitor, a visitor remembered on a DIFFERENT domain
+    (e.g. a parish-level user on a diocese's own branded hostname), a
+    hostname with no active mapping, or a domain with no
+    identity_provider_domains entry at all."""
+    host = _request_host(request)
+    if not host:
+        return None
+    row = db.query_one(
+        "SELECT expected_email_domain FROM checkreq.sso_auto_hostnames "
+        "WHERE hostname = %s AND is_active",
+        (host,),
+    )
+    if not row:
+        return None
+    remembered = (request.cookies.get(_REMEMBER_COOKIE) or "").strip().lower()
+    if not remembered or _domain_of(remembered) != row["expected_email_domain"]:
+        return None
+    provider = _provider_for_domain(row["expected_email_domain"])
+    if not provider:
+        return None
+    return provider, remembered
 
 
 def _microsoft_redirect_uri(request: Request) -> str:
@@ -83,19 +146,31 @@ def _microsoft_redirect_uri(request: Request) -> str:
     the token exchange -- Azure requires these to match exactly, so this is
     the one place that decision gets made. Defaults to the per-environment
     REDIRECT_URI env var (unchanged behavior everywhere). When the incoming
-    request's own Host is SSO_AUTO_HOSTNAME, Azure must redirect back to
-    THAT hostname instead -- the session cookie the callback response sets
-    is scoped to whichever domain the browser is actually on, so completing
-    the flow against the wrong hostname would leave the user signed in on a
-    domain they never navigated back to. Requires
-    https://{SSO_AUTO_HOSTNAME}/auth/callback to also be registered as a
-    redirect URI on the same Azure AD app registration (client id
-    a7f89cbd-0d41-457d-a090-ee367fda4f65, tenant cfmins.org) -- additive,
-    Jay can do this himself since it's Cornerstone's own app registration."""
+    request's own Host is a branded hostname whose domain routes to
+    Microsoft, Azure must redirect back to THAT hostname instead -- the
+    session cookie the callback response sets is scoped to whichever domain
+    the browser is actually on, so completing the flow against the wrong
+    hostname would leave the user signed in on a domain they never
+    navigated back to. Requires https://{host}/auth/callback to also be
+    registered as a redirect URI on the same Azure AD app registration
+    (client id a7f89cbd-0d41-457d-a090-ee367fda4f65, tenant cfmins.org) --
+    additive, Jay can do this himself since it's Cornerstone's own app
+    registration."""
     host = _request_host(request)
-    if SSO_AUTO_HOSTNAME and host == SSO_AUTO_HOSTNAME:
+    if host and _sso_hostname_provider(host) == "microsoft":
         return f"https://{host}/auth/callback"
     return REDIRECT_URI
+
+
+def _google_redirect_uri(request: Request) -> str:
+    """Google's exact equivalent of _microsoft_redirect_uri above -- same
+    reasoning, same requirement (https://{host}/auth/google/callback must be
+    an authorized redirect URI on the Google OAuth 2.0 Client, project
+    cfm-qbo-mcp)."""
+    host = _request_host(request)
+    if host and _sso_hostname_provider(host) == "google":
+        return f"https://{host}/auth/google/callback"
+    return GOOGLE_REDIRECT_URI
 
 _NOT_REGISTERED_MESSAGE = (
     "This email address isn't set up in Beacon yet. Contact your "
@@ -250,12 +325,22 @@ def create_router(templates) -> APIRouter:
         GET query param can spoof."""
         if request.session.get("user_id"):
             return RedirectResponse("/portal")
-        # EDOM's own branded hostname skips email-entry entirely -- straight
-        # to Microsoft sign-in. Not applied when `error` is set (a failed
-        # Microsoft attempt redirects back here) -- looping straight back
-        # into another attempt with no visibility would hide the failure.
-        if SSO_AUTO_HOSTNAME and _request_host(request) == SSO_AUTO_HOSTNAME and not error:
-            return RedirectResponse("/auth/start")
+        # A branded hostname whose own domain matches THIS visitor's
+        # remembered email skips email-entry entirely -- straight to that
+        # domain's provider, pre-filled. A first-time visitor, or one
+        # remembered on a different domain, always falls through to the
+        # normal screen below -- see _sso_auto_login_target()'s docstring.
+        # Not applied when `error` is set (a failed sign-in attempt
+        # redirects back here) -- looping straight back into another
+        # attempt with no visibility would hide the failure.
+        if not error:
+            auto = _sso_auto_login_target(request)
+            if auto:
+                provider, auto_email = auto
+                if provider == "microsoft":
+                    return RedirectResponse(f"/auth/start?email={quote(auto_email)}")
+                if provider == "google":
+                    return RedirectResponse(f"/auth/google/start?email={quote(auto_email)}")
         remembered_email = "" if switch else (request.cookies.get(_REMEMBER_COOKIE) or "")
         return templates.TemplateResponse(request, "login.html", {
             "error": error, "email": email, "remembered_email": remembered_email, "mode": mode,
@@ -332,7 +417,7 @@ def create_router(templates) -> APIRouter:
     @router.get("/auth/google/start")
     def auth_google_start(request: Request, email: str = ""):
         state = pysecrets.token_urlsafe(24)
-        resp = RedirectResponse(auth_google.get_auth_url(GOOGLE_REDIRECT_URI, state, login_hint=email or None))
+        resp = RedirectResponse(auth_google.get_auth_url(_google_redirect_uri(request), state, login_hint=email or None))
         _set_oauth_state_cookie(resp, state)
         return resp
 
@@ -346,7 +431,7 @@ def create_router(templates) -> APIRouter:
             return templates.TemplateResponse(request, "login.html", {"error": "Login state mismatch — please try signing in again."})
 
         try:
-            claims = auth_google.acquire_token(code, GOOGLE_REDIRECT_URI, state)
+            claims = auth_google.acquire_token(code, _google_redirect_uri(request), state)
         except ValueError as exc:
             return templates.TemplateResponse(request, "login.html", {"error": str(exc)})
 
