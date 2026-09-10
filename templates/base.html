@@ -213,6 +213,7 @@
   {% if user and current_org and not parish_view %}<script src="/static/js/entity_switcher.js?v={{ asset_version('js/entity_switcher.js') }}"></script>{% endif %}
   {% if user %}<script src="/static/js/notifications.js?v={{ asset_version('js/notifications.js') }}"></script>{% endif %}
   {% if user %}<script src="/static/js/user_menu.js?v={{ asset_version('js/user_menu.js') }}"></script>{% endif %}
+  {% if user %}<script src="/static/js/submit_loading.js?v={{ asset_version('js/submit_loading.js') }}"></script>{% endif %}
   <script src="/static/js/fullscreen.js?v={{ asset_version('js/fullscreen.js') }}"></script>
   {% block extra_js %}{% endblock %}
 </body>

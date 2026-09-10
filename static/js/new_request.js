@@ -834,7 +834,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // error page on the actual submit attempt.
     const form = e.target;
     const already = form.querySelector('input[name="confirmed_overbudget"]');
-    if (already && already.value === '1') return; // already confirmed -- let this one through
+    if (already && already.value === '1') {
+      showButtonLoading(e.submitter); // 2026-09-10: about to really submit
+      return; // already confirmed -- let this one through
+    }
 
     e.preventDefault();
     let cfoRequired = [];
@@ -867,6 +870,7 @@ document.addEventListener('DOMContentLoaded', () => {
       form.appendChild(hidden);
     }
     hidden.value = '1';
+    showButtonLoading(e.submitter); // 2026-09-10: about to really submit
     form.submit();
   });
 

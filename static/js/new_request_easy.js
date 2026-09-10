@@ -505,7 +505,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // the authoritative check server-side regardless of this pre-flight).
     const form = e.target;
     const already = form.querySelector('input[name="confirmed_overbudget"]');
-    if (already && already.value === '1') return;
+    if (already && already.value === '1') {
+      showButtonLoading(e.submitter); // 2026-09-10: about to really submit
+      return;
+    }
 
     e.preventDefault();
     let cfoRequired = [];
@@ -535,6 +538,7 @@ document.addEventListener('DOMContentLoaded', () => {
       form.appendChild(hidden);
     }
     hidden.value = '1';
+    showButtonLoading(e.submitter); // 2026-09-10: about to really submit
     form.submit();
   });
 

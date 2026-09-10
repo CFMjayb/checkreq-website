@@ -184,5 +184,17 @@ function addCodingLine(prId, requestNumber) {
 document.querySelectorAll('.codingGlAccount').forEach(sel => {
   loadCodingGlOptions(sel.dataset.requestNumber, sel);
 });
+
+// 2026-09-10 (Jay): "when you post to QBO, there is no indication that it
+// is working." Post-to-QBO can be a real several-second QuickBooks round
+// trip. A separate listener (not touching the dev-environment confirm()
+// above) so a cancelled confirm still correctly shows no loading state --
+// e.defaultPrevented is only true when that confirm() returned false.
+document.querySelectorAll('form[action$="/post-to-qbo"]').forEach(form => {
+  form.addEventListener('submit', (e) => {
+    if (e.defaultPrevented) return;
+    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+  });
+});
 </script>
 {% endblock %}
