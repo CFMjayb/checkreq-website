@@ -156,7 +156,8 @@ SETUP_TABS = [
      "url": "/admin/setup/gl-accounts", "built": True, "entity_scoped": True,
      "count_sql": "SELECT COUNT(*) AS n FROM checkreq.gl_accounts WHERE org_id = %s"},
     {"key": "vendors", "title": "Vendors (reference)",
-     "desc": "Vendor list, synced nightly from QBO. Read-only.",
+     "desc": "Vendor list, synced nightly from QBO -- or on demand via the "
+             "\"Sync Vendors Now\" button on the screen itself.",
      "url": "/admin/setup/vendors", "built": True, "entity_scoped": True,
      "count_sql": "SELECT COUNT(*) AS n FROM checkreq.vendors WHERE org_id = %s"},
     # Added 2026-08-01, RBAC build (admin_users.py) -- live since
