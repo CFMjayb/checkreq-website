@@ -561,11 +561,43 @@ function applyExtractedFields(data, filename) {
     }
   }
 
+  // 2026-09-10 (Jay): "if you see account coding on the check request, you
+  // should prefill in the gl coding and then backfill the program so you
+  // can fully complete the transaction." matched_gl_account_id/
+  // matched_program_area_id are only ever set server-side on an exact,
+  // unambiguous match (main.py's api_extract_document) -- never guessed.
+  // Program Area is set FIRST since the GL Account picker's own option
+  // list is scoped to whichever Program Area is selected (see
+  // fetchGlAccountOptions) -- but the actual selection below is made via
+  // an explicit addOption+addItem on the still-live Tom Select instance
+  // (same fallback pattern applyEditPrefill() already uses for an account
+  // outside the default 50-row fetch), so it doesn't depend on that
+  // picker's own async load ever completing. Never overwrites a value the
+  // submitter already picked themselves.
+  if (data.matched_gl_account_id) {
+    const paSel = document.getElementById('programAreaSelect');
+    if (data.matched_program_area_id && !paSel.value) {
+      paSel.value = String(data.matched_program_area_id);
+      markAutoFilled(paSel);
+    }
+    const firstAcctSel = document.querySelector('#glLines .gl-line .glAccount');
+    const ts = firstAcctSel && firstAcctSel.tomselect;
+    if (ts && !ts.items.length) {
+      if (!ts.options[String(data.matched_gl_account_id)]) {
+        ts.addOption({ id: String(data.matched_gl_account_id), label: data.matched_gl_account_name || String(data.matched_gl_account_id), depth: 0 });
+      }
+      ts.addItem(String(data.matched_gl_account_id));
+    }
+  }
+
   refreshPreview();
 
   const vendorNote = data.matched_vendor_id ? '' : (data.vendor_name ? ' (no matching vendor found -- the "Add a new vendor" panel below has been opened and prefilled from this document -- please review)' : '');
+  const glNote = (data.coded_gl_account && !data.matched_gl_account_id)
+    ? ` (this document appears to be coded to GL account "${data.coded_gl_account}", but no matching account was found for this entity -- please code it manually)`
+    : '';
   const confidenceNote = data.confidence && data.confidence !== 'high' ? ` [${data.confidence} confidence]` : '';
-  setUploadStatus(`Filled from "${filename}" -- please review before submitting.${confidenceNote}${vendorNote}`, 'success', data.caveats);
+  setUploadStatus(`Filled from "${filename}" -- please review before submitting.${confidenceNote}${vendorNote}${glNote}`, 'success', data.caveats);
 }
 
 // ---- Vendor selection required at submit time ----

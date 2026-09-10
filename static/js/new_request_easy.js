@@ -361,12 +361,33 @@ function applyExtractedFields(data, filename) {
     }
   }
 
+  // 2026-09-10 (Jay): same GL-coding prefill as the classic form -- see
+  // new_request.js's applyExtractedFields() for the full rationale.
+  if (data.matched_gl_account_id) {
+    const paSel = document.getElementById('programAreaSelect');
+    if (data.matched_program_area_id && !paSel.value) {
+      paSel.value = String(data.matched_program_area_id);
+      markAutoFilled(paSel);
+    }
+    const firstAcctSel = document.querySelector('#glLines .gl-line .glAccount');
+    const ts = firstAcctSel && firstAcctSel.tomselect;
+    if (ts && !ts.items.length) {
+      if (!ts.options[String(data.matched_gl_account_id)]) {
+        ts.addOption({ id: String(data.matched_gl_account_id), label: data.matched_gl_account_name || String(data.matched_gl_account_id), depth: 0 });
+      }
+      ts.addItem(String(data.matched_gl_account_id));
+    }
+  }
+
   scheduleBudgetChecks();
 
   const vendorNote = data.matched_vendor_id ? '' : (data.vendor_name ? ' (no matching vendor found -- the "Add a new vendor" panel below has been opened and prefilled from this document -- please review)' : '');
+  const glNote = (data.coded_gl_account && !data.matched_gl_account_id)
+    ? ` (this document appears to be coded to GL account "${data.coded_gl_account}", but no matching account was found for this entity -- please code it manually)`
+    : '';
   const confidenceNote = data.confidence && data.confidence !== 'high' ? ` [${data.confidence} confidence]` : '';
   setStatus('upload', {
-    text: `Filled from "${filename}" -- please review before submitting.${confidenceNote}${vendorNote}`,
+    text: `Filled from "${filename}" -- please review before submitting.${confidenceNote}${vendorNote}${glNote}`,
     kind: 'success',
     caveats: data.caveats,
   });

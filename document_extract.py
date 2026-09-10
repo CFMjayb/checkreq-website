@@ -52,6 +52,15 @@ EXTRACTION_SCHEMA = {
         "vendor_zip": {"type": ["string", "null"]},
         "vendor_phone": {"type": ["string", "null"]},
         "vendor_contact_email": {"type": ["string", "null"], "description": "The vendor's own contact/support email, not the customer's"},
+        # 2026-09-10 (Jay): "if you see account coding on the check request,
+        # you should prefill in the gl coding". A GL account number an AP
+        # staffer has already handwritten, stamped, or otherwise manually
+        # annotated on the document itself while coding it for accounting --
+        # e.g. a handwritten "6677" or "code to 2405.26W" in a margin.
+        # Deliberately NOT any account/customer number the VENDOR printed on
+        # the invoice (that identifies the customer to the vendor, not a GL
+        # account) -- only a genuine internal accounting annotation counts.
+        "coded_gl_account": {"type": ["string", "null"], "description": "A GL account number handwritten/stamped/annotated on the document by whoever is coding it for accounting -- not a vendor-printed account or customer number. Null if no such annotation is present."},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "caveats": {"type": "array", "items": {"type": "string"}, "description": "Anything ambiguous -- multiple totals found, unclear date format, low image quality, etc."},
     },
@@ -59,7 +68,7 @@ EXTRACTION_SCHEMA = {
         "vendor_name", "amount", "date", "description",
         "vendor_address_line1", "vendor_address_line2", "vendor_city",
         "vendor_state", "vendor_zip", "vendor_phone", "vendor_contact_email",
-        "confidence", "caveats",
+        "coded_gl_account", "confidence", "caveats",
     ],
     "additionalProperties": False,
 }
@@ -71,10 +80,17 @@ _PROMPT = (
     "'Sold By' / 'From' / remit-to address block for the VENDOR itself is "
     "present (not the customer's own 'Sold To'/'Bill To' address) -- the "
     "vendor's own mailing address, city, state, zip, phone, and contact "
-    "email, as JSON. Only extract what is legibly present. Return null for "
-    "anything genuinely absent or illegible rather than guessing a "
-    "plausible-looking value. Never extract a tax ID, SSN, or EIN even if "
-    "one is visible -- that is out of scope here regardless. If something is "
+    "email, as JSON. Also look for a GL account number someone has "
+    "handwritten, stamped, or otherwise manually annotated on the document "
+    "itself while coding it for accounting (e.g. a handwritten '6677' or "
+    "'code to 2405.26W' in a margin or on a coding stamp) -- this is "
+    "distinct from any account/customer number the vendor itself printed on "
+    "the invoice to identify the customer, which is never a GL account and "
+    "must not be returned here. Only extract what is legibly present. "
+    "Return null for anything genuinely absent or illegible rather than "
+    "guessing a plausible-looking value. Never extract a tax ID, SSN, or "
+    "EIN even if one is visible -- that is out of scope here regardless. "
+    "If something is "
     "ambiguous (e.g. multiple dollar amounts -- subtotal vs. tax vs. total "
     "-- or an ambiguous date format), pick your best interpretation for the "
     "field but set confidence accordingly and explain the ambiguity in "

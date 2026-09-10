@@ -2207,6 +2207,42 @@ async def api_extract_document(request: Request, file: UploadFile):
                 matched_vendor_id = live_vendor_id
 
     result["matched_vendor_id"] = matched_vendor_id
+
+    # 2026-09-10 (Jay): "if you see account coding on the check request, you
+    # should prefill in the gl coding and then backfill the program so you
+    # can fully complete the transaction." Resolves whatever GL account
+    # document_extract.py found handwritten/stamped on the document into a
+    # real local checkreq.gl_accounts row, then -- only if that account maps
+    # to EXACTLY ONE postable Program Area (checkreq.program_area_gl_accounts,
+    # allow_post=true) -- also resolves the Program Area. Exact match only,
+    # same "never guess" philosophy as the vendor matching above: an
+    # unmatched or ambiguous account/program area is left null rather than
+    # picked at random, and the client tells the submitter to code it
+    # manually in that case.
+    matched_gl_account_id = None
+    matched_gl_account_name = None
+    matched_program_area_id = None
+    coded_gl_account = (result.get("coded_gl_account") or "").strip()
+    if coded_gl_account:
+        acct = db.query_one(
+            "SELECT id, account_name, account_number FROM checkreq.gl_accounts "
+            "WHERE org_id = %s AND is_active AND account_number = %s",
+            (org["id"], coded_gl_account),
+        )
+        if acct:
+            matched_gl_account_id = acct["id"]
+            matched_gl_account_name = f"{acct['account_name']} ({acct['account_number']})"
+            pa_rows = db.query(
+                "SELECT DISTINCT program_area_id FROM checkreq.program_area_gl_accounts "
+                "WHERE gl_account_id = %s AND allow_post = TRUE",
+                (matched_gl_account_id,),
+            )
+            if len(pa_rows) == 1:
+                matched_program_area_id = pa_rows[0]["program_area_id"]
+
+    result["matched_gl_account_id"] = matched_gl_account_id
+    result["matched_gl_account_name"] = matched_gl_account_name
+    result["matched_program_area_id"] = matched_program_area_id
     return result
 
 
