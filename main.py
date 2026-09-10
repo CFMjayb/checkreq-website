@@ -86,6 +86,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import re
 import secrets as pysecrets
 import threading
 from datetime import date, datetime
@@ -2156,11 +2157,37 @@ async def api_extract_document(request: Request, file: UploadFile):
     matched_vendor_id = None
     vendor_name = result.get("vendor_name")
     if vendor_name:
+        # Plain substring match first -- handles company names and any
+        # individual vendor already stored in the same word order the
+        # invoice printed.
         match = db.query_one(
             "SELECT id FROM checkreq.vendors WHERE org_id = %s AND is_active AND display_name ILIKE %s "
             "ORDER BY display_name LIMIT 1",
             (org["id"], f"%{vendor_name}%"),
         )
+        if not match:
+            # Real bug found live 2026-09-10 (Jay): a real, already-onboarded
+            # vendor ("Ford, Jane") was reported as "no matching vendor
+            # found" for an invoice printing the same person as "Jane
+            # Ford" -- many individual vendors in this codebase's real
+            # data are stored "Last, First", but an invoice/check
+            # requisition prints a name "First Last". A plain substring
+            # match can never find "Jane Ford" inside "Ford, Jane", since
+            # the word order differs and ILIKE has no reordering concept.
+            # Fall back to a token match: every whitespace/comma-separated
+            # word in the extracted name must appear somewhere in
+            # display_name, in any order. Single-character tokens (e.g. a
+            # middle initial) are dropped so they can't make the match
+            # spuriously permissive.
+            tokens = [t for t in re.split(r"[\s,]+", vendor_name) if len(t) > 1]
+            if tokens:
+                conditions = " AND ".join(["display_name ILIKE %s"] * len(tokens))
+                params = tuple([org["id"]] + [f"%{t}%" for t in tokens])
+                match = db.query_one(
+                    f"SELECT id FROM checkreq.vendors WHERE org_id = %s AND is_active AND {conditions} "
+                    "ORDER BY display_name LIMIT 1",
+                    params,
+                )
         if match:
             matched_vendor_id = match["id"]
 
