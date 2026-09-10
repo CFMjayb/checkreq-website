@@ -289,6 +289,21 @@ body.beacon-env-dev .site-header {
 .back-link a { color: var(--color-muted, #667); text-decoration: none; }
 .back-link a:hover { text-decoration: underline; }
 
+/* 2026-09-10: generic h1-plus-primary-action row, for a page whose title
+   needs a button next to it (e.g. My Requests' "+ New Request"). Same
+   shape as new_request.css's own scoped .form-header-row -- that one isn't
+   reusable here since most pages don't load new_request.css -- kept in
+   base.css (loaded everywhere) so any future page can reuse this instead
+   of inventing its own. */
+.page-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.page-header-row h1 { margin: 0; }
+
 /* 2026-08-02 feedback batch, Item 5/7: the standing entity-filter rule for
    any screen showing cross-entity data, plus All Requests' own vendor/
    submitted-by/status filters. One shared row layout. */

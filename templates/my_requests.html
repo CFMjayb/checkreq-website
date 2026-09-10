@@ -8,7 +8,10 @@
 {% endblock %}
 {% block content %}
 <div class="page-shell-wide">
-<h1>My Requests</h1>
+<div class="page-header-row">
+  <h1>My Requests</h1>
+  <a href="/new-request" class="btn btn-primary">+ New Request</a>
+</div>
 <p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
 {% if submitted %}
 <div class="banner banner-success">
