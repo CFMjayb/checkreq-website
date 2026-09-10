@@ -338,7 +338,11 @@ function applyExtractedFields(data, filename) {
       vendorTomSelect.addOption({ id: String(data.matched_vendor_id), display_name: data.vendor_name });
       vendorTomSelect.addItem(String(data.matched_vendor_id));
     } else if (vendorTomSelect) {
-      vendorTomSelect.setTextboxValue(data.vendor_name);
+      // Same real bug as the classic form (Jay, 2026-09-10): leaving an
+      // unmatched vendor name as plain search text made the vendor box
+      // look confirmed when it wasn't. Open the "Add a new vendor" panel
+      // immediately instead -- it also clears the deceptive text.
+      showNewVendorPanel(true);
       vendorDisplayText = data.vendor_name;
       const entityRadio = document.querySelector('input[name="new_vendor_entity_type"][value="entity"]');
       if (entityRadio) { entityRadio.checked = true; updateNewVendorEntityFieldVisibility(); }
@@ -359,7 +363,7 @@ function applyExtractedFields(data, filename) {
 
   scheduleBudgetChecks();
 
-  const vendorNote = data.matched_vendor_id ? '' : (data.vendor_name ? ' (no matching vendor found -- click "Add a new vendor" below, already prefilled from this document -- please review)' : '');
+  const vendorNote = data.matched_vendor_id ? '' : (data.vendor_name ? ' (no matching vendor found -- the "Add a new vendor" panel below has been opened and prefilled from this document -- please review)' : '');
   const confidenceNote = data.confidence && data.confidence !== 'high' ? ` [${data.confidence} confidence]` : '';
   setStatus('upload', {
     text: `Filled from "${filename}" -- please review before submitting.${confidenceNote}${vendorNote}`,

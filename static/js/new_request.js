@@ -523,17 +523,27 @@ function applyExtractedFields(data, filename) {
       vendorTomSelect.addOption({ id: String(data.matched_vendor_id), display_name: data.vendor_name });
       vendorTomSelect.addItem(String(data.matched_vendor_id));
     } else if (vendorTomSelect) {
-      vendorTomSelect.setTextboxValue(data.vendor_name);
+      // Real bug found live 2026-09-10 (Jay): an unmatched vendor name
+      // (e.g. "Jane Ford") sat in the Tom Select search box looking
+      // exactly like a confirmed selection -- setTextboxValue() only
+      // sets the visible text, it never calls addItem(), so the
+      // underlying <select> stayed empty. The banner below already said
+      // "no matching vendor found -- click Add a new vendor," but that's
+      // easy to miss when the vendor box itself looks filled in, and it
+      // led directly to a blocked submission with no clear reason why.
+      // Fixed: open the "Add a new vendor" panel immediately instead of
+      // leaving it collapsed behind a small link -- showNewVendorPanel()
+      // also clears the deceptive vendorSelect text as a side effect, so
+      // there's no longer a fake-looking selection sitting in the form.
+      showNewVendorPanel(true);
       vendorDisplayText = data.vendor_name;
       // Jay, 2026-07-29: "if I decide to add a new vendor... you should
       // already bring over the name... you should be able to read [the
-      // Sold By block] from the upload." No existing-vendor match --
-      // prefill the "Add a new vendor" panel's own fields now (it isn't
-      // open yet; whenever the user clicks "Add a new vendor," these
-      // values are already sitting in the form). Defaults to Entity mode
-      // (Company Name), not Individual -- an invoice's vendor is almost
-      // always a business, and the extraction only ever returns one
-      // combined name string, never separate first/last.
+      // Sold By block] from the upload." Prefill the now-open panel's
+      // own fields. Defaults to Entity mode (Company Name), not
+      // Individual -- an invoice's vendor is almost always a business,
+      // and the extraction only ever returns one combined name string,
+      // never separate first/last.
       const entityRadio = document.querySelector('input[name="new_vendor_entity_type"][value="entity"]');
       if (entityRadio) { entityRadio.checked = true; updateNewVendorEntityFieldVisibility(); }
       const setIfEmpty = (id, val) => {
@@ -553,7 +563,7 @@ function applyExtractedFields(data, filename) {
 
   refreshPreview();
 
-  const vendorNote = data.matched_vendor_id ? '' : (data.vendor_name ? ' (no matching vendor found -- click "Add a new vendor" below, already prefilled from this document -- please review)' : '');
+  const vendorNote = data.matched_vendor_id ? '' : (data.vendor_name ? ' (no matching vendor found -- the "Add a new vendor" panel below has been opened and prefilled from this document -- please review)' : '');
   const confidenceNote = data.confidence && data.confidence !== 'high' ? ` [${data.confidence} confidence]` : '';
   setUploadStatus(`Filled from "${filename}" -- please review before submitting.${confidenceNote}${vendorNote}`, 'success', data.caveats);
 }
