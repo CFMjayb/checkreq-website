@@ -194,6 +194,23 @@ def get_vendors(company: str) -> tuple[dict | None, str | None]:
     return _get("/api/checkreq/vendors/{company}", company, {})
 
 
+def get_live_vendors(company: str) -> tuple[dict | None, str | None]:
+    """GET /api/vendors/{company} -- the LIVE QBO vendor list (qbo-mcp-
+    server's own main.py route, NOT the Postgres-backed
+    /api/checkreq/vendors/{company} get_vendors() above wraps). This is the
+    exact same endpoint 26-124's nightly vendor_sync_job.py Cloud Run Job
+    already calls for the full QBO->checkreq.vendors sync -- reused here,
+    not duplicated, 2026-09-10, for two new Beacon capabilities that both
+    need a live (not last-night's-cache) vendor list: an admin "Sync
+    Vendors Now" on-demand trigger, and a live single-vendor fallback check
+    when a document-extraction vendor match finds nothing locally.
+
+    Returns ({"company", "count", "vendors": [{"id", "name",
+    "company_name", "address", "email", "vendor_type", "active"}]}, None)
+    on success, or (None, "error text") on failure."""
+    return _get("/api/vendors/{company}", company, {}, timeout=45)
+
+
 def get_parish_invoices(company: str, qbo_customer_id: str) -> tuple[dict | None, str | None]:
     """GET /api/checkreq/parish-invoices/{company}?qbo_customer_id=...
 

@@ -2190,6 +2190,21 @@ async def api_extract_document(request: Request, file: UploadFile):
                 )
         if match:
             matched_vendor_id = match["id"]
+        else:
+            # 2026-09-10 (Jay, relayed via a separate "Vendor lookup in
+            # Beacon" session): both local checks above just failed --
+            # before reporting "no matching vendor found" and pushing the
+            # submitter into "Add a new vendor," do one live QBO lookup.
+            # This catches a real vendor that exists in QBO but hasn't
+            # reached checkreq.vendors yet (created after last night's
+            # 11:05 PM sync, or simply never synced) -- if found, it's
+            # upserted into checkreq.vendors immediately so it has a real
+            # local id, same as if the nightly sync had already run.
+            live_vendor_id = vendor_sync_admin.find_and_sync_one_vendor(
+                org["id"], org["code"], vendor_name,
+            )
+            if live_vendor_id:
+                matched_vendor_id = live_vendor_id
 
     result["matched_vendor_id"] = matched_vendor_id
     return result
@@ -6130,6 +6145,18 @@ gl_vendors_reference.register(
     current_user=_current_user,
     current_org=_current_org,
     render=_render,
+)
+
+# 2026-09-10: on-demand "Sync Vendors Now" admin trigger + the live-QBO
+# single-vendor fallback used inside api_extract_document() below -- see
+# vendor_sync_admin.py's own docstring for the full "why" (Jay's request,
+# relayed from a separate "Vendor lookup in Beacon" session).
+import vendor_sync_admin
+
+vendor_sync_admin.register(
+    app,
+    current_user=_current_user,
+    current_org=_current_org,
 )
 
 # RBAC (2026-08-01, Role-Based Access Control Plan.md §9/§6). Same

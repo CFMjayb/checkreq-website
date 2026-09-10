@@ -8,10 +8,15 @@ carried since 2026-08-01 ("GL Accounts (reference)"/"Vendors (reference)",
 built: False, url: None) — see that module's docstring/session history for
 the full context.
 
-New file per the standing main.py rule. Read-only, no writes at all: both
-`checkreq.gl_accounts` and `checkreq.vendors` are synced nightly from QBO
-(gl_sync_job.py/vendor_sync_job.py, 26-124 GCP Daily Jobs) and are not
-staff-editable anywhere in this app — there is nothing to save here, ever.
+New file per the standing main.py rule. Both `checkreq.gl_accounts` and
+`checkreq.vendors` are synced nightly from QBO (gl_sync_job.py/
+vendor_sync_job.py, 26-124 GCP Daily Jobs) and are never hand-editable here
+-- no staff-typed field on either screen is ever saved back to QBO or to
+these tables. **2026-09-10**: the Vendors screen gained one real write
+action, a "Sync Vendors Now" button (route lives in `vendor_sync_admin.py`,
+not here) that re-runs the same QBO->checkreq.vendors diff/upsert the
+nightly job does, on demand, scoped to the current org -- everything else
+on both screens remains pure read-only reference data.
 
 2026-08-16, Jay: queries `checkreq.gl_accounts`/`checkreq.vendors` directly
 via db.py rather than qbo-mcp-server's REST endpoints (the plan's original
@@ -98,4 +103,5 @@ def vendors_view_page(request: Request):
     )
     return _render(request, "admin_vendors_view.html", user, {
         "rows": rows, "error": None, "current_org": org,
+        "sync_result": request.query_params.get("sync_result"),
     })

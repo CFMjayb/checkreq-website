@@ -14,12 +14,19 @@
 <div class="banner banner-error">Couldn't load vendors from qbo-mcp-server: {{ error }}</div>
 {% endif %}
 
+{% if sync_result %}
+<div class="banner {{ 'banner-error' if 'failed' in sync_result else 'banner-info' }}">{{ sync_result }}</div>
+{% endif %}
+
 {% if rows %}
 <div class="card">
   <p style="margin:0 0 12px;">
     <input type="text" id="vendorFilter" placeholder="Filter by name or email&hellip;"
            style="max-width:320px;">
     <span class="sub" id="vendorCount">{{ rows|length }} vendor{{ '' if rows|length == 1 else 's' }}</span>
+    <form method="post" action="/admin/vendors/sync-now" style="display:inline; margin-left:16px;">
+      <button type="submit" class="btn btn-sm">Sync Vendors Now</button>
+    </form>
   </p>
   <div class="table-scroll">
     <table class="simple-table" id="vendorTable">
