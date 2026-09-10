@@ -5585,10 +5585,149 @@ async def assign_gl_coding(request_number: str, request: Request):
     return RedirectResponse("/admin/ap-review?coded=1", status_code=303)
 
 
+def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: int | None) -> tuple[bool, str | None]:
+    """Core Post-to-QBO logic for exactly one request -- extracted 2026-09-10
+    (Jay: "checking multiple and clicking a 'Post to QBO' batch button at
+    the top") so both the single-request route (post_to_qbo, below) and the
+    new POST /admin/ap-review/post-batch route share one implementation of
+    the actual posting steps, rather than a second copy that could drift.
+    See post_to_qbo()'s own docstring for the full step-by-step design this
+    follows unchanged. Returns (True, None) on success, (False, "error
+    text") on failure -- never raises; every real QBO/data error is caught
+    and surfaced as text, exactly matching this route's pre-refactor
+    behavior, just returned instead of redirected directly."""
+    pr = db.query_one(
+        "SELECT pr.*, o.code AS org_code FROM checkreq.payment_requests pr "
+        "JOIN checkreq.organizations o ON o.id = pr.org_id "
+        "WHERE pr.request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return False, "Request not found"
+    if pr["status"] != "Approved":
+        return False, f"someone already acted on this request (status is now {pr['status']})"
+
+    company = pr["org_code"]
+
+    # Step 2/3/4: New Vendor Onboarding gate + vendor creation, only if this
+    # request used the "Add a new vendor" panel instead of an existing
+    # checkreq.vendors row.
+    qbo_vendor_id = None
+    if pr["vendor_request_id"]:
+        vr = db.query_one(
+            "SELECT * FROM checkreq.vendor_requests WHERE id = %s", (pr["vendor_request_id"],),
+        )
+        if not vr or vr["status"] != "approved":
+            return False, "vendor not yet approved"
+        if vr["requires_w9"] and not vr["w9_received"]:
+            return False, "W-9 not yet received"
+
+        if vr["qbo_vendor_id"]:
+            qbo_vendor_id = vr["qbo_vendor_id"]
+        else:
+            display_name = _vendor_request_display_name(vr)
+            result, vendor_error = qbo_mcp_client.create_vendor(
+                company, display_name,
+                company_name=vr.get("company_name") or "",
+                address_line1=vr.get("address_line1") or "", address_line2=vr.get("address_line2") or "",
+                city=vr.get("city") or "", state=vr.get("state") or "", zip_code=vr.get("zip") or "",
+                phone=vr.get("phone") or "", email=vr.get("contact_email") or "",
+            )
+            if vendor_error:
+                return False, f"vendor creation failed -- {vendor_error}"
+            qbo_vendor_id = result["vendor_id"]
+            with db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE checkreq.vendor_requests SET qbo_vendor_id = %s, "
+                        "status = 'posted_to_qbo' WHERE id = %s",
+                        (qbo_vendor_id, vr["id"]),
+                    )
+    else:
+        v = db.query_one("SELECT qbo_vendor_id FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],))
+        if not v or not v.get("qbo_vendor_id"):
+            return False, "this vendor has no qbo_vendor_id on file -- cannot post"
+        qbo_vendor_id = v["qbo_vendor_id"]
+
+    # Step 5/6: resolve GL lines and post the Bill.
+    gl_lines = db.query(
+        "SELECT gl.amount, gl.memo, ga.account_number FROM checkreq.payment_request_gl_lines gl "
+        "JOIN checkreq.gl_accounts ga ON ga.id = gl.gl_account_id "
+        "WHERE gl.payment_request_id = %s ORDER BY gl.id",
+        (pr["id"],),
+    )
+    bill_lines = [
+        {"account_ref": g["account_number"], "amount": float(g["amount"]),
+         "description": g["memo"] or pr["description"] or ""}
+        for g in gl_lines
+    ]
+
+    qbo_attachments = []
+    active_atts = _active_attachments(pr["id"])
+    if active_atts:
+        org_sp = db.query_one(
+            "SELECT sp_hostname, sp_site_path FROM checkreq.organizations WHERE id = %s",
+            (pr["org_id"],),
+        )
+        if org_sp and org_sp.get("sp_hostname") and org_sp.get("sp_site_path"):
+            try:
+                sp_token = sharepoint_client.get_access_token()
+                sp_site_id = sharepoint_client.get_site_id(sp_token, org_sp["sp_hostname"], org_sp["sp_site_path"])
+                for att in active_atts:
+                    try:
+                        content = sharepoint_client.download_bytes(sp_token, sp_site_id, att["sp_file_path"])
+                        qbo_attachments.append({
+                            "filename": att["archived_filename"],
+                            "content_base64": base64.b64encode(content).decode("ascii"),
+                        })
+                    except Exception as exc:
+                        print(f"[post_to_qbo] attachment download failed for {request_number} "
+                              f"({att['archived_filename']}): {exc}")
+            except Exception as exc:
+                print(f"[post_to_qbo] SharePoint auth failed for {request_number}: {exc}")
+
+    result, bill_error = qbo_mcp_client.create_bill(
+        company, qbo_vendor_id,
+        date.today().isoformat(),
+        bill_lines, doc_number=pr["request_number"],
+        private_note=pr["description"] or f"Check Request {pr['request_number']}",
+        due_date=pr["requested_pay_date"].isoformat() if pr["requested_pay_date"] else None,
+        attachments=qbo_attachments,
+    )
+    if bill_error:
+        return False, f"Bill creation failed -- {bill_error}"
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.payment_requests SET status = 'Posted to QBO', "
+                "qbo_bill_id = %s, qbo_bill_url = %s, updated_at = NOW() WHERE id = %s",
+                (result.get("bill_id"), result.get("qbo_url"), pr["id"]),
+            )
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, "
+                " previous_status, new_status, impersonated_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (pr["id"], user["id"], "Posted to QBO",
+                 f"QBO Bill {result.get('bill_number') or result.get('bill_id')} created.",
+                 "Approved", "Posted to QBO", impersonated_by),
+            )
+
+    # Step 7: cleanup_gcs_attachment()'s first real call site.
+    try:
+        cleanup_gcs_attachment(pr["id"])
+    except Exception as exc:
+        print(f"[post-to-qbo] cleanup_gcs_attachment failed for {request_number}: {exc}")
+
+    return True, None
+
+
 @app.post("/requests/{request_number}/post-to-qbo")
 async def post_to_qbo(request_number: str, request: Request):
     """AP Review Workflow Plan.md, Section 4 -- sequencing and failure
-    handling, implemented exactly per that section's own numbered steps:
+    handling, implemented exactly per that section's own numbered steps
+    (now via the shared _post_one_request_to_qbo() helper above, 2026-09-10):
 
       1. Re-select + confirm status == 'Approved' at the moment of the
          click (guards a double-click/race).
@@ -5647,169 +5786,66 @@ async def post_to_qbo(request_number: str, request: Request):
                 status_code=303,
             )
 
-    pr = db.query_one(
-        "SELECT pr.*, o.code AS org_code FROM checkreq.payment_requests pr "
-        "JOIN checkreq.organizations o ON o.id = pr.org_id "
-        "WHERE pr.request_number = %s",
-        (request_number,),
-    )
-    if not pr:
-        return JSONResponse({"error": "Request not found"}, status_code=404)
-    if pr["status"] != "Approved":
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+
+    ok, error = _post_one_request_to_qbo(request_number, user, impersonated_by)
+    if not ok:
         return RedirectResponse(
-            f"/admin/ap-review?post_error="
-            f"{quote(request_number + ': someone already acted on this request (status is now ' + pr['status'] + ').')}",
+            f"/admin/ap-review?post_error={quote(f'{request_number}: {error}')}",
+            status_code=303,
+        )
+    return RedirectResponse(f"/admin/ap-review?posted={request_number}", status_code=303)
+
+
+@app.post("/admin/ap-review/post-batch")
+async def post_batch_to_qbo(request: Request):
+    """Batch variant of post_to_qbo() (2026-09-10, Jay: "I also like the
+    idea of checking multiple and clicking a 'Post to QBO' batch button at
+    the top") -- posts every checked request in sequence through the exact
+    same _post_one_request_to_qbo() core logic the single-request route
+    uses, so there is only ever one real implementation of the posting
+    steps. Each request is entirely independent -- one failure never blocks
+    or rolls back any other; the redirect reports exactly how many
+    succeeded and lists each specific failure by request number, matching
+    this app's established "never silently swallow a partial failure"
+    philosophy (same posture as invoice_pdf_job.py's per-PDF loop, 26-124)."""
+    from urllib.parse import quote
+
+    user, err = _require_ap_reviewer(request)
+    if err:
+        return err
+
+    form = await request.form()
+    if BEACON_ENV == "dev" and form.get("dev_confirmed") != "1":
+        return RedirectResponse(
+            "/admin/ap-review?post_error="
+            + quote("Batch post: dev-environment confirmation required before posting to the real, live QuickBooks."),
             status_code=303,
         )
 
-    company = pr["org_code"]
-
-    # Step 2/3/4: New Vendor Onboarding gate + vendor creation, only if this
-    # request used the "Add a new vendor" panel instead of an existing
-    # checkreq.vendors row.
-    qbo_vendor_id = None
-    if pr["vendor_request_id"]:
-        vr = db.query_one(
-            "SELECT * FROM checkreq.vendor_requests WHERE id = %s", (pr["vendor_request_id"],),
-        )
-        if not vr or vr["status"] != "approved":
-            return RedirectResponse(
-                f"/admin/ap-review?post_error={quote(request_number + ': vendor not yet approved.')}",
-                status_code=303,
-            )
-        if vr["requires_w9"] and not vr["w9_received"]:
-            return RedirectResponse(
-                f"/admin/ap-review?post_error={quote(request_number + ': W-9 not yet received.')}",
-                status_code=303,
-            )
-
-        if vr["qbo_vendor_id"]:
-            qbo_vendor_id = vr["qbo_vendor_id"]
-        else:
-            display_name = _vendor_request_display_name(vr)
-            result, vendor_error = qbo_mcp_client.create_vendor(
-                company, display_name,
-                company_name=vr.get("company_name") or "",
-                address_line1=vr.get("address_line1") or "", address_line2=vr.get("address_line2") or "",
-                city=vr.get("city") or "", state=vr.get("state") or "", zip_code=vr.get("zip") or "",
-                phone=vr.get("phone") or "", email=vr.get("contact_email") or "",
-            )
-            if vendor_error:
-                return RedirectResponse(
-                    f"/admin/ap-review?post_error="
-                    f"{quote(f'{request_number}: vendor creation failed -- {vendor_error}')}",
-                    status_code=303,
-                )
-            qbo_vendor_id = result["vendor_id"]
-            with db.connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE checkreq.vendor_requests SET qbo_vendor_id = %s, "
-                        "status = 'posted_to_qbo' WHERE id = %s",
-                        (qbo_vendor_id, vr["id"]),
-                    )
-    else:
-        v = db.query_one("SELECT qbo_vendor_id FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],))
-        if not v or not v.get("qbo_vendor_id"):
-            return RedirectResponse(
-                f"/admin/ap-review?post_error="
-                f"{quote(request_number + ': this vendor has no qbo_vendor_id on file -- cannot post.')}",
-                status_code=303,
-            )
-        qbo_vendor_id = v["qbo_vendor_id"]
-
-    # Step 5/6: resolve GL lines and post the Bill.
-    gl_lines = db.query(
-        "SELECT gl.amount, gl.memo, ga.account_number FROM checkreq.payment_request_gl_lines gl "
-        "JOIN checkreq.gl_accounts ga ON ga.id = gl.gl_account_id "
-        "WHERE gl.payment_request_id = %s ORDER BY gl.id",
-        (pr["id"],),
-    )
-    # Jay, 2026-07-29, real gaps found on the first live post (CR26-007):
-    # (1) no line item description -- a blank GL-line memo (optional by
-    # design) left the Bill's own line with nothing at all; fall back to
-    # the request's own Description so a line is never blank.
-    # (2) the Bill memo showed "Group 1: mdickson-patrick" -- the internal
-    # approval_chain_summary means nothing to anyone reading the Bill in
-    # QBO. Use the request's own Description instead, matching (1)'s fix.
-    bill_lines = [
-        {"account_ref": g["account_number"], "amount": float(g["amount"]),
-         "description": g["memo"] or pr["description"] or ""}
-        for g in gl_lines
-    ]
-
-    # Jay, 2026-07-29: "no attachments existed on the document" -- fetch this
-    # request's own already-archived files (SharePoint, the same source
-    # view_attachment reads from) and carry them onto the QBO Bill too.
-    # Best-effort: a download hiccup here must never block the Bill itself
-    # from posting (matches _archive_attachments'/cleanup_gcs_attachment's
-    # own established "storage hiccups are recoverable" philosophy) --
-    # logged server-side, not surfaced as a hard failure.
-    qbo_attachments = []
-    active_atts = _active_attachments(pr["id"])
-    if active_atts:
-        org_sp = db.query_one(
-            "SELECT sp_hostname, sp_site_path FROM checkreq.organizations WHERE id = %s",
-            (pr["org_id"],),
-        )
-        if org_sp and org_sp.get("sp_hostname") and org_sp.get("sp_site_path"):
-            try:
-                sp_token = sharepoint_client.get_access_token()
-                sp_site_id = sharepoint_client.get_site_id(sp_token, org_sp["sp_hostname"], org_sp["sp_site_path"])
-                for att in active_atts:
-                    try:
-                        content = sharepoint_client.download_bytes(sp_token, sp_site_id, att["sp_file_path"])
-                        qbo_attachments.append({
-                            "filename": att["archived_filename"],
-                            "content_base64": base64.b64encode(content).decode("ascii"),
-                        })
-                    except Exception as exc:
-                        print(f"[post_to_qbo] attachment download failed for {request_number} "
-                              f"({att['archived_filename']}): {exc}")
-            except Exception as exc:
-                print(f"[post_to_qbo] SharePoint auth failed for {request_number}: {exc}")
-
-    result, bill_error = qbo_mcp_client.create_bill(
-        company, qbo_vendor_id,
-        date.today().isoformat(),
-        bill_lines, doc_number=pr["request_number"],
-        private_note=pr["description"] or f"Check Request {pr['request_number']}",
-        due_date=pr["requested_pay_date"].isoformat() if pr["requested_pay_date"] else None,
-        attachments=qbo_attachments,
-    )
-    if bill_error:
+    request_numbers = [rn for rn in form.getlist("request_numbers") if rn]
+    if not request_numbers:
         return RedirectResponse(
-            f"/admin/ap-review?post_error={quote(f'{request_number}: Bill creation failed -- {bill_error}')}",
-            status_code=303,
+            "/admin/ap-review?post_error=" + quote("Batch post: nothing was selected."), status_code=303,
         )
 
     imp_id = request.session.get("impersonating_user_id")
     impersonated_by = _real_user(request)["id"] if imp_id else None
 
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE checkreq.payment_requests SET status = 'Posted to QBO', "
-                "qbo_bill_id = %s, qbo_bill_url = %s, updated_at = NOW() WHERE id = %s",
-                (result.get("bill_id"), result.get("qbo_url"), pr["id"]),
-            )
-            cur.execute(
-                "INSERT INTO checkreq.audit_log "
-                "(payment_request_id, action_by_user_id, action_type, comment, "
-                " previous_status, new_status, impersonated_by_user_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (pr["id"], user["id"], "Posted to QBO",
-                 f"QBO Bill {result.get('bill_number') or result.get('bill_id')} created.",
-                 "Approved", "Posted to QBO", impersonated_by),
-            )
+    posted, failed = [], []
+    for rn in request_numbers:
+        ok, error = _post_one_request_to_qbo(rn, user, impersonated_by)
+        (posted if ok else failed).append(rn if ok else f"{rn}: {error}")
 
-    # Step 7: cleanup_gcs_attachment()'s first real call site.
-    try:
-        cleanup_gcs_attachment(pr["id"])
-    except Exception as exc:
-        print(f"[post-to-qbo] cleanup_gcs_attachment failed for {request_number}: {exc}")
-
-    return RedirectResponse(f"/admin/ap-review?posted={request_number}", status_code=303)
+    parts = []
+    if posted:
+        parts.append("posted=" + quote(", ".join(posted)))
+    if failed:
+        parts.append(
+            "post_error=" + quote(f"Batch post -- {len(posted)} succeeded, {len(failed)} failed: " + "; ".join(failed))
+        )
+    return RedirectResponse(f"/admin/ap-review?{'&'.join(parts)}", status_code=303)
 
 
 @app.post("/requests/{request_number}/ap-return")

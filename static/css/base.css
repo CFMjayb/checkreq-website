@@ -521,6 +521,8 @@ table.my-requests-table td.program-area-cell { white-space: normal; }
 .table-scroll { overflow-x: auto; }
 table.approvals-table { table-layout: auto; width: 100%; }
 table.approvals-table th, table.approvals-table td { white-space: normal; vertical-align: middle; }
+/* 2026-09-10: AP Review's batch-select checkbox column. */
+table.approvals-table .col-select { width: 32px; text-align: center; }
 table.approvals-table .col-reqnum { min-width: 95px; }
 table.approvals-table .col-reqnum a { font-weight: 600; white-space: nowrap; }
 table.approvals-table .col-type, table.approvals-table .col-entity { min-width: 55px; white-space: nowrap; }

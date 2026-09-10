@@ -12,8 +12,15 @@ that writes to QuickBooks.</p>
 {% if returned %}<div class="banner banner-info">Returned to submitter: {{ returned }}</div>{% endif %}
 {% if post_error %}
 <div class="banner banner-error">
+  {% if post_error.startswith('Batch post') %}
+  {# A batch failure can be PARTIAL -- some requests really did post to
+     QBO -- so this must never claim "nothing was changed," unlike the
+     single-post case below. #}
+  {{ post_error }}
+  {% else %}
   Could not post {{ post_error }}
   Nothing was changed in QuickBooks -- safe to fix the underlying issue and try again.
+  {% endif %}
 </div>
 {% endif %}
 {% if email_warning %}
@@ -78,10 +85,25 @@ that writes to QuickBooks.</p>
   </div>
 </form>
 
+{# 2026-09-10 (Jay): "checking multiple and clicking a 'Post to QBO' batch
+   button at the top" -- request_numbers here are collected from the
+   checkbox column below at submit time (checkboxes live outside this form,
+   in the table itself, since a per-row form already occupies each row's
+   Actions cell and HTML forbids nested forms). Only ever meaningful on
+   THIS (pending) view -- ap_review_completed.html has no equivalent, its
+   rows are already posted. #}
+<form id="batchPostForm" method="post" action="/admin/ap-review/post-batch"
+      {% if BEACON_ENV == 'dev' %}onsubmit="return confirmBatchPost(this)"{% endif %}>
+  <input type="hidden" name="dev_confirmed" value="1">
+  <button type="submit" class="btn btn-primary" id="batchPostBtn" disabled>Post Selected to QBO</button>
+  <span class="sub" id="batchSelectedCount">0 selected</span>
+</form>
+
 <div class="card">
 <div class="table-scroll">
   <table class="simple-table approvals-table">
     <tr>
+      <th class="col-select"><input type="checkbox" id="selectAllCheckbox" title="Select all postable rows"></th>
       <th class="col-reqnum">Request #</th><th class="col-type">Type</th><th class="col-entity">Entity</th>
       <th class="col-program">Program Area</th><th class="col-vendor">Vendor</th>
       <th class="col-submitter">Submitted By</th><th class="col-amount">Amount</th>
@@ -89,6 +111,11 @@ that writes to QuickBooks.</p>
     </tr>
     {% for r in rows %}
     <tr>
+      <td class="col-select">
+        {% if not r.vendor_gate_wait %}
+        <input type="checkbox" class="batchSelectCheckbox" value="{{ r.request_number }}">
+        {% endif %}
+      </td>
       <td class="col-reqnum"><a href="/requests/{{ r.request_number }}/view">{{ r.request_number }}</a></td>
       <td class="col-type">{{ r.type_abbr }}</td>
       <td class="col-entity">{{ r.org_code }}</td>
@@ -133,7 +160,7 @@ that writes to QuickBooks.</p>
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="10">Nothing waiting for AP review.</td></tr>
+    <tr><td colspan="11">Nothing waiting for AP review.</td></tr>
     {% endfor %}
   </table>
 </div>
@@ -195,6 +222,48 @@ document.querySelectorAll('form[action$="/post-to-qbo"]').forEach(form => {
     if (e.defaultPrevented) return;
     showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
   });
+});
+
+// 2026-09-10 (Jay): batch select + "Post Selected to QBO". Checkboxes live
+// in the table itself (outside #batchPostForm -- a per-row form already
+// occupies each row's own Actions cell, and HTML forbids nested forms), so
+// their checked values are copied into hidden inputs on #batchPostForm
+// right before it actually submits.
+function updateBatchPostButton() {
+  const checked = document.querySelectorAll('.batchSelectCheckbox:checked').length;
+  document.getElementById('batchPostBtn').disabled = checked === 0;
+  document.getElementById('batchSelectedCount').textContent = checked + ' selected';
+}
+const selectAllCb = document.getElementById('selectAllCheckbox');
+if (selectAllCb) {
+  selectAllCb.addEventListener('change', () => {
+    document.querySelectorAll('.batchSelectCheckbox').forEach(cb => { cb.checked = selectAllCb.checked; });
+    updateBatchPostButton();
+  });
+}
+document.querySelectorAll('.batchSelectCheckbox').forEach(cb => cb.addEventListener('change', () => {
+  if (!cb.checked && selectAllCb) selectAllCb.checked = false;
+  updateBatchPostButton();
+}));
+
+function confirmBatchPost(form) {
+  const n = document.querySelectorAll('.batchSelectCheckbox:checked').length;
+  return confirm(
+    `DEV ENVIRONMENT: this will create REAL Vendor/Bill records in the live, production QuickBooks ` +
+    `for ${n} selected request(s). There is no dev/test QuickBooks -- this is not a drill. Continue?`
+  );
+}
+
+document.getElementById('batchPostForm').addEventListener('submit', (e) => {
+  if (e.defaultPrevented) return;
+  document.querySelectorAll('.batchSelectCheckbox:checked').forEach(cb => {
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.name = 'request_numbers';
+    hidden.value = cb.value;
+    e.target.appendChild(hidden);
+  });
+  showButtonLoading(e.submitter || document.getElementById('batchPostBtn'));
 });
 </script>
 {% endblock %}
