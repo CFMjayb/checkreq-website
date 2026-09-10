@@ -6229,6 +6229,7 @@ vendor_sync_admin.register(
     app,
     current_user=_current_user,
     current_org=_current_org,
+    get_internal_key=_get_internal_key,
 )
 
 # RBAC (2026-08-01, Role-Based Access Control Plan.md §9/§6). Same

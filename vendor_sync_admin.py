@@ -29,7 +29,7 @@ import re
 from urllib.parse import quote
 
 from fastapi import APIRouter, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 import db
 import qbo_mcp_client
@@ -39,11 +39,21 @@ router = APIRouter()
 
 _current_user = None
 _current_org = None
+_get_internal_key = None
+
+# Orgs qbo-mcp-server's own _COMPANY_TO_CODE actually recognizes for
+# /api/vendors/{company} -- the 11 Cornerstone-served parish orgs each have
+# their own checkreq.organizations row (for QBO Bill posting) but were never
+# wired into that dict, so a code outside this set would just 404/ValueError
+# there. Kept as a literal set here (not "every org") so adding a served
+# parish never silently expands what this hourly job tries to hit.
+_HOURLY_SYNC_CODES = {"edom", "claggett", "dsw", "dme"}
 
 
-def register(app, *, current_user, current_org) -> None:
-    global _current_user, _current_org
+def register(app, *, current_user, current_org, get_internal_key=None) -> None:
+    global _current_user, _current_org, _get_internal_key
     _current_user, _current_org = current_user, current_org
+    _get_internal_key = get_internal_key
     app.include_router(router)
 
 
@@ -193,3 +203,49 @@ def vendors_sync_now_route(request: Request):
         msg = (f"Synced from QBO: {result['created']} created, {result['updated']} updated, "
                f"{result['deactivated']} deactivated, {result['unchanged']} unchanged.")
     return RedirectResponse(f"/admin/setup/vendors?sync_result={quote(msg)}", status_code=303)
+
+
+def sync_all_orgs_now() -> dict:
+    """Runs sync_vendors_now() for every org whose code is one qbo-mcp-server
+    actually recognizes (_HOURLY_SYNC_CODES), tolerating a per-org failure
+    the same way vendor_sync_job.py (26-124, the nightly 11:05 PM ET job)
+    tolerates a per-company failure -- one org's live-QBO-token gap (DSW's
+    OAuth 400, DME's missing qbo-dme-tokens secret, both already documented
+    live findings as of 2026-09-10) must never block EDOM/Claggett's own
+    sync from completing. Returns a per-org breakdown plus overall totals,
+    used by both the hourly Cloud Scheduler endpoint below and, if ever
+    wanted, a future manual "sync everything" trigger."""
+    orgs = db.query(
+        "SELECT id, code FROM checkreq.organizations WHERE LOWER(code) = ANY(%s)",
+        (list(_HOURLY_SYNC_CODES),),
+    )
+    results = {}
+    totals = {"created": 0, "updated": 0, "deactivated": 0, "unchanged": 0}
+    failed = []
+    for org in orgs:
+        result = sync_vendors_now(org["id"], org["code"])
+        results[org["code"]] = result
+        if "error" in result:
+            failed.append(org["code"])
+        else:
+            for k in totals:
+                totals[k] += result[k]
+    return {"orgs": results, "totals": totals, "failed": failed}
+
+
+@router.post("/internal/sync-vendors-hourly")
+def sync_vendors_hourly_route(request: Request):
+    """Cloud Scheduler -> this endpoint, hourly 10 AM-5 PM ET (Jay, 2026-09-10:
+    "I also think we need to run the QBO vendor sync hourly from 10a to 5p").
+    Machine-to-machine, gated by the same shared-secret X-Internal-Key header
+    /internal/send-daily-digest already established -- no signed-in user
+    drives this call. This is IN ADDITION TO the existing nightly
+    vendor-sync-daily Cloud Run Job (26-124, 11:05 PM ET) -- Jay wants
+    same-day vendor changes to show up in Beacon's picker sooner than the
+    next morning, not a replacement for the nightly job."""
+    supplied = request.headers.get("x-internal-key", "")
+    if not supplied or not _get_internal_key or supplied != _get_internal_key():
+        return JSONResponse({"error": "unauthorized"}, status_code=403)
+
+    result = sync_all_orgs_now()
+    return JSONResponse(result)
