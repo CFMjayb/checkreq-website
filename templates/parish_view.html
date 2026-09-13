@@ -14,11 +14,21 @@
    the alpha channel directly, not by eye -- the "gap" was real content,
    white text rendering white-on-near-white against this page's own pale
    background). The header stays background-free (it's already a colored
-   bar); THIS spot is a plain page, so the logo gets its own small dark
-   backing chip so a reversed-color asset still reads here too. #}
+   bar); THIS spot is a plain page, so the logo gets its own small backing
+   chip so a reversed-color asset still reads here too.
+
+   2026-09-13, Jay: "I don't like the black" -- the chip's background was
+   --color-ink (near-black). Checked before swapping: the page's own
+   background (--color-parchment, #f7f3ea) is only marginally darker than
+   pure white, so a plain transparent chip would still wash out the same
+   white/reversed logos the dark chip exists to rescue. Landed on
+   --color-border (#ddd4c0, an existing warm-neutral token already used
+   throughout this app, not a new color invented for this) -- light enough
+   to read as "not black," still enough contrast for a white-on-transparent
+   logo to stay legible. #}
 <h1 style="display:flex; align-items:center; gap:12px;">
   {% if parish.logo_gcs_path %}
-  <span style="display:inline-flex; align-items:center; background:var(--color-ink); border-radius:6px; padding:4px 10px;">
+  <span style="display:inline-flex; align-items:center; background:var(--color-border); border-radius:6px; padding:4px 10px;">
     <img src="/parish-logo/{{ parish.id }}" alt="{{ parish.name }} logo" style="height:1.2em; width:auto; display:block;">
   </span>
   {% endif %}
