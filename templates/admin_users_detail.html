@@ -26,6 +26,12 @@
 {% if request.query_params.get('parish_revoked') %}<div class="banner banner-success">Parish role revoked.</div>{% endif %}
 {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
 
+{# 2026-09-13, Jay: "Anyone with the RBAC of Parish Mode will also be able
+   to manage Parish-related user logins." A parish_mode_user holder without
+   beacon_admin gets is_full_admin=False here -- identity editing stays
+   beacon_admin-only (the /update route below is untouched), so this card
+   is hidden entirely rather than shown-but-broken. #}
+{% if is_full_admin %}
 <details class="card setup-section">
   <summary><h2>Identity</h2></summary>
   <form method="post" action="/admin/setup/users/{{ target.id }}/update">
@@ -52,6 +58,7 @@
     <button type="submit" class="btn btn-primary">Save Identity</button>
   </form>
 </details>
+{% endif %}
 
 <!-- Parish Portal S3: same shape as the Roles card below, scoped to a
      specific parish instead of an entity -- the "invite to a parish"
@@ -138,7 +145,11 @@
      doesn't cover -- confirmed with Jay that no bootstrap affordance is
      wanted for it. -->
 {% set has_served_parish_role = parish_role_grants | selectattr('linked_org_id') | list | length > 0 %}
-{% if roles or program_areas or approval_rules_as_approver or approval_rules_as_backup or has_served_parish_role %}
+{# 2026-09-13: this whole section is entity-level (diocesan roles, program
+   areas, approval rules) -- stays beacon_admin-only regardless of the
+   `has_served_parish_role` condition below, since a parish_mode_user
+   holder should manage Parish Roles (above) only, never these. #}
+{% if is_full_admin and (roles or program_areas or approval_rules_as_approver or approval_rules_as_backup or has_served_parish_role) %}
 <details class="card setup-section" style="margin-top:24px;">
   <summary><h2>Cornerstone Entity Roles</h2></summary>
   {% if orgs|length > 1 %}

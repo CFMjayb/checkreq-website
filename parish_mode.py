@@ -87,6 +87,9 @@ def _is_beacon_admin(user_id: int) -> bool:
     return rbac.user_has_role(user_id, "beacon_admin", org_id=None)
 
 
+_PARISH_MODE_ROLES = ["cfo", "parish_mode_user"]
+
+
 def _require_effective_cfo(request: Request):
     """2026-08-16, Jay, live test: "aren't you trying to impersonate ALL of
     that user? How can you diagnose security/permission issues when you
@@ -107,13 +110,24 @@ def _require_effective_cfo(request: Request):
     same as before. Still returns the REAL session user_id, not the
     persona's -- the audit trail (parish_mode_log, the session's own
     parish_view_id ownership) should reflect who physically clicked, not
-    who they were viewing as."""
+    who they were viewing as.
+
+    2026-09-13, Jay: "add a RBAC role for Parish Mode that I can give to a
+    Diocesan Employee. This is NOT a parish role." Widened from a bare cfo
+    check to _PARISH_MODE_ROLES (cfo OR the new parish_mode_user role,
+    migration 055) via rbac.user_has_any_role -- a parish_mode_user holder
+    gets ONLY the ability to preview a parish, none of cfo's other powers
+    (Impersonate a User, budget overrides, etc. all stay cfo-gated
+    elsewhere in main.py, untouched by this change). Name kept as
+    _require_effective_cfo (not renamed) to avoid touching every call site
+    across this file for a purely cosmetic rename -- the docstring is the
+    source of truth on what it actually checks now."""
     real_id = request.session.get("user_id")
     if not real_id:
         return None, RedirectResponse("/login")
     current = _current_user(request)
-    if not current or not rbac.user_has_role(current["id"], "cfo", org_id=None):
-        return None, JSONResponse({"error": "CFO access required"}, status_code=403)
+    if not current or not rbac.user_has_any_role(current["id"], _PARISH_MODE_ROLES, org_id=None):
+        return None, JSONResponse({"error": "CFO or Parish Mode User access required"}, status_code=403)
     return real_id, None
 
 
@@ -130,14 +144,14 @@ def _close_open_parish_mode(real_user_id: int) -> None:
 def current_parish_view(request: Request) -> dict | None:
     """The one thing main.py's _render() calls, every render, every route --
     same fail-closed discipline as main.py's own _current_user(): if the
-    real identity has lost cfo since parish_view_id was set (role revoked
-    mid-session), silently drop back to no parish view and close the log
-    row, rather than trusting the session flag alone."""
+    real identity has lost cfo/parish_mode_user since parish_view_id was
+    set (role revoked mid-session), silently drop back to no parish view
+    and close the log row, rather than trusting the session flag alone."""
     real_id = request.session.get("user_id")
     parish_id = request.session.get("parish_view_id")
     if not real_id or not parish_id:
         return None
-    if not rbac.user_has_role(real_id, "cfo", org_id=None):
+    if not rbac.user_has_any_role(real_id, _PARISH_MODE_ROLES, org_id=None):
         request.session.pop("parish_view_id", None)
         _close_open_parish_mode(real_id)
         return None
@@ -322,7 +336,7 @@ def parish_mode_start(parish_id: int, request: Request):
 
     target = db.query_one("SELECT id, org_id FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
     current = _current_user(request)
-    if not target or not current or not rbac.user_has_role(current["id"], "cfo", target["org_id"]):
+    if not target or not current or not rbac.user_has_any_role(current["id"], _PARISH_MODE_ROLES, org_id=target["org_id"]):
         return RedirectResponse("/admin/parish-mode")
 
     _close_open_parish_mode(real_id)
