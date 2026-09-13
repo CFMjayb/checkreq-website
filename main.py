@@ -770,13 +770,16 @@ def select_entity(org_id: int, request: Request, next: str = "/portal"):
 @app.get("/org-logo/{org_id}")
 def org_logo(org_id: int, request: Request):
     """Streams a diocese's own uploaded logo (base.html's header, to the
-    left of the "Beacon" wordmark). Requires login like everything else in
-    this app, but deliberately does NOT re-check that org_id matches the
-    caller's own current entity -- a logo is not sensitive content, and
-    every other org's is exactly as visible to any signed-in user as its
-    own name already is in the entity switcher."""
-    if not _current_user(request):
-        return RedirectResponse("/login")
+    left of the "Beacon" wordmark). Deliberately UNAUTHENTICATED as of
+    2026-09-13 (was login-required until then) -- the diocese-branded login
+    page (login.html, via login_branding()) needs to show this same logo
+    to a visitor who hasn't signed in yet at all, and a logo was already
+    judged non-sensitive content before this change (every other org's logo
+    was already exactly as visible to any signed-in user as its own name
+    already is in the entity switcher) -- widening that same reasoning to
+    "visible to anyone" is not a new risk, just a wider audience for
+    something that was never access-gated on its own merits. Does NOT
+    re-check that org_id matches any particular caller/entity, unchanged."""
     org = db.query_one(
         "SELECT logo_gcs_path, logo_content_type FROM checkreq.organizations WHERE id = %s",
         (org_id,),

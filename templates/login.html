@@ -2,9 +2,23 @@
 {% block title %}Sign In — Beacon{% endblock %}
 {% block extra_css %}<link rel="stylesheet" href="/static/css/login.css?v={{ asset_version('css/login.css') }}">{% endblock %}
 {% block content %}
+{% set brand = login_branding(request) %}
 <div class="login-hero">
   <div class="login-card">
-    <div class="wordmark">Cornerstone Franciscan Ministries</div>
+    {# Diocese-branded login (Jay, 2026-09-13): a visitor arriving on a
+       diocese's own branded hostname (e.g. beacon.episcopalmaryland.org,
+       checkreq.sso_auto_hostnames.org_id) sees THAT diocese's name and logo
+       here instead of Cornerstone's -- "Beacon" itself stays put below,
+       it's the product name, not the organization name (same reasoning
+       this wordmark line's own history already settled). An unmapped
+       hostname (or a diocese with no logo uploaded) falls back to the
+       original Cornerstone wordmark, no logo -- unchanged from before. #}
+    <div class="wordmark">{{ brand.org_name if brand else "Cornerstone Franciscan Ministries" }}</div>
+    {% if brand and brand.has_logo %}
+    <div class="login-org-logo-chip">
+      <img src="/org-logo/{{ brand.org_id }}" alt="{{ brand.org_name }} logo">
+    </div>
+    {% endif %}
     <h1>Beacon</h1>
     {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
 

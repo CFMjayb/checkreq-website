@@ -34,6 +34,26 @@
   font-size: 1.6rem;
   margin-bottom: var(--space-2);
 }
+/* Diocese-branded login logo (2026-09-13) -- a backing chip, not a bare
+   <img>, for the same reason parish_view.html's parish-logo chip needed
+   one: several real diocese logos are white/reversed-color art that would
+   wash out against this card's own near-white background otherwise. */
+.login-org-logo-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-border, #ddd4c0);
+  border-radius: var(--radius-md, 6px);
+  padding: var(--space-2) var(--space-4);
+  margin: 0 auto var(--space-4);
+}
+.login-org-logo-chip img {
+  max-height: 48px;
+  max-width: 220px;
+  width: auto;
+  height: auto;
+  display: block;
+}
 .login-card .tagline {
   color: var(--color-text-muted);
   font-size: 0.92rem;
