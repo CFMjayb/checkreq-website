@@ -32,6 +32,8 @@ isn't a silent trap.
 """
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
@@ -40,6 +42,7 @@ import gcs_client
 import org_branding
 import rbac
 import registry
+import sharepoint_client
 
 router = APIRouter()
 
@@ -69,13 +72,89 @@ def _require_setup_admin(request: Request):
     return user, org, None
 
 
+def _create_sharepoint_folder_for_parish(org: dict, parish: dict) -> str | None:
+    """2026-09-13: closes the gap Jay hit hand-creating SharePoint folders
+    for every parish added this session (101 Redemption/Locust Point, 102
+    Transfiguration/Braddock Heights, 103 Living Grace/Urbana, 104 Church
+    on the Square/Canton) -- going forward, adding a parish here also
+    creates its matching document folder.
+
+    Folder naming confirmed against a LIVE DioNet listing before writing
+    this (not guessed): every one of the 4 parishes above already has a
+    real folder, and each one's exact name is reconstructable byte-for-byte
+    from just this app's own `name`/`city` columns -- e.g. parish 421
+    (code "102") has `sp_folder_path = "102. Transfiguration Episcopal
+    Church, Braddock Heights"`, which is exactly `"{code}. {name}, {city}"`.
+    Checked all 6 of the 101-106 parishes this way, zero mismatches; also
+    confirmed every EDOM parish carrying a `code` also carries a `city` (0
+    counterexamples), but the no-city case is still handled explicitly
+    below since a future parish could be added without one --
+    parish_documents.py's own `_split_folder_label()` already treats a
+    folder with no comma (no city) as a real, valid shape.
+
+    EDOM-specific for now, by construction rather than a special case:
+    this only fires when the org actually has `sp_parish_hostname`
+    configured (DioNet), which is the same guard resolve_parish_folder()
+    already uses. Checked DME's own organizations row directly before
+    writing this: sp_parish_hostname is NULL there -- DME's congregation
+    document story is Realm-sourced info (26-138), not a DioNet-style
+    per-parish SharePoint folder at all, so there is genuinely no
+    equivalent convention to reuse for DME today. If DME (or a future
+    diocese) ever gets one, this same function works unchanged the moment
+    that org's own sp_parish_hostname/sp_parish_site_path/
+    sp_parish_library_folder are populated -- no per-diocese branching
+    needed here.
+
+    Returns None on success (and stamps sp_folder_path/sp_folder_resolved_at
+    on the parish row, so parish_documents.py's very first page view for
+    this parish doesn't need its own live-resolve pass), or an error string
+    on failure -- callers must treat a failure as non-blocking, same
+    fail-open philosophy this app already applies to attachment archival
+    (see main.py's own archive_warning pattern): a SharePoint hiccup must
+    never roll back or block the parish record itself, which is why this
+    is called AFTER create_parish() has already committed, not inside the
+    same transaction."""
+    if not org.get("sp_parish_hostname"):
+        return None  # this diocese has no DioNet-style parish folder convention configured (e.g. DME) -- nothing to create
+    code = (parish.get("code") or "").strip()
+    if not code:
+        return None  # no code yet -- creating a folder without one would guess at a name nobody can resolve back to later; stays a manual follow-up
+
+    name = parish["name"]
+    city = (parish.get("city") or "").strip()
+    folder_name = f"{code}. {name}, {city}" if city else f"{code}. {name}"
+
+    try:
+        token = sharepoint_client.get_access_token()
+        site_id = sharepoint_client.get_site_id(
+            token, org["sp_parish_hostname"], org["sp_parish_site_path"]
+        )
+        parent = org.get("sp_parish_library_folder") or ""
+        sharepoint_client.ensure_folder(token, site_id, parent, folder_name)
+    except Exception as exc:
+        return str(exc)
+
+    registry.update_parish(parish["id"], org["id"], sp_folder_path=folder_name)
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE portal.parishes SET sp_folder_resolved_at = NOW() WHERE id = %s",
+                (parish["id"],),
+            )
+    return None
+
+
 @router.get("/admin/manage-parishes", response_class=HTMLResponse)
 def manage_parishes_page(request: Request, error: str = ""):
     user, org, err = _require_setup_admin(request)
     if err:
         return err
 
-    parishes = registry.list_parishes(org["id"])
+    # include_inactive=True (2026-09-13): a closed/merged parish sets
+    # is_active=FALSE (see set_parish_status below) -- without this, the
+    # moment someone closes a parish here it would silently vanish from
+    # this exact screen, with no way to look at it again or reopen it.
+    parishes = registry.list_parishes(org["id"], include_inactive=True)
     org_ids = [p["linked_org_id"] for p in parishes if p.get("linked_org_id")]
     linked_orgs = {}
     if org_ids:
@@ -90,6 +169,68 @@ def manage_parishes_page(request: Request, error: str = ""):
     return _render(request, "manage_parishes.html", user, {
         "parishes": parishes, "current_org": org, "error": error,
     })
+
+
+@router.post("/admin/manage-parishes/add")
+async def add_parish(request: Request):
+    """2026-09-13, Jay: there was no UI anywhere to add a new parish to
+    portal.parishes -- every one of EDOM's ~95 / DME's ~65 rows was created
+    by a one-off Python script calling registry.create_parish() directly.
+    Entity-scoped like everything else on this screen: the new row always
+    lands in the CURRENTLY SELECTED org, never a form-supplied one.
+
+    The "External CRM ID" field is a deliberately GENERIC label/form-field
+    name over the same portal.parishes.databank_contact_id column the
+    existing per-row edit control (below) already exposes -- for an EDOM
+    parish this is a Databank contact id, for a DME parish it would be a
+    Realm contact id, two unrelated vendor systems sharing one column
+    (migration 034 predates DME/Realm entirely). Confirmed via the actual
+    26-124/26-138 code before deciding NOT to unify this with
+    portal.parishes.realm_church_id (26-138, migration 050): DME's own
+    sync scripts already have a separate, working match mechanism against
+    realm_church_id and never touch databank_contact_id at all, and
+    migration 050's own comment describes realm_church_id as playing "the
+    same role" as databank_contact_id deliberately, not accidentally --
+    unifying them into one field here would just break 26-138's existing
+    convention for no real benefit. So this form's "External CRM ID"
+    value is stored into databank_contact_id regardless of which org is
+    selected; a DME parish's Realm id (if ever needed here) would still
+    need its own separate field, not built in this pass."""
+    user, org, err = _require_setup_admin(request)
+    if err:
+        return err
+
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    code = (form.get("code") or "").strip() or None
+    city = (form.get("city") or "").strip() or None
+    external_crm_id = (form.get("external_crm_id") or "").strip() or None
+
+    if not name:
+        return RedirectResponse(
+            "/admin/manage-parishes?error=Parish+name+is+required.", status_code=303
+        )
+
+    if code:
+        existing_code = db.query_one(
+            "SELECT id FROM portal.parishes WHERE org_id = %s AND code = %s",
+            (org["id"], code),
+        )
+        if existing_code:
+            return RedirectResponse(
+                f"/admin/manage-parishes?error=Code+'{code}'+is+already+in+use+by+another+parish+in+this+entity.",
+                status_code=303,
+            )
+
+    parish = registry.create_parish(
+        org["id"], name, code=code, city=city, databank_contact_id=external_crm_id,
+    )
+
+    folder_warning = _create_sharepoint_folder_for_parish(org, parish)
+    redirect_url = "/admin/manage-parishes?added=1"
+    if folder_warning:
+        redirect_url += f"&folder_warning={quote(folder_warning)}"
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @router.post("/admin/manage-parishes/{parish_id}/enable-cornerstone")
@@ -167,6 +308,75 @@ def disable_cornerstone(parish_id: int, request: Request):
             )
 
     return RedirectResponse("/admin/manage-parishes?disabled=1", status_code=303)
+
+
+_PARISH_STATUSES = {"active", "closed", "merged"}
+
+
+@router.post("/admin/manage-parishes/{parish_id}/status")
+async def set_parish_status(parish_id: int, request: Request):
+    """2026-09-13, Jay: `portal.parishes.status` has existed since migration
+    023 (default 'active', its own column comment already said "a closed/
+    merged parish's history stays") but nothing ever set it to anything
+    else, and no screen could change it. Real trigger: parish 271 (Church
+    of the Advent - Federal Hill, code 014) is genuinely closed -- it was
+    one of the 6 parishes with no databank_contact_id, which is exactly why
+    it never matched a real Databank church record.
+
+    Deliberately ties status to the ALREADY-existing is_active flag rather
+    than adding a second, independent on/off switch: is_active is what
+    congregation_sync_job.py (26-124's nightly clergy refresh),
+    load_lay_leadership_from_relationships.py, and this screen's own
+    default listing all actually check today. 'active' -> is_active=TRUE;
+    'closed'/'merged' -> is_active=FALSE, so a closed parish automatically
+    stops being nightly-synced and stops showing in every other screen's
+    normal (active-only) listing, with zero changes needed anywhere else.
+    Never hard-deleted, never removed from this screen (see
+    include_inactive=True above) -- matches this app's standing philosophy.
+
+    'merged' does not yet record WHAT a parish merged into -- that's a
+    real, separate feature (a merged_into_parish_id reference + probably
+    surfacing a redirect/notice on the old parish's own pages) not asked
+    for here; this just gives the status value a place to live so it's not
+    lost, same spirit as 'closed' before this session did anything with it."""
+    user, org, err = _require_setup_admin(request)
+    if err:
+        return err
+    parish = registry.get_parish(parish_id, org["id"])
+    if not parish:
+        return RedirectResponse("/admin/manage-parishes")
+    form = await request.form()
+    status = (form.get("status") or "").strip()
+    if status not in _PARISH_STATUSES:
+        return RedirectResponse(
+            "/admin/manage-parishes?error=Status+must+be+one+of:+active,+closed,+merged.", status_code=303
+        )
+    registry.update_parish(parish_id, org["id"], status=status, is_active=(status == "active"))
+    return RedirectResponse("/admin/manage-parishes?saved=1", status_code=303)
+
+
+@router.post("/admin/manage-parishes/{parish_id}/databank-contact-id")
+async def set_databank_contact_id(parish_id: int, request: Request):
+    """2026-09-13, Jay: this column existed in the schema (migration 034)
+    and was already READ by congregation_sync_job.py (26-124, nightly
+    clergy refresh) and the one-off lay-leadership relationship import, but
+    had no admin UI anywhere -- every value on file today (86 of 88 active
+    EDOM parishes) was set by a one-off backfill script matching a Databank
+    export, never through Beacon itself. A parish added to Beacon going
+    forward with this left blank silently gets NO congregation info, ever,
+    with no error anywhere -- this closes that gap. Blank clears it back to
+    NULL (registry.update_parish already treats None as a real value, same
+    as every other nullable field this screen edits)."""
+    user, org, err = _require_setup_admin(request)
+    if err:
+        return err
+    parish = registry.get_parish(parish_id, org["id"])
+    if not parish:
+        return RedirectResponse("/admin/manage-parishes")
+    form = await request.form()
+    value = (form.get("databank_contact_id") or "").strip() or None
+    registry.update_parish(parish_id, org["id"], databank_contact_id=value)
+    return RedirectResponse("/admin/manage-parishes?saved=1", status_code=303)
 
 
 @router.post("/admin/manage-parishes/{parish_id}/upload-logo")

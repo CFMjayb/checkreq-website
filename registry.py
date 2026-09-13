@@ -85,13 +85,19 @@ def create_parish(org_id: int, name: str, **fields) -> dict:
     this app's own `name` and from QBO's Customer/Vendor display names),
     short_name (migration 043 -- a diocese's own payroll/HR "Department"
     label for this parish, e.g. DME's "Wilton", which often isn't the same
-    string as the parish's formal church name)."""
+    string as the parish's formal church name), databank_contact_id
+    (2026-09-13 -- added here so the new "+ Add New Parish" form on
+    parish_org_admin.py can set it at creation time instead of a
+    create-then-update two-step; despite the column name, this is the
+    org's own source-of-truth CRM contact id -- EDOM's Databank, DME's
+    Realm uses the separate realm_church_id column instead, see that
+    column's own migration 050 for why the two are kept apart)."""
     allowed = {
         "code", "city", "status", "databank_churchwebacct",
         "qbo_ar_customer_id", "qbo_ap_vendor_id", "served_tier",
         "modules", "contacts",
         "parochial_report_id", "pr_name", "legal_name", "ein",
-        "short_name",
+        "short_name", "databank_contact_id",
     }
     cols = ["org_id", "name"] + [k for k in fields if k in allowed]
     vals = [org_id, name] + [fields[k] for k in fields if k in allowed]

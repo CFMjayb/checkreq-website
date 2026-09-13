@@ -18,20 +18,97 @@ Parish Portal presence, which is unaffected either way.</p>
 </div>
 
 {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+{% if request.query_params.get('added') %}<div class="banner banner-success">Parish added.</div>{% endif %}
+{% if request.query_params.get('folder_warning') %}
+<div class="banner banner-error">
+  Parish added, but its SharePoint document folder could not be created automatically:
+  {{ request.query_params.get('folder_warning') }}
+  Please create it by hand in DioNet ("{code}. {name}, {city}"), or use "Re-resolve from SharePoint"
+  on the Parish Documents admin screen once it exists.
+</div>
+{% endif %}
 {% if request.query_params.get('enabled') %}<div class="banner banner-success">Cornerstone Served enabled.</div>{% endif %}
 {% if request.query_params.get('disabled') %}<div class="banner banner-info">Cornerstone Served disabled (soft — history preserved).</div>{% endif %}
 {% if request.query_params.get('finance_saved') %}<div class="banner banner-success">Finance settings saved.</div>{% endif %}
 
 <div class="card">
+<details>
+  <summary class="btn btn-primary btn-sm" style="display:inline-block;cursor:pointer">+ Add New Parish</summary>
+  <form method="post" action="/admin/manage-parishes/add" style="margin-top:12px;max-width:520px">
+    <div class="field"><label>Name *</label>
+      <input type="text" name="name" required placeholder="e.g. All Saints Church"></div>
+    <div class="field"><label>Code</label>
+      <input type="text" name="code" placeholder="e.g. 100 — optional, must be unique in this entity">
+      <p class="hint">Optional, but if set must not already be used by another parish in {{ current_org.name }}.</p>
+    </div>
+    <div class="field"><label>City</label>
+      <input type="text" name="city" placeholder="e.g. Baltimore"></div>
+    <div class="field"><label>External CRM ID</label>
+      <input type="text" name="external_crm_id" placeholder="e.g. 208 — this org's source-of-truth CRM contact id">
+      <p class="hint">The parish's contact id in whichever CRM this diocese uses as its source of truth
+        (Databank for EDOM, Realm for DME, etc.) — leave blank if not yet known. Powers the nightly
+        congregation-info sync; left blank means no congregation info until this is set.</p>
+    </div>
+    <button type="submit" class="btn btn-sm">Add Parish</button>
+  </form>
+</details>
+</div>
+
+<div class="card">
 <div class="table-scroll">
   <table class="simple-table">
     <tr>
-      <th>Parish</th><th>City</th><th>Logo</th><th>Cornerstone Served</th><th>Code</th><th>QBO Realm ID</th><th></th><th>Finance Settings</th>
+      <th>Parish</th><th>Parish Code</th><th>Status</th><th>City</th><th>External CRM ID</th><th>Logo</th><th>Cornerstone Served</th><th>Code</th><th>QBO Realm ID</th><th></th><th>Finance Settings</th>
     </tr>
     {% for p in parishes %}
-    <tr>
+    <tr{% if p.status != 'active' %} style="opacity:0.7"{% endif %}>
       <td>{{ p.name }}</td>
+      {# p.code (this diocese's own internal parish code, e.g. "100") --
+         distinct from the "Code" column further right, which is the
+         SEPARATE Cornerstone-served checkreq.organizations row's own code
+         (e.g. "MEC") once one exists. Two different "code" concepts on
+         one parish; kept as two separate, clearly-labeled columns rather
+         than overloading one. #}
+      <td>{{ p.code or "—" }}</td>
+      <td>
+        {% if p.status == 'closed' %}<span class="badge badge-rejected">Closed</span>
+        {% elif p.status == 'merged' %}<span class="badge badge-rejected">Merged</span>
+        {% else %}<span class="badge badge-approved">Active</span>{% endif %}
+        <details style="margin-top:4px">
+          <summary class="btn btn-secondary btn-sm" style="display:inline-block;cursor:pointer">Change&hellip;</summary>
+          <form method="post" action="/admin/manage-parishes/{{ p.id }}/status" style="margin-top:8px">
+            <select name="status">
+              <option value="active" {% if p.status == 'active' or not p.status %}selected{% endif %}>Active</option>
+              <option value="closed" {% if p.status == 'closed' %}selected{% endif %}>Closed</option>
+              <option value="merged" {% if p.status == 'merged' %}selected{% endif %}>Merged</option>
+            </select>
+            <button type="submit" class="btn btn-sm">Save</button>
+          </form>
+        </details>
+      </td>
       <td>{{ p.city or "—" }}</td>
+      <td>
+        {# 2026-09-13, Jay: powers congregation_sync_job.py's nightly clergy
+           refresh + the one-off lay-leadership relationship import (both
+           key off this) -- silently gives NO congregation info at all if
+           left blank, no error anywhere. Databank itself is EDOM-only, so
+           this is only ever meaningful for EDOM parishes -- harmless
+           blank for every other entity. Labeled "External CRM ID" (not
+           "Databank Contact ID") for the same reason the new Add-Parish
+           form above uses that label -- the underlying column
+           (databank_contact_id) holds a Databank id for EDOM but would
+           hold a different vendor's id for any other org; DME's own
+           Realm id lives in the separate realm_church_id column instead
+           (26-138, migration 050), deliberately not this one. #}
+        <details>
+          <summary class="btn btn-secondary btn-sm" style="display:inline-block;cursor:pointer">{{ p.databank_contact_id or "— Edit…" }}</summary>
+          <form method="post" action="/admin/manage-parishes/{{ p.id }}/databank-contact-id" style="margin-top:8px">
+            <input type="text" name="databank_contact_id" value="{{ p.databank_contact_id or '' }}"
+                   placeholder="e.g. 208" style="width:90px">
+            <button type="submit" class="btn btn-sm">Save</button>
+          </form>
+        </details>
+      </td>
       <td>
         {# 2026-08-29, Jay: shown next to the parish's own name on
            parish_view.html (Parish Mode), NOT the header bar -- that's
@@ -52,7 +129,7 @@ Parish Portal presence, which is unaffected either way.</p>
       </td>
       <td>
         {% if p.linked_org and p.linked_org.is_active %}
-          <span class="badge badge-confirmed">Served</span>
+          <span class="badge badge-approved">Served</span>
         {% else %}
           <span class="sub">Not served</span>
         {% endif %}
@@ -99,7 +176,7 @@ Parish Portal presence, which is unaffected either way.</p>
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="8">No parishes yet in this entity.</td></tr>
+    <tr><td colspan="11">No parishes yet in this entity.</td></tr>
     {% endfor %}
   </table>
 </div>
