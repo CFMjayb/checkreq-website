@@ -94,6 +94,37 @@ def _request_host(request: Request) -> str:
     return (request.headers.get("host") or "").split(":")[0].strip().lower()
 
 
+def _branding_for_host(host: str) -> dict | None:
+    """The diocese (checkreq.organizations row) THIS branded hostname
+    belongs to, if any -- per Jay (2026-09-13): "when we have someone log in
+    from their diocese's domain, they will need to see a different login
+    that has the Diocese's name and logo and not Cornerstone's name."
+    Reuses the SAME hostname table as the auto-SSO-skip feature above
+    (checkreq.sso_auto_hostnames gained an org_id column, migration 057)
+    rather than a second, parallel "which diocese is this hostname" table --
+    it's the same underlying fact (this branded hostname belongs to this
+    diocese), just read for a different purpose. Registered below as the
+    Jinja2 global login_branding(request), so login.html can call it
+    directly without every route in this file needing to thread branding
+    into its own TemplateResponse context dict. Returns None (fall back to
+    the app's own default Cornerstone/Beacon branding) for an unmapped
+    hostname, a mapped hostname with no org_id set yet, or a hostname with
+    no active row at all -- same NULL-means-default convention as every
+    other branding column (org_branding.py)."""
+    if not host:
+        return None
+    row = db.query_one(
+        "SELECT o.id AS org_id, o.name AS org_name, o.logo_gcs_path "
+        "FROM checkreq.sso_auto_hostnames h "
+        "JOIN checkreq.organizations o ON o.id = h.org_id "
+        "WHERE h.hostname = %s AND h.is_active",
+        (host,),
+    )
+    if not row:
+        return None
+    return {"org_id": row["org_id"], "org_name": row["org_name"], "has_logo": bool(row["logo_gcs_path"])}
+
+
 def _sso_hostname_provider(host: str) -> str | None:
     """Which OAuth provider THIS branded hostname belongs to, if any --
     used only to decide whether Azure/Google must redirect back to this
@@ -315,6 +346,12 @@ def create_router(templates) -> APIRouter:
     only needs the raw session value, not the full impersonation-aware
     lookup, so it's inlined below instead of importing main.py's helper."""
     router = APIRouter()
+
+    # login.html calls this directly (Jinja2 global, same registration
+    # pattern main.py already uses for asset_version/BEACON_ENV) so every
+    # route that renders login.html gets diocese branding for free, with
+    # zero changes to any of this file's own TemplateResponse call sites.
+    templates.env.globals["login_branding"] = lambda request: _branding_for_host(_request_host(request))
 
     @router.get("/login", response_class=HTMLResponse)
     def login_page(request: Request, error: str = "", email: str = "", switch: str = "", mode: str = ""):
