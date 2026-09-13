@@ -1,10 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Request Access — Beacon{% endblock %}
+{% block title %}{{ "User Access" if manage_parish else "Request Access" }} — Beacon{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
 
-<h1>Request Access</h1>
+<h1>{{ "User Access" if manage_parish else "Request Access" }}</h1>
 <p class="back-link"><a href="{{ '/parish-view' if parish_view else '/portal' }}">&larr; Back</a></p>
+
+{% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
 
 {% if pending %}
 <div class="banner banner-info">
@@ -15,8 +17,6 @@
 </div>
 {% else %}
 <p class="sub">Tell us which parish you're with and what you need, and a reviewer will look at it.</p>
-
-{% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
 
 <div class="card">
   <form method="post" action="/parish-access-request">
@@ -92,6 +92,69 @@
       {% endfor %}
     </tbody>
   </table>
+</div>
+{% endif %}
+
+{% if manage_parish %}
+{# "User Access" (2026-09-13, Jay): everyone currently granted access to
+   THIS parish, plus a direct grant/revoke -- distinct from the pending-
+   request queue above, which is about self-service requests, not the
+   parish's actual roster. Only rendered for a manager (Beacon Admin,
+   parish_mode_user, or this parish's own Parish Admin) actively viewing
+   this one parish -- see parish_access.py's own docstring. #}
+<h2 style="margin-top:var(--space-6);">Everyone with Access — {{ manage_parish.name }}</h2>
+<p class="sub">Grant or revoke this parish's portal access directly. Revoking Parish Admin from
+  the last remaining holder isn't allowed — grant it to someone else here first.</p>
+
+{% if request.query_params.get('granted_user') %}<div class="banner banner-success">Access granted.</div>{% endif %}
+{% if request.query_params.get('revoked_user') %}<div class="banner banner-success">Access revoked.</div>{% endif %}
+
+<div class="card">
+  <table class="simple-table">
+    <thead>
+      <tr><th>User</th><th>Role</th><th>Granted</th><th>Granted By</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for r in parish_roster %}
+      <tr>
+        <td>{{ r.display_name or r.email }}<br><span class="muted">{{ r.email }}</span></td>
+        <td>{{ r.role_label }}</td>
+        <td>{{ r.granted_at }}</td>
+        <td>{{ r.granted_by_email or "—" }}</td>
+        <td class="actions-cell">
+          <form method="post" action="/parish-access-request/{{ manage_parish.id }}/revoke" style="display:inline"
+                onsubmit="return confirm('Revoke {{ r.role_label }} access for {{ r.email }}?');">
+            <input type="hidden" name="user_id" value="{{ r.user_id }}">
+            <input type="hidden" name="role_key" value="{{ r.role_key }}">
+            <button type="submit" class="btn btn-secondary">Revoke</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">No one has been granted access to this parish yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h3 style="margin-top:var(--space-5);">Grant Access</h3>
+<div class="card">
+  <form method="post" action="/parish-access-request/{{ manage_parish.id }}/grant">
+    <label for="grant_email">Email</label>
+    <input type="email" id="grant_email" name="email" required placeholder="person@example.org">
+
+    <label for="grant_role_key">Role</label>
+    <select id="grant_role_key" name="role_key" required>
+      <option value="">Select a role...</option>
+      {% for r in manage_parish_roles %}
+      <option value="{{ r.key }}">{{ r.label }}{% if r.description %} — {{ r.description }}{% endif %}</option>
+      {% endfor %}
+    </select>
+
+    <p class="sub">If this email doesn't have a Beacon login yet, one is created automatically —
+      they can sign in with it right away.</p>
+    <button type="submit" class="btn btn-primary">Grant Access</button>
+  </form>
 </div>
 {% endif %}
 

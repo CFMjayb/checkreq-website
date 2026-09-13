@@ -89,8 +89,24 @@ def can_view_finance(user: dict, parish: dict) -> bool:
     return parish_roles.user_has_parish_role(user["id"], "parish_finance", parish["id"])
 
 
+#  Beacon's own org code (checkreq.organizations.code) is NOT always the
+#  same string qbo-mcp-server's own company registry uses -- confirmed
+#  2026-09-13 via a live qbo-mcp-server company lookup: Diocese of Maine's
+#  Beacon code is "DME" (per Jay's own explicit naming decision,
+#  2026-08-08), but its real, live QBO connection is registered under
+#  "dmecdf" ("Dio of Maine CDF") -- Maine actually runs 3 separate QBO
+#  companies (dmecdf/dmebdf/dmetdf); "dmecdf" is the one confirmed (Jay,
+#  2026-09-13: "use dmecdf and poll the AR") to hold parish-level annual
+#  assessment invoices. A plain lowercase of org["code"] would silently
+#  404 on qbo-mcp-server's own qbo-dme-tokens secret lookup (confirmed
+#  live) -- this override is the fix, scoped to DME only so no other
+#  diocese's resolution is touched.
+_ORG_CODE_TO_QBO_COMPANY = {"DME": "dmecdf"}
+
+
 def _company_code(org: dict) -> str:
-    return (org.get("code") or "").lower()
+    code = (org.get("code") or "")
+    return _ORG_CODE_TO_QBO_COMPANY.get(code, code.lower())
 
 
 # ── SMA data ─────────────────────────────────────────────────────────────────

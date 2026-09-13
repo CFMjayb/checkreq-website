@@ -10,17 +10,41 @@ flagged this as a design question; confirmed with Jay 2026-08-08 against
 the same nullable-scope-column ambiguity checkreq.user_roles.org_id already
 rejected once, citing the global_approvers.org_id incident).
 
-No "last admin" guard here, unlike rbac.revoke_role's beacon_admin
+Originally NO "last admin" guard here, unlike rbac.revoke_role's beacon_admin
 protection — a parish losing its only parish_admin isn't the same class of
 outage as losing the diocese's only beacon_admin: diocesan staff (still
-holding beacon_admin) can always intervene at any parish. Worth revisiting
-if that assumption ever proves wrong in practice.
+holding beacon_admin) can always intervene at any parish. **Revisited
+2026-09-13**: once the new "User Access" screen (parish_access.py) made
+revoking a parish_admin grant one click away for parish admins and Diocesan
+Employees (parish_mode_user) alike, not just beacon_admin, Jay asked for the
+same class of guard anyway -- see LastParishAdminError/revoke_parish_role
+below. Scoped PER PARISH (not system-wide) since the original reasoning
+still holds; this only prevents an accidental self-inflicted gap, not a
+structural one a beacon_admin couldn't fix.
 
 Depends only on db.py, same one-way-dependency discipline as rbac.py.
 """
 from __future__ import annotations
 
 import db
+import rbac
+
+
+def is_parish_manager(user_id: int, parish_id: int) -> bool:
+    """Beacon Admin (any entity) OR parish_mode_user (any entity, a
+    Diocesan Employee granted Parish Mode) OR THIS SPECIFIC parish's own
+    Parish Admin -- the "User Access" screen's authorization rule
+    (parish_access.py, 2026-09-13, Jay's explicit widen-beyond-just-
+    beacon_admin/parish_admin decision). Lives here (not in parish_access.py
+    or parish_mode.py) so BOTH of those modules can call it with no circular
+    import -- parish_mode.py already imports this module, and
+    parish_access.py already imports parish_mode.py, so parish_mode.py
+    importing parish_access.py back would be circular."""
+    if rbac.user_has_role(user_id, "beacon_admin", org_id=None):
+        return True
+    if rbac.user_has_role(user_id, "parish_mode_user", org_id=None):
+        return True
+    return user_has_parish_role(user_id, "parish_admin", parish_id)
 
 
 def user_has_parish_role(user_id: int, role_key: str, parish_id: int | None = None) -> bool:
@@ -116,6 +140,54 @@ def get_users_with_parish_role(role_key: str, parish_id: int | None = None) -> l
     )
 
 
+def get_users_at_parish(parish_id: int) -> list[dict]:
+    """Every LIVE (user, role) grant at this ONE parish -- the "User Access"
+    screen's roster (parish_access.py, 2026-09-13): "add the ability to see
+    all users registered for this parish." One row per grant (a person
+    holding 2 roles there appears twice, same convention as every other
+    role listing in this codebase) -- ordered by role sort_order then name,
+    matching get_parish_roles_for_user's own ordering convention."""
+    return db.query(
+        """
+        SELECT pur.id AS parish_user_role_id, pur.user_id, u.email, u.display_name,
+               pur.role_key, pr.label AS role_label, pur.granted_at,
+               g.email AS granted_by_email, pur.note
+          FROM portal.parish_user_roles pur
+          JOIN checkreq.app_users u ON u.id = pur.user_id
+          JOIN portal.parish_roles pr ON pr.key = pur.role_key
+          LEFT JOIN checkreq.app_users g ON g.id = pur.granted_by_user_id
+         WHERE pur.parish_id = %s AND pur.revoked_at IS NULL
+         ORDER BY pr.sort_order, u.display_name, u.email
+        """,
+        (parish_id,),
+    )
+
+
+def get_or_create_user_for_grant(email: str, display_name: str | None = None) -> tuple[int, bool]:
+    """Resolve an email to a checkreq.app_users id for the "User Access"
+    screen's direct-grant form (2026-09-13, Jay: "create the account +
+    grant together... silently, so they can attempt a log in with their
+    email address"). Mirrors admin_users.py's users_add() exactly: an
+    existing row (any email, any active state) is returned completely
+    untouched -- no field updated, no reactivation attempted here -- only a
+    genuinely new email gets a fresh, roleless, no-password row (the normal
+    first-sign-in-via-emailed-code path picks it up from there, same as
+    every other silently-provisioned account in this app). Returns
+    (user_id, was_created)."""
+    email = email.strip().lower()
+    existing = db.query_one("SELECT id FROM checkreq.app_users WHERE LOWER(email) = %s", (email,))
+    if existing:
+        return existing["id"], False
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO checkreq.app_users (email, display_name, is_active) "
+                "VALUES (%s, %s, TRUE) RETURNING id",
+                (email, display_name or email.split("@")[0]),
+            )
+            return cur.fetchone()["id"], True
+
+
 def get_parish_ids_with_role(user_id: int, role_key: str) -> list[int]:
     """Every parish_id this user holds role_key for, live -- the scoping
     query behind a Parish Admin's own (not diocese-wide) access-request
@@ -164,11 +236,42 @@ def grant_parish_role(user_id: int, parish_id: int, role_key: str,
             )
 
 
+class LastParishAdminError(Exception):
+    """Raised by revoke_parish_role when a revoke would leave zero live
+       parish_admin holders for THAT SPECIFIC parish, or when someone tries
+       to revoke their own parish_admin grant there. Added 2026-09-13, per
+       Jay's direct call, once the new "User Access" screen (parish_access.py)
+       made revoking a click away for a much wider audience than before --
+       the module docstring's original "no last-admin guard" reasoning
+       ("diocesan staff can always intervene") is still true and is exactly
+       why this guard is scoped to ONE parish, not system-wide the way
+       rbac.LastAdminError's beacon_admin guard is: a beacon_admin can still
+       always grant a fresh parish_admin at any parish with zero live
+       holders, this just stops that gap from being created by an ordinary
+       revoke click with no warning."""
+
+
 def revoke_parish_role(user_id: int, parish_id: int, role_key: str,
                        revoked_by_user_id: int, note: str | None = None) -> None:
-    """UPDATE ... SET revoked_at = NOW() ... -- never DELETEs. No last-admin
-       guard here -- see module docstring for why that's a deliberate
-       difference from rbac.revoke_role."""
+    """UPDATE ... SET revoked_at = NOW() ... -- never DELETEs. Guards only
+       for parish_admin specifically (2026-09-13, see LastParishAdminError
+       above) -- every other parish role is unguarded, matching the module
+       docstring's original reasoning."""
+    if role_key == "parish_admin":
+        if user_id == revoked_by_user_id:
+            raise LastParishAdminError("You can't remove your own Parish Admin role at this parish.")
+        remaining = db.query_one(
+            "SELECT COUNT(*) AS n FROM portal.parish_user_roles "
+            "WHERE parish_id = %s AND role_key = 'parish_admin' AND revoked_at IS NULL AND user_id != %s",
+            (parish_id, user_id),
+        )
+        if not remaining or remaining["n"] == 0:
+            raise LastParishAdminError(
+                "This is the last Parish Admin grant for this parish -- revoking it "
+                "would leave nobody able to manage its users. Grant Parish Admin to "
+                "someone else at this parish first."
+            )
+
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(

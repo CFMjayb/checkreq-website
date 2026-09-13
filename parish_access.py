@@ -37,6 +37,8 @@ pending request for the same thing," mirrored from the entity-level flow.
 """
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
@@ -61,6 +63,21 @@ def register(app, *, current_user, render) -> None:
 
 def _is_beacon_admin(user: dict) -> bool:
     return rbac.user_has_role(user["id"], "beacon_admin", org_id=None)
+
+
+def _require_parish_manager(request: Request, parish_id: int):
+    """Request-scoped wrapper around parish_roles.is_parish_manager() for
+    the grant/revoke routes below -- always re-checks against the SPECIFIC
+    parish_id in the URL, never trusts a hidden form field alone. (The
+    predicate itself lives in parish_roles.py, not here, so parish_mode.py
+    -- which this module already imports -- can use it too without a
+    circular import.)"""
+    user = _current_user(request)
+    if not user:
+        return None, RedirectResponse("/login")
+    if not parish_roles.is_parish_manager(user["id"], parish_id):
+        return None, JSONResponse({"error": "You don't manage this parish."}, status_code=403)
+    return user, None
 
 
 def _require_parish_reviewer(request: Request):
@@ -121,18 +138,21 @@ def _request_form_context(request: Request, user: dict, error: str | None = None
 
 
 @router.get("/parish-access-request", response_class=HTMLResponse)
-def parish_access_request_page(request: Request, entity: str = ""):
+def parish_access_request_page(request: Request, entity: str = "", error: str = ""):
     """Consolidated per Jay's direct feedback, 2026-08-08: "Request Access
     replaces Request Parish Access and Parish Access Requests -- the
     sub-screen should do all of this, depending on your RBAC." One page:
-    the submit form (everyone), plus an inline review queue for anyone who
-    qualifies as a reviewer (beacon_admin, or parish_admin somewhere)."""
+    the submit form (everyone), an inline review queue for anyone who
+    qualifies as a reviewer (beacon_admin, or parish_admin somewhere), and
+    -- 2026-09-13, the "User Access" addition -- a full roster + direct
+    grant/revoke for the ONE specific parish currently being viewed
+    (native or Parish-Mode preview), when the viewer manages it."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
 
     pending = parish_roles.get_pending_parish_access_request(user["id"])
-    ctx = {"pending": pending, **_request_form_context(request, user)}
+    ctx = {"pending": pending, **_request_form_context(request, user, error=(error or None))}
 
     is_admin = _is_beacon_admin(user)
     parish_admin_ids = parish_roles.get_parish_ids_with_role(user["id"], "parish_admin")
@@ -152,6 +172,21 @@ def parish_access_request_page(request: Request, entity: str = ""):
         })
     else:
         ctx["is_reviewer"] = False
+
+    # "User Access" (2026-09-13, Jay): "In Parish Mode you can alter
+    # 'Request Access' to 'User Access' and add the ability to see all
+    # users registered for this parish and make adjustments." Only renders
+    # when the viewer is actively IN a specific parish's context (native
+    # login or a Parish-Mode preview) AND manages that particular parish --
+    # a plain parish_member, or a manager not currently viewing any one
+    # parish, still sees the original request-only screen unchanged.
+    manage_parish, _is_preview = parish_mode.effective_parish_mode(request, user)
+    if manage_parish and parish_roles.is_parish_manager(user["id"], manage_parish["id"]):
+        ctx.update({
+            "manage_parish": manage_parish,
+            "parish_roster": parish_roles.get_users_at_parish(manage_parish["id"]),
+            "manage_parish_roles": parish_roles.all_parish_roles(),
+        })
 
     return _render(request, "parish_access_request.html", user, ctx)
 
@@ -240,3 +275,50 @@ async def admin_parish_access_request_reject(request_id: int, request: Request):
     note = (form.get("note") or "").strip() or None
     parish_roles.reject_parish_access_request(request_id, user["id"], note)
     return RedirectResponse("/parish-access-request?rejected=1", status_code=303)
+
+
+# ── "User Access" direct grant/revoke (2026-09-13) ──────────────────────────
+# Distinct from the approve/reject routes above, which act on an existing
+# SELF-SERVICE request by request_id. These act directly on (parish_id,
+# user, role) -- a manager granting/revoking access with no request ever
+# having been submitted. Both re-check _require_parish_manager against the
+# URL's own parish_id, never a hidden form field alone.
+
+@router.post("/parish-access-request/{parish_id}/grant")
+async def parish_user_access_grant(parish_id: int, request: Request):
+    user, err = _require_parish_manager(request, parish_id)
+    if err:
+        return err
+    form = await request.form()
+    email = (form.get("email") or "").strip().lower()
+    role_key = (form.get("role_key") or "").strip()
+    role = db.query_one("SELECT key FROM portal.parish_roles WHERE key = %s AND is_active", (role_key,))
+    parish = db.query_one("SELECT id FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
+    if not email or "@" not in email or not role or not parish:
+        return RedirectResponse(
+            "/parish-access-request?error=" + quote("Enter a valid email and pick a role."), status_code=303
+        )
+    target_user_id, _was_created = parish_roles.get_or_create_user_for_grant(email)
+    parish_roles.grant_parish_role(target_user_id, parish_id, role_key, user["id"],
+                                    note="Granted via User Access")
+    return RedirectResponse("/parish-access-request?granted_user=1", status_code=303)
+
+
+@router.post("/parish-access-request/{parish_id}/revoke")
+async def parish_user_access_revoke(parish_id: int, request: Request):
+    user, err = _require_parish_manager(request, parish_id)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        target_user_id = int(form.get("user_id") or 0)
+    except (TypeError, ValueError):
+        target_user_id = 0
+    role_key = (form.get("role_key") or "").strip()
+    if not target_user_id or not role_key:
+        return RedirectResponse("/parish-access-request?error=" + quote("Bad request."), status_code=303)
+    try:
+        parish_roles.revoke_parish_role(target_user_id, parish_id, role_key, user["id"])
+    except parish_roles.LastParishAdminError as exc:
+        return RedirectResponse("/parish-access-request?error=" + quote(str(exc)), status_code=303)
+    return RedirectResponse("/parish-access-request?revoked_user=1", status_code=303)

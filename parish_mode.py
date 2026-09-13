@@ -374,6 +374,13 @@ def parish_view_page(request: Request):
         and len(_native_parish_ids(user["id"])) > 1
     return _render(request, "parish_view.html", user, {
         "parish": parish, "is_preview": is_preview, "can_review": can_review,
+        # "User Access" (2026-09-13, Jay): the "Request Access" tile below
+        # renames to "User Access" for anyone who can actually MANAGE this
+        # parish's roster (a superset of can_review above -- also includes
+        # parish_mode_user, per Jay's direct widen decision) -- see
+        # parish_roles.is_parish_manager()'s own docstring for why this
+        # lives there instead of here or in parish_access.py.
+        "is_parish_access_manager": parish_roles.is_parish_manager(user["id"], parish["id"]),
         "can_switch": is_preview or has_other_native_parishes,
         "switch_url": "/admin/parish-mode" if is_preview else "/parish-view/switch",
         # Timekeeping tile gate revised 2026-08-16: diocese-wide org_features
