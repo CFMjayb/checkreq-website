@@ -302,27 +302,44 @@ def how_it_works_page(request: Request):
     (2026-08-02) -- rebuilt from Beacon - Overview.docx's own content so
     staff get a page that actually renders in a browser, with the docx still
     linked at the bottom for anyone who wants a printable copy. Public, no
-    login required -- matches the footer link's own placement outside the
-    `{% if user %}` header block in base.html, and login.html itself follows
-    the identical no-`user`-in-context render pattern just below.
+    login required to VIEW this page -- matches the footer link's own
+    placement outside the `{% if user %}` header block in base.html.
 
-    Shows a "Parish Mode" link only for a signed-in user who actually holds
-    one of the gating roles -- a signed-out visitor, or one without access,
-    sees only the AP page link, never a link into a 403."""
+    2026-09-14 fix (Jay, live: "there's no way to return to the main
+    screen once you read the How To"): base.html's ENTIRE header --
+    including the "Beacon" wordmark's own link back to /portal, the entity
+    switcher, everything -- is gated on `user` being present in the
+    template context at all (base.html:68, `{% if user %}`). The original
+    fix attempt computed `user` locally but never actually put it in the
+    context dict passed to TemplateResponse, so a SIGNED-IN visitor landing
+    here lost the entire header and had no way back except the browser's
+    own Back button. Now calls the normal _render() helper (which requires
+    a real user dict, same as every other gated page) whenever someone is
+    actually signed in, so they get the full, working header; only a truly
+    signed-out visitor falls back to the bare, header-less render --
+    matching login.html's own precedent for the one audience that
+    genuinely has no portal to return to yet."""
     user = _current_user(request)
     show_parish_mode_link = bool(user) and rbac.user_has_any_role(
         user["id"], _PARISH_MODE_DOC_ROLES, org_id=None,
     )
-    return templates.TemplateResponse(request, "how_it_works.html", {
-        "show_parish_mode_link": show_parish_mode_link,
-    })
+    extra = {"show_parish_mode_link": show_parish_mode_link}
+    if user:
+        return _render(request, "how_it_works.html", user, extra)
+    return templates.TemplateResponse(request, "how_it_works.html", extra)
 
 
 @app.get("/how-it-works/ap", response_class=HTMLResponse)
 def how_it_works_ap_page(request: Request):
-    """The original /how-it-works content, moved here unchanged in
-    structure (still public, no login required) -- see how_it_works_page
-    above for why this split happened."""
+    """The original /how-it-works content, moved here (still viewable
+    without signing in -- see how_it_works_page above for why this split
+    happened). 2026-09-14 fix: same "lost header" bug and same fix as
+    how_it_works_page above -- a signed-in visitor now gets the real,
+    working header via _render(); only a genuinely signed-out visitor gets
+    the bare, header-less render."""
+    user = _current_user(request)
+    if user:
+        return _render(request, "how_it_works_ap.html", user, {})
     return templates.TemplateResponse(request, "how_it_works_ap.html", {})
 
 
