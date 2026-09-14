@@ -221,8 +221,11 @@ def get_parish_invoices(company: str, qbo_customer_id: str) -> tuple[dict | None
     list.
 
     Returns ({"qbo_customer_id", "invoices": [{"txn_id", "doc_number",
-    "txn_date", "total_amt", "balance"}]}, None) on success, or
-    (None, "error text") on failure."""
+    "txn_date", "total_amt", "balance", "item_names"}]}, None) on success,
+    or (None, "error text") on failure. item_names (2026-09-13) is each
+    invoice's line Item name(s) -- parish_finance.py's _sma_year() needs
+    this for DME, whose real annual assessment invoice is identified by a
+    line Item named "{YYYY} Assessment" rather than a DocNumber pattern."""
     return _get(
         "/api/checkreq/parish-invoices/{company}", company,
         {"qbo_customer_id": qbo_customer_id},

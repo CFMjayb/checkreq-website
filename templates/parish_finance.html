@@ -30,9 +30,9 @@ diocese for the Parish Finance role if you need access.</div>
       {% for y in sma_years %}
       <tr>
         <td>{{ y.year }}</td>
-        <td>${{ "%.2f"|format(y.original_amount) }}</td>
-        <td><a href="/parish-finance/sma-payments/{{ y.year }}">${{ "%.2f"|format(y.paid_to_date) }}</a></td>
-        <td>${{ "%.2f"|format(y.current_balance) }}</td>
+        <td>${{ "{:,.2f}".format(y.original_amount) }}</td>
+        <td><a href="/parish-finance/sma-payments/{{ y.year }}">${{ "{:,.2f}".format(y.paid_to_date) }}</a></td>
+        <td>${{ "{:,.2f}".format(y.current_balance) }}</td>
         <td><a href="/parish-finance/sma-statement.pdf?year={{ y.year }}" class="btn btn-sm">PDF</a></td>
       </tr>
       {% endfor %}
@@ -61,7 +61,7 @@ diocese for the Parish Finance role if you need access.</div>
   <p class="sub">Couldn't load this parish's loan balance right now: {{ loan_error }}</p>
   {% elif loan %}
   <p class="sub">{{ loan.acct_name }} ({{ loan.acct_num }})</p>
-  <p style="font-size:1.4em; margin:4px 0"><strong>${{ "%.2f"|format(loan.current_balance) }}</strong> current balance</p>
+  <p style="font-size:1.4em; margin:4px 0"><strong>${{ "{:,.2f}".format(loan.current_balance) }}</strong> current balance</p>
   {% else %}
   <p class="sub">No matching QBO account found for this parish's loan mapping — ask your diocese to check.</p>
   {% endif %}
@@ -83,7 +83,7 @@ diocese for the Parish Finance role if you need access.</div>
       {% for p in payments %}
       <tr>
         <td>{{ p.txn_date }}</td>
-        <td>${{ "%.2f"|format(p.total_amt) }}</td>
+        <td>${{ "{:,.2f}".format(p.total_amt) }}</td>
         <td>{{ p.ref_number or "—" }}</td>
       </tr>
       {% endfor %}

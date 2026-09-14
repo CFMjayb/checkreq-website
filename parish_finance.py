@@ -53,7 +53,67 @@ _current_user = None
 _render = None
 
 _SMA_DOCNUMBER_RE = re.compile(r"^(\d{4})A-")
-BUSINESS_OFFICE_EMAIL = "businessoffice@episcopalmaryland.org"
+# DME's real annual assessment invoice (2026-09-13, confirmed live against a
+# real dmecdf invoice + its own CustomerMemo, per Jay: "There should be a
+# product code that relates to the allocations at DME for 2026") carries no
+# year info in its DocNumber at all -- plain numeric, e.g. "100487" -- it's
+# identified by a line Item literally named "{YYYY} Assessment" instead
+# (Item Id 72, "170100 INCOME:01 - ASSESSMENTS:Assessments"). Confirmed this
+# is a real, reliable signal by checking a same-day invoice billed to an
+# INDIVIDUAL for "Insurance" that TxnDate=Jan-1 alone would have wrongly
+# swept in -- it carries no such Item, correctly excluded.
+_SMA_ITEM_RE = re.compile(r"^(\d{4})\s+Assessment$")
+
+# Per-diocese statement/contact branding (2026-09-13, Jay: "we will have to
+# remove the pictures on the allocation statement that reads 'Diocese of
+# Maryland' and replace the wording on the statement be Maine and not
+# Maryland. They should contact accounting@episcopalmaine.org"). EDOM's own
+# real letterhead images (static/img/edom_statement_header.png/_footer.png)
+# have "Diocese of Maryland" baked directly into the artwork -- showing them
+# on a DME parish's statement would be factually wrong, not just visually
+# inconsistent. No Maine-specific letterhead artwork exists yet, so DME
+# (and any future diocese not in this dict) gets NO header/footer image at
+# all (a clean, image-free layout) rather than silently inheriting EDOM's --
+# the same "never default a new diocese to Maryland's own branding" lesson
+# _company_code()'s DME override above already exists for.
+_STATEMENT_BRANDING = {
+    "EDOM": {
+        "business_office_email": "businessoffice@episcopalmaryland.org",
+        "header_image": "edom_statement_header.png",
+        "footer_image": "edom_statement_footer.png",
+    },
+    "DME": {
+        "business_office_email": "accounting@episcopalmaine.org",
+        "header_image": "dme_statement_header.png",
+        "footer_image": None,
+    },
+}
+_DEFAULT_STATEMENT_BRANDING = {"business_office_email": None, "header_image": None, "footer_image": None}
+
+
+def _statement_branding(org: dict) -> dict:
+    return _STATEMENT_BRANDING.get((org or {}).get("code") or "", _DEFAULT_STATEMENT_BRANDING)
+
+
+def _sma_year(inv: dict) -> str | None:
+    """Which year (if any) this invoice counts as the annual Shared Ministry
+    Allocation / assessment for. Two independent identification rules are
+    tried in order, since different dioceses' own QBO setups encode this
+    differently -- a parish's AR Customer record isn't assessment-only for
+    either diocese, so this must positively identify the real invoice, never
+    just assume every invoice (or every invoice dated Jan 1) counts. Checked
+    live, 2026-09-13: a plain "any invoice dated Jan 1" rule would have
+    wrongly counted 60 invoices for a real 2025 date instead of the correct
+    57 -- a few Jan-1-dated invoices are unrelated small charges to
+    individuals, not parish assessments."""
+    m = _SMA_DOCNUMBER_RE.match(inv.get("doc_number") or "")
+    if m:
+        return m.group(1)
+    for name in inv.get("item_names") or []:
+        m = _SMA_ITEM_RE.match((name or "").strip())
+        if m:
+            return m.group(1)
+    return None
 
 
 def register(app, *, current_user, render) -> None:
@@ -113,28 +173,27 @@ def _company_code(org: dict) -> str:
 
 def get_sma_years(company: str, qbo_customer_id: str) -> tuple[list[dict], str | None]:
     """Every SMA (Allocation) invoice for this parish's AR Customer, grouped
-    by the 4-digit year encoded in its own DocNumber (^\\d{4}A-, e.g.
-    "2026A-ASTFRE") — not every invoice under the customer, since that
-    record isn't SMA-only.
+    by the 4-digit year it's identified as (see _sma_year() above — EDOM's
+    own DocNumber prefix, or DME's line-Item name) — not every invoice under
+    the customer, since that record isn't assessment-only for either diocese.
     Returns ([{year, original_amount, paid_to_date, current_balance,
     invoice_txn_ids}], error) sorted by year descending — error is None on
     success (an empty list is a valid, non-error result: this parish simply
-    has no SMA invoices yet, or none matching the pattern). invoice_txn_ids
-    (2026-08-27) is the list of real QBO Invoice internal ids behind this
-    year's total — normally just one, kept as a list since nothing here
-    guarantees exactly one SMA invoice per year — needed by
-    get_sma_year_payments()/the statement PDF to pull real payment history
-    for this specific year, since Payment has no direct link to "a year,"
-    only to the specific Invoice(s) it was applied against."""
+    has no assessment invoices yet, or none matching either identification
+    rule). invoice_txn_ids (2026-08-27) is the list of real QBO Invoice
+    internal ids behind this year's total — normally just one, kept as a
+    list since nothing here guarantees exactly one assessment invoice per
+    year — needed by get_sma_year_payments()/the statement PDF to pull real
+    payment history for this specific year, since Payment has no direct link
+    to "a year," only to the specific Invoice(s) it was applied against."""
     data, error = qbo_mcp_client.get_parish_invoices(company, qbo_customer_id)
     if error:
         return [], error
     years: dict[str, dict] = {}
     for inv in (data or {}).get("invoices", []):
-        m = _SMA_DOCNUMBER_RE.match(inv.get("doc_number") or "")
-        if not m:
+        year = _sma_year(inv)
+        if not year:
             continue
-        year = m.group(1)
         row = years.setdefault(year, {"year": year, "original_amount": 0.0,
                                        "paid_to_date": 0.0, "current_balance": 0.0,
                                        "invoice_txn_ids": []})
@@ -366,6 +425,7 @@ def render_sma_statement_pdf(
     customer_email = ((customer or {}).get("PrimaryEmailAddr") or {}).get("Address") or ""
 
     monthly_amount = (year_row["original_amount"] / 12) if year_row["original_amount"] else 0.0
+    branding = _statement_branding(diocese_org)
 
     # payment_rows already carries display_date + remaining, stamped by
     # _payments_with_running_balance() at the call site.
@@ -374,11 +434,11 @@ def render_sma_statement_pdf(
         payments=payment_rows, monthly_amount=monthly_amount,
         total_paid=year_row["paid_to_date"], total_due=year_row["current_balance"],
         statement_date=datetime.date.today().strftime("%m/%d/%Y"),
-        business_office_email=BUSINESS_OFFICE_EMAIL,
+        business_office_email=branding["business_office_email"] or "",
         customer_address_line1=address_line1, customer_city_state_zip=city_state_zip,
         customer_email=customer_email,
-        header_data_uri=_image_data_uri("edom_statement_header.png"),
-        footer_data_uri=_image_data_uri("edom_statement_footer.png"),
+        header_data_uri=_image_data_uri(branding["header_image"]) if branding["header_image"] else "",
+        footer_data_uri=_image_data_uri(branding["footer_image"]) if branding["footer_image"] else "",
     )
     static_css_dir = os.path.join(os.path.dirname(__file__), "static", "css")
     with open(os.path.join(static_css_dir, "tokens.css"), encoding="utf-8") as f:
@@ -398,7 +458,7 @@ body {{ font-family: 'Inter', sans-serif; margin: 0; padding: 0; background: #ff
 
 # ── Routes: Ask the Business Office / SMA direct-debit enrollment ──────────
 
-def _submit_and_notify(parish: dict, user: dict, subject: str, message: str) -> None:
+def _submit_and_notify(parish: dict, diocese_org: dict, user: dict, subject: str, message: str) -> None:
     """Both new request kinds get the same treatment (resolved with Jay
     2026-08-16): logged to the existing portal.parish_requests review queue
     AND emailed to the Business Office — calling parish_requests.create_request()
@@ -413,21 +473,31 @@ def _submit_and_notify(parish: dict, user: dict, subject: str, message: str) -> 
     Both an Ask-the-Business-Office question and an SMA direct-debit
     enrollment request are genuinely general requests to the diocese; the
     distinct `subject` line (below) is what tells them apart in the
-    existing /admin/parish-requests review queue."""
+    existing /admin/parish-requests review queue.
+
+    diocese_org (2026-09-13): the "Business Office" contact is per-diocese
+    now, same _statement_branding() lookup the printed statement uses —
+    DME's is accounting@episcopalmaine.org, not EDOM's. A diocese with no
+    branding entry configured silently skips the email (still logs the
+    request) rather than guessing at a recipient — see the caller-facing
+    behavior documented in _statement_branding()'s own docstring."""
     parish_requests.create_request(parish["id"], user["id"], "general_request", subject, message)
+    email = _statement_branding(diocese_org)["business_office_email"]
+    if not email:
+        return
     body_text = (
         f"Parish: {parish['name']}\n"
         f"Submitted by: {user.get('display_name') or user.get('email')}\n\n"
         f"{message}"
     )
     email_client.send_email(
-        to=BUSINESS_OFFICE_EMAIL,
+        to=email,
         subject=subject,
         body_text=body_text,
         body_html=f"<p><strong>Parish:</strong> {parish['name']}</p>"
                    f"<p><strong>Submitted by:</strong> {user.get('display_name') or user.get('email')}</p>"
                    f"<p>{message}</p>",
-        sender=BUSINESS_OFFICE_EMAIL,
+        sender=email,
     )
 
 
@@ -443,7 +513,7 @@ async def ask_business_office(request: Request):
     if not message:
         return RedirectResponse("/parish-finance?error=empty_question", status_code=303)
     _submit_and_notify(
-        parish, user,
+        parish, diocese_org, user,
         f"Business Office question — {parish['name']}", message,
     )
     return RedirectResponse("/parish-finance?asked=1", status_code=303)
@@ -460,7 +530,7 @@ async def request_direct_debit(request: Request):
         return RedirectResponse("/parish-finance?error=already_requested", status_code=303)
     registry.update_parish(parish["id"], parish["org_id"], sma_direct_debit_status="requested")
     _submit_and_notify(
-        parish, user,
+        parish, diocese_org, user,
         f"SMA direct debit enrollment request — {parish['name']}",
         f"{parish['name']} has requested to enroll in direct debit for their Shared Ministry "
         f"Allocation payments. Please follow up to complete enrollment through our normal process "

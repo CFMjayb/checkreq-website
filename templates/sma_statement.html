@@ -20,9 +20,7 @@ image path would never resolve inside headless Chromium.
 .stmt-date-row span:first-child { font-weight: 700; margin-right: 8px; }
 .stmt-from-email { font-size: 8.5pt; color: #555; margin-top: 4px; }
 .stmt-customer { margin-top: 18px; }
-.stmt-customer-label { font-weight: 700; font-size: 9.5pt; letter-spacing: 0.05em; margin-bottom: 4px; }
 .stmt-customer-table td { padding: 1px 0; }
-.stmt-customer-table td.lbl { color: #555; padding-right: 10px; width: 100px; }
 table.stmt-main { width: 100%; border-collapse: collapse; margin-top: 18px; }
 table.stmt-main th, table.stmt-main td { padding: 4px 8px; text-align: left; }
 table.stmt-main th { font-weight: 700; border-bottom: 2px solid #1a1a1a; }
@@ -31,12 +29,11 @@ table.stmt-main .qty, table.stmt-main th.qty { text-align: center; width: 32px; 
 table.stmt-main .check, table.stmt-main th.check { width: 155px; font-size: 9pt; }
 tr.stmt-payments-header td { font-weight: 700; border-bottom: 1px solid #1a1a1a; padding-top: 10px; }
 tr.stmt-total-paid td { font-weight: 700; border-top: 2px solid #1a1a1a; padding-top: 6px; }
-.stmt-due-row { display: flex; justify-content: space-between; align-items: flex-start; margin-top: 14px; }
-.stmt-thanks { font-weight: 700; font-style: italic; }
+.stmt-due-row { display: flex; justify-content: flex-end; align-items: flex-start; margin-top: 14px; }
 .stmt-total-due { font-weight: 700; font-size: 12pt; }
 .stmt-total-due span:first-child { margin-right: 14px; }
-.stmt-remit, .stmt-contact-note { margin-top: 18px; font-size: 9.5pt; }
-.stmt-remit p, .stmt-contact-note p { margin: 1px 0; }
+.stmt-contact-note { margin-top: 18px; font-size: 9.5pt; }
+.stmt-contact-note p { margin: 1px 0; }
 .stmt-footer { margin-top: 26px; text-align: center; }
 .stmt-footer img { width: 100%; max-width: 480px; }
 .stmt-no-invoices { margin-top: 24px; font-style: italic; }
@@ -44,7 +41,7 @@ tr.stmt-total-paid td { font-weight: 700; border-top: 2px solid #1a1a1a; padding
 
 <div class="stmt">
   <div class="stmt-header">
-    <img src="{{ header_data_uri }}" alt="{{ diocese_org.name }}">
+    {% if header_data_uri %}<img src="{{ header_data_uri }}" alt="{{ diocese_org.name }}">{% endif %}
     <div>
       <div class="stmt-title">STATEMENT</div>
       <div class="stmt-date-row"><span>Date</span><span>{{ statement_date }}</span></div>
@@ -53,12 +50,11 @@ tr.stmt-total-paid td { font-weight: 700; border-top: 2px solid #1a1a1a; padding
   <div class="stmt-from-email">{{ business_office_email }}</div>
 
   <div class="stmt-customer">
-    <div class="stmt-customer-label">CUSTOMER</div>
     <table class="stmt-customer-table">
-      <tr><td class="lbl">Name</td><td>{{ parish.name }}</td></tr>
-      {% if customer_address_line1 %}<tr><td class="lbl">Address</td><td>{{ customer_address_line1 }}</td></tr>{% endif %}
-      {% if customer_city_state_zip %}<tr><td class="lbl">City, State, Zip</td><td>{{ customer_city_state_zip }}</td></tr>{% endif %}
-      {% if customer_email %}<tr><td></td><td>{{ customer_email }}</td></tr>{% endif %}
+      <tr><td>{{ parish.name }}</td></tr>
+      {% if customer_address_line1 %}<tr><td>{{ customer_address_line1 }}</td></tr>{% endif %}
+      {% if customer_city_state_zip %}<tr><td>{{ customer_city_state_zip }}</td></tr>{% endif %}
+      {% if customer_email %}<tr><td>{{ customer_email }}</td></tr>{% endif %}
     </table>
   </div>
 
@@ -74,8 +70,8 @@ tr.stmt-total-paid td { font-weight: 700; border-top: 2px solid #1a1a1a; padding
       <td class="qty">1</td>
       <td>Congregational Allocation - {{ year }}</td>
       <td class="check"></td>
-      <td class="amt">${{ "%.2f"|format(monthly_amount) }}</td>
-      <td class="amt">${{ "%.2f"|format(year_row.original_amount) }}</td>
+      <td class="amt">${{ "{:,.2f}".format(monthly_amount) }}</td>
+      <td class="amt">${{ "{:,.2f}".format(year_row.original_amount) }}</td>
     </tr>
     <tr class="stmt-payments-header">
       <td colspan="3"></td><td class="amt">Payments</td><td class="amt">Total Remaining</td>
@@ -85,8 +81,8 @@ tr.stmt-total-paid td { font-weight: 700; border-top: 2px solid #1a1a1a; padding
       <td class="qty"></td>
       <td>{{ p.display_date or p.txn_date }}</td>
       <td class="check">{{ p.ref_number or "" }}</td>
-      <td class="amt">${{ "%.2f"|format(p.amount_applied) }}</td>
-      <td class="amt">${{ "%.2f"|format(p.remaining) }}</td>
+      <td class="amt">${{ "{:,.2f}".format(p.amount_applied) }}</td>
+      <td class="amt">${{ "{:,.2f}".format(p.remaining) }}</td>
     </tr>
     {% endfor %}
     {% if not payments %}
@@ -94,26 +90,20 @@ tr.stmt-total-paid td { font-weight: 700; border-top: 2px solid #1a1a1a; padding
     {% endif %}
     <tr class="stmt-total-paid">
       <td colspan="3" class="check">TOTAL PAID</td>
-      <td class="amt">${{ "%.2f"|format(total_paid) }}</td>
-      <td class="amt">${{ "%.2f"|format(total_due) }}</td>
+      <td class="amt">${{ "{:,.2f}".format(total_paid) }}</td>
+      <td class="amt">${{ "{:,.2f}".format(total_due) }}</td>
     </tr>
   </table>
 
   <div class="stmt-due-row">
-    <div class="stmt-thanks">Balance Due Upon Receipt.  Thank you!</div>
-    <div class="stmt-total-due"><span>TOTAL DUE</span><span>${{ "%.2f"|format(total_due) }}</span></div>
+    <div class="stmt-total-due"><span>TOTAL DUE</span><span>${{ "{:,.2f}".format(total_due) }}</span></div>
   </div>
 
-  <div class="stmt-remit">
-    <p>Please make your check payable to:</p>
-    <p><strong>{{ diocese_org.name }}</strong></p>
-    <p>and mail to the address below.</p>
-  </div>
   <div class="stmt-contact-note">
     <p>For questions, corrections, or to change your email address, please send a message to:</p>
     <p>{{ business_office_email }}</p>
   </div>
   {% endif %}
 
-  <div class="stmt-footer"><img src="{{ footer_data_uri }}" alt=""></div>
+  {% if footer_data_uri %}<div class="stmt-footer"><img src="{{ footer_data_uri }}" alt=""></div>{% endif %}
 </div>
