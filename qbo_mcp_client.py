@@ -183,6 +183,26 @@ def get_gl_accounts(company: str) -> tuple[dict | None, str | None]:
     return _get("/api/checkreq/gl-accounts/{company}", company, {})
 
 
+def get_vendor_ytd_bills_total(
+    company: str, qbo_vendor_id: str, year: int | None = None,
+) -> tuple[dict | None, str | None]:
+    """GET /api/checkreq/vendor-ytd-bills/{company}?qbo_vendor_id=...&year=...
+
+    W-9 threshold, existing-vendor year-to-date check (2026-09-14, Jay:
+    "can't we do a poll of QBO to see what the YTD spend is for the vendor
+    on the fly?"). A live poll of QBO's own real Bill history, summed
+    server-side -- deliberately NOT a second, locally-maintained running
+    total. First caller: main.py's _check_existing_vendor_w9().
+
+    Returns ({"qbo_vendor_id", "year", "ytd_total", "bill_count"}, None) on
+    success, or (None, "error text") on failure. ytd_total is 0.0 (not an
+    error) for a vendor with no Bills yet this year."""
+    params: dict = {"qbo_vendor_id": qbo_vendor_id}
+    if year:
+        params["year"] = year
+    return _get("/api/checkreq/vendor-ytd-bills/{company}", company, params)
+
+
 def get_vendors(company: str) -> tuple[dict | None, str | None]:
     """GET /api/checkreq/vendors/{company}. JSON. Cornerstone Served
     Parishes Plan.md, Phase J (item 16): the Vendors view screen's first

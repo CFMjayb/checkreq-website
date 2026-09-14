@@ -10,6 +10,7 @@ that writes to QuickBooks.</p>
 
 {% if posted %}<div class="banner banner-success">Posted to QBO: {{ posted }}</div>{% endif %}
 {% if returned %}<div class="banner banner-info">Returned to submitter: {{ returned }}</div>{% endif %}
+{% if request.query_params.get('w9_requested') %}<div class="banner banner-success">W-9 request email sent.</div>{% endif %}
 {% if post_error %}
 <div class="banner banner-error">
   {% if post_error.startswith('Batch post') %}
@@ -128,10 +129,16 @@ that writes to QuickBooks.</p>
         {% if r.overspend_flagged %}
         <br><span class="sub overspend-detail">{{ (r.overspend_detail or "") | e | replace("\n", "<br>") | safe }}</span>
         {% endif %}
+        {% if r.existing_vendor_w9_flagged and not r.w9_on_file %}
+        <br><span class="sub overspend-detail">{{ r.existing_vendor_w9_detail or "" }}</span>
+        {% endif %}
       </td>
       <td class="col-status">
         {% if r.vendor_gate_wait %}
         <span class="badge badge-pending">Waiting: {{ r.vendor_gate_wait }}</span>
+        {% if r.existing_vendor_w9_flagged and r.w9_requested_at %}
+        <br><span class="sub">W-9 requested {{ r.w9_requested_at }}</span>
+        {% endif %}
         {% else %}
         <span class="badge badge-approved">Ready to post</span>
         {% endif %}
@@ -141,6 +148,19 @@ that writes to QuickBooks.</p>
       </td>
       <td class="col-actions">
         <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
+        {# 2026-09-14: existing-vendor YTD W-9 hold's own collection
+           action -- distinct from the new-vendor gate above (that one is
+           collected via Vendor Approvals, not here). Only shown for the
+           existing-vendor case (existing_vendor_w9_flagged, not
+           vendor_request_id) so it never appears alongside the unrelated
+           new-vendor gate. #}
+        {% if r.existing_vendor_w9_flagged and not r.w9_on_file %}
+        · <form method="post" action="/admin/ap-review/{{ r.request_number }}/request-existing-vendor-w9" style="display:inline">
+            <button type="submit" class="btn btn-secondary btn-sm">
+              {{ "Resend W-9 Request" if r.w9_requested_at else "Send W-9 Request" }}
+            </button>
+          </form>
+        {% endif %}
         {# Dev/Prod Split Plan.md (2026-07-31), Decision 4: dev is allowed to
            post real Bills to the real, live production QuickBooks -- there
            is no QBO sandbox -- but only behind an explicit, hard-to-miss

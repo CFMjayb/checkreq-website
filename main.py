@@ -1903,6 +1903,52 @@ def _is_self_payment(vendor_id: int | None, submitter_user_id: int) -> bool:
     return bool(row and row["linked_user_id"] == submitter_user_id)
 
 
+def _check_existing_vendor_w9(vendor_id: int | None, org_code: str, total_amount: float) -> tuple[bool, str | None]:
+    """W-9 threshold, EXISTING (already-onboarded) vendor case (2026-09-14,
+    Jay: "can't we do a poll of QBO to see what the YTD spend is for the
+    vendor on the fly?"). A brand-new vendor's own requires_w9 check
+    (VENDOR_W9_AMOUNT_THRESHOLD / _w9_threshold_amount(), computed on the
+    using_new_vendor branches) is a completely separate, unrelated
+    mechanism -- this function is never called for that case, since a
+    just-created vendor has no QBO history to poll yet by definition.
+
+    Returns (flagged, detail). flagged is True only when ALL of: (a) an
+    existing vendor_id was actually selected, (b) that vendor has no
+    w9_on_file yet, (c) it has a real qbo_vendor_id to poll, and (d) QBO's
+    own live YTD Bill total for this vendor, PLUS this submission's own
+    amount, crosses _w9_threshold_amount(). Fails open (flagged=False) on
+    any QBO/network error or missing data -- a live poll hiccup must never
+    block a legitimate submission; AP Review's own hold (see
+    ap_review_list) is a human backstop regardless, not this check alone.
+
+    detail, when flagged, is a human-readable reason stored verbatim on
+    checkreq.payment_requests.existing_vendor_w9_detail for AP Review to
+    show -- computed once at submission/edit time, same convention as
+    overspend_detail, never re-evaluated later."""
+    if not vendor_id:
+        return False, None
+    vendor = db.query_one(
+        "SELECT qbo_vendor_id, w9_on_file, display_name FROM checkreq.vendors WHERE id = %s",
+        (vendor_id,),
+    )
+    if not vendor or vendor["w9_on_file"] or not vendor["qbo_vendor_id"]:
+        return False, None
+
+    result, err = qbo_mcp_client.get_vendor_ytd_bills_total(org_code, vendor["qbo_vendor_id"])
+    if err or not result:
+        return False, None
+
+    threshold = _w9_threshold_amount()
+    projected = float(result.get("ytd_total") or 0) + total_amount
+    if projected <= threshold:
+        return False, None
+    return True, (
+        f"{vendor['display_name']}'s year-to-date QBO total (including this request) is "
+        f"${projected:,.2f}, over the ${threshold:,.2f} W-9 threshold, and no W-9 is on file "
+        f"for this vendor yet."
+    )
+
+
 def _cfo_approver_rows(exclude_user_id: int, org_id: int) -> list[dict]:
     """Every CFO of THIS entity except the given one -- shared by the
     self-payment chain and the tier-3 budget-overage CFO step. Excluding the
@@ -2924,6 +2970,59 @@ def _send_w9_request_email(vr: dict, org_name: str, request: Request) -> dict:
     )
 
 
+def _send_existing_vendor_w9_request_email(vendor: dict, org_name: str, request: Request) -> dict:
+    """Existing-vendor sibling of _send_w9_request_email above (2026-09-14,
+    the YTD-threshold feature -- see _check_existing_vendor_w9). Same
+    secure-upload-link mechanism, same attached blank W-9 PDF; addressed to
+    checkreq.vendors.email directly -- that table has no separate "contact
+    name" concept the way vendor_requests does, so the greeting stays
+    generic. Returns whatever email_client.send_email() returns, never
+    raises -- caller stamps w9_requested_at only on a real {"status":
+    "sent"}, same discipline as the new-vendor flow."""
+    vendor_name = vendor["display_name"]
+    base_url = str(request.base_url).rstrip("/")
+    upload_url = f"{base_url}/vendor-w9-upload/{vendor['w9_upload_token']}"
+    subject = f"W-9 Request — {vendor_name}"
+    body_html = (
+        f"<p>Hello,</p>"
+        f"<p>{org_name} needs a completed IRS Form W-9 on file for <strong>{vendor_name}</strong>, "
+        f"based on total payments so far this year.</p>"
+        f"<p>A blank W-9 is attached for reference. Please complete it and upload it "
+        f"using the secure link below:</p>"
+        f'<p><a href="{upload_url}">{upload_url}</a></p>'
+        f"<p>Thank you,<br>{org_name} Business Office</p>"
+    )
+    body_text = (
+        f"Hello,\n\n"
+        f"{org_name} needs a completed IRS Form W-9 on file for {vendor_name}, based on total "
+        f"payments so far this year.\n\n"
+        f"A blank W-9 is attached for reference. Please complete it and upload it using "
+        f"this secure link:\n{upload_url}\n\n"
+        f"Thank you,\n{org_name} Business Office"
+    )
+
+    attachments = None
+    try:
+        with open(_W9_PDF_PATH, "rb") as f:
+            pdf_bytes = f.read()
+        attachments = [{
+            "name": "Form W-9 (blank).pdf",
+            "content_type": "application/pdf",
+            "content_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+        }]
+    except OSError:
+        pass
+
+    return email_client.send_email(
+        to=vendor["email"],
+        subject=subject,
+        body_html=body_html,
+        body_text=body_text,
+        sender=W9_SENDER_EMAIL,
+        attachments=attachments,
+    )
+
+
 def _vendor_request_by_upload_token(token: str) -> dict | None:
     """404-safe lookup for the unauthenticated /vendor-w9-upload/{token}
     route (Section 4a). Returns None (never a distinguishing error) for a
@@ -2940,6 +3039,27 @@ def _vendor_request_by_upload_token(token: str) -> dict | None:
         FROM checkreq.vendor_requests vr
         JOIN checkreq.organizations o ON o.id = vr.org_id
         WHERE vr.upload_token = %s AND vr.status = 'approved'
+        """,
+        (token,),
+    )
+
+
+def _existing_vendor_by_w9_upload_token(token: str) -> dict | None:
+    """404-safe lookup for /vendor-w9-upload/{token} -- the EXISTING-vendor
+    sibling of _vendor_request_by_upload_token above (2026-09-14). No
+    status gate to check (unlike vendor_requests' own 'approved'
+    requirement) -- an existing checkreq.vendors row is, by definition,
+    already a real, active vendor; the token itself being unguessable is
+    the only real access control this route needs."""
+    if not token:
+        return None
+    return db.query_one(
+        """
+        SELECT v.*, o.name AS org_name, o.code AS org_code, o.sp_hostname,
+               o.sp_site_path, o.sp_library_folder
+        FROM checkreq.vendors v
+        JOIN checkreq.organizations o ON o.id = v.org_id
+        WHERE v.w9_upload_token = %s
         """,
         (token,),
     )
@@ -3317,6 +3437,16 @@ async def new_request_submit(request: Request):
         e["detail"] for e in budget_result["buffer_notice"] + budget_result["cfo_required"]
     ) or None
 
+    # 2026-09-14: existing-vendor W-9 year-to-date check (see
+    # _check_existing_vendor_w9's own docstring) -- computed once here,
+    # same point/convention as overspend_flagged above, and stamped onto
+    # the row below. using_new_vendor's own requires_w9 check (further
+    # down, inside the new-vendor branches) is a separate, unrelated
+    # mechanism -- this only ever applies to an EXISTING vendor_id.
+    existing_vendor_w9_flagged, existing_vendor_w9_detail = _check_existing_vendor_w9(
+        vendor_id, org["code"], total_amount,
+    )
+
     # Optional user attachments (not required -- see form). Read all bytes
     # now, while we still have the async UploadFile objects; everything
     # downstream (archival) works with plain bytes.
@@ -3538,13 +3668,15 @@ async def new_request_submit(request: Request):
                             special_instructions = %s, status = %s, current_approver_id = %s,
                             serial_group_current = %s, approval_chain_summary = %s,
                             overspend_flagged = %s, overspend_detail = %s, budget_checked_at = NOW(),
+                            existing_vendor_w9_flagged = %s, existing_vendor_w9_detail = %s,
                             pre_approved = %s, updated_at = NOW()
                         WHERE id = %s
                         """,
                         (program_area_id, vendor_id, new_vendor_request_id, total_amount,
                          requested_pay_date, description, special_instructions,
                          initial_status, first_display_approver, first_serial_group,
-                         chain_summary, overspend_flagged, overspend_detail, pre_approved,
+                         chain_summary, overspend_flagged, overspend_detail,
+                         existing_vendor_w9_flagged, existing_vendor_w9_detail, pre_approved,
                          payment_request_id),
                     )
 
@@ -3736,6 +3868,7 @@ async def new_request_submit(request: Request):
                             serial_group_current = %s, approval_chain_summary = %s,
                             cfo_override = FALSE, cfo_override_date = NULL,
                             overspend_flagged = %s, overspend_detail = %s, budget_checked_at = NOW(),
+                            existing_vendor_w9_flagged = %s, existing_vendor_w9_detail = %s,
                             pre_approved = %s, updated_at = NOW()
                         WHERE id = %s
                         """,
@@ -3743,7 +3876,9 @@ async def new_request_submit(request: Request):
                          requested_pay_date, description, special_instructions,
                          initial_status,
                          first_display_approver, first_serial_group,
-                         chain_summary, overspend_flagged, overspend_detail, pre_approved, payment_request_id),
+                         chain_summary, overspend_flagged, overspend_detail,
+                         existing_vendor_w9_flagged, existing_vendor_w9_detail,
+                         pre_approved, payment_request_id),
                     )
                     # AP Review Workflow Plan.md, Section 1a: mark any still-
                     # pending rows from the OLD chain skipped, then
@@ -3861,15 +3996,18 @@ async def new_request_submit(request: Request):
                     (request_number, request_type, org_id, program_area_id, submitter_user_id,
                      vendor_id, amount, requested_pay_date, description, special_instructions,
                      status, current_approver_id, serial_group_current, approval_chain_summary,
-                     overspend_flagged, overspend_detail, pre_approved, budget_checked_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                     overspend_flagged, overspend_detail,
+                     existing_vendor_w9_flagged, existing_vendor_w9_detail,
+                     pre_approved, budget_checked_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 RETURNING id
                 """,
                 (request_number, request_type, org_id, program_area_id, user["id"],
                  vendor_id, total_amount, requested_pay_date, description, special_instructions,
                  initial_status,
                  first_display_approver, first_serial_group,
-                 chain_summary, overspend_flagged, overspend_detail, pre_approved),
+                 chain_summary, overspend_flagged, overspend_detail,
+                 existing_vendor_w9_flagged, existing_vendor_w9_detail, pre_approved),
             )
             payment_request_id = cur.fetchone()["id"]
 
@@ -5595,10 +5733,12 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
         SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount,
                pr.approval_chain_summary, pr.created_at, pr.vendor_request_id,
                pr.overspend_flagged, pr.overspend_detail,
+               pr.existing_vendor_w9_flagged, pr.existing_vendor_w9_detail,
                o.code AS org_code, o.name AS org_name,
                COALESCE(pa.title, 'All Program Areas') AS program_area_title, u.display_name AS submitter_name,
                u.email AS submitter_email,
-               v.display_name AS vendor_display_name,
+               v.id AS existing_vendor_id, v.display_name AS vendor_display_name,
+               v.w9_on_file, v.w9_requested_at,
                vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
                vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
                vr.dba_name AS vr_dba_name, vr.status AS vr_status,
@@ -5641,6 +5781,13 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
                 r["vendor_gate_wait"] = "W-9 not yet received"
             else:
                 r["vendor_gate_wait"] = None
+        elif r["existing_vendor_w9_flagged"] and not r["w9_on_file"]:
+            # 2026-09-14: existing-vendor YTD W-9 hold (see
+            # _check_existing_vendor_w9's docstring and post_to_qbo's own
+            # gate re-check below) -- same "hold here, visibly, until it
+            # clears" shape as the new-vendor gate above, just keyed off
+            # checkreq.vendors.w9_on_file instead of vendor_requests.status.
+            r["vendor_gate_wait"] = "W-9 not yet received (year-to-date threshold)"
         else:
             r["vendor_gate_wait"] = None
 
@@ -5880,9 +6027,17 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
                         (qbo_vendor_id, vr["id"]),
                     )
     else:
-        v = db.query_one("SELECT qbo_vendor_id FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],))
+        v = db.query_one(
+            "SELECT qbo_vendor_id, w9_on_file FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],),
+        )
         if not v or not v.get("qbo_vendor_id"):
             return False, "this vendor has no qbo_vendor_id on file -- cannot post"
+        # 2026-09-14: existing-vendor YTD W-9 hold -- re-checked here
+        # server-side (never trust the UI's own disabled-button state
+        # alone), matching the identical re-check pattern the new-vendor
+        # requires_w9/w9_received gate just above already uses.
+        if pr["existing_vendor_w9_flagged"] and not v["w9_on_file"]:
+            return False, "W-9 not yet received (year-to-date threshold)"
         qbo_vendor_id = v["qbo_vendor_id"]
 
     # Step 5/6: resolve GL lines and post the Bill.
@@ -6084,6 +6239,72 @@ async def post_batch_to_qbo(request: Request):
     return RedirectResponse(f"/admin/ap-review?{'&'.join(parts)}", status_code=303)
 
 
+@app.post("/admin/ap-review/{request_number}/request-existing-vendor-w9")
+def ap_review_request_existing_vendor_w9(request_number: str, request: Request):
+    """2026-09-14: AP Reviewer-triggered W-9 collection email for an
+    EXISTING (already-onboarded) vendor that crossed the year-to-date
+    threshold -- see _check_existing_vendor_w9. The sibling action to a
+    brand-new vendor's automatic email-on-approval (Vendor Approvals
+    screen), triggered manually here instead since there's no "vendor
+    request to approve" for a vendor that's already real and in use.
+
+    Generates a real w9_upload_token on first use, idempotent afterward --
+    re-clicking re-sends the SAME link rather than rotating it, so an
+    already-shared link never silently stops working. Stamps
+    w9_requested_at only on a real send success, same discipline as
+    vendor_request_approve's own requires_w9 branch."""
+    from urllib.parse import quote
+
+    user, err = _require_ap_reviewer(request)
+    if err:
+        return err
+
+    pr = db.query_one(
+        "SELECT pr.vendor_id, o.name AS org_name FROM checkreq.payment_requests pr "
+        "JOIN checkreq.organizations o ON o.id = pr.org_id "
+        "WHERE pr.request_number = %s",
+        (request_number,),
+    )
+    if not pr or not pr["vendor_id"]:
+        return RedirectResponse(
+            "/admin/ap-review?post_error=" + quote("No existing vendor found on this request."),
+            status_code=303,
+        )
+
+    vendor = db.query_one("SELECT * FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],))
+    if not vendor or not vendor.get("email"):
+        return RedirectResponse(
+            "/admin/ap-review?post_error="
+            + quote(f"{vendor['display_name'] if vendor else 'This vendor'} has no email on file -- "
+                    f"cannot send a W-9 request."),
+            status_code=303,
+        )
+
+    token = vendor.get("w9_upload_token") or pysecrets.token_urlsafe(32)
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.vendors SET w9_upload_token = %s WHERE id = %s",
+                (token, vendor["id"]),
+            )
+    vendor["w9_upload_token"] = token
+
+    result = _send_existing_vendor_w9_request_email(vendor, pr["org_name"], request)
+    if result.get("status") == "sent":
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE checkreq.vendors SET w9_requested_at = NOW() WHERE id = %s",
+                    (vendor["id"],),
+                )
+        return RedirectResponse("/admin/ap-review?w9_requested=1", status_code=303)
+
+    return RedirectResponse(
+        "/admin/ap-review?post_error=" + quote(f"W-9 email failed: {result.get('error', 'unknown error')}"),
+        status_code=303,
+    )
+
+
 @app.post("/requests/{request_number}/ap-return")
 async def ap_return_request(request_number: str, request: Request):
     """AP Review Workflow Plan.md, Section 3 ('Return to Submitter') +
@@ -6163,37 +6384,63 @@ _W9_UPLOAD_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image
 
 @app.get("/vendor-w9-upload/{token}", response_class=HTMLResponse)
 def vendor_w9_upload_form(token: str, request: Request):
+    """2026-09-14: widened to also recognize a checkreq.vendors row (the
+    existing-vendor YTD-threshold case, see _check_existing_vendor_w9) --
+    tries the original vendor_requests lookup first (unchanged), falls back
+    to the new vendors-table lookup, 404s only if neither matches. Same
+    shared template either way, same "already_uploaded" semantics (bool),
+    just sourced from a different column depending on which table matched."""
     vr = _vendor_request_by_upload_token(token)
-    if not vr:
-        return JSONResponse({"error": "Not found"}, status_code=404)
+    if vr:
+        return templates.TemplateResponse(request, "vendor_w9_upload.html", {
+            "already_uploaded": bool(vr["w9_uploaded_at"]),
+            "vendor_name": _vendor_request_display_name(vr),
+            "org_name": vr["org_name"],
+            "token": token,
+            "error": "",
+        })
 
-    return templates.TemplateResponse(request, "vendor_w9_upload.html", {
-        "already_uploaded": bool(vr["w9_uploaded_at"]),
-        "vendor_name": _vendor_request_display_name(vr),
-        "org_name": vr["org_name"],
-        "token": token,
-        "error": "",
-    })
+    v = _existing_vendor_by_w9_upload_token(token)
+    if v:
+        return templates.TemplateResponse(request, "vendor_w9_upload.html", {
+            "already_uploaded": bool(v["w9_on_file"]),
+            "vendor_name": v["display_name"],
+            "org_name": v["org_name"],
+            "token": token,
+            "error": "",
+        })
+
+    return JSONResponse({"error": "Not found"}, status_code=404)
 
 
 @app.post("/vendor-w9-upload/{token}", response_class=HTMLResponse)
 async def vendor_w9_upload_submit(token: str, request: Request, file: UploadFile):
+    """2026-09-14: widened the same way as the GET route above. The
+    existing-vendor branch skips the separate "staff confirms receipt"
+    step the new-vendor flow has (w9_uploaded_at is a distinct fact from
+    w9_received there) -- a deliberate simplification: an EXISTING vendor
+    is already a real, in-use vendor (the separate business-legitimacy
+    approval a brand-new vendor needs doesn't apply here), so a genuine
+    file upload is trusted to set w9_on_file directly, no extra review
+    step. Archival (GCS + SharePoint) is identical either way."""
     vr = _vendor_request_by_upload_token(token)
-    if not vr:
+    v = None if vr else _existing_vendor_by_w9_upload_token(token)
+    if not vr and not v:
         return JSONResponse({"error": "Not found"}, status_code=404)
 
-    vendor_name = _vendor_request_display_name(vr)
+    vendor_name = _vendor_request_display_name(vr) if vr else v["display_name"]
+    org_row = vr if vr else v
 
     content = await file.read()
     if len(content) > _W9_UPLOAD_MAX_BYTES:
         return templates.TemplateResponse(request, "vendor_w9_upload.html", {
-            "already_uploaded": False, "vendor_name": vendor_name, "org_name": vr["org_name"],
+            "already_uploaded": False, "vendor_name": vendor_name, "org_name": org_row["org_name"],
             "token": token, "error": "File is too large (max 10MB).",
         })
     mime_type = file.content_type or ""
     if mime_type not in _W9_UPLOAD_ALLOWED_TYPES:
         return templates.TemplateResponse(request, "vendor_w9_upload.html", {
-            "already_uploaded": False, "vendor_name": vendor_name, "org_name": vr["org_name"],
+            "already_uploaded": False, "vendor_name": vendor_name, "org_name": org_row["org_name"],
             "token": token,
             "error": f"Unsupported file type ({mime_type or 'unknown'}). Please upload a PDF, "
                      f"or a JPG/PNG/GIF/WebP photo of the completed form.",
@@ -6201,23 +6448,23 @@ async def vendor_w9_upload_submit(token: str, request: Request, file: UploadFile
 
     ext = _guess_extension(file.filename or "w9", mime_type)
     archived_filename = (
-        f"{vr['org_code'].upper()} W9 {_custom_titlecase(vendor_name)} "
+        f"{org_row['org_code'].upper()} W9 {_custom_titlecase(vendor_name)} "
         f"{datetime.today().strftime('%Y.%m.%d')}.{ext}"
     )
 
     gcs_path = None
     sp_path = None
     try:
-        gcs_path = f"vendor_w9/{vr['id']}/{archived_filename}"
+        gcs_path = f"vendor_w9/{'vr' if vr else 'v'}{org_row['id']}/{archived_filename}"
         gcs_client.upload_bytes(ATTACHMENTS_BUCKET, gcs_path, content, mime_type)
 
-        if vr.get("sp_hostname") and vr.get("sp_site_path") and vr.get("sp_library_folder"):
+        if org_row.get("sp_hostname") and org_row.get("sp_site_path") and org_row.get("sp_library_folder"):
             sp_token = sharepoint_client.get_access_token()
-            site_id = sharepoint_client.get_site_id(sp_token, vr["sp_hostname"], vr["sp_site_path"])
+            site_id = sharepoint_client.get_site_id(sp_token, org_row["sp_hostname"], org_row["sp_site_path"])
             sharepoint_client.upload_bytes(
-                sp_token, site_id, vr["sp_library_folder"], archived_filename, content, mime_type,
+                sp_token, site_id, org_row["sp_library_folder"], archived_filename, content, mime_type,
             )
-            sp_path = f"{vr['sp_library_folder'].strip('/')}/{archived_filename}"
+            sp_path = f"{org_row['sp_library_folder'].strip('/')}/{archived_filename}"
     except Exception as exc:
         # Never show the external vendor a raw internal error, and never
         # silently claim success either -- log server-side; the admin page
@@ -6226,14 +6473,21 @@ async def vendor_w9_upload_submit(token: str, request: Request, file: UploadFile
 
     with db.connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE checkreq.vendor_requests SET w9_file_gcs_path = %s, w9_file_sp_path = %s, "
-                "w9_uploaded_at = NOW() WHERE id = %s",
-                (gcs_path, sp_path, vr["id"]),
-            )
+            if vr:
+                cur.execute(
+                    "UPDATE checkreq.vendor_requests SET w9_file_gcs_path = %s, w9_file_sp_path = %s, "
+                    "w9_uploaded_at = NOW() WHERE id = %s",
+                    (gcs_path, sp_path, vr["id"]),
+                )
+            else:
+                cur.execute(
+                    "UPDATE checkreq.vendors SET w9_file_gcs_path = %s, w9_file_sp_path = %s, "
+                    "w9_on_file = TRUE WHERE id = %s",
+                    (gcs_path, sp_path, v["id"]),
+                )
 
     return templates.TemplateResponse(request, "vendor_w9_upload.html", {
-        "already_uploaded": True, "vendor_name": vendor_name, "org_name": vr["org_name"],
+        "already_uploaded": True, "vendor_name": vendor_name, "org_name": org_row["org_name"],
         "token": token, "error": "",
     })
 
