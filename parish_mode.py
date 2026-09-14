@@ -87,7 +87,15 @@ def _is_beacon_admin(user_id: int) -> bool:
     return rbac.user_has_role(user_id, "beacon_admin", org_id=None)
 
 
-_PARISH_MODE_ROLES = ["cfo", "parish_mode_user"]
+# Widened 2026-09-14 (Jay): "the parish mode should also show up for
+# people with parish mode or the administrative features and functions"
+# -- beacon_admin/setup_admin now also count as "administrative features
+# and functions" for reaching Parish Mode, alongside the dedicated
+# parish_mode_user role. Single source of truth for all 3 server-side
+# gates below AND base.html's nav link AND admin_hub.py's own card gate
+# (admin_hub.py can't import this module -- see its own docstring for why
+# -- so its literal copy of this list must be kept in sync by hand).
+_PARISH_MODE_ROLES = ["cfo", "parish_mode_user", "beacon_admin", "setup_admin"]
 
 
 def _require_effective_cfo(request: Request):

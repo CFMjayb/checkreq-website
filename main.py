@@ -141,7 +141,22 @@ ATTACHMENTS_BUCKET = "cfm-checkreq-attachments"
 # requires_w9: payment_requests.amount > this threshold, computed once at
 # vendor_request creation time -- not re-evaluated later even if the amount
 # changes (a change needs its own re-approval anyway, per the plan's Section 4).
-VENDOR_W9_AMOUNT_THRESHOLD = 2000
+#
+# 2026-09-14 (Jay): was a hardcoded literal -- the IRS can change this
+# figure year to year, so it's now a live app_settings value (same
+# checkreq.app_settings key/value table/pattern the Test Mode toggle
+# already uses), editable from /admin/ap-settings. _w9_threshold_amount()
+# is the one place that reads it; every call site below calls this
+# function instead of the old bare constant name.
+VENDOR_W9_AMOUNT_THRESHOLD = 2000  # fallback only if the setting is unreadable/unset
+
+
+def _w9_threshold_amount() -> float:
+    raw = app_settings.get_setting("w9_threshold_amount", str(VENDOR_W9_AMOUNT_THRESHOLD))
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(VENDOR_W9_AMOUNT_THRESHOLD)
 
 # Section 6, decision 4: "not resolved in this pass -- defaulting to the same
 # EDOM mailbox sending on Claggett's behalf too, until Jay provides a
@@ -261,6 +276,26 @@ if os.environ.get("ENABLE_DEV_AUTH_BYPASS") == "1":
 app.include_router(auth_routes.create_router(templates))
 
 
+# "How Beacon Works" documentation (restructured 2026-09-14, Jay: "have a
+# overall how Beacon works, and then you can explain that Beacon has
+# several components to it... a parish mode for a diocese, and it has a
+# diocesan mode. And then we can also create a section for Cornerstone
+# served parishes"). Was one single, AP-only page; now three:
+#   /how-it-works              -- this umbrella (public, no login, unchanged
+#                                  gate/placement from before this split)
+#   /how-it-works/ap           -- the original page's content, retitled and
+#                                  edited, still public
+#   /how-it-works/parish-mode  -- new content, gated to the same
+#                                  _PARISH_MODE_ROLES set parish_mode.py's
+#                                  own gates use (duplicated here as a
+#                                  literal list, not imported -- see
+#                                  admin_hub.py's identical convention/
+#                                  reasoning for why)
+# A future Cornerstone-Served Parishes page is a real next addition here,
+# not built yet -- Jay named it as the plan, not something to build today.
+_PARISH_MODE_DOC_ROLES = ["cfo", "parish_mode_user", "beacon_admin", "setup_admin"]
+
+
 @app.get("/how-it-works", response_class=HTMLResponse)
 def how_it_works_page(request: Request):
     """Rendered replacement for the old docx-only "About Beacon" footer link
@@ -269,8 +304,41 @@ def how_it_works_page(request: Request):
     linked at the bottom for anyone who wants a printable copy. Public, no
     login required -- matches the footer link's own placement outside the
     `{% if user %}` header block in base.html, and login.html itself follows
-    the identical no-`user`-in-context render pattern just below."""
-    return templates.TemplateResponse(request, "how_it_works.html", {})
+    the identical no-`user`-in-context render pattern just below.
+
+    Shows a "Parish Mode" link only for a signed-in user who actually holds
+    one of the gating roles -- a signed-out visitor, or one without access,
+    sees only the AP page link, never a link into a 403."""
+    user = _current_user(request)
+    show_parish_mode_link = bool(user) and rbac.user_has_any_role(
+        user["id"], _PARISH_MODE_DOC_ROLES, org_id=None,
+    )
+    return templates.TemplateResponse(request, "how_it_works.html", {
+        "show_parish_mode_link": show_parish_mode_link,
+    })
+
+
+@app.get("/how-it-works/ap", response_class=HTMLResponse)
+def how_it_works_ap_page(request: Request):
+    """The original /how-it-works content, moved here unchanged in
+    structure (still public, no login required) -- see how_it_works_page
+    above for why this split happened."""
+    return templates.TemplateResponse(request, "how_it_works_ap.html", {})
+
+
+@app.get("/how-it-works/parish-mode", response_class=HTMLResponse)
+def how_it_works_parish_mode_page(request: Request):
+    """New page (2026-09-14) -- gated to the same role set that can reach
+    Parish Mode itself (_PARISH_MODE_DOC_ROLES, kept in sync with
+    parish_mode.py's own _PARISH_MODE_ROLES by hand -- see that module's
+    docstring). Unlike the AP page, this one requires a real sign-in, since
+    it describes a workflow only some staff can actually use."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    if not rbac.user_has_any_role(user["id"], _PARISH_MODE_DOC_ROLES, org_id=None):
+        return RedirectResponse("/how-it-works")
+    return _render(request, "how_it_works_parish_mode.html", user, {})
 
 
 # Portal module tiles. A plain list is enough for this scope (6 tiles) --
@@ -819,7 +887,27 @@ def parish_logo(parish_id: int, request: Request):
 def impersonate_picker(request: Request):
     """CFO-only. Gated on the REAL identity, not _current_user() -- while
     already impersonating, only the real underlying CFO may reach this, a
-    non-CFO impersonated persona must not be able to chain-impersonate."""
+    non-CFO impersonated persona must not be able to chain-impersonate.
+
+    2026-09-14 (Jay): this page had become very slow to load, and the fix
+    is the same N+1 bug admin_users.py's _user_list_rows() already had and
+    fixed on 2026-08-16 -- one rbac.get_roles_for_user() query PER USER,
+    each opening its own fresh DB connection (db.py has no pooling; this
+    project's own CLAUDE.md has measured ~0.4s per connection through the
+    Cloud SQL proxy). Rewritten to one fixed batch query for every live
+    checkreq.user_roles grant, grouped back onto each user in Python --
+    same shape as the proven admin_users.py fix.
+
+    Also splits the picker per Jay's request: this route now returns ONLY
+    "entity users" (anyone holding a live role at any entity) -- shown
+    immediately, since impersonating an entity-level person is the common
+    case. Parish-only users (a live portal.parish_user_roles grant and
+    NOTHING in checkreq.user_roles) are deliberately NOT queried here at
+    all -- they're fetched only on demand by api_impersonate_parish_users
+    below, the moment someone actually expands that section (same
+    fetch-on-open deferral notifications.js already established for the
+    header bell, for the identical reason: querying a list that's usually
+    never opened isn't worth doing on every page load)."""
     real = _real_user(request)
     if not real:
         return RedirectResponse("/login")
@@ -828,14 +916,68 @@ def impersonate_picker(request: Request):
     if not rbac.user_has_role(real["id"], "cfo", org_id=None):
         return JSONResponse({"error": "CFO access required"}, status_code=403)
 
-    users = db.query(
-        "SELECT id, email, display_name FROM checkreq.app_users "
-        "WHERE is_active AND id != %s ORDER BY display_name",
+    all_role_rows = db.query(
+        "SELECT ur.user_id, o.code AS org_code, r.label AS role_label "
+        "FROM checkreq.user_roles ur "
+        "JOIN checkreq.organizations o ON o.id = ur.org_id "
+        "JOIN checkreq.roles r ON r.key = ur.role_key "
+        "WHERE ur.revoked_at IS NULL "
+        "ORDER BY o.code, r.sort_order"
+    )
+    roles_by_user: dict[int, list[dict]] = {}
+    for r in all_role_rows:
+        roles_by_user.setdefault(r["user_id"], []).append(r)
+
+    entity_users: list[dict] = []
+    if roles_by_user:
+        entity_users = db.query(
+            "SELECT id, email, display_name FROM checkreq.app_users "
+            "WHERE is_active AND id != %s AND id = ANY(%s) ORDER BY display_name",
+            (real["id"], list(roles_by_user.keys())),
+        )
+        for u in entity_users:
+            u["roles"] = roles_by_user.get(u["id"], [])
+    return _render(request, "impersonate.html", _current_user(request), {"users": entity_users})
+
+
+@app.get("/api/impersonate/parish-users")
+def api_impersonate_parish_users(request: Request):
+    """Lazy-loaded companion to impersonate_picker above -- returns every
+    active user holding ONLY a parish-level role (no checkreq.user_roles
+    grant anywhere; those users already showed up in the eager entity-user
+    list). Fetched by impersonate.js only when the Parish-Only Users
+    section is actually expanded, per Jay's explicit request that this
+    rarer case shouldn't cost anything on a normal page load."""
+    real = _real_user(request)
+    if not real:
+        return JSONResponse({"error": "not signed in"}, status_code=401)
+    if not rbac.user_has_role(real["id"], "cfo", org_id=None):
+        return JSONResponse({"error": "CFO access required"}, status_code=403)
+
+    rows = db.query(
+        """
+        SELECT au.id, au.email, au.display_name,
+               pr.label AS role_label, p.name AS parish_name
+          FROM checkreq.app_users au
+          JOIN portal.parish_user_roles pur ON pur.user_id = au.id AND pur.revoked_at IS NULL
+          JOIN portal.parish_roles pr ON pr.key = pur.role_key
+          JOIN portal.parishes p ON p.id = pur.parish_id
+         WHERE au.is_active AND au.id != %s
+           AND NOT EXISTS (
+             SELECT 1 FROM checkreq.user_roles ur
+              WHERE ur.user_id = au.id AND ur.revoked_at IS NULL
+           )
+         ORDER BY au.display_name, p.name
+        """,
         (real["id"],),
     )
-    for u in users:
-        u["roles"] = rbac.get_roles_for_user(u["id"])
-    return _render(request, "impersonate.html", _current_user(request), {"users": users})
+    users_by_id: dict[int, dict] = {}
+    for r in rows:
+        u = users_by_id.setdefault(r["id"], {
+            "id": r["id"], "email": r["email"], "display_name": r["display_name"], "roles": [],
+        })
+        u["roles"].append({"role_label": r["role_label"], "parish_name": r["parish_name"]})
+    return JSONResponse({"users": list(users_by_id.values())})
 
 
 @app.post("/admin/impersonate/stop")
@@ -3327,7 +3469,7 @@ async def new_request_submit(request: Request):
                     # already exists rather than creating a duplicate).
                     new_vendor_request_id = old_vendor_request_id
                     if using_new_vendor:
-                        requires_w9 = total_amount > VENDOR_W9_AMOUNT_THRESHOLD
+                        requires_w9 = total_amount > _w9_threshold_amount()
                         if old_vendor_request_id:
                             cur.execute(
                                 """
@@ -3504,7 +3646,7 @@ async def new_request_submit(request: Request):
                 # re-approval).
                 new_vendor_request_id = old_vendor_request_id
                 if using_new_vendor:
-                    requires_w9 = total_amount > VENDOR_W9_AMOUNT_THRESHOLD
+                    requires_w9 = total_amount > _w9_threshold_amount()
                     if old_vendor_request_id:
                         # Same underlying vendor_request row this payment
                         # request already pointed to -- update its fields in
@@ -3765,7 +3907,7 @@ async def new_request_submit(request: Request):
             # back, in the same transaction (both inserts commit together
             # or not at all).
             if new_vendor_fields:
-                requires_w9 = total_amount > VENDOR_W9_AMOUNT_THRESHOLD
+                requires_w9 = total_amount > _w9_threshold_amount()
                 upload_token = pysecrets.token_urlsafe(32)
                 cur.execute(
                     """
@@ -4922,11 +5064,20 @@ async def send_daily_digest(request: Request):
 # all the CRs and where they are, what has happened to them." Distinct from
 # My Requests' own "All Requests" toggle -- that one stays scoped to the
 # session's selected entity by Jay's own earlier explicit call (Task 6,
-# 2026-07-26); this view is deliberately NOT entity-scoped, showing every
-# request across every organization and every status in one place.
+# 2026-07-26).
+#
+# 2026-09-14 (Jay): reverses this screen's own 2026-08-02 deliberate
+# cross-entity design ("the genuinely cross-entity audit view Jay asked
+# for") -- "this should only show you requests for the diocese that you
+# selected." Now hard-scoped to the session's currently-selected entity,
+# same as every other entity-scoped admin screen in this app (Setup
+# Tables, Manage Parishes, AP Review's own default) -- no more "All
+# entities" option, so the in-page Entity filter dropdown is gone from the
+# template too (redundant with the top-nav switcher, which is now the only
+# way to change which entity this screen shows).
 
 @app.get("/admin/all-requests", response_class=HTMLResponse)
-def admin_all_requests(request: Request, entity: str = "", vendor: str = "",
+def admin_all_requests(request: Request, vendor: str = "",
                         submitted_by: str = "", status: str = ""):
     """2026-08-02 feedback batch, Item 7: renamed "Administrative" -> "All
     Requests" in the template; added entity/vendor/submitted-by/status
@@ -4937,16 +5088,23 @@ def admin_all_requests(request: Request, entity: str = "", vendor: str = "",
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
-    # RBAC (2026-08-01): cross-entity by design -- the genuinely cross-entity
-    # audit view Jay asked for. See Role-Based Access Control Plan.md §2.2.
+    # RBAC (2026-08-01): existence check (cfo anywhere) -- the QUERY below
+    # is what actually scopes this to one entity now, matching AP Review's
+    # own gate-vs-query split (see that route's docstring).
     if not rbac.user_has_role(user["id"], "cfo", org_id=None):
         return JSONResponse({"error": "CFO access required"}, status_code=403)
 
-    where = []
-    params: list = []
-    if entity:
-        where.append("o.code = %s")
-        params.append(entity)
+    current_org = _current_org(request)
+    if not current_org:
+        return _render(request, "admin_all_requests.html", user, {
+            "rows": [], "filter_vendor": vendor, "filter_submitted_by": submitted_by,
+            "filter_status": status, "all_statuses": [
+                "UnderReview", "Approved", "Posted to QBO", "Rejected", "Returned by AP", "Cancelled",
+            ], "current_org": None,
+        })
+
+    where = ["pr.org_id = %s"]
+    params: list = [current_org["id"]]
     if status:
         where.append("pr.status = %s")
         params.append(status)
@@ -5010,13 +5168,12 @@ def admin_all_requests(request: Request, entity: str = "", vendor: str = "",
         else:
             r["vendor_name"] = "—"
 
-    all_orgs_list = db.query("SELECT code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
     all_statuses = ["UnderReview", "Approved", "Posted to QBO", "Rejected", "Returned by AP", "Cancelled"]
     return _render(request, "admin_all_requests.html", user, {
         "rows": rows,
-        "filter_entity": entity, "filter_vendor": vendor,
+        "filter_vendor": vendor,
         "filter_submitted_by": submitted_by, "filter_status": status,
-        "all_orgs_list": all_orgs_list, "all_statuses": all_statuses,
+        "all_statuses": all_statuses, "current_org": current_org,
     })
 
 
@@ -5113,6 +5270,49 @@ async def test_mode_save(request: Request):
     app_settings.set_setting("email_test_mode", "true" if enabled else "false", user["id"])
     app_settings.set_setting("email_test_mode_address", address, user["id"])
     return RedirectResponse("/admin/test-mode?saved=1", status_code=303)
+
+
+# ── AP Settings (2026-09-14) ──────────────────────────────────────────────
+# Small, focused settings page for AP-process values that need to be
+# editable without a redeploy -- same app_settings key/value pattern as
+# Test Mode above, just its own page/route rather than growing that one,
+# since this is a different concern (vendor onboarding policy, not email
+# routing). Currently just the W-9 threshold; a natural home for any
+# future AP policy value that shouldn't be a hardcoded constant.
+
+@app.get("/admin/ap-settings", response_class=HTMLResponse)
+def ap_settings_form(request: Request, saved: bool = False):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    if not rbac.user_has_role(user["id"], "setup_admin", org_id=None):
+        return JSONResponse({"error": "Setup Administrator access required"}, status_code=403)
+    return _render(request, "admin_ap_settings.html", user, {
+        "w9_threshold_amount": _w9_threshold_amount(), "saved": saved,
+    })
+
+
+@app.post("/admin/ap-settings")
+async def ap_settings_save(request: Request):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    if not rbac.user_has_role(user["id"], "setup_admin", org_id=None):
+        return JSONResponse({"error": "Setup Administrator access required"}, status_code=403)
+
+    form = await request.form()
+    try:
+        threshold = float(form.get("w9_threshold_amount") or 0)
+    except (TypeError, ValueError):
+        threshold = -1
+    if threshold <= 0:
+        return _render(request, "admin_ap_settings.html", user, {
+            "w9_threshold_amount": _w9_threshold_amount(),
+            "error": "Enter a W-9 threshold amount greater than $0.",
+        })
+
+    app_settings.set_setting("w9_threshold_amount", str(threshold), user["id"])
+    return RedirectResponse("/admin/ap-settings?saved=1", status_code=303)
 
 
 # ── New Vendor Onboarding: vendor-approval queue ─────────────────────────────
@@ -5306,6 +5506,22 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
 
     granted_org_ids = rbac.get_granted_org_ids(user["id"], "ap_reviewer")
     all_orgs_list = db.query("SELECT code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
+
+    # 2026-09-14 (Jay): "the AP review menu option at the main menu... should
+    # only be for the entity that you're working in." Defaults the entity
+    # filter to the session's currently-selected org whenever the visitor
+    # hasn't touched the filter explicitly (a fresh load from the main-menu
+    # tile, no query string) -- distinguished from an explicit "All"
+    # selection (entity= present but empty, from the dropdown) via
+    # request.query_params directly, since FastAPI's own `entity: str = ""`
+    # parameter can't tell "never set" from "explicitly set to All" apart.
+    # An AP reviewer covering more than one entity can still pick "All" or
+    # another specific one from the existing dropdown -- this only changes
+    # what a plain, unfiltered visit defaults to.
+    if "entity" not in request.query_params:
+        _default_org = _current_org(request)
+        if _default_org and _default_org["id"] in granted_org_ids:
+            entity = _default_org["code"]
 
     # Jay, 2026-07-29: "some sort of need in the AP review to also have a
     # completed tab as well." A request leaves this queue the moment it's

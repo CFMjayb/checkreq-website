@@ -20,7 +20,6 @@
 
 <h1>User Management</h1>
 <p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
-<p class="sub">Who can sign in, and what each person may do in each entity — every user, every entity.</p>
 
 {% if unreachable_count %}
 <div class="banner banner-error">
@@ -35,9 +34,11 @@
 <!-- 2026-08-02 feedback batch, Item 13-continued: "Add User" moved to the
      top of the screen. Still a single-step form -- the "guided" part of
      the flow is what happens next, on the detail page (a highlighted
-     next-steps prompt via ?new=1), not a multi-page wizard here. -->
-<div class="card">
-  <h2>Add User</h2>
+     next-steps prompt via ?new=1), not a multi-page wizard here.
+     2026-09-14: made collapsible (closed by default -- a secondary action
+     on a page whose main job is browsing the two lists below), per Jay. -->
+<details class="card setup-section">
+  <summary><h2>Add User</h2></summary>
   <form method="post" action="/admin/setup/users/add" class="filter-bar" style="align-items:flex-end;">
     <div class="field">
       <label for="email">Email</label>
@@ -60,7 +61,7 @@
     a role is granted. Submitting takes you straight to their page to grant a role (and, if needed,
     program-area access) next.
   </p>
-</div>
+</details>
 {% endif %}
 
 {# 2026-09-13, Jay: "manage Beacon user logins in two distinct groups -- the
@@ -74,9 +75,11 @@
    cut of the two-group split (real access control, real grouping) --
    NOT yet the fuller per-group column/layout redesign (e.g. a parish-
    specific column set instead of reusing the diocesan Program Areas/
-   Entities/Roles columns below), which is its own follow-up. #}
-<div class="card">
-  <h2>Parish-Related Logins</h2>
+   Entities/Roles columns below), which is its own follow-up.
+   2026-09-14: made collapsible (open by default -- this list is the
+   page's own primary content, unlike Add User above), per Jay. #}
+<details class="card setup-section" open>
+  <summary><h2>Parish-Related Logins</h2></summary>
   <div class="table-scroll scroll-panel">
   <table class="simple-table">
     <thead>
@@ -109,11 +112,22 @@
     </tbody>
   </table>
   </div>
-</div>
+</details>
 
 {% if is_full_admin %}
-<div class="card">
-  <h2>Diocesan-Related Logins</h2>
+<!-- 2026-09-14: scoped to the currently-selected entity (Jay: "I would
+     only like to see the users for that entity that is currently
+     selected") -- was previously every diocesan-role holder across every
+     entity regardless of the header switcher. See admin_users.py's
+     users_list_page for the actual filter. Made collapsible (open by
+     default, same reasoning as Parish-Related Logins above). -->
+<details class="card setup-section" open>
+  <summary>
+    <h2>Diocesan-Related Logins{% if current_org %} — {{ current_org.code|upper if current_org.code else current_org.name }}{% endif %}</h2>
+  </summary>
+  {% if not current_org %}
+  <p class="sub">Select an entity (top of the page) to see its diocesan-related logins here.</p>
+  {% endif %}
   <div class="table-scroll scroll-panel">
   <table class="simple-table" id="usersTable">
     <thead>
@@ -199,12 +213,16 @@
         <td><a class="btn btn-secondary" href="/admin/setup/users/{{ u.id }}">Manage</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="9">No diocesan-related logins found.</td></tr>
+      <tr><td colspan="9">
+        {% if not current_org %}Select an entity to see its diocesan-related logins.
+        {% else %}No diocesan-related logins found for {{ current_org.code|upper if current_org.code else current_org.name }}.
+        {% endif %}
+      </td></tr>
       {% endfor %}
     </tbody>
   </table>
   </div>
-</div>
+</details>
 {% endif %}
 
 </div>

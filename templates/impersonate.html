@@ -1,17 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Impersonate a User{% endblock %}
 {% block content %}
-<div class="page-shell">
+<div class="page-shell-wide">
 <h1>Impersonate a User</h1>
 <p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
 <div class="banner banner-info">
   Actions taken while impersonating are real — they hit live data and, once approvals go live, real QBO postings.
   Clean up any test submissions afterward, same as any other test data in this system.
 </div>
+
+<!-- 2026-09-14, Jay: split entity users (the common case, shown
+     immediately) from parish-only users (rare, lazy-loaded on expand --
+     see impersonate.js) and compacted the rows/button. -->
 <div class="card">
-  <table class="simple-table">
+  <h2>Entity Users</h2>
+  <div class="table-scroll">
+  <table class="simple-table impersonate-table">
     <thead>
-      <tr><th>Name</th><th>Email</th><th>Roles</th><th></th></tr>
+      <tr><th class="col-name">Name</th><th class="col-email">Email</th><th class="col-roles">Roles</th><th class="col-action"></th></tr>
     </thead>
     <tbody>
       {% for u in users %}
@@ -21,17 +27,35 @@
         <td>
           {% for r in u.roles %}<span class="badge badge-approved">{{ r.role_label }} ({{ r.org_code|upper }})</span>{% endfor %}
         </td>
-        <td>
+        <td class="col-action">
           <form method="post" action="/admin/impersonate/{{ u.id }}">
-            <button type="submit" class="btn btn-secondary">Become this user</button>
+            <button type="submit" class="btn btn-secondary btn-sm">Impersonate</button>
           </form>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="4">No other active users found.</td></tr>
+      <tr><td colspan="4">No other active entity users found.</td></tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </div>
+
+<details class="card setup-section" id="parishUsersSection">
+  <summary><h2>Parish-Only Users</h2></summary>
+  <p class="muted" id="parishUsersHint">Loads when opened.</p>
+  <div class="table-scroll">
+  <table class="simple-table impersonate-table">
+    <thead>
+      <tr><th class="col-name">Name</th><th class="col-email">Email</th><th class="col-roles">Parish Roles</th><th class="col-action"></th></tr>
+    </thead>
+    <tbody id="parishUsersBody"></tbody>
+  </table>
+  </div>
+</details>
+
 </div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/impersonate.js?v={{ asset_version('js/impersonate.js') }}"></script>
 {% endblock %}

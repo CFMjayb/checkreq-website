@@ -149,9 +149,10 @@
    areas, approval rules) -- stays beacon_admin-only regardless of the
    `has_served_parish_role` condition below, since a parish_mode_user
    holder should manage Parish Roles (above) only, never these. #}
+{% set _roles_touched = request.query_params.get('granted') or request.query_params.get('revoked') or request.query_params.get('error') %}
 {% if is_full_admin and (roles or program_areas or approval_rules_as_approver or approval_rules_as_backup or has_served_parish_role) %}
-<details class="card setup-section" style="margin-top:24px;">
-  <summary><h2>Cornerstone Entity Roles</h2></summary>
+<details class="card setup-section" style="margin-top:24px;" {% if _roles_touched %}open{% endif %}>
+  <summary><h2>Entity Roles</h2></summary>
   {% if orgs|length > 1 %}
   <!-- Cornerstone Served Parishes Plan.md Phase F, items 17.2/18: "entity
        first, then Program Areas/Approval Rules only if that entity is
@@ -197,9 +198,9 @@
   </div>
   {% endif %}
 
-  <details class="setup-section">
+  <details class="setup-section" open>
     <summary><h2>Roles</h2></summary>
-  <table class="simple-table">
+  <table class="simple-table compact">
     <thead><tr><th>Role</th><th>Entity</th><th>Granted</th><th>By</th><th></th></tr></thead>
     <tbody>
       {% for r in roles %}

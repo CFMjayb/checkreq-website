@@ -450,6 +450,13 @@ table.simple-table { width: 100%; border-collapse: collapse; }
 table.simple-table th { text-align: left; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--color-text-muted); border-bottom: 2px solid var(--color-border); padding: var(--space-2) var(--space-3); }
 table.simple-table td { padding: var(--space-3); border-bottom: 1px solid var(--color-border); font-size: 0.92rem; }
 
+/* Compact row-density modifier (2026-09-14) -- for a simple-table whose
+   list is the point of the section (e.g. a user's Entity Roles), not a
+   handful of rare rows -- tighter padding and a slightly smaller font so
+   more of the list is visible without scrolling. */
+table.simple-table.compact th { padding: var(--space-1) var(--space-2); }
+table.simple-table.compact td { padding: 4px var(--space-2); font-size: 0.85rem; }
+
 /* ---- My Requests table (2026-07-26 redesign, Task 1) ----
    table-layout:fixed + explicit per-column widths so a normal row fits on
    one line and never wraps to 2 lines (Jay's real screenshot showed this
@@ -537,6 +544,22 @@ table.approvals-table .col-actions { min-width: 260px; text-align: right; white-
 /* The chain-popup/status-pill cell must never clip -- .status-popup itself
    is position:absolute and needs to render outside this cell's own bounds. */
 table.approvals-table td.status-cell { overflow: visible; position: relative; }
+
+/* ---- Impersonate a User (2026-09-14) ----
+   Same auto-layout + min-width + wrap-not-truncate approach as
+   .approvals-table above -- the one this codebase already learned (2026-07-29)
+   works better than a fixed-percentage layout for a table with a variable-
+   width badge column. The real fix for "Become this user" wrapping across 3
+   lines was this (a real min-width floor on the action column, plus
+   .btn-sm + nowrap on the button) combined with shortening the label to
+   "Impersonate". */
+table.impersonate-table { table-layout: auto; width: 100%; }
+table.impersonate-table th, table.impersonate-table td { white-space: normal; vertical-align: middle; padding: var(--space-2) var(--space-3); }
+table.impersonate-table .col-name { min-width: 140px; }
+table.impersonate-table .col-email { min-width: 220px; }
+table.impersonate-table .col-roles { min-width: 160px; }
+table.impersonate-table .col-action { min-width: 110px; white-space: nowrap; text-align: right; }
+table.impersonate-table .col-action .btn { white-space: nowrap; }
 
 /* ---- CFO "My Requests" / "All Requests" toggle (Task 6) ---- */
 .view-toggle { display: flex; gap: var(--space-2); margin-bottom: var(--space-4); }

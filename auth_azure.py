@@ -81,13 +81,23 @@ def _msal_app() -> msal.ConfidentialClientApplication:
     )
 
 
-def get_auth_url(redirect_uri: str, state: str, login_hint: str | None = None) -> str:
+def get_auth_url(redirect_uri: str, state: str, login_hint: str | None = None, prompt: str | None = "select_account") -> str:
     """Build the Microsoft login redirect URL. login_hint (optional) prefills
     the email the user already typed on Beacon's own email-first login page
     (Multi-Provider Authentication Plan.md, Section 3) -- purely a UX nicety,
-    Microsoft still lets the user change it."""
+    Microsoft still lets the user change it.
+
+    prompt defaults to "select_account" (2026-09-14, Jay: users should have
+    to actually authenticate to Microsoft each time, not silently ride a
+    Microsoft session that's still alive in the browser from an earlier sign-
+    in on this machine -- e.g. someone else's Microsoft session, or the
+    auto-SSO-hostname redirect firing again right after this app's own
+    /logout). Forces Microsoft to render its own account-chooser screen
+    instead of completing SSO with zero interaction; pass prompt=None to
+    suppress it for a call site that legitimately wants silent SSO."""
     return _msal_app().get_authorization_request_url(
         scopes=_SCOPES, redirect_uri=redirect_uri, state=state, login_hint=login_hint,
+        prompt=prompt,
     )
 
 

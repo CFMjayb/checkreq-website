@@ -255,18 +255,34 @@ def users_list_page(request: Request):
     entities. A parish_mode_user holder with no beacon_admin gets
     is_full_admin=False: only the Parish-Related group renders, and the
     Diocesan-Related section/Add-User card are hidden entirely by the
-    template rather than just visually de-emphasized."""
+    template rather than just visually de-emphasized.
+
+    2026-09-14 (Jay): "under diocesan related logins... I would only like
+    to see the users for that entity that is currently selected" -- this
+    group used to show every user with a live role grant at ANY entity,
+    regardless of which one was selected in the header switcher. Now
+    filtered to users holding a live role specifically at current_org's id
+    (each row's own `roles` list already carries org_id, from
+    _user_list_rows' batched query -- no extra DB round trip needed).
+    Falls back to an empty list (not an error) when no entity is currently
+    selected; the template tells the admin to pick one rather than showing
+    a silently-empty table with no explanation."""
     user, is_full_admin, err = _require_parish_login_admin(request)
     if err:
         return err
     rows = _user_list_rows()
+    current_org = _current_org(request)
     parish_rows = [r for r in rows if r["has_any_parish_role"]]
-    diocese_rows = [r for r in rows if r["has_any_role"]] if is_full_admin else []
+    diocese_rows = (
+        [r for r in rows if any(role["org_id"] == current_org["id"] for role in r["roles"])]
+        if is_full_admin and current_org else []
+    )
     unreachable = [r for r in rows if r["is_unreachable_approver"]] if is_full_admin else []
     return _render(request, "admin_users_index.html", user, {
         "parish_rows": parish_rows,
         "diocese_rows": diocese_rows,
         "is_full_admin": is_full_admin,
+        "current_org": current_org,
         "unreachable_count": len(unreachable),
     })
 

@@ -563,7 +563,20 @@ def create_router(templates) -> APIRouter:
 
     @router.get("/logout")
     def logout(request: Request):
+        """2026-09-14 fix (Jay): logging off on a branded hostname (e.g.
+        beacon.episcopalmaryland.org) used to log the user right back in
+        with no visible interaction. Root cause: this route cleared the
+        Beacon session but left the _REMEMBER_COOKIE untouched, so the very
+        next /login load's _sso_auto_login_target() check still matched and
+        silently redirected straight back into Microsoft's flow -- which
+        then completed with zero prompt because Microsoft's own browser
+        session was also still alive (see get_auth_url's new prompt default
+        for that second half of the fix). Deleting the cookie here means a
+        post-logout visit always lands on the normal email-entry screen,
+        not an instant silent re-login."""
         request.session.clear()
-        return RedirectResponse("/login", status_code=303)
+        resp = RedirectResponse("/login", status_code=303)
+        resp.delete_cookie(_REMEMBER_COOKIE)
+        return resp
 
     return router

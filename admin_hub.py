@@ -70,27 +70,36 @@ _CARDS = [
     {"title": "Impersonate a User", "desc": "Act as another user for testing or support.",
      "url": "/admin/impersonate", "role": "real_cfo", "group": "beacon"},
 
-    {"title": "All Requests", "desc": "Every check request, every entity, every status.",
+    {"title": "All Requests", "desc": "Every check request for the selected entity, every status.",
      "url": "/admin/all-requests", "role": "cfo", "group": "ap"},
     {"title": "Vendor Approvals", "desc": "Approve or reject new-vendor requests; confirm W-9 receipt.",
      "url": "/admin/vendor-requests", "role": "vendor_approver", "group": "ap"},
     {"title": "Setup Tables", "desc": "Program areas, GL account mapping, entities, global approvers.",
      "url": "/admin/setup", "role": "setup_admin", "group": "ap"},
+    {"title": "AP Settings", "desc": "Editable AP policy values, e.g. the new-vendor W-9 threshold.",
+     "url": "/admin/ap-settings", "role": "setup_admin", "group": "ap"},
 
-    # Parish Mode (S4, 2026-08-08) -- gated identically to Impersonate a
-    # User (real_cfo sentinel), same reasoning: hidden while already
-    # impersonating, since only the real underlying CFO may reach it.
-    {"title": "Parish Mode", "desc": "See a specific parish's (currently minimal) portal view.",
-     "url": "/admin/parish-mode", "role": "real_cfo", "group": "parish"},
+    # Parish Mode (S4, 2026-08-08) -- gated on the "real_parish_mode"
+    # sentinel (widened 2026-09-14, see below): hidden while already
+    # impersonating, same reasoning as Impersonate a User's own real_cfo
+    # sentinel, but checked against parish_mode.py's own _PARISH_MODE_ROLES
+    # list (cfo/parish_mode_user/beacon_admin/setup_admin) instead of cfo
+    # alone -- Jay: Parish Mode should "show up for people with parish mode
+    # or the administrative features and functions."
+    {"title": "Parish Mode", "desc": "See a specific parish's portal view.",
+     "url": "/admin/parish-mode", "role": "real_parish_mode", "group": "parish"},
     # Parish Portal S4+S5 (2026-08-08) -- three new diocesan-side management
-    # screens. `role` is a LIST here (setup_admin OR beacon_admin) -- see
-    # the visibility check below, which now accepts either shape.
+    # screens. `role` is a LIST here. Widened 2026-09-14 to also include
+    # parish_mode_user, per Jay: these should be usable by "anyone with
+    # access to the system... has an RBAC of parish mode" -- full manage
+    # access, not just visibility (see announcements.py/parish_documents.py
+    # for the matching route-level widening).
     {"title": "Announcements", "desc": "Post dated, targeted announcements to parish users.",
-     "url": "/admin/announcements", "role": ["setup_admin", "beacon_admin"], "group": "parish"},
+     "url": "/admin/announcements", "role": ["setup_admin", "beacon_admin", "parish_mode_user"], "group": "parish"},
     {"title": "Parish Documents", "desc": "Upload documents into a specific parish's read-only archive.",
-     "url": "/admin/parish-documents", "role": ["setup_admin", "beacon_admin"], "group": "parish"},
+     "url": "/admin/parish-documents", "role": ["setup_admin", "beacon_admin", "parish_mode_user"], "group": "parish"},
     {"title": "Resource Library", "desc": "Manage the diocese-wide shared resource library.",
-     "url": "/admin/resource-library", "role": ["setup_admin", "beacon_admin"], "group": "parish"},
+     "url": "/admin/resource-library", "role": ["setup_admin", "beacon_admin", "parish_mode_user"], "group": "parish"},
     # Cornerstone Served Parishes Phase A (2026-08-16) -- entity-scoped, same
     # reasoning as Setup Tables (see _ENTITY_SCOPED_TITLES below): this
     # screen only ever shows/acts on the current diocese's own parishes.
@@ -195,6 +204,16 @@ def admin_hub(request: Request):
     for c in _CARDS:
         if c["role"] == "real_cfo":
             visible = (not is_impersonating) and real_uid and rbac.user_has_role(real_uid, "cfo", org_id=None)
+        elif c["role"] == "real_parish_mode":
+            # 2026-09-14: same "real identity, hidden while impersonating"
+            # shape as real_cfo above, but against the wider role set
+            # parish_mode.py's own _PARISH_MODE_ROLES uses (kept as a
+            # literal duplicate here, not imported -- this module must
+            # never import parish_mode/main, same reasoning as
+            # _ADMIN_TASK_ROLE_KEYS above; keep both lists in sync by hand).
+            visible = (not is_impersonating) and real_uid and rbac.user_has_any_role(
+                real_uid, ["cfo", "parish_mode_user", "beacon_admin", "setup_admin"], org_id=None,
+            )
         elif c["title"] in _ENTITY_SCOPED_TITLES:
             # 2026-08-16: generalized from a hardcoded "setup_admin" check
             # (every entity-scoped card used to require exactly that role)

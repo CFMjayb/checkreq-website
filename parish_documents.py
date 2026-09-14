@@ -430,13 +430,19 @@ def _require_docs_admin(request: Request):
     switching entities first"). No equivalent "must see every diocese's
     parish documents at once" workflow exists here (unlike /admin/all-
     requests' deliberate cross-entity design) -- scoped to the CURRENTLY
-    SELECTED entity, matching Manage Parishes / the Parish Mode picker."""
+    SELECTED entity, matching Manage Parishes / the Parish Mode picker.
+
+    2026-09-14, Jay: Parish Documents (and Resource Library, same gate)
+    should be usable by "anyone with access to the system and has an RBAC
+    of parish mode" -- widened to also accept parish_mode_user."""
     user = _current_user(request)
     if not user:
         return None, RedirectResponse("/login")
     org = _current_org(request)
-    if not org or not rbac.user_has_any_role(user["id"], ["setup_admin", "beacon_admin"], org_id=org["id"]):
-        return None, JSONResponse({"error": "Setup Admin or Beacon Admin access required"}, status_code=403)
+    if not org or not rbac.user_has_any_role(
+        user["id"], ["setup_admin", "beacon_admin", "parish_mode_user"], org_id=org["id"],
+    ):
+        return None, JSONResponse({"error": "Setup Admin, Beacon Admin, or Parish Mode access required"}, status_code=403)
     return user, None
 
 

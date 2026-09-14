@@ -89,13 +89,20 @@ def _require_admin(request: Request):
     Decision 5 already settled for parish-listing screens: scoped to the
     CURRENTLY SELECTED entity, not "any org this admin holds the role at
     somewhere." Switching entities (top nav) reaches a different diocese's
-    announcements, same as Manage Parishes / the Parish Mode picker."""
+    announcements, same as Manage Parishes / the Parish Mode picker.
+
+    2026-09-14, Jay: Announcements should be usable by "anyone with access
+    to the system and has an RBAC of parish mode" -- widened to also
+    accept parish_mode_user (same entity-scoped check as setup_admin/
+    beacon_admin above, no separate branch needed)."""
     user = _current_user(request)
     if not user:
         return None, RedirectResponse("/login")
     org = _current_org(request)
-    if not org or not rbac.user_has_any_role(user["id"], ["setup_admin", "beacon_admin"], org_id=org["id"]):
-        return None, JSONResponse({"error": "Setup Admin or Beacon Admin access required"}, status_code=403)
+    if not org or not rbac.user_has_any_role(
+        user["id"], ["setup_admin", "beacon_admin", "parish_mode_user"], org_id=org["id"],
+    ):
+        return None, JSONResponse({"error": "Setup Admin, Beacon Admin, or Parish Mode access required"}, status_code=403)
     return user, None
 
 

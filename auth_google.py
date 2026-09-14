@@ -76,24 +76,30 @@ def _client_config(redirect_uri: str) -> dict:
     }
 
 
-def get_auth_url(redirect_uri: str, state: str, login_hint: str | None = None) -> str:
+def get_auth_url(redirect_uri: str, state: str, login_hint: str | None = None, prompt: str | None = "select_account") -> str:
     """Build the Google login redirect URL. login_hint (optional) prefills
     the email the user already typed on Beacon's own email-first login page
     (Multi-Provider Authentication Plan.md, Section 3) -- purely a UX nicety,
-    Google still lets the user change it."""
+    Google still lets the user change it.
+
+    prompt defaults to "select_account" (2026-09-14, same reasoning as
+    auth_azure.get_auth_url's identical default -- see that docstring)
+    rather than "consent": this forces Google's account-chooser screen so a
+    still-live Google session isn't silently reused with zero interaction,
+    without re-forcing the OAuth consent screen for a user who's already
+    granted this app's (non-sensitive) scopes."""
     flow = Flow.from_client_config(
         _client_config(redirect_uri), scopes=_SCOPES, redirect_uri=redirect_uri,
     )
     kwargs = {}
     if login_hint:
         kwargs["login_hint"] = login_hint
+    if prompt:
+        kwargs["prompt"] = prompt
     auth_url, _ = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         state=state,
-        # No prompt="consent" -- Google's own login/consent UI handles a
-        # returning user's already-granted-scope case correctly on its own,
-        # matching how the Microsoft side never forces a re-consent either.
         **kwargs,
     )
     return auth_url

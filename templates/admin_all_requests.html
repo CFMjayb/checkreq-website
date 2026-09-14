@@ -8,20 +8,18 @@
 {% endblock %}
 {% block content %}
 <div class="page-shell-wide">
-<h1>All Requests</h1>
+<h1>All Requests{% if current_org %} — {{ current_org.code|upper if current_org.code else current_org.name }}{% endif %}</h1>
 <p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
-<p class="sub">Every check request, every entity, every status. Click a status pill to see its full history.</p>
+<!-- 2026-09-14, Jay: scoped to the entity currently selected in the top
+     nav (was every entity at once) -- the in-page Entity filter is gone,
+     since the top-nav switcher is now the only way to change it. -->
+<p class="sub">Every check request for the selected entity, every status. Click a status pill to see its full history.</p>
+
+{% if not current_org %}
+<div class="banner banner-info">Select an entity (top of the page) to see its requests here.</div>
+{% endif %}
 
 <form method="get" action="/admin/all-requests" class="filter-bar">
-  <div class="field">
-    <label>Entity</label>
-    <select name="entity">
-      <option value="">All</option>
-      {% for o in all_orgs_list %}
-      <option value="{{ o.code }}" {% if filter_entity == o.code %}selected{% endif %}>{{ o.name }}</option>
-      {% endfor %}
-    </select>
-  </div>
   <div class="field">
     <label>Vendor</label>
     <input type="text" name="vendor" value="{{ filter_vendor }}" placeholder="Search vendor...">
@@ -40,7 +38,7 @@
     </select>
   </div>
   <button type="submit" class="btn btn-secondary btn-sm">Filter</button>
-  {% if filter_entity or filter_vendor or filter_submitted_by or filter_status %}
+  {% if filter_vendor or filter_submitted_by or filter_status %}
   <a href="/admin/all-requests" class="btn btn-secondary btn-sm">Clear</a>
   {% endif %}
 </form>

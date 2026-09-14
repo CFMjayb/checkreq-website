@@ -190,8 +190,13 @@
              reach Parish Mode; the server-side gate (parish_mode.py's
              _require_effective_cfo, despite its name) already accepts
              either role, so this link must match or it'd be hidden from
-             someone whose route access actually works. #}
-          {% if 'cfo' in effective_roles or 'parish_mode_user' in effective_roles %}
+             someone whose route access actually works.
+             2026-09-14: widened again to beacon_admin/setup_admin, matching
+             parish_mode.py's own _PARISH_MODE_ROLES (the single source of
+             truth -- keep this condition in sync with that list by hand,
+             same as admin_hub.py's own literal copy). #}
+          {% if 'cfo' in effective_roles or 'parish_mode_user' in effective_roles
+             or 'beacon_admin' in effective_roles or 'setup_admin' in effective_roles %}
           <a href="/admin/parish-mode" class="user-menu-item">Parish Mode</a>
           {% endif %}
           {# Cornerstone Mode (Phase B, 2026-08-16): existence check --
