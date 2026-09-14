@@ -94,10 +94,19 @@
   {# Consolidated 2026-08-08 (Jay: "Request Access replaces Request Parish
      Access and Parish Access Requests -- the sub-screen should do all of
      this, depending on your RBAC") -- one tile, the page itself shows the
-     submit form plus an inline review queue for anyone who qualifies. #}
+     submit form plus an inline review queue for anyone who qualifies.
+     Renamed to "User Access" for a manager of THIS parish (2026-09-13,
+     Jay: "In Parish Mode you can alter 'Request Access' to 'User Access'
+     and add the ability to see all users registered for this parish and
+     make adjustments") -- everyone else still sees the original label,
+     since the page's own request-only content is unchanged for them. #}
   <a class="module-tile" href="/parish-access-request">
-    <h3>Request Access</h3>
+    <h3>{{ "User Access" if is_parish_access_manager else "Request Access" }}</h3>
+    {% if is_parish_access_manager %}
+    <p class="desc">See and manage everyone with access to this parish, or review pending requests.</p>
+    {% else %}
     <p class="desc">Ask for access to a parish, or review pending requests if you're a reviewer.</p>
+    {% endif %}
   </a>
 </div>
 </div>

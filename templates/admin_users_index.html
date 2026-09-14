@@ -31,6 +31,7 @@
 </div>
 {% endif %}
 
+{% if is_full_admin %}
 <!-- 2026-08-02 feedback batch, Item 13-continued: "Add User" moved to the
      top of the screen. Still a single-step form -- the "guided" part of
      the flow is what happens next, on the detail page (a highlighted
@@ -60,8 +61,59 @@
     program-area access) next.
   </p>
 </div>
+{% endif %}
 
+{# 2026-09-13, Jay: "manage Beacon user logins in two distinct groups -- the
+   parish-related logins, and the Diocesan-related logins." A user in both
+   groups (holds a checkreq.roles grant AND a live parish role) appears in
+   both -- same "membership, not exclusive category" idea the Entities
+   column already uses. A parish_mode_user holder (is_full_admin=False)
+   only ever gets `parish_rows` populated (see admin_users.py's
+   users_list_page) -- the Diocesan-Related section below is simply never
+   rendered for them, not just hidden by CSS. This is a first, functional
+   cut of the two-group split (real access control, real grouping) --
+   NOT yet the fuller per-group column/layout redesign (e.g. a parish-
+   specific column set instead of reusing the diocesan Program Areas/
+   Entities/Roles columns below), which is its own follow-up. #}
 <div class="card">
+  <h2>Parish-Related Logins</h2>
+  <div class="table-scroll scroll-panel">
+  <table class="simple-table">
+    <thead>
+      <tr>
+        <th>Display Name</th><th>Email</th><th>Active</th><th>Parish Roles</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in parish_rows %}
+      <tr>
+        <td>{{ u.display_name or "—" }}</td>
+        <td>{{ u.email }}</td>
+        <td>{% if not u.is_active %}<span class="badge badge-draft">Deactivated</span>{% else %}Yes{% endif %}</td>
+        <td class="status-cell">
+          <button type="button" class="status-pill-btn" data-popup="prole-popup-{{ u.id }}">
+            <span class="badge badge-approved">{{ u.parish_roles|length }} role{{ '' if u.parish_roles|length == 1 else 's' }}</span>
+          </button>
+          <div class="status-popup compact" id="prole-popup-{{ u.id }}" hidden>
+            <div class="status-popup-title">Parish Roles — {{ u.display_name or u.email }}</div>
+            <ul class="popup-list">
+              {% for r in u.parish_roles %}<li>{{ r.role_label }} ({{ r.parish_name }})</li>{% endfor %}
+            </ul>
+          </div>
+        </td>
+        <td><a class="btn btn-secondary" href="/admin/setup/users/{{ u.id }}">Manage</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">No parish-related logins yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{% if is_full_admin %}
+<div class="card">
+  <h2>Diocesan-Related Logins</h2>
   <div class="table-scroll scroll-panel">
   <table class="simple-table" id="usersTable">
     <thead>
@@ -78,7 +130,7 @@
       </tr>
     </thead>
     <tbody>
-      {% for u in rows %}
+      {% for u in diocese_rows %}
       <tr data-row="1">
         <td data-sort-value="display_name">{{ u.display_name or "—" }}</td>
         <td data-sort-value="first_name">{{ u.first_name or "—" }}</td>
@@ -147,12 +199,13 @@
         <td><a class="btn btn-secondary" href="/admin/setup/users/{{ u.id }}">Manage</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="9">No users found.</td></tr>
+      <tr><td colspan="9">No diocesan-related logins found.</td></tr>
       {% endfor %}
     </tbody>
   </table>
   </div>
 </div>
+{% endif %}
 
 </div>
 {% endblock %}

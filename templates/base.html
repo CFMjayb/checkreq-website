@@ -185,7 +185,13 @@
             <button type="submit" class="user-menu-item">Diocese Mode</button>
           </form>
           {% else %}
-          {% if 'cfo' in effective_roles %}
+          {# 2026-09-13: widened for the new parish_mode_user role (migration
+             055) -- a Diocesan Employee holding it, but not cfo, can also
+             reach Parish Mode; the server-side gate (parish_mode.py's
+             _require_effective_cfo, despite its name) already accepts
+             either role, so this link must match or it'd be hidden from
+             someone whose route access actually works. #}
+          {% if 'cfo' in effective_roles or 'parish_mode_user' in effective_roles %}
           <a href="/admin/parish-mode" class="user-menu-item">Parish Mode</a>
           {% endif %}
           {# Cornerstone Mode (Phase B, 2026-08-16): existence check --

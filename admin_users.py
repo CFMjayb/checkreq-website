@@ -99,6 +99,30 @@ def _require_beacon_admin(request: Request):
     return user, None
 
 
+def _require_parish_login_admin(request: Request):
+    """2026-09-13, Jay: "Anyone with the RBAC of Parish Mode will also be
+    able to manage Parish-related user logins." Widens this screen's normal
+    beacon_admin-only gate for the routes that manage PARISH role grants
+    specifically (the list/detail GET pages, and grant/revoke-parish-role) --
+    a parish_mode_user holder can view and manage the parish-related subset
+    of users, but NOT diocesan role grants, program-area assignments,
+    approval rules, or identity edits/Add User, which all stay on
+    _require_beacon_admin above, unchanged. Returns (user, is_full_admin,
+    err) -- callers use is_full_admin to decide what to show/allow beyond
+    the parish-role panel itself; a parish_mode_user holder who is NOT also
+    beacon_admin gets is_full_admin=False, never a 403, since this screen IS
+    meant for them, just narrower."""
+    user = _current_user(request)
+    if not user:
+        return None, None, RedirectResponse("/login")
+    is_full_admin = rbac.user_has_role(user["id"], "beacon_admin", org_id=None)
+    if not is_full_admin and not rbac.user_has_role(user["id"], "parish_mode_user", org_id=None):
+        return None, None, JSONResponse(
+            {"error": "Beacon Admin or Parish Mode User access required"}, status_code=403
+        )
+    return user, is_full_admin, None
+
+
 def _user_list_rows() -> list[dict]:
     """One row per app_users row, with role/program-area/entity DETAIL (not
        just a count -- 2026-08-02 feedback batch, Item 13: "if you click on
@@ -184,11 +208,34 @@ def _user_list_rows() -> list[dict]:
     )
     approver_uids = {r["uid"] for r in approver_uid_rows}
 
+    # 2026-09-13: same batched-fetch discipline as the two queries above,
+    # for portal.parish_user_roles -- powers the new "Parish-Related
+    # Logins" grouping (a parish_mode_user's restricted view of this
+    # screen) and the always-shown Parish Roles column.
+    all_parish_role_rows = db.query(
+        """
+        SELECT pur.user_id, p.id AS parish_id, p.name AS parish_name,
+               pur.role_key, pr.label AS role_label
+          FROM portal.parish_user_roles pur
+          JOIN portal.parishes p ON p.id = pur.parish_id
+          JOIN portal.parish_roles pr ON pr.key = pur.role_key
+         WHERE pur.user_id = ANY(%s) AND pur.revoked_at IS NULL
+         ORDER BY pur.user_id, p.name
+        """,
+        (user_ids,),
+    )
+    parish_roles_by_user: dict[int, list[dict]] = {uid: [] for uid in user_ids}
+    for r in all_parish_role_rows:
+        uid = r.pop("user_id")
+        parish_roles_by_user[uid].append(r)
+
     for u in users:
         u["roles"] = roles_by_user.get(u["id"], [])
         u["has_any_role"] = len(u["roles"]) > 0
         u["program_areas"] = pas_by_user.get(u["id"], [])
         u["pa_count"] = len(u["program_areas"])
+        u["parish_roles"] = parish_roles_by_user.get(u["id"], [])
+        u["has_any_parish_role"] = len(u["parish_roles"]) > 0
         # Every entity this person has a live footprint in, role OR
         # program-area -- Item 13's "Entities" column.
         entity_codes = sorted({r["org_code"] for r in u["roles"]} |
@@ -200,13 +247,26 @@ def _user_list_rows() -> list[dict]:
 
 @router.get("/admin/setup/users", response_class=HTMLResponse)
 def users_list_page(request: Request):
-    user, err = _require_beacon_admin(request)
+    """2026-09-13: now shown in two groups -- "Parish-Related Logins"
+    (has_any_parish_role) and "Diocesan-Related Logins" (has_any_role) --
+    per Jay's direct request to manage the two separately. A user in both
+    groups (holds a checkreq.roles grant AND a parish role) appears in
+    both, same as the Entities column already lets one user span several
+    entities. A parish_mode_user holder with no beacon_admin gets
+    is_full_admin=False: only the Parish-Related group renders, and the
+    Diocesan-Related section/Add-User card are hidden entirely by the
+    template rather than just visually de-emphasized."""
+    user, is_full_admin, err = _require_parish_login_admin(request)
     if err:
         return err
     rows = _user_list_rows()
-    unreachable = [r for r in rows if r["is_unreachable_approver"]]
+    parish_rows = [r for r in rows if r["has_any_parish_role"]]
+    diocese_rows = [r for r in rows if r["has_any_role"]] if is_full_admin else []
+    unreachable = [r for r in rows if r["is_unreachable_approver"]] if is_full_admin else []
     return _render(request, "admin_users_index.html", user, {
-        "rows": rows,
+        "parish_rows": parish_rows,
+        "diocese_rows": diocese_rows,
+        "is_full_admin": is_full_admin,
         "unreachable_count": len(unreachable),
     })
 
@@ -304,7 +364,14 @@ def _approval_rules_for_user(user_id: int) -> tuple[list[dict], list[dict]]:
 
 @router.get("/admin/setup/users/{user_id}", response_class=HTMLResponse)
 def user_detail_page(user_id: int, request: Request):
-    user, err = _require_beacon_admin(request)
+    """2026-09-13: reachable by a parish_mode_user holder now too (any
+    target user, not just already-parish-related ones -- granting a FIRST
+    parish role to a diocesan-only or brand-new person must still work).
+    is_full_admin=False hides every panel here except Parish Roles in the
+    template (Roles/Program Areas/Approval Rules, and the identity-edit
+    form) -- those routes below all stay on _require_beacon_admin
+    unchanged, so hiding the UI and gating the route agree."""
+    user, is_full_admin, err = _require_parish_login_admin(request)
     if err:
         return err
     target = db.query_one("SELECT * FROM checkreq.app_users WHERE id = %s", (user_id,))
@@ -442,6 +509,7 @@ def user_detail_page(user_id: int, request: Request):
         "parish_role_grants": parish_role_grants,
         "all_parish_roles": parish_roles.all_parish_roles(),
         "all_parishes": all_parishes,
+        "is_full_admin": is_full_admin,
     })
 
 
@@ -570,8 +638,13 @@ async def user_grant_parish_role(user_id: int, request: Request):
        a parish instead of an entity. No "all parishes" option (unlike the
        entity grant's "All entities" checkbox) -- a role held across every
        parish in a diocese isn't a real thing this plan describes; the
-       shared-bookkeeper case is one row per parish, granted individually."""
-    user, err = _require_beacon_admin(request)
+       shared-bookkeeper case is one row per parish, granted individually.
+
+       2026-09-13: gate widened to _require_parish_login_admin -- a
+       parish_mode_user holder can grant parish roles too, matching Jay's
+       "manage Parish-related user logins" request. is_full_admin isn't
+       needed here (both allowed identities can grant equally)."""
+    user, _is_full_admin, err = _require_parish_login_admin(request)
     if err:
         return err
     form = await request.form()
@@ -591,7 +664,9 @@ async def user_grant_parish_role(user_id: int, request: Request):
 
 @router.post("/admin/setup/users/{user_id}/revoke-parish-role")
 async def user_revoke_parish_role(user_id: int, request: Request):
-    user, err = _require_beacon_admin(request)
+    """2026-09-13: gate widened to _require_parish_login_admin, same as
+    user_grant_parish_role above."""
+    user, _is_full_admin, err = _require_parish_login_admin(request)
     if err:
         return err
     form = await request.form()
