@@ -29,6 +29,12 @@ from __future__ import annotations
 import db
 import rbac
 
+# Baseline "you belong to this parish" role -- the parish-side mirror of
+# rbac.ENTITY_BASE_ROLE, 2026-09-15. admin_users.users_add grants this
+# immediately for a new Parish login (at the parish picked on the Add User
+# form), the same "baseline now, more later" shape as the entity side.
+PARISH_BASE_ROLE = "parish_member"
+
 
 def is_parish_manager(user_id: int, parish_id: int) -> bool:
     """Beacon Admin (any entity) OR parish_mode_user (any entity, a

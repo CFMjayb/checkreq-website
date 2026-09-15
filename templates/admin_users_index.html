@@ -64,10 +64,29 @@
        diocesan admin screen. #}
     <div class="field">
       <label for="login_type">Login Type</label>
-      <select id="login_type" name="login_type" required>
+      <select id="login_type" name="login_type" required onchange="document.getElementById('addUserParishField').hidden = (this.value !== 'parish')">
         <option value="" disabled selected>Choose one…</option>
         <option value="entity">Entity Login — diocesan/entity-level roles</option>
         <option value="parish">Parish Login — access at one or more parishes</option>
+      </select>
+    </div>
+    {# 2026-09-15, Jay's second follow-up: "I thought you were going to set
+       up a default role when a entity user is created... noone would be
+       roleless going forward" -- the Parish side had the same gap the
+       Entity side just had (see users_add's own docstring). Unlike an
+       entity (implicit from the header's current_org), there's no "current
+       parish," so this needs an explicit picker -- scoped to whichever
+       diocese is currently selected (same all_parishes source
+       user_detail_page's own Parish Roles panel already uses). Hidden
+       until "Parish Login" is chosen (onchange above) so it doesn't read
+       as relevant to an Entity login. #}
+    <div class="field" id="addUserParishField" hidden>
+      <label for="parish_id">Parish</label>
+      <select id="parish_id" name="parish_id">
+        <option value="">Select a parish…</option>
+        {% for p in all_parishes %}
+        <option value="{{ p.id }}">{{ p.name }}</option>
+        {% endfor %}
       </select>
     </div>
     <div class="field">
@@ -76,9 +95,9 @@
   </form>
   <p class="setup-note">
     An Entity Login is granted baseline access at whichever entity is currently selected above
-    (see the header) — they can sign in immediately and reach the main portal. A Parish Login is
-    created with no access yet; submitting takes you straight to their page to grant a parish role
-    (or, for an Entity login, a Program Area / additional role) next.
+    (see the header); a Parish Login is granted baseline access at the parish picked here — either
+    way they can sign in immediately and reach the main portal. Submitting takes you straight to
+    their page to grant more (a Program Area / additional role, or an additional parish role) next.
   </p>
 </details>
 {% endif %}

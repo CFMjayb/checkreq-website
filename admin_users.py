@@ -278,12 +278,19 @@ def users_list_page(request: Request):
         if is_full_admin and current_org else []
     )
     unreachable = [r for r in rows if r["is_unreachable_approver"]] if is_full_admin else []
+    # 2026-09-15: for the Add User form's Parish picker below -- same
+    # current-entity scoping as user_detail_page's own all_parishes (there's
+    # no "current parish" concept in the header the way there's a current
+    # entity, so Add User needs an explicit picker; scoped to whichever
+    # diocese is currently selected, same reasoning as that page's comment).
+    all_parishes = registry.list_parishes(current_org["id"]) if current_org else []
     return _render(request, "admin_users_index.html", user, {
         "parish_rows": parish_rows,
         "diocese_rows": diocese_rows,
         "is_full_admin": is_full_admin,
         "current_org": current_org,
         "unreachable_count": len(unreachable),
+        "all_parishes": all_parishes,
     })
 
 
@@ -312,11 +319,18 @@ async def users_add(request: Request):
        never falls into the true "zero everything" bucket that sends a
        brand-new user to the blank /access-request screen (the exact gap
        Jay hit testing this the first time -- login_type alone, with
-       nothing actually granted anywhere, wasn't enough). A Parish login is
-       intentionally NOT granted anything here -- parish access is scoped
-       to a specific PARISH, not an entity, and is granted afterward via
-       this same detail page's existing Parish Roles panel (or the "User
-       Access" screen)."""
+       nothing actually granted anywhere, wasn't enough).
+
+       2026-09-15, second follow-up, Jay: "I thought you were going to set
+       up a default role when a entity user is created... noone would be
+       roleless going forward" -- confirmed the parish side had the exact
+       same gap the entity side just had. Unlike an entity (implicit from
+       the header), there's no "current parish," so this form needs an
+       EXPLICIT parish picker, shown only for a Parish login and scoped to
+       the currently-selected diocese (users_list_page's all_parishes).
+       Granted parish_roles.PARISH_BASE_ROLE ('parish_member') there
+       immediately, same "baseline now, more later via the detail page"
+       shape as the entity side."""
     user, err = _require_beacon_admin(request)
     if err:
         return err
@@ -337,6 +351,16 @@ async def users_add(request: Request):
             status_code=400,
         )
 
+    parish = None
+    if login_type == "parish":
+        try:
+            parish_id = int(form.get("parish_id") or 0)
+        except (TypeError, ValueError):
+            parish_id = 0
+        parish = db.query_one("SELECT id FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
+        if not parish:
+            return JSONResponse({"error": "Pick a parish for this Parish login."}, status_code=400)
+
     existing = db.query_one("SELECT id FROM checkreq.app_users WHERE LOWER(email) = %s", (email,))
     if existing:
         return RedirectResponse(f"/admin/setup/users/{existing['id']}", status_code=303)
@@ -353,6 +377,9 @@ async def users_add(request: Request):
     if login_type == "entity":
         rbac.grant_role(new_id, current_org["id"], rbac.ENTITY_BASE_ROLE, user["id"],
                          "Baseline access, granted at Add User time")
+    elif login_type == "parish":
+        parish_roles.grant_parish_role(new_id, parish["id"], parish_roles.PARISH_BASE_ROLE, user["id"],
+                                        "Baseline access, granted at Add User time")
 
     return RedirectResponse(f"/admin/setup/users/{new_id}?new=1", status_code=303)
 
