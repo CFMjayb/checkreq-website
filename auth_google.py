@@ -76,7 +76,7 @@ def _client_config(redirect_uri: str) -> dict:
     }
 
 
-def get_auth_url(redirect_uri: str, state: str, login_hint: str | None = None, prompt: str | None = "select_account") -> str:
+def get_auth_url(redirect_uri: str, state: str, login_hint: str | None = None, prompt: str | None = "select_account") -> tuple[str, str]:
     """Build the Google login redirect URL. login_hint (optional) prefills
     the email the user already typed on Beacon's own email-first login page
     (Multi-Provider Authentication Plan.md, Section 3) -- purely a UX nicety,
@@ -87,7 +87,21 @@ def get_auth_url(redirect_uri: str, state: str, login_hint: str | None = None, p
     rather than "consent": this forces Google's account-chooser screen so a
     still-live Google session isn't silently reused with zero interaction,
     without re-forcing the OAuth consent screen for a user who's already
-    granted this app's (non-sensitive) scopes."""
+    granted this app's (non-sensitive) scopes.
+
+    Returns (auth_url, code_verifier). google-auth-oauthlib's Flow defaults
+    to autogenerate_code_verifier=True, so calling authorization_url() below
+    silently generates a PKCE code_verifier on THIS flow instance and embeds
+    the matching code_challenge in auth_url -- but this Flow object is
+    thrown away right after this function returns. Found live 2026-09-15:
+    acquire_token() below builds a second, brand-new Flow (with no
+    code_verifier) to exchange the code, so Google's token endpoint saw a
+    code_challenge was used at authorization time but got no matching
+    code_verifier back at exchange time -- "invalid_grant: Missing code
+    verifier" on every real Google sign-in attempt. The caller must persist
+    this returned code_verifier the same way it already persists `state`
+    (a short-lived cookie -- see auth_routes._OAUTH_STATE_COOKIE) and pass it
+    back into acquire_token()."""
     flow = Flow.from_client_config(
         _client_config(redirect_uri), scopes=_SCOPES, redirect_uri=redirect_uri,
     )
@@ -102,11 +116,16 @@ def get_auth_url(redirect_uri: str, state: str, login_hint: str | None = None, p
         state=state,
         **kwargs,
     )
-    return auth_url
+    return auth_url, flow.code_verifier
 
 
-def acquire_token(code: str, redirect_uri: str, state: str) -> dict:
+def acquire_token(code: str, redirect_uri: str, state: str, code_verifier: str) -> dict:
     """Exchange an authorization code for tokens + verified ID-token claims.
+
+    code_verifier must be the exact value get_auth_url() returned for this
+    same login attempt (see that function's docstring) -- passed straight
+    through to this Flow instance so fetch_token() below sends it back to
+    Google, matching the code_challenge Google saw at authorization time.
 
     Returns a claims dict with email/email_verified/name/sub (Google's
     durable per-account id, the equivalent of Azure's oid). Raises ValueError
@@ -115,6 +134,7 @@ def acquire_token(code: str, redirect_uri: str, state: str) -> dict:
     c = _creds()
     flow = Flow.from_client_config(
         _client_config(redirect_uri), scopes=_SCOPES, redirect_uri=redirect_uri, state=state,
+        code_verifier=code_verifier, autogenerate_code_verifier=False,
     )
     try:
         flow.fetch_token(code=code)

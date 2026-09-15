@@ -23,6 +23,58 @@ from __future__ import annotations
 
 import db
 
+# Baseline "you belong to this entity" role -- 2026-09-15, Jay's Entity-vs-
+# Parish login design (see MixedLoginTypeError below). Every Entity login
+# should carry a real checkreq.roles grant, even one with no other
+# functional access yet -- both so being "Entity" is a real classification
+# rather than an inference from whatever else happens to be granted, and so
+# the login shows up in the Diocesan-Related Logins list on
+# /admin/setup/users (driven by "holds a live checkreq.roles grant," same as
+# every other role there). grant_role below auto-grants this alongside any
+# other entity role, at the same org -- callers never need to grant it
+# directly except the one place that has nothing else to grant yet (a plain
+# Program Area assignment; see admin_users.user_grant_program_area).
+ENTITY_BASE_ROLE = "entity_member"
+
+
+class MixedLoginTypeError(Exception):
+    """A login is either an Entity login (checkreq.app_users.login_type =
+       'entity', roles live in checkreq.user_roles) or a Parish login
+       ('parish', roles live in portal.parish_user_roles) -- never both
+       (Jay, 2026-09-15: "A login must be one or another"). The one
+       sanctioned bridge is an Entity login additionally holding
+       parish_mode_user (Parish Mode) -- that grants no
+       portal.parish_user_roles row at all, so it never trips this guard.
+
+       Raised by grant_role (below) and parish_roles.grant_parish_role when
+       a grant would put the wrong kind of row on a login already
+       classified the other way. A login with no login_type set yet (NULL --
+       true only for a handful of legacy/edge accounts predating this
+       column, or a fresh account nobody has classified) claims whichever
+       type is granted first, via claim_login_type, rather than raising."""
+
+
+def get_login_type(user_id: int) -> str | None:
+    """'entity' | 'parish' | None (not yet classified -- see
+       MixedLoginTypeError's docstring)."""
+    row = db.query_one("SELECT login_type FROM checkreq.app_users WHERE id = %s", (user_id,))
+    return row["login_type"] if row else None
+
+
+def claim_login_type(user_id: int, login_type: str) -> None:
+    """Sets login_type ONLY if it is not already set -- the first grant of
+       either kind claims it; an already-classified login is left alone
+       (grant_role/grant_parish_role check the existing value themselves and
+       raise MixedLoginTypeError before ever reaching this call if it would
+       conflict)."""
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.app_users SET login_type = %s "
+                "WHERE id = %s AND login_type IS NULL",
+                (login_type, user_id),
+            )
+
 
 def user_has_role(user_id: int, role_key: str, org_id: int | None = None) -> bool:
     """org_id given -> does this user hold this role FOR THAT ENTITY?
@@ -201,22 +253,44 @@ def grant_role(user_id: int, org_id: int, role_key: str,
        unique index makes a true duplicate impossible anyway, but check
        first so this never raises on a double-click). Re-granting a
        previously-revoked role INSERTs a new row -- the revoked one stays as
-       history, never deleted or reactivated in place."""
+       history, never deleted or reactivated in place.
+
+       2026-09-15: enforces the Entity/Parish login split (see
+       MixedLoginTypeError) -- raises if this login is already classified
+       'parish'. A not-yet-classified login (login_type NULL) claims
+       'entity' as a side effect of this call. Also ensures ENTITY_BASE_ROLE
+       ('entity_member') is granted alongside whatever role_key actually
+       asked for, at the same org -- every Entity login should carry at
+       least this baseline grant (recurses once; stops immediately since
+       ENTITY_BASE_ROLE != ENTITY_BASE_ROLE is False on that inner call)."""
+    current_type = get_login_type(user_id)
+    if current_type == "parish":
+        raise MixedLoginTypeError(
+            "This login is classified as a Parish login -- a login must be "
+            "either an Entity login or a Parish login, not both. Grant "
+            "Parish Mode (parish_mode_user) instead if this person needs to "
+            "preview parishes as a Diocesan Employee."
+        )
+    if current_type is None:
+        claim_login_type(user_id, "entity")
+
     existing = db.query_one(
         "SELECT id FROM checkreq.user_roles "
         "WHERE user_id = %s AND org_id = %s AND role_key = %s AND revoked_at IS NULL",
         (user_id, org_id, role_key),
     )
-    if existing:
-        return
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO checkreq.user_roles "
-                "(user_id, org_id, role_key, granted_by_user_id, note) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (user_id, org_id, role_key, granted_by_user_id, note),
-            )
+    if not existing:
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO checkreq.user_roles "
+                    "(user_id, org_id, role_key, granted_by_user_id, note) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (user_id, org_id, role_key, granted_by_user_id, note),
+                )
+    if role_key != ENTITY_BASE_ROLE:
+        grant_role(user_id, org_id, ENTITY_BASE_ROLE, granted_by_user_id,
+                   f"Baseline access, auto-granted alongside {role_key}")
 
 
 def grant_role_all_entities(user_id: int, role_key: str,
@@ -335,9 +409,15 @@ def approve_access_request(request_id: int, reviewer_user_id: int, review_note: 
     )
     if not req:
         raise ValueError("That request is no longer pending.")
-    grant_role(req["user_id"], req["org_id"], req["requested_role_key"],
-               granted_by_user_id=reviewer_user_id,
-               note=f"Approved access request #{request_id}")
+    try:
+        grant_role(req["user_id"], req["org_id"], req["requested_role_key"],
+                   granted_by_user_id=reviewer_user_id,
+                   note=f"Approved access request #{request_id}")
+    except MixedLoginTypeError as exc:
+        # Translated to this function's own existing ValueError contract
+        # (2026-09-15) so every caller's pre-existing `except ValueError`
+        # handling covers this new failure mode with no route changes.
+        raise ValueError(str(exc)) from exc
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(

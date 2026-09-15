@@ -293,7 +293,14 @@ async def users_add(request: Request):
        13-continued). Still a plain roleless-account INSERT -- the "guided"
        part is the `?new=1` redirect below, which the detail page renders
        as an explicit "now grant a role" prompt rather than leaving that as
-       an undiscoverable next step."""
+       an undiscoverable next step.
+
+       2026-09-15, Jay: "when we add a user, what type of user is being
+       added... you should ask which type of user it is." login_type is now
+       required -- 'entity' or 'parish' (see rbac.MixedLoginTypeError) --
+       set at creation, before any role exists to infer it from. An
+       already-existing email is returned untouched (its login_type, if
+       any, was decided whenever it was actually classified, not now)."""
     user, err = _require_beacon_admin(request)
     if err:
         return err
@@ -301,8 +308,11 @@ async def users_add(request: Request):
     email = (form.get("email") or "").strip().lower()
     first_name = (form.get("first_name") or "").strip() or None
     display_name = (form.get("display_name") or "").strip() or None
+    login_type = (form.get("login_type") or "").strip()
     if not email:
         return JSONResponse({"error": "Email is required."}, status_code=400)
+    if login_type not in ("entity", "parish"):
+        return JSONResponse({"error": "Pick a login type: Entity or Parish."}, status_code=400)
 
     existing = db.query_one("SELECT id FROM checkreq.app_users WHERE LOWER(email) = %s", (email,))
     if existing:
@@ -311,9 +321,9 @@ async def users_add(request: Request):
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO checkreq.app_users (email, display_name, first_name, is_active) "
-                "VALUES (%s, %s, %s, TRUE) RETURNING id",
-                (email, display_name or email.split("@")[0], first_name),
+                "INSERT INTO checkreq.app_users (email, display_name, first_name, is_active, login_type) "
+                "VALUES (%s, %s, %s, TRUE, %s) RETURNING id",
+                (email, display_name or email.split("@")[0], first_name, login_type),
             )
             new_id = cur.fetchone()["id"]
     return RedirectResponse(f"/admin/setup/users/{new_id}?new=1", status_code=303)
@@ -559,7 +569,20 @@ async def user_grant_program_area(user_id: int, request: Request):
        just a display tweak. Immediate single-row action, no dirty/batch
        tracking, same convention this screen's own Roles Grant/Revoke
        already uses (unlike the dense multi-field GL Mapping/Global
-       Approvers grids, which needed batching)."""
+       Approvers grids, which needed batching).
+
+       2026-09-15: a Program Area assignment is, on its own, the ONLY
+       footprint some real users have (e.g. Mark Dickson-Patrick -- a
+       genuine submitter, invisible on this screen's Diocesan-Related list
+       because that grouping is driven by a live checkreq.roles grant, not
+       user_program_areas). Every assignment now also ensures
+       rbac.ENTITY_BASE_ROLE ('entity_member') is granted at the same org,
+       via rbac.grant_role -- makes the classification real (login_type)
+       and makes the person show up where an admin would actually look for
+       them. Ordered BEFORE the user_program_areas insert so a
+       MixedLoginTypeError (this login is already a Parish login) blocks
+       the whole action instead of leaving an orphaned assignment with no
+       matching role."""
     user, err = _require_beacon_admin(request)
     if err:
         return err
@@ -571,11 +594,18 @@ async def user_grant_program_area(user_id: int, request: Request):
     if not program_area_id:
         return RedirectResponse(f"/admin/setup/users/{user_id}?error=Pick+a+program+area.", status_code=303)
 
+    pa = db.query_one("SELECT org_id FROM checkreq.program_areas WHERE id = %s", (program_area_id,))
+    if not pa:
+        return RedirectResponse(f"/admin/setup/users/{user_id}?error=Unknown+program+area.", status_code=303)
+
+    try:
+        rbac.grant_role(user_id, pa["org_id"], rbac.ENTITY_BASE_ROLE, user["id"],
+                         "Baseline access, auto-granted alongside a Program Area assignment")
+    except rbac.MixedLoginTypeError as exc:
+        return RedirectResponse(f"/admin/setup/users/{user_id}?error={exc}", status_code=303)
+
     with db.connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM checkreq.program_areas WHERE id = %s", (program_area_id,))
-            if not cur.fetchone():
-                return RedirectResponse(f"/admin/setup/users/{user_id}?error=Unknown+program+area.", status_code=303)
             cur.execute(
                 "INSERT INTO checkreq.user_program_areas (user_id, program_area_id) "
                 "VALUES (%s, %s) ON CONFLICT DO NOTHING",
@@ -616,14 +646,17 @@ async def user_grant_role(user_id: int, request: Request):
     if not role_key:
         return RedirectResponse(f"/admin/setup/users/{user_id}?error=Pick+a+role.", status_code=303)
 
-    if org_id_raw == "all":
-        rbac.grant_role_all_entities(user_id, role_key, user["id"], note)
-    else:
-        try:
-            org_id = int(org_id_raw)
-        except (TypeError, ValueError):
-            return RedirectResponse(f"/admin/setup/users/{user_id}?error=Pick+an+entity.", status_code=303)
-        rbac.grant_role(user_id, org_id, role_key, user["id"], note)
+    try:
+        if org_id_raw == "all":
+            rbac.grant_role_all_entities(user_id, role_key, user["id"], note)
+        else:
+            try:
+                org_id = int(org_id_raw)
+            except (TypeError, ValueError):
+                return RedirectResponse(f"/admin/setup/users/{user_id}?error=Pick+an+entity.", status_code=303)
+            rbac.grant_role(user_id, org_id, role_key, user["id"], note)
+    except rbac.MixedLoginTypeError as exc:
+        return RedirectResponse(f"/admin/setup/users/{user_id}?error={exc}", status_code=303)
 
     return RedirectResponse(f"/admin/setup/users/{user_id}?granted=1", status_code=303)
 
@@ -674,7 +707,10 @@ async def user_grant_parish_role(user_id: int, request: Request):
     if not role_key or not parish_id:
         return RedirectResponse(f"/admin/setup/users/{user_id}?error=Pick+a+parish+and+role.", status_code=303)
 
-    parish_roles.grant_parish_role(user_id, parish_id, role_key, user["id"], note)
+    try:
+        parish_roles.grant_parish_role(user_id, parish_id, role_key, user["id"], note)
+    except rbac.MixedLoginTypeError as exc:
+        return RedirectResponse(f"/admin/setup/users/{user_id}?error={exc}", status_code=303)
     return RedirectResponse(f"/admin/setup/users/{user_id}?parish_granted=1", status_code=303)
 
 

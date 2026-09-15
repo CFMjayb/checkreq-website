@@ -26,14 +26,25 @@ permissions, as needed"):
     administer their own parish, nothing diocesan) can reach this page and
     act on their own parish's requests without needing any entity role.
 
-Deliberately does NOT gate on "already has a live entity role" the way
-access_requests.py's own submit route checks user_has_any_role -- parish
-access is a completely separate grant system (portal.parish_user_roles),
-so someone could legitimately hold zero entity roles but still want parish
-access (a parish volunteer with no Beacon/checkreq footprint at all), or
-already hold an entity role AND want parish access too (diocesan staff who
-also need to view a specific parish). The only real guard is "no duplicate
-pending request for the same thing," mirrored from the entity-level flow.
+Submission itself does NOT gate on "already has a live entity role" --
+someone can legitimately hold zero entity roles and still want parish
+access (a parish volunteer with no Beacon/checkreq footprint at all). The
+only guard at submit time is "no duplicate pending request for the same
+thing," mirrored from the entity-level flow.
+
+2026-09-15 UPDATE, supersedes this file's original reasoning above: an
+Entity login requesting real parish access (not just Parish Mode) is no
+longer a legitimate outcome -- Jay's Entity-vs-Parish login split (see
+rbac.MixedLoginTypeError) means a login already classified 'entity' must
+use Parish Mode (parish_mode_user) to view/manage parishes, not a real
+portal.parish_user_roles grant. That guard lives at GRANT time
+(parish_roles.grant_parish_role, called from both approve_parish_access_
+request below and the direct "User Access" grant route) rather than at
+submission -- an Entity login can still submit a request here, it will
+just be refused when a reviewer tries to approve it (surfaced as a clear
+error, not a silent no-op). Not yet worth a submit-time precheck too;
+revisit if this in practice lets confusing requests pile up in a
+reviewer's queue.
 """
 from __future__ import annotations
 
@@ -299,8 +310,11 @@ async def parish_user_access_grant(parish_id: int, request: Request):
             "/parish-access-request?error=" + quote("Enter a valid email and pick a role."), status_code=303
         )
     target_user_id, _was_created = parish_roles.get_or_create_user_for_grant(email)
-    parish_roles.grant_parish_role(target_user_id, parish_id, role_key, user["id"],
-                                    note="Granted via User Access")
+    try:
+        parish_roles.grant_parish_role(target_user_id, parish_id, role_key, user["id"],
+                                        note="Granted via User Access")
+    except rbac.MixedLoginTypeError as exc:
+        return RedirectResponse("/parish-access-request?error=" + quote(str(exc)), status_code=303)
     return RedirectResponse("/parish-access-request?granted_user=1", status_code=303)
 
 

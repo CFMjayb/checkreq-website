@@ -250,6 +250,23 @@ def _set_oauth_state_cookie(response: Response, state: str) -> None:
     )
 
 
+# 2026-09-15: Google-only PKCE code_verifier, same short-lived-cookie
+# treatment as _OAUTH_STATE_COOKIE above and for the identical reason -- it
+# has to survive from auth_google_start (where google_auth_oauthlib.Flow
+# auto-generates it) to auth_google_callback (a separate request, a separate
+# Flow instance). See auth_google.get_auth_url's docstring for the bug this
+# fixes ("invalid_grant: Missing code verifier" on every real Google sign-in).
+# Microsoft's flow needs no equivalent -- auth_azure.py never uses PKCE.
+_OAUTH_PKCE_COOKIE = "beacon_oauth_pkce"
+
+
+def _set_oauth_pkce_cookie(response: Response, code_verifier: str) -> None:
+    response.set_cookie(
+        _OAUTH_PKCE_COOKIE, code_verifier, max_age=_OAUTH_STATE_MAX_AGE,
+        httponly=True, samesite="lax", secure=ON_CLOUD_RUN,
+    )
+
+
 def _domain_of(email: str) -> str:
     email = (email or "").strip().lower()
     return email.rsplit("@", 1)[-1] if "@" in email else ""
@@ -454,8 +471,10 @@ def create_router(templates) -> APIRouter:
     @router.get("/auth/google/start")
     def auth_google_start(request: Request, email: str = ""):
         state = pysecrets.token_urlsafe(24)
-        resp = RedirectResponse(auth_google.get_auth_url(_google_redirect_uri(request), state, login_hint=email or None))
+        auth_url, code_verifier = auth_google.get_auth_url(_google_redirect_uri(request), state, login_hint=email or None)
+        resp = RedirectResponse(auth_url)
         _set_oauth_state_cookie(resp, state)
+        _set_oauth_pkce_cookie(resp, code_verifier)
         return resp
 
     @router.get("/auth/google/callback", response_class=HTMLResponse)
@@ -467,8 +486,12 @@ def create_router(templates) -> APIRouter:
         if not state or state != expected_state:
             return templates.TemplateResponse(request, "login.html", {"error": "Login state mismatch — please try signing in again."})
 
+        code_verifier = request.cookies.get(_OAUTH_PKCE_COOKIE)
+        if not code_verifier:
+            return templates.TemplateResponse(request, "login.html", {"error": "Login state mismatch — please try signing in again."})
+
         try:
-            claims = auth_google.acquire_token(code, _google_redirect_uri(request), state)
+            claims = auth_google.acquire_token(code, _google_redirect_uri(request), state, code_verifier)
         except ValueError as exc:
             return templates.TemplateResponse(request, "login.html", {"error": str(exc)})
 
@@ -487,6 +510,7 @@ def create_router(templates) -> APIRouter:
 
         resp = RedirectResponse("/portal", status_code=303)
         resp.delete_cookie(_OAUTH_STATE_COOKIE)
+        resp.delete_cookie(_OAUTH_PKCE_COOKIE)
         _remember_email(resp, email)
         return resp
 

@@ -181,8 +181,8 @@ def get_or_create_user_for_grant(email: str, display_name: str | None = None) ->
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO checkreq.app_users (email, display_name, is_active) "
-                "VALUES (%s, %s, TRUE) RETURNING id",
+                "INSERT INTO checkreq.app_users (email, display_name, is_active, login_type) "
+                "VALUES (%s, %s, TRUE, 'parish') RETURNING id",
                 (email, display_name or email.split("@")[0]),
             )
             return cur.fetchone()["id"], True
@@ -218,7 +218,23 @@ def all_parish_roles(include_inactive: bool = False) -> list[dict]:
 
 def grant_parish_role(user_id: int, parish_id: int, role_key: str,
                       granted_by_user_id: int | None, note: str | None = None) -> None:
-    """Idempotent, same discipline as rbac.grant_role."""
+    """Idempotent, same discipline as rbac.grant_role.
+
+       2026-09-15: enforces the Entity/Parish login split from the other
+       side of rbac.grant_role's identical guard -- raises
+       rbac.MixedLoginTypeError if this login is already classified
+       'entity'. A not-yet-classified login (login_type NULL) claims
+       'parish' as a side effect, mirroring rbac.grant_role's own
+       claim-on-first-grant behavior."""
+    current_type = rbac.get_login_type(user_id)
+    if current_type == "entity":
+        raise rbac.MixedLoginTypeError(
+            "This login is classified as an Entity login -- a login must be "
+            "either an Entity login or a Parish login, not both."
+        )
+    if current_type is None:
+        rbac.claim_login_type(user_id, "parish")
+
     existing = db.query_one(
         "SELECT id FROM portal.parish_user_roles "
         "WHERE user_id = %s AND parish_id = %s AND role_key = %s AND revoked_at IS NULL",
@@ -357,9 +373,16 @@ def approve_parish_access_request(request_id: int, reviewer_user_id: int, review
     )
     if not req:
         raise ValueError("That request is no longer pending.")
-    grant_parish_role(req["user_id"], req["parish_id"], req["requested_role_key"],
-                      granted_by_user_id=reviewer_user_id,
-                      note=f"Approved parish access request #{request_id}")
+    try:
+        grant_parish_role(req["user_id"], req["parish_id"], req["requested_role_key"],
+                          granted_by_user_id=reviewer_user_id,
+                          note=f"Approved parish access request #{request_id}")
+    except rbac.MixedLoginTypeError as exc:
+        # Translated to this function's own existing ValueError contract
+        # (2026-09-15), same reasoning as rbac.approve_access_request's
+        # identical translation -- every caller's pre-existing
+        # `except ValueError` handling covers this with no route changes.
+        raise ValueError(str(exc)) from exc
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(

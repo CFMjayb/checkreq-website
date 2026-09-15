@@ -9,6 +9,19 @@
 <h1>{{ target.display_name or target.email }}</h1>
 <p class="back-link"><a href="/admin/setup/users">&larr; Back to User Management</a></p>
 
+{# 2026-09-15: Jay's Entity-vs-Parish login split (rbac.MixedLoginTypeError) --
+   surfaces the classification set at Add User time (or claimed automatically
+   on this login's first role/parish-role grant). NULL only for a handful of
+   legacy accounts predating this column; read-only here, no reclassify UI
+   yet -- see rbac.claim_login_type if one is ever needed. #}
+<p class="sub">
+  Login Type:
+  {% if target.login_type == "entity" %}<span class="badge badge-approved">Entity Login</span>
+  {% elif target.login_type == "parish" %}<span class="badge badge-approved">Parish Login</span>
+  {% else %}<span class="badge badge-draft">Not yet classified</span>
+  {% endif %}
+</p>
+
 {% if request.query_params.get('new') %}
 <div class="banner banner-success">
   <strong>User created.</strong> Next: grant at least one role below — and, if this person needs
