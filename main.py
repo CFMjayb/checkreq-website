@@ -365,8 +365,18 @@ def how_it_works_parish_mode_page(request: Request):
 # is_ap_reviewer=TRUE (checked in portal.html, since MODULES itself is a
 # module-level constant shared by every request, not per-user).
 MODULES = [
-    {"key": "check_request", "title": "Check Request", "desc": "Submit a classic check request.", "url": "/new-request", "enabled": True, "gate": None},
-    {"key": "my_requests", "title": "My Requests", "desc": "Track requests you've submitted.", "url": "/my-requests", "enabled": True, "gate": None},
+    # 2026-09-15: gated on the synthetic "can_submit_check_request" pseudo-
+    # role (cfo OR at least one Program Area assignment at the current
+    # entity) -- was gate=None, visible to every signed-in user. Jay caught
+    # this live: a bare entity_member holder (the new baseline, granted
+    # with nothing else) saw both tiles even though _user_can_submit_for()
+    # would reject any actual submission attempt with no program area to
+    # pick from. Unlike Approval Queue below (deliberately gate=None --
+    # reviewing OTHERS' requests doesn't depend on the viewer's own program
+    # area access), these two are specifically about the viewer's OWN
+    # ability to submit/track something.
+    {"key": "check_request", "title": "Check Request", "desc": "Submit a classic check request.", "url": "/new-request", "enabled": True, "gate": "can_submit_check_request"},
+    {"key": "my_requests", "title": "My Requests", "desc": "Track requests you've submitted.", "url": "/my-requests", "enabled": True, "gate": "can_submit_check_request"},
     # Flipped enabled 2026-08-02 (Invoice Processing Intake Plan.md, Tier 3) --
     # was a disabled "Coming Soon" placeholder. Same generic `m.gate in
     # entity_roles` mechanism every other gated tile already uses -- the
@@ -662,6 +672,24 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
         entity_roles = entity_roles | {"is_entity_login"}
     elif user.get("login_type") == "parish":
         entity_roles = entity_roles | {"is_parish_login"}
+    # 2026-09-15, Jay caught this live: a bare entity_member holder (no
+    # Program Area, not cfo) still saw Check Request/My Requests tiles that
+    # do nothing for them -- _user_can_submit_for() requires an explicit
+    # checkreq.user_program_areas assignment (cfo bypasses), so without
+    # either, clicking either tile leads nowhere real. Same synthetic-
+    # pseudo-role trick as the others -- gates both tiles on actually being
+    # able to submit something at the current entity, not just being
+    # signed in with the baseline role.
+    if org_id is not None and (
+        "cfo" in entity_roles
+        or db.query_one(
+            "SELECT 1 FROM checkreq.user_program_areas upa "
+            "JOIN checkreq.program_areas pa ON pa.id = upa.program_area_id "
+            "WHERE upa.user_id = %s AND pa.org_id = %s LIMIT 1",
+            (user["id"], org_id),
+        )
+    ):
+        entity_roles = entity_roles | {"can_submit_check_request"}
     _parish_view, _parish_view_is_preview = parish_mode.effective_parish_mode(request, user)
     # Cornerstone Served Parishes Phase B (2026-08-16): True whenever the
     # currently-selected entity is a served parish-org -- drives the
