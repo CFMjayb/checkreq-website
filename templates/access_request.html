@@ -13,10 +13,19 @@
   to anything else — check back later, or reach out to your administrator directly if it's urgent.
 </div>
 {% else %}
-<p class="sub">
-  You're signed in, but you don't have access to anything in Beacon yet. Tell us what you need
-  and a Beacon Admin will review it.
-</p>
+{# 2026-09-15, Jay's Entity-vs-Parish login split: this page now has two
+   real audiences -- a brand-new login with nothing granted yet (redirected
+   here automatically), and someone who already has SOME access asking for
+   more (reached via the "Request Access" portal tile). orgs is scoped to
+   entities this login already belongs to either way -- see
+   access_requests._requestable_orgs. #}
+{% if orgs %}
+{# orgs is scoped to entities this login already holds a live role at
+   (access_requests._requestable_orgs) -- non-empty here implies this is a
+   voluntary visit (via the "Request Access" tile), never the involuntary
+   roleless-redirect, since main.py's gate only fires when
+   rbac.user_has_any_role is False in the first place. #}
+<p class="sub">Ask for an additional role at an entity you already belong to below.</p>
 
 {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
 
@@ -44,7 +53,13 @@
     <button type="submit" class="btn btn-primary">Submit Request</button>
   </form>
 </div>
-<p class="sub">Looking for access to a specific parish's information instead? <a href="/parish-access-request">Request parish access</a>.</p>
+{% else %}
+<p class="sub">
+  You're signed in, but don't yet belong to any entity in Beacon — there's nothing here to request
+  more of yet. Contact a Beacon Admin directly; they can add you as a login from within the entity
+  you need access to.
+</p>
+{% endif %}
 {% endif %}
 
 </div>

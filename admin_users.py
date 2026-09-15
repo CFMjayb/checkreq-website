@@ -300,7 +300,23 @@ async def users_add(request: Request):
        required -- 'entity' or 'parish' (see rbac.MixedLoginTypeError) --
        set at creation, before any role exists to infer it from. An
        already-existing email is returned untouched (its login_type, if
-       any, was decided whenever it was actually classified, not now)."""
+       any, was decided whenever it was actually classified, not now).
+
+       2026-09-15, same-day follow-up, Jay: "I want the entity user to have
+       the default role set... the user is being created from within an
+       entity" -- no separate entity picker is needed on this form: this
+       whole screen is already scoped to whichever entity is selected in
+       the header (_current_org, the same context users_list_page's
+       Diocesan-Related Logins table already filters by). An Entity login
+       is granted rbac.ENTITY_BASE_ROLE at that entity immediately, so it
+       never falls into the true "zero everything" bucket that sends a
+       brand-new user to the blank /access-request screen (the exact gap
+       Jay hit testing this the first time -- login_type alone, with
+       nothing actually granted anywhere, wasn't enough). A Parish login is
+       intentionally NOT granted anything here -- parish access is scoped
+       to a specific PARISH, not an entity, and is granted afterward via
+       this same detail page's existing Parish Roles panel (or the "User
+       Access" screen)."""
     user, err = _require_beacon_admin(request)
     if err:
         return err
@@ -314,6 +330,13 @@ async def users_add(request: Request):
     if login_type not in ("entity", "parish"):
         return JSONResponse({"error": "Pick a login type: Entity or Parish."}, status_code=400)
 
+    current_org = _current_org(request)
+    if login_type == "entity" and not current_org:
+        return JSONResponse(
+            {"error": "Select an entity (top of the page) before adding an Entity login."},
+            status_code=400,
+        )
+
     existing = db.query_one("SELECT id FROM checkreq.app_users WHERE LOWER(email) = %s", (email,))
     if existing:
         return RedirectResponse(f"/admin/setup/users/{existing['id']}", status_code=303)
@@ -326,6 +349,11 @@ async def users_add(request: Request):
                 (email, display_name or email.split("@")[0], first_name, login_type),
             )
             new_id = cur.fetchone()["id"]
+
+    if login_type == "entity":
+        rbac.grant_role(new_id, current_org["id"], rbac.ENTITY_BASE_ROLE, user["id"],
+                         "Baseline access, granted at Add User time")
+
     return RedirectResponse(f"/admin/setup/users/{new_id}?new=1", status_code=303)
 
 

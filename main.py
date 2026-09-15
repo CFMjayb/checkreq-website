@@ -398,7 +398,22 @@ MODULES = [
     # (beacon_admin, or parish_admin at the relevant parish). The old
     # separate "Parish Access Requests" tile/gate is gone; /admin/
     # parish-access-requests now just redirects here.
-    {"key": "request_parish_access", "title": "Request Access", "desc": "Ask for access to a parish, or review pending requests if you're a reviewer.", "url": "/parish-access-request", "enabled": True, "gate": None},
+    # 2026-09-15: gated to Parish logins only (was gate=None, visible to
+    # everyone) -- an Entity login now has its own request_entity_access
+    # tile below instead. Since a login is now provably Entity XOR Parish
+    # (rbac.MixedLoginTypeError), this can never wrongly hide the tile from
+    # someone who genuinely needs it.
+    {"key": "request_parish_access", "title": "Request Access", "desc": "Ask for access to a parish, or review pending requests if you're a reviewer.", "url": "/parish-access-request", "enabled": True, "gate": "is_parish_login"},
+    # 2026-09-15, Jay's Entity-vs-Parish login split: the entity-side
+    # equivalent of the parish tile above -- an Entity login (even one
+    # holding only the entity_member baseline, with no functional access
+    # yet) needs a real way to ask for more, not just an empty portal.
+    # access_requests.py's own picker is scoped to entities this login
+    # already has SOME footing in (Jay: "a user requests a role, they
+    # should only be able to select entities that they have the default
+    # role for") -- reaching a brand-new entity is an admin action (Add
+    # User, from within that entity), not self-service.
+    {"key": "request_entity_access", "title": "Request Access", "desc": "Ask for an additional role at an entity you already belong to.", "url": "/access-request", "enabled": True, "gate": "is_entity_login"},
     # Parish Portal S4+S5 (2026-08-08): same "parish_reviewer" synthetic
     # pseudo-role as the tile above -- a pure Parish Admin (no
     # checkreq.roles grant at all) needs to reach this without the
@@ -632,6 +647,21 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # this also keeps the tiles out of Cornerstone Mode without a second check.
     if org_id is not None and entity_roles & {"hr_admin", "beacon_admin"}             and org_features.is_enabled(org_id, "timekeeping"):
         entity_roles = entity_roles | {"timekeeping_reviewer"}
+    # 2026-09-15, Jay's Entity-vs-Parish login split: same synthetic-
+    # pseudo-role trick as administrative_tasks/parish_reviewer above, so
+    # the two "Request Access" tiles (entity-flavored -> /access-request,
+    # parish-flavored -> /parish-access-request) use the generic `m.gate in
+    # entity_roles` check instead of template special-casing. login_type is
+    # a per-USER property (not per-org, unlike every role above), set on
+    # app_users.login_type -- see rbac.MixedLoginTypeError. A NULL
+    # login_type (a handful of legacy/edge accounts) gets neither: they
+    # never reach this far anyway, since main.py's own roleless-gate above
+    # already redirects a true zero-everything user to /access-request
+    # before /portal ever renders.
+    if user.get("login_type") == "entity":
+        entity_roles = entity_roles | {"is_entity_login"}
+    elif user.get("login_type") == "parish":
+        entity_roles = entity_roles | {"is_parish_login"}
     _parish_view, _parish_view_is_preview = parish_mode.effective_parish_mode(request, user)
     # Cornerstone Served Parishes Phase B (2026-08-16): True whenever the
     # currently-selected entity is a served parish-org -- drives the
@@ -755,6 +785,19 @@ def portal(request: Request):
     if (not rbac.user_has_any_role(user["id"])
             and not db.query_one("SELECT 1 FROM checkreq.user_program_areas WHERE user_id = %s", (user["id"],))
             and not parish_roles.get_parish_role_keys(user["id"])):
+        # 2026-09-15: route by login_type -- a brand-new Parish login (Add
+        # User, login_type='parish', not yet granted any parish role) has
+        # no reason to land on the ENTITY-flavored /access-request page,
+        # whose own entity picker would be empty for them (rbac.
+        # get_entity_org_ids returns nothing -- they hold zero checkreq.
+        # user_roles anywhere, by definition, since they're roleless). An
+        # Entity login should never actually reach this branch any more
+        # (Add User grants ENTITY_BASE_ROLE immediately, from within the
+        # target entity) -- this is now effectively the Parish/unclassified
+        # path, defaulting to /access-request only for the still-NULL edge
+        # case (a handful of legacy accounts predating login_type).
+        if user.get("login_type") == "parish":
+            return RedirectResponse("/parish-access-request")
         return RedirectResponse("/access-request")
 
     # Parish Portal S4 correction (2026-08-08, Jay, first real test login):

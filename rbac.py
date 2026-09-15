@@ -173,6 +173,27 @@ def get_users_with_role(role_key: str, org_id: int | None = None) -> list[dict]:
     )
 
 
+def get_entity_org_ids(user_id: int) -> list[int]:
+    """Every org_id where this user holds ANY live checkreq.user_roles
+       grant, regardless of which role -- 2026-09-15, the self-service
+       Request Access picker's own scoping rule (Jay: "a user requests a
+       role, they should only be able to select entities that they have
+       the default role for"). Deliberately NOT scoped to specifically
+       ENTITY_BASE_ROLE ('entity_member') -- a real role holder from
+       before this baseline existed (e.g. Jay's own cfo/beacon_admin grants,
+       or anyone granted a role prior to 2026-09-15) was never backfilled
+       with a redundant entity_member row at every org they already had
+       real access to, so checking for entity_member specifically would
+       wrongly exclude them. "Has some footing at this entity" is what
+       actually matters; entity_member is just the marker for a login with
+       nothing else granted yet."""
+    rows = db.query(
+        "SELECT DISTINCT org_id FROM checkreq.user_roles WHERE user_id = %s AND revoked_at IS NULL",
+        (user_id,),
+    )
+    return [r["org_id"] for r in rows]
+
+
 def get_granted_org_ids(user_id: int, role_key: str) -> list[int]:
     """Every org_id where this user holds a LIVE grant of role_key --
     2026-08-16, the building block for "scope this list to only the orgs
