@@ -393,10 +393,14 @@ MODULES = [
     # -- no template special-casing needed.
     {"key": "administrative_tasks", "title": "Administrative Tasks", "desc": "Setup tables, user roles, vendor approvals, and system administration.", "url": "/admin", "enabled": True, "gate": "administrative_tasks"},
     # Flipped enabled 2026-07-26 (was a disabled "Coming Soon" placeholder) --
-    # AP Review Workflow Plan.md Section 2a: visible to every logged-in user,
-    # same as My Requests -- an empty queue is a harmless empty state, not
-    # worth its own permission gate.
-    {"key": "approval_queue", "title": "Approval Queue", "desc": "Review requests awaiting your approval.", "url": "/my-approvals", "enabled": True, "gate": None},
+    # AP Review Workflow Plan.md Section 2a originally had this as
+    # gate=None (visible to every logged-in user, same reasoning as My
+    # Requests at the time). 2026-09-15, Jay caught live: with entity_member
+    # -only logins now a real, common case, "an empty queue is harmless" no
+    # longer holds -- gated on "can_review_approvals" (actually named as an
+    # approver/backup somewhere for the current entity), same fix as
+    # Check Request/My Requests just above.
+    {"key": "approval_queue", "title": "Approval Queue", "desc": "Review requests awaiting your approval.", "url": "/my-approvals", "enabled": True, "gate": "can_review_approvals"},
     {"key": "ap_review", "title": "AP Review", "desc": "Final review and QBO posting for fully-approved requests.", "url": "/admin/ap-review", "enabled": True, "gate": "ap_reviewer"},
     # Parish Portal S3 (2026-08-08), consolidated same day per Jay's direct
     # feedback ("Request Access replaces Request Parish Access and Parish
@@ -690,6 +694,33 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
         )
     ):
         entity_roles = entity_roles | {"can_submit_check_request"}
+    # 2026-09-15, same live-testing round, Jay's direct follow-up: "why is
+    # the approval queue showing up?" -- same problem as Check Request/My
+    # Requests, just a different underlying condition. /my-approvals shows
+    # "requests where I am owed an action right now" (checkreq.
+    # approval_actions rows), which only ever exist for someone actually
+    # NAMED as approver_user_id/backup_approver_id somewhere -- either a
+    # program area's checkreq.approval_rules, or a diocese-wide checkreq.
+    # global_approvers threshold row. There's no separate "cfo always sees
+    # this" bypass (confirmed: approval_engine.py never special-cases the
+    # cfo role by name) -- a CFO's own queue visibility comes from actually
+    # being named in one of these two tables, same as anyone else. Mirrors
+    # admin_users.py's own is_unreachable_approver query, scoped to the
+    # CURRENT entity instead of system-wide.
+    if org_id is not None and db.query_one(
+        """
+        SELECT 1 FROM checkreq.global_approvers ga
+         WHERE ga.org_id = %s AND ga.is_active
+           AND (ga.approver_user_id = %s OR ga.backup_approver_id = %s)
+        UNION
+        SELECT 1 FROM checkreq.approval_rules ar
+          JOIN checkreq.program_areas pa ON pa.id = ar.program_area_id
+         WHERE pa.org_id = %s AND ar.is_active
+           AND (ar.approver_user_id = %s OR ar.backup_approver_id = %s)
+        """,
+        (org_id, user["id"], user["id"], org_id, user["id"], user["id"]),
+    ):
+        entity_roles = entity_roles | {"can_review_approvals"}
     _parish_view, _parish_view_is_preview = parish_mode.effective_parish_mode(request, user)
     # Cornerstone Served Parishes Phase B (2026-08-16): True whenever the
     # currently-selected entity is a served parish-org -- drives the
@@ -4786,9 +4817,11 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
 # ── Approval Action Workflow (AP Review Workflow Plan.md, Section 2) ────────
 # GET /my-approvals: an approver's queue -- fundamentally a different query
 # shape than My Requests (submitter_user_id = me): here it's "requests where
-# I am owed an action right now," across every submitter. Visible to every
-# logged-in user (MODULES' approval_queue tile, gate=None) -- an empty queue
-# is a harmless empty state, not worth its own permission gate.
+# I am owed an action right now," across every submitter. The route itself
+# stays reachable by anyone signed in (an empty result is still a harmless
+# render) -- the portal TILE that links here is now gated on
+# "can_review_approvals" (2026-09-15, was gate=None) since a bare
+# entity_member holder can never actually appear in this queue.
 
 @app.get("/my-approvals", response_class=HTMLResponse)
 def my_approvals(request: Request, view: str = "mine", approved: str = "",
