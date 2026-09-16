@@ -11,9 +11,16 @@
 
 <!-- 2026-09-14, Jay: split entity users (the common case, shown
      immediately) from parish-only users (rare, lazy-loaded on expand --
-     see impersonate.js) and compacted the rows/button. -->
+     see impersonate.js) and compacted the rows/button.
+     2026-09-16, Jay: "I only want to see users related to the Entity I am
+     in at the time" -- both lists are now scoped to whichever entity is
+     currently selected in the header (main.py's impersonate_picker /
+     api_impersonate_parish_users), not every user system-wide. -->
 <div class="card">
-  <h2>Entity Users</h2>
+  <h2>Entity Users{% if current_org %} — {{ current_org.code|upper if current_org.code else current_org.name }}{% endif %}</h2>
+  {% if not current_org %}
+  <p class="sub">Select an entity (top of the page) to see its users here.</p>
+  {% endif %}
   <div class="table-scroll">
   <table class="simple-table impersonate-table">
     <thead>
@@ -34,7 +41,11 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="4">No other active entity users found.</td></tr>
+      <tr><td colspan="4">
+        {% if not current_org %}Select an entity to see its users.
+        {% else %}No other active users found for {{ current_org.code|upper if current_org.code else current_org.name }}.
+        {% endif %}
+      </td></tr>
       {% endfor %}
     </tbody>
   </table>

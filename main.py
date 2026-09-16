@@ -1037,7 +1037,20 @@ def impersonate_picker(request: Request):
     below, the moment someone actually expands that section (same
     fetch-on-open deferral notifications.js already established for the
     header bell, for the identical reason: querying a list that's usually
-    never opened isn't worth doing on every page load)."""
+    never opened isn't worth doing on every page load).
+
+    2026-09-16, Jay: "when I am impersonating a user, I only want to see
+    users related to the Entity I am in at the time." Was every entity
+    user system-wide, regardless of which entity was selected in the
+    header -- scoped to _current_org, same "current entity only" rule
+    admin_users.py's Diocesan-Related Logins table already enforces (and
+    for the same reason: at this portfolio's real scale, "everyone,
+    everywhere" stops being a usable picker). A person's OWN role list
+    (`roles`) still shows every entity they hold something at, not just the
+    current one -- only which USERS appear is newly scoped, not what's
+    shown about each one. Falls back to an empty list (not an error) when
+    no entity is currently selected, same convention as every other
+    entity-scoped screen in this codebase."""
     real = _real_user(request)
     if not real:
         return RedirectResponse("/login")
@@ -1045,6 +1058,8 @@ def impersonate_picker(request: Request):
     # EDOM-only CFO could impersonate before RBAC too (is_cfo was global).
     if not rbac.user_has_role(real["id"], "cfo", org_id=None):
         return JSONResponse({"error": "CFO access required"}, status_code=403)
+
+    current_org = _current_org(request)
 
     all_role_rows = db.query(
         "SELECT ur.user_id, o.code AS org_code, r.label AS role_label "
@@ -1058,16 +1073,23 @@ def impersonate_picker(request: Request):
     for r in all_role_rows:
         roles_by_user.setdefault(r["user_id"], []).append(r)
 
+    current_org_user_ids = (
+        {uid for uid, roles in roles_by_user.items() if any(r["org_code"] == current_org["code"] for r in roles)}
+        if current_org else set()
+    )
+
     entity_users: list[dict] = []
-    if roles_by_user:
+    if current_org_user_ids:
         entity_users = db.query(
             "SELECT id, email, display_name FROM checkreq.app_users "
             "WHERE is_active AND id != %s AND id = ANY(%s) ORDER BY display_name",
-            (real["id"], list(roles_by_user.keys())),
+            (real["id"], list(current_org_user_ids)),
         )
         for u in entity_users:
             u["roles"] = roles_by_user.get(u["id"], [])
-    return _render(request, "impersonate.html", _current_user(request), {"users": entity_users})
+    return _render(request, "impersonate.html", _current_user(request), {
+        "users": entity_users, "current_org": current_org,
+    })
 
 
 @app.get("/api/impersonate/parish-users")
@@ -1077,12 +1099,23 @@ def api_impersonate_parish_users(request: Request):
     grant anywhere; those users already showed up in the eager entity-user
     list). Fetched by impersonate.js only when the Parish-Only Users
     section is actually expanded, per Jay's explicit request that this
-    rarer case shouldn't cost anything on a normal page load."""
+    rarer case shouldn't cost anything on a normal page load.
+
+    2026-09-16, same "current entity only" scoping as impersonate_picker
+    above -- a parish belongs to one diocese (portal.parishes.org_id), so
+    this list is now scoped to parishes under whichever entity is
+    currently selected in the header, not every parish system-wide.
+    Returns an empty list (not an error) when no entity is selected --
+    impersonate.js already handles an empty result gracefully."""
     real = _real_user(request)
     if not real:
         return JSONResponse({"error": "not signed in"}, status_code=401)
     if not rbac.user_has_role(real["id"], "cfo", org_id=None):
         return JSONResponse({"error": "CFO access required"}, status_code=403)
+
+    current_org = _current_org(request)
+    if not current_org:
+        return JSONResponse({"users": []})
 
     rows = db.query(
         """
@@ -1092,14 +1125,14 @@ def api_impersonate_parish_users(request: Request):
           JOIN portal.parish_user_roles pur ON pur.user_id = au.id AND pur.revoked_at IS NULL
           JOIN portal.parish_roles pr ON pr.key = pur.role_key
           JOIN portal.parishes p ON p.id = pur.parish_id
-         WHERE au.is_active AND au.id != %s
+         WHERE au.is_active AND au.id != %s AND p.org_id = %s
            AND NOT EXISTS (
              SELECT 1 FROM checkreq.user_roles ur
               WHERE ur.user_id = au.id AND ur.revoked_at IS NULL
            )
          ORDER BY au.display_name, p.name
         """,
-        (real["id"],),
+        (real["id"], current_org["id"]),
     )
     users_by_id: dict[int, dict] = {}
     for r in rows:
