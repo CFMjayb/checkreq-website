@@ -24,6 +24,14 @@
     {% if locked_parish %}
     <input type="text" value="{{ parishes[0].name }}{% if parishes[0].city %}, {{ parishes[0].city }}{% endif %}" disabled>
     <input type="hidden" name="parish_id" value="{{ parishes[0].id }}">
+    {% elif not current_org %}
+    {# 2026-09-16, Jay: this picker used to show every parish system-wide
+       regardless of the header's entity selection -- now scoped to
+       current_org (parish_access._request_form_context). No entity
+       selected means no parishes to show, same convention as every other
+       entity-scoped screen -- a clear prompt, not a silently-empty
+       dropdown. #}
+    <p class="sub">Select an entity (top of the page) to see its parishes here.</p>
     {% else %}
     <select id="parish_id" name="parish_id" required>
       <option value="">Select a parish...</option>

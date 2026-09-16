@@ -63,12 +63,13 @@ import tile_badges
 router = APIRouter()
 
 _current_user = None
+_current_org = None
 _render = None
 
 
-def register(app, *, current_user, render) -> None:
-    global _current_user, _render
-    _current_user, _render = current_user, render
+def register(app, *, current_user, current_org, render) -> None:
+    global _current_user, _current_org, _render
+    _current_user, _current_org, _render = current_user, current_org, render
     app.include_router(router)
 
 
@@ -128,21 +129,40 @@ def _request_form_context(request: Request, user: dict, error: str | None = None
     ACTIVELY being viewed (native or CFO-preview alike) is what actually
     matches "they should only be able to request access for someone in
     their Parish." Diocesan staff who aren't currently viewing any
-    specific parish (plain /portal browsing) keep the full picker, since
+    specific parish (plain /portal browsing) keep a picker, since
     that's the legitimate "request access to parish X on someone's behalf"
-    case; a genuine first-timer with no parish context also gets the full
-    list, since there's nothing to lock to yet."""
+    case.
+
+    2026-09-16, Jay: "the Request Access screen on my EDOM page shows all
+    parishes from ALL dioceses... this should be filtered (as most
+    screens) by the entity that you are working on." The unlocked picker
+    used registry.list_all_parishes() -- every parish system-wide,
+    unscoped -- since this route was first built (2026-08-08), predating
+    the "current entity only" convention this codebase now applies
+    everywhere else (admin_users.py's Diocesan-Related Logins, Impersonate
+    a User, etc.). Not role-based, despite how it might have looked --
+    beacon_admin/parish_admin decide who can REACH this picker at all
+    (_require_parish_reviewer), never how many parishes are IN it. Now
+    scoped to registry.list_parishes(current_org["id"]) when an entity is
+    selected in the header; falls back to an empty list (not every
+    diocese's parishes) when none is, same convention as every other
+    entity-scoped screen -- the template shows a clear prompt rather than
+    a silently-empty dropdown."""
     parish, _is_preview = parish_mode.effective_parish_mode(request, user)
     if parish:
         parishes = [parish]
         locked = True
     else:
-        parishes = registry.list_all_parishes()
+        current_org = _current_org(request)
+        parishes = registry.list_parishes(current_org["id"]) if current_org else []
         locked = False
     ctx = {
         "parishes": parishes,
         "roles": parish_roles.all_parish_roles(),
         "locked_parish": locked,
+        # current_org itself isn't set here -- _render() already injects it
+        # into every template's context globally (main.py), so the
+        # template can read it directly without this function duplicating it.
         "error": error,
     }
     return ctx
