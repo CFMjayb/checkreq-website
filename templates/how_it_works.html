@@ -19,12 +19,11 @@
         <h3><a href="/how-it-works/ap">How Beacon AP Works</a></h3>
         <p>The check &amp; payment request system — submitting, approving, and posting requests to the accounting system. Open to every signed-in user.</p>
       </div>
-      {% if show_parish_mode_link %}
-      <div class="hiw-subcard">
-        <h3><a href="/how-it-works/parish-mode">How Beacon Works — Parish Mode</a></h3>
-        <p>Parish Mode — a parish's own view of Beacon: its documents, announcements, and shared resources. Visible here because you're currently viewing Beacon in Parish Mode.</p>
-      </div>
-      {% endif %}
+      {# 2026-09-16: the Parish Mode subcard that used to live here is gone
+         -- main.py's how_it_works_page() now redirects straight to
+         /how-it-works/parish-mode whenever the viewer is actually in
+         Parish Mode, so this umbrella page is only ever reached by
+         someone who ISN'T -- the subcard could never render anyway. #}
       <div class="hiw-subcard">
         <h3>Cornerstone-Served Parishes</h3>
         <p>A planned future section describing how a diocese's Cornerstone-Served parishes work end to end. Not written yet.</p>

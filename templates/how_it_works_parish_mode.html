@@ -10,9 +10,17 @@
 
 <div class="howitworks">
 
+  {# 2026-09-16: the "How Beacon Works (overview)" link that used to sit
+     here is gone -- /how-it-works now redirects straight back to THIS
+     page for anyone actually in Parish Mode (main.py's how_it_works_page),
+     which is the only way to reach this page in the first place, so that
+     link was a self-redirecting no-op. "Back to Portal" now goes to
+     /parish-view instead when actually viewing a parish (same
+     parish_view-conditional pattern parish_access_request.html already
+     uses) -- /portal would have bounced there anyway, just with an extra
+     hop. #}
   <p class="back-link">
-    <a href="/portal">&larr; Back to Portal</a> &middot;
-    <a href="/how-it-works">&larr; How Beacon Works (overview)</a>
+    <a href="{{ '/parish-view' if parish_view else '/portal' }}">&larr; Back</a>
   </p>
 
   <div class="status-callout">

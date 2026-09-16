@@ -317,24 +317,28 @@ def how_it_works_page(request: Request):
     genuinely has no portal to return to yet.
 
     2026-09-16, Jay: "the How Beacon Works should only explain Parish Mode
-    when you are in Parish Mode" -- show_parish_mode_link was gated on ROLE
-    ELIGIBILITY (_PARISH_MODE_DOC_ROLES: cfo/parish_mode_user/beacon_admin/
-    setup_admin -- anyone who COULD ever use Parish Mode), regardless of
-    whether they were actually using it right now. Replaced with the real
-    CURRENT state via parish_mode.effective_parish_mode() -- the same
-    function main.py's own /portal route and _render() already call to
-    decide whether the viewer is a native parish-only user or has an
-    active CFO/parish_mode_user preview toggled on. Someone eligible but
-    not currently viewing any parish no longer sees this link at all."""
+    when you are in Parish Mode." First cut only gated the Parish Mode
+    SUBCARD's own visibility on this umbrella page by current state
+    (parish_mode.effective_parish_mode()) -- but the umbrella's OTHER
+    subcards (AP, Cornerstone-Served) rendered regardless, so someone
+    actually in Parish Mode still saw the whole umbrella, subcard and all,
+    not just Parish Mode content. Corrected, real intent (Jay, live test:
+    "I was in Parish Mode and I saw the entire How Beacon Works - all
+    sections - not just about Parish Mode"): the footer's "How Beacon
+    Works" link (base.html, every page including parish_view.html) now
+    goes STRAIGHT to /how-it-works/parish-mode while a parish is actively
+    being viewed, skipping this umbrella entirely -- not offering it as
+    one of several choices. This umbrella is now only ever reached by
+    someone NOT currently in Parish Mode, so its own Parish Mode subcard
+    (which only ever applied to someone who WAS) is gone -- see
+    how_it_works.html."""
     user = _current_user(request)
-    show_parish_mode_link = False
     if user:
         parish, _is_preview = parish_mode.effective_parish_mode(request, user)
-        show_parish_mode_link = bool(parish)
-    extra = {"show_parish_mode_link": show_parish_mode_link}
-    if user:
-        return _render(request, "how_it_works.html", user, extra)
-    return templates.TemplateResponse(request, "how_it_works.html", extra)
+        if parish:
+            return RedirectResponse("/how-it-works/parish-mode")
+        return _render(request, "how_it_works.html", user, {})
+    return templates.TemplateResponse(request, "how_it_works.html", {})
 
 
 @app.get("/how-it-works/ap", response_class=HTMLResponse)
