@@ -285,15 +285,11 @@ app.include_router(auth_routes.create_router(templates))
 #                                  gate/placement from before this split)
 #   /how-it-works/ap           -- the original page's content, retitled and
 #                                  edited, still public
-#   /how-it-works/parish-mode  -- new content, gated to the same
-#                                  _PARISH_MODE_ROLES set parish_mode.py's
-#                                  own gates use (duplicated here as a
-#                                  literal list, not imported -- see
-#                                  admin_hub.py's identical convention/
-#                                  reasoning for why)
+#   /how-it-works/parish-mode  -- new content, gated by CURRENT Parish Mode
+#                                  state (see below) -- was gated by ROLE
+#                                  ELIGIBILITY only, until 2026-09-16
 # A future Cornerstone-Served Parishes page is a real next addition here,
 # not built yet -- Jay named it as the plan, not something to build today.
-_PARISH_MODE_DOC_ROLES = ["cfo", "parish_mode_user", "beacon_admin", "setup_admin"]
 
 
 @app.get("/how-it-works", response_class=HTMLResponse)
@@ -318,11 +314,23 @@ def how_it_works_page(request: Request):
     actually signed in, so they get the full, working header; only a truly
     signed-out visitor falls back to the bare, header-less render --
     matching login.html's own precedent for the one audience that
-    genuinely has no portal to return to yet."""
+    genuinely has no portal to return to yet.
+
+    2026-09-16, Jay: "the How Beacon Works should only explain Parish Mode
+    when you are in Parish Mode" -- show_parish_mode_link was gated on ROLE
+    ELIGIBILITY (_PARISH_MODE_DOC_ROLES: cfo/parish_mode_user/beacon_admin/
+    setup_admin -- anyone who COULD ever use Parish Mode), regardless of
+    whether they were actually using it right now. Replaced with the real
+    CURRENT state via parish_mode.effective_parish_mode() -- the same
+    function main.py's own /portal route and _render() already call to
+    decide whether the viewer is a native parish-only user or has an
+    active CFO/parish_mode_user preview toggled on. Someone eligible but
+    not currently viewing any parish no longer sees this link at all."""
     user = _current_user(request)
-    show_parish_mode_link = bool(user) and rbac.user_has_any_role(
-        user["id"], _PARISH_MODE_DOC_ROLES, org_id=None,
-    )
+    show_parish_mode_link = False
+    if user:
+        parish, _is_preview = parish_mode.effective_parish_mode(request, user)
+        show_parish_mode_link = bool(parish)
     extra = {"show_parish_mode_link": show_parish_mode_link}
     if user:
         return _render(request, "how_it_works.html", user, extra)
@@ -345,15 +353,18 @@ def how_it_works_ap_page(request: Request):
 
 @app.get("/how-it-works/parish-mode", response_class=HTMLResponse)
 def how_it_works_parish_mode_page(request: Request):
-    """New page (2026-09-14) -- gated to the same role set that can reach
-    Parish Mode itself (_PARISH_MODE_DOC_ROLES, kept in sync with
-    parish_mode.py's own _PARISH_MODE_ROLES by hand -- see that module's
-    docstring). Unlike the AP page, this one requires a real sign-in, since
-    it describes a workflow only some staff can actually use."""
+    """New page (2026-09-14). 2026-09-16: gate changed from ROLE
+    ELIGIBILITY to CURRENT Parish Mode state (see how_it_works_page's own
+    docstring for the full reasoning) -- someone eligible but not currently
+    viewing a parish is redirected back to the umbrella page, same as
+    before, just on a different condition. Still requires a real sign-in,
+    unlike the AP page, since it describes a workflow tied to an active
+    parish context."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
-    if not rbac.user_has_any_role(user["id"], _PARISH_MODE_DOC_ROLES, org_id=None):
+    parish, _is_preview = parish_mode.effective_parish_mode(request, user)
+    if not parish:
         return RedirectResponse("/how-it-works")
     return _render(request, "how_it_works_parish_mode.html", user, {})
 

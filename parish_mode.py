@@ -406,6 +406,23 @@ def parish_view_page(request: Request):
             org_features.is_enabled(parish["org_id"], "timekeeping")
             and timekeeping_activation.parish_hr_enabled(parish)
         ),
+        # 2026-09-16, Jay: caught the Finance tile showing for a bare
+        # parish_member with no Parish Finance role -- it was always-shown
+        # by a deliberate 2026-08-16 design (the destination page,
+        # parish_finance.py, already denies the actual data via its own
+        # can_view_finance() gate -- verified no financial data ever
+        # renders without it), but Jay asked for the tile itself to match
+        # timekeeping_enabled's own pattern above instead: hide it entirely
+        # rather than show-then-deny. Duplicates parish_finance.
+        # can_view_finance()'s exact logic rather than importing that
+        # module -- parish_finance.py already imports THIS module (line 43
+        # there), so the reverse would be circular, same accepted-
+        # duplication precedent as _is_beacon_admin's own docstring above.
+        "can_view_finance": (
+            _is_beacon_admin(user["id"])
+            or rbac.user_has_role(user["id"], "setup_admin", parish["org_id"])
+            or parish_roles.user_has_parish_role(user["id"], "parish_finance", parish["id"])
+        ),
     })
 
 

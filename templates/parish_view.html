@@ -60,14 +60,20 @@
     <h3>Parish Information</h3>
     <p class="desc">Contact details, clergy, and parish leadership.</p>
   </a>
-  {# Parish Portal Plan.md S6/S7 addendum (2026-08-16) -- always shown; the
-     page itself shows a clear "no permission" message for a viewer without
-     the Parish Finance role (parish_finance.can_view_finance()), same
-     pattern as this page's own can_review gating elsewhere. #}
+  {# Parish Portal Plan.md S6/S7 addendum (2026-08-16) originally showed this
+     tile unconditionally, relying on the destination page's own
+     parish_finance.can_view_finance() gate to deny a viewer without the
+     Parish Finance role. 2026-09-16, Jay caught this live and asked for the
+     same treatment as Timekeeping below: hide the tile entirely rather than
+     show-then-deny. can_view_finance is computed by parish_mode.py's
+     parish_view_page() (duplicating can_view_finance()'s own logic --
+     see that route's comment for why it can't just import parish_finance). #}
+  {% if can_view_finance %}
   <a class="module-tile" href="/parish-finance">
     <h3>Finance</h3>
     <p class="desc">Shared Ministry Allocation status, Middendorf loan, and AP payments.</p>
   </a>
+  {% endif %}
   <a class="module-tile" href="/parish-documents">
     <h3>Documents</h3>
     <p class="desc">What the diocese has shared with you, and your own parish's files.</p>
