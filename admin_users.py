@@ -69,6 +69,8 @@ already 609 lines) -- see feedback_modular_file_organization.md.
 """
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
@@ -82,6 +84,23 @@ router = APIRouter()
 _current_user = None
 _current_org = None
 _render = None
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _format_last_login(dt) -> str | None:
+    """Eastern time, 24-hour clock (2026-09-16, Jay's explicit ask: "last
+       sign in does need the time to be converted into EST format 24hr") --
+       was a bare timestamptz rendered directly (an ISO-ish UTC string).
+       Distinct from congregation.py's own _format_as_of, which uses a
+       12-hour "at 5:20 PM ET" convention -- kept separate rather than
+       shared, since the two screens deliberately want different formats.
+       %H/%M are safe cross-platform (unlike %-d/%-I, which are Linux-only
+       -- see that same module's note on why this codebase avoids them)."""
+    if dt is None:
+        return None
+    local = dt.astimezone(_ET)
+    return f"{local.strftime('%Y-%m-%d %H:%M')} ET"
 
 
 def register(app, *, current_user, current_org, render) -> None:
@@ -242,6 +261,7 @@ def _user_list_rows() -> list[dict]:
                                {r["org_code"] for r in u["program_areas"]})
         u["entity_codes"] = entity_codes
         u["is_unreachable_approver"] = (u["last_login_at"] is None) and (u["id"] in approver_uids)
+        u["last_login_display"] = _format_last_login(u["last_login_at"])
     return users
 
 
@@ -458,6 +478,7 @@ def user_detail_page(user_id: int, request: Request):
     target = db.query_one("SELECT * FROM checkreq.app_users WHERE id = %s", (user_id,))
     if not target:
         return RedirectResponse("/admin/setup/users")
+    target["last_login_display"] = _format_last_login(target["last_login_at"])
 
     roles = rbac.get_roles_for_user(user_id)
     program_areas = db.query(

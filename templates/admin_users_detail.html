@@ -66,7 +66,7 @@
       {% else %}Not yet signed in
       {% endif %}
       &nbsp;·&nbsp;
-      Last sign-in: {{ target.last_login_at or "Never" }}
+      Last sign-in: {{ target.last_login_display or "Never" }}
     </p>
     <button type="submit" class="btn btn-primary">Save Identity</button>
   </form>

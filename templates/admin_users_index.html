@@ -102,63 +102,20 @@
 </details>
 {% endif %}
 
-{# 2026-09-13, Jay: "manage Beacon user logins in two distinct groups -- the
-   parish-related logins, and the Diocesan-related logins." A user in both
-   groups (holds a checkreq.roles grant AND a live parish role) appears in
-   both -- same "membership, not exclusive category" idea the Entities
-   column already uses. A parish_mode_user holder (is_full_admin=False)
-   only ever gets `parish_rows` populated (see admin_users.py's
-   users_list_page) -- the Diocesan-Related section below is simply never
-   rendered for them, not just hidden by CSS. This is a first, functional
-   cut of the two-group split (real access control, real grouping) --
-   NOT yet the fuller per-group column/layout redesign (e.g. a parish-
-   specific column set instead of reusing the diocesan Program Areas/
-   Entities/Roles columns below), which is its own follow-up.
-   2026-09-14: made collapsible (open by default -- this list is the
-   page's own primary content, unlike Add User above), per Jay. #}
-<details class="card setup-section" open>
-  <summary><h2>Parish-Related Logins</h2></summary>
-  <div class="table-scroll scroll-panel">
-  <table class="simple-table">
-    <thead>
-      <tr>
-        <th>Display Name</th><th>Email</th><th>Active</th><th>Parish Roles</th><th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for u in parish_rows %}
-      <tr>
-        <td>{{ u.display_name or "—" }}</td>
-        <td>{{ u.email }}</td>
-        <td>{% if not u.is_active %}<span class="badge badge-draft">Deactivated</span>{% else %}Yes{% endif %}</td>
-        <td class="status-cell">
-          <button type="button" class="status-pill-btn" data-popup="prole-popup-{{ u.id }}">
-            <span class="badge badge-approved">{{ u.parish_roles|length }} role{{ '' if u.parish_roles|length == 1 else 's' }}</span>
-          </button>
-          <div class="status-popup compact" id="prole-popup-{{ u.id }}" hidden>
-            <div class="status-popup-title">Parish Roles — {{ u.display_name or u.email }}</div>
-            <ul class="popup-list">
-              {% for r in u.parish_roles %}<li>{{ r.role_label }} ({{ r.parish_name }})</li>{% endfor %}
-            </ul>
-          </div>
-        </td>
-        <td><a class="btn btn-secondary" href="/admin/setup/users/{{ u.id }}">Manage</a></td>
-      </tr>
-      {% else %}
-      <tr><td colspan="5">No parish-related logins yet.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-</details>
-
+{# 2026-09-16, Jay: "I expected the user management sections to be ordered
+   a) add user, b) Diocesan-related Logins (entity) and c) Parish-related
+   logins" -- reordered below to match (Diocesan first, Parish second).
+   Checked git history first: this was never a lost/reverted commit, the
+   Parish section had simply always come first since the split was
+   originally built (commit 767e8e8, 2026-09-13) -- just never matched
+   what Jay expected. #}
 {% if is_full_admin %}
 <!-- 2026-09-14: scoped to the currently-selected entity (Jay: "I would
      only like to see the users for that entity that is currently
      selected") -- was previously every diocesan-role holder across every
      entity regardless of the header switcher. See admin_users.py's
      users_list_page for the actual filter. Made collapsible (open by
-     default, same reasoning as Parish-Related Logins above). -->
+     default, same reasoning as Parish-Related Logins below). -->
 <details class="card setup-section" open>
   <summary>
     <h2>Diocesan-Related Logins{% if current_org %} — {{ current_org.code|upper if current_org.code else current_org.name }}{% endif %}</h2>
@@ -190,8 +147,11 @@
         <td data-sort-value="active" data-value="{{ '0' if not u.is_active else '1' }}">
           {% if not u.is_active %}<span class="badge badge-draft">Deactivated</span>{% else %}Yes{% endif %}
         </td>
+        {# data-value stays the raw timestamp (still sorts correctly as a
+           string -- ISO8601 UTC sorts chronologically) -- only the
+           user-visible text is reformatted to ET/24hr (2026-09-16, Jay). #}
         <td data-sort-value="last_sign_in" data-value="{{ u.last_login_at or '' }}">
-          {% if u.last_login_at %}{{ u.last_login_at }}{% else %}Never{% endif %}
+          {% if u.last_login_display %}{{ u.last_login_display }}{% else %}Never{% endif %}
           {% if u.is_unreachable_approver %}<br><span class="badge badge-draft">Required approver, never signed in</span>{% endif %}
         </td>
         <td class="status-cell">
@@ -262,6 +222,56 @@
   </div>
 </details>
 {% endif %}
+
+{# 2026-09-13, Jay: "manage Beacon user logins in two distinct groups -- the
+   parish-related logins, and the Diocesan-related logins." A user in both
+   groups (holds a checkreq.roles grant AND a live parish role) appears in
+   both -- same "membership, not exclusive category" idea the Entities
+   column already uses. A parish_mode_user holder (is_full_admin=False)
+   only ever gets `parish_rows` populated (see admin_users.py's
+   users_list_page) -- the Diocesan-Related section above is simply never
+   rendered for them, not just hidden by CSS. This is a first, functional
+   cut of the two-group split (real access control, real grouping) --
+   NOT yet the fuller per-group column/layout redesign (e.g. a parish-
+   specific column set instead of reusing the diocesan Program Areas/
+   Entities/Roles columns above), which is its own follow-up.
+   2026-09-14: made collapsible (open by default -- this list is the
+   page's own primary content, unlike Add User above), per Jay. #}
+<details class="card setup-section" open>
+  <summary><h2>Parish-Related Logins</h2></summary>
+  <div class="table-scroll scroll-panel">
+  <table class="simple-table">
+    <thead>
+      <tr>
+        <th>Display Name</th><th>Email</th><th>Active</th><th>Parish Roles</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in parish_rows %}
+      <tr>
+        <td>{{ u.display_name or "—" }}</td>
+        <td>{{ u.email }}</td>
+        <td>{% if not u.is_active %}<span class="badge badge-draft">Deactivated</span>{% else %}Yes{% endif %}</td>
+        <td class="status-cell">
+          <button type="button" class="status-pill-btn" data-popup="prole-popup-{{ u.id }}">
+            <span class="badge badge-approved">{{ u.parish_roles|length }} role{{ '' if u.parish_roles|length == 1 else 's' }}</span>
+          </button>
+          <div class="status-popup compact" id="prole-popup-{{ u.id }}" hidden>
+            <div class="status-popup-title">Parish Roles — {{ u.display_name or u.email }}</div>
+            <ul class="popup-list">
+              {% for r in u.parish_roles %}<li>{{ r.role_label }} ({{ r.parish_name }})</li>{% endfor %}
+            </ul>
+          </div>
+        </td>
+        <td><a class="btn btn-secondary" href="/admin/setup/users/{{ u.id }}">Manage</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">No parish-related logins yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</details>
 
 </div>
 {% endblock %}
