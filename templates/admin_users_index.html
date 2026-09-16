@@ -124,7 +124,12 @@
   <p class="sub">Select an entity (top of the page) to see its diocesan-related logins here.</p>
   {% endif %}
   <div class="table-scroll scroll-panel">
-  <table class="simple-table" id="usersTable">
+  {# 2026-09-16, Jay: "list these screens in a more compact fashion, row by
+     row" -- the .compact row-density modifier (base.css, 2026-09-14)
+     already existed and was already used on admin_users_detail.html's own
+     Roles table and parish_mode.html, but was never applied here -- the
+     gap Jay was recalling. #}
+  <table class="simple-table compact" id="usersTable">
     <thead>
       <tr>
         <th data-sort="display_name" class="sortable">Display Name</th>
@@ -240,7 +245,7 @@
 <details class="card setup-section" open>
   <summary><h2>Parish-Related Logins</h2></summary>
   <div class="table-scroll scroll-panel">
-  <table class="simple-table">
+  <table class="simple-table compact">
     <thead>
       <tr>
         <th>Display Name</th><th>Email</th><th>Active</th><th>Parish Roles</th><th></th>
