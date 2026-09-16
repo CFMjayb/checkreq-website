@@ -1046,11 +1046,13 @@ def impersonate_picker(request: Request):
     admin_users.py's Diocesan-Related Logins table already enforces (and
     for the same reason: at this portfolio's real scale, "everyone,
     everywhere" stops being a usable picker). A person's OWN role list
-    (`roles`) still shows every entity they hold something at, not just the
-    current one -- only which USERS appear is newly scoped, not what's
-    shown about each one. Falls back to an empty list (not an error) when
-    no entity is currently selected, same convention as every other
-    entity-scoped screen in this codebase."""
+    (`roles`) is ALSO scoped to just the current entity now (2026-09-16,
+    Jay's direct follow-up: "the impersonate user is only supposed to show
+    the roles for the entity selected" -- corrects this function's own
+    first cut, which deliberately kept every entity's roles visible per
+    row). Falls back to an empty list (not an error) when no entity is
+    currently selected, same convention as every other entity-scoped
+    screen in this codebase."""
     real = _real_user(request)
     if not real:
         return RedirectResponse("/login")
@@ -1086,7 +1088,7 @@ def impersonate_picker(request: Request):
             (real["id"], list(current_org_user_ids)),
         )
         for u in entity_users:
-            u["roles"] = roles_by_user.get(u["id"], [])
+            u["roles"] = [r for r in roles_by_user.get(u["id"], []) if r["org_code"] == current_org["code"]]
     return _render(request, "impersonate.html", _current_user(request), {
         "users": entity_users, "current_org": current_org,
     })
