@@ -36,6 +36,59 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import db
 import rbac
 
+# ── Fund Account Masks (CFM Items) ──────────────────────────────────────────
+# 2026-09-18: the Fund Summary Report (26-106/26-107 qbo-mcp-server) reads its
+# per-company account masks from this same `fund_account_masks` table (moved
+# off an Excel tab the same session -- see 26-106's Plan.md). This is the
+# first real capability on the CFM Items placeholder page: a served client's
+# own masks, editable while a diocesan staffer is already working inside that
+# client's Cornerstone-Mode context. Company code is resolved the same way
+# parish_finance.py's _company_code() does elsewhere in this app (org's own
+# `code`, lowercased) -- no DME-style override needed here, since DME is a
+# diocese, not a served parish-org, and can never reach this route (see
+# is_cornerstone_org() below).
+
+def _fund_mask_company_code(org: dict) -> str:
+    return (org.get("code") or "").lower()
+
+
+def get_fund_account_masks(company: str) -> list[dict]:
+    return db.query(
+        "SELECT id, account_mask, display_label, sort_order, fund_group, active "
+        "FROM fund_account_masks WHERE lower(company) = %s AND active "
+        "ORDER BY sort_order, account_mask",
+        (company,),
+    )
+
+
+def add_fund_account_mask(company: str, account_mask: str, display_label: str,
+                           sort_order: int, fund_group: str, updated_by: str) -> None:
+    db.query(
+        "INSERT INTO fund_account_masks (company, account_mask, display_label, sort_order, fund_group, updated_by) "
+        "VALUES (%s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (company, account_mask) DO UPDATE SET "
+        "display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, "
+        "fund_group = EXCLUDED.fund_group, active = TRUE, updated_at = now(), updated_by = EXCLUDED.updated_by",
+        (company, account_mask, display_label, sort_order, fund_group, updated_by),
+    )
+
+
+def update_fund_account_mask(mask_id: int, company: str, display_label: str,
+                              sort_order: int, fund_group: str, updated_by: str) -> None:
+    db.query(
+        "UPDATE fund_account_masks SET display_label = %s, sort_order = %s, fund_group = %s, "
+        "updated_at = now(), updated_by = %s WHERE id = %s AND lower(company) = %s",
+        (display_label, sort_order, fund_group, updated_by, mask_id, company),
+    )
+
+
+def deactivate_fund_account_mask(mask_id: int, company: str) -> None:
+    db.query(
+        "UPDATE fund_account_masks SET active = FALSE, updated_at = now() "
+        "WHERE id = %s AND lower(company) = %s",
+        (mask_id, company),
+    )
+
 router = APIRouter()
 
 _current_user = None
@@ -227,4 +280,68 @@ def cfm_items(request: Request):
     org = _current_org(request)
     if not org or not is_cornerstone_org(org["id"]):
         return RedirectResponse("/portal")
-    return _render(request, "cfm_items.html", user, {})
+    company = _fund_mask_company_code(org)
+    masks = get_fund_account_masks(company)
+    return _render(request, "cfm_items.html", user, {"fund_masks": masks, "fund_mask_company": company})
+
+
+@router.post("/admin/cfm-items/fund-masks/add")
+async def cfm_items_fund_mask_add(request: Request):
+    """Add (or reactivate/update) one Fund Summary Report account mask row
+    for the currently-selected served client's own QBO company -- see the
+    module-level comment above for why this lives here. Same access gate as
+    the page itself (must be inside this specific client's own org context)."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    org = _current_org(request)
+    if not org or not is_cornerstone_org(org["id"]):
+        return RedirectResponse("/portal")
+    form = await request.form()
+    account_mask = (form.get("account_mask") or "").strip()
+    if account_mask:
+        try:
+            sort_order = int(form.get("sort_order") or 999)
+        except ValueError:
+            sort_order = 999
+        add_fund_account_mask(
+            _fund_mask_company_code(org), account_mask,
+            (form.get("display_label") or "").strip(),
+            sort_order, (form.get("fund_group") or "").strip(),
+            user.get("email", ""),
+        )
+    return RedirectResponse("/admin/cfm-items", status_code=303)
+
+
+@router.post("/admin/cfm-items/fund-masks/{mask_id}/update")
+async def cfm_items_fund_mask_update(mask_id: int, request: Request):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    org = _current_org(request)
+    if not org or not is_cornerstone_org(org["id"]):
+        return RedirectResponse("/portal")
+    form = await request.form()
+    try:
+        sort_order = int(form.get("sort_order") or 999)
+    except ValueError:
+        sort_order = 999
+    update_fund_account_mask(
+        mask_id, _fund_mask_company_code(org),
+        (form.get("display_label") or "").strip(),
+        sort_order, (form.get("fund_group") or "").strip(),
+        user.get("email", ""),
+    )
+    return RedirectResponse("/admin/cfm-items", status_code=303)
+
+
+@router.post("/admin/cfm-items/fund-masks/{mask_id}/delete")
+def cfm_items_fund_mask_delete(mask_id: int, request: Request):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    org = _current_org(request)
+    if not org or not is_cornerstone_org(org["id"]):
+        return RedirectResponse("/portal")
+    deactivate_fund_account_mask(mask_id, _fund_mask_company_code(org))
+    return RedirectResponse("/admin/cfm-items", status_code=303)

@@ -4,8 +4,61 @@
 <div class="page-shell">
 <h1>CFM Items</h1>
 <p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
+
 <div class="card">
-  <p class="sub">Cornerstone-specific tools for {{ current_org.name }} will appear here. Nothing's been built yet — check back soon.</p>
+  <h2>Fund Summary Report — Account Masks</h2>
+  <p class="sub">Which QBO equity accounts feed {{ current_org.name }}'s Fund Summary Report (QBO company <code>{{ fund_mask_company }}</code>). A mask change here is live immediately — no redeploy needed.</p>
+
+  {% if fund_masks %}
+  <table class="simple-table compact">
+    <thead>
+      <tr><th>Account Mask</th><th>Display Label</th><th>Sort Order</th><th>Group</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for m in fund_masks %}
+      <tr>
+        <td>{{ m.account_mask }}</td>
+        <td><input type="text" name="display_label" value="{{ m.display_label or '' }}" form="mask-update-{{ m.id }}"></td>
+        <td><input type="number" name="sort_order" value="{{ m.sort_order }}" style="width:5em" form="mask-update-{{ m.id }}"></td>
+        <td><input type="text" name="fund_group" value="{{ m.fund_group or '' }}" form="mask-update-{{ m.id }}"></td>
+        <td>
+          <button type="submit" form="mask-update-{{ m.id }}" class="btn btn-sm">Save</button>
+          <button type="submit" form="mask-delete-{{ m.id }}" class="btn btn-sm btn-danger">Remove</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% for m in fund_masks %}
+  <form id="mask-update-{{ m.id }}" method="post" action="/admin/cfm-items/fund-masks/{{ m.id }}/update" hidden></form>
+  <form id="mask-delete-{{ m.id }}" method="post" action="/admin/cfm-items/fund-masks/{{ m.id }}/delete" onsubmit="return confirm('Remove this mask?');" hidden></form>
+  {% endfor %}
+  {% else %}
+  <p class="sub">No masks defined yet for <code>{{ fund_mask_company }}</code>.</p>
+  {% endif %}
+
+  <details>
+    <summary>+ Add a mask</summary>
+    <form method="post" action="/admin/cfm-items/fund-masks/add" class="add-grid">
+      <div class="fld">
+        <label>Account Mask (glob '3*' or range '3100-3199')</label>
+        <input type="text" name="account_mask" required>
+      </div>
+      <div class="fld">
+        <label>Display Label</label>
+        <input type="text" name="display_label">
+      </div>
+      <div class="fld">
+        <label>Sort Order</label>
+        <input type="number" name="sort_order" value="999" style="width:5em">
+      </div>
+      <div class="fld">
+        <label>Group (optional)</label>
+        <input type="text" name="fund_group">
+      </div>
+      <button type="submit" class="btn btn-primary">Add Mask</button>
+    </form>
+  </details>
 </div>
 </div>
 {% endblock %}
