@@ -6,8 +6,8 @@
 <p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
 <p class="sub">Your Cornerstone Franciscan Ministries staff menu — pick a diocese to work on, or go straight into one of our served parish clients. This menu will keep growing with more Cornerstone-specific tools over time.</p>
 
-<div class="card">
-  <h2>Enter a Diocese</h2>
+<details class="card doc-area" open>
+  <summary><h2>Enter a Diocese</h2></summary>
   <table class="simple-table">
     <thead><tr><th>Diocese</th><th>Code</th><th></th></tr></thead>
     <tbody>
@@ -22,15 +22,17 @@
       {% endfor %}
     </tbody>
   </table>
-</div>
+</details>
 
-<div class="card">
-  <h2>Enter a Client</h2>
+<details class="card doc-area" open>
+  <summary><h2>Enter a Client</h2></summary>
+  {% if current_org %}<p class="sub">Showing clients under {{ current_org.name }}. Enter a different diocese above to see its own clients.</p>{% endif %}
   <table class="simple-table">
-    <thead><tr><th>Parish</th><th>Diocese</th><th>City</th><th></th></tr></thead>
+    <thead><tr><th>Code</th><th>Parish</th><th>Diocese</th><th>City</th><th></th></tr></thead>
     <tbody>
       {% for o in orgs %}
       <tr>
+        <td>{{ o.code|upper }}</td>
         <td>{{ o.parish_name }}</td>
         <td>{{ o.diocese_name }}</td>
         <td>{{ o.city or "—" }}</td>
@@ -41,11 +43,11 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="4">No Cornerstone-served parishes set up for you yet.</td></tr>
+      <tr><td colspan="5">No Cornerstone-served parishes set up for you yet{{ " under " + current_org.name if current_org else "" }}.</td></tr>
       {% endfor %}
     </tbody>
   </table>
-</div>
+</details>
 
 <div class="card">
   <p class="sub">More Cornerstone tools will appear here over time.</p>

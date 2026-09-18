@@ -171,7 +171,7 @@ def _parish_preview_active(request: Request) -> bool:
     return bool(request.session.get("parish_view_id"))
 
 
-def get_cornerstone_picker_orgs(user_id: int) -> list[dict]:
+def get_cornerstone_picker_orgs(user_id: int, diocese_org_id: int | None = None) -> list[dict]:
     """Served parish-orgs where this user actually holds cornerstone_employee
     -- their own real grants, not every served parish (same "explicit grant
     required, no inheritance" rule as everything else in this app).
@@ -181,13 +181,27 @@ def get_cornerstone_picker_orgs(user_id: int) -> list[dict]:
     would show anything (scoped to `WHERE pdio.id = current_org`) -- a real
     chicken-and-egg problem for the new standing Cornerstone Menu landing
     page (see the router below), which must be reachable BEFORE any diocese
-    is selected at all. Now returns every served client this user holds the
-    grant at, across every diocese -- `diocese_name` stays in the SELECT so
-    the picker can still show which diocese each client belongs to. Fails
-    closed (empty list) if migrations 036/037 haven't landed yet."""
+    is selected at all. So this became unconditionally cross-diocese --
+    every served client this user holds the grant at, across every diocese.
+
+    2026-09-19, Jay caught the real regression that created: "I went into
+    Cornerstone Mode while in EDOM and can only see Clients under EDOM, when
+    I change to DSW... I still only see EDOM's cornerstone clients." The
+    2026-08-29 fix went too far the other way -- it dropped diocese scoping
+    ENTIRELY, so switching the header's current diocese never changed this
+    list at all (it just happened to look diocese-scoped for Jay, since his
+    own cornerstone_employee grants all sit under EDOM's clients). Fixed by
+    re-adding an optional `diocese_org_id` filter: when the caller is
+    already sitting inside a real diocese (the normal case), the list is
+    scoped to that diocese's own served clients; `diocese_org_id=None`
+    (nothing selected yet -- the landing-page case) still returns every
+    client across every diocese, preserving the original chicken-and-egg
+    fix for a pure Cornerstone employee with no diocese-level role anywhere.
+    `diocese_name` stays in the SELECT either way, since it's still useful
+    context on the landing page's cross-diocese list. Fails closed (empty
+    list) if migrations 036/037 haven't landed yet."""
     try:
-        return db.query(
-            """
+        sql = """
             SELECT o.id AS org_id, o.code, p.name AS parish_name, p.city,
                    pdio.name AS diocese_name
             FROM checkreq.user_roles ur
@@ -196,10 +210,13 @@ def get_cornerstone_picker_orgs(user_id: int) -> list[dict]:
             JOIN portal.parishes p ON p.linked_org_id = o.id
             JOIN checkreq.organizations pdio ON pdio.id = p.org_id
             WHERE ur.user_id = %s AND ur.role_key = 'cornerstone_employee' AND ur.revoked_at IS NULL
-            ORDER BY pdio.name, p.name
-            """,
-            (user_id,),
-        )
+        """
+        params: list = [user_id]
+        if diocese_org_id is not None:
+            sql += " AND pdio.id = %s"
+            params.append(diocese_org_id)
+        sql += " ORDER BY pdio.name, p.name"
+        return db.query(sql, tuple(params))
     except Exception:
         return []
 
@@ -237,7 +254,10 @@ def cornerstone_mode_picker(request: Request):
     org = _current_org(request)
     if _parish_preview_active(request) or (org and is_cornerstone_org(org["id"])):
         return RedirectResponse("/portal")
-    orgs = get_cornerstone_picker_orgs(user["id"])
+    # org is either None or a real diocese here -- a served client's own org
+    # already bounced to /portal above (is_cornerstone_org check), so it's
+    # always safe to use org["id"] directly as the diocese scope.
+    orgs = get_cornerstone_picker_orgs(user["id"], org["id"] if org else None)
     dioceses = _accessible_diocese_orgs(user["id"])
     return _render(request, "cornerstone_mode.html", user, {"orgs": orgs, "dioceses": dioceses})
 
