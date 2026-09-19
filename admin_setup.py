@@ -205,6 +205,30 @@ def _require_setup_admin(request: Request):
     return user, None
 
 
+def _org_in_scope(user: dict, request: Request, target_org_id) -> bool:
+    """H3 (Security Assessment 2026-09-19): the Organizations screen's write
+    routes take an org_id (form/path) or row ids from the request body and
+    used to act on them with no check beyond _require_setup_admin's gate on
+    the CURRENT entity -- so a setup_admin at one entity could raise another
+    entity's global-approval threshold, add/remove its global approvers,
+    toggle its features, or replace its branding. A target entity is in
+    scope when it IS the currently selected entity, or when the caller
+    independently holds setup_admin AT that target entity. Anything else --
+    including a None/unparseable id -- is out of scope."""
+    try:
+        target_org_id = int(target_org_id)
+    except (TypeError, ValueError):
+        return False
+    org = _current_org(request)
+    if org and org["id"] == target_org_id:
+        return True
+    return rbac.user_has_role(user["id"], "setup_admin", org_id=target_org_id)
+
+
+def _forbidden_entity() -> JSONResponse:
+    return JSONResponse({"error": "Not authorized for this entity."}, status_code=403)
+
+
 def _sort_depth(sort_order: str | None) -> int:
     """Indentation depth from dot-notation SortOrder — literal dot count,
     identical to new_request.js's glAccountDepth() and to the ORDER BY both
@@ -625,6 +649,8 @@ async def organizations_toggle_feature(request: Request):
         org_id = int(form.get("org_id", ""))
     except ValueError:
         return RedirectResponse("/admin/setup/organizations?error=Bad+request.", status_code=303)
+    if not _org_in_scope(user, request, org_id):  # H3
+        return _forbidden_entity()
     feature_key = (form.get("feature_key") or "").strip()
     enabled = form.get("enabled") == "1"
     known_keys = {k for k, _ in org_features.KNOWN_FEATURES}
@@ -640,10 +666,19 @@ async def organizations_save_orgs(request: Request):
     if err:
         return err
     body = await request.json()
+    rows = body.get("rows") or []
+    # H3 (Security Assessment 2026-09-19): every row id in the batch is an
+    # organizations.id the client chose. Check the WHOLE batch against the
+    # caller's scope before writing anything -- a single out-of-scope row
+    # refuses the entire save with a 403, rather than silently applying the
+    # in-scope rows and burying the refusal in a per-row result.
+    out_of_scope = [r.get("id") for r in rows if not _org_in_scope(user, request, r.get("id"))]
+    if out_of_scope:
+        return _forbidden_entity()
     results = []
     with db.connect() as conn:
         with conn.cursor() as cur:
-            for i, r in enumerate(body.get("rows") or []):
+            for i, r in enumerate(rows):
                 row_id = r.get("id")
                 try:
                     with _RowSavepoint(cur, f"sp_org_{i}"):
@@ -712,6 +747,8 @@ async def organizations_upload_logo(org_id: int, request: Request, logo: UploadF
     user, err = _require_setup_admin(request)
     if err:
         return err
+    if not _org_in_scope(user, request, org_id):  # H3
+        return _forbidden_entity()
     org = db.query_one("SELECT id FROM checkreq.organizations WHERE id = %s", (org_id,))
     if not org:
         return RedirectResponse("/admin/setup/organizations?error=Unknown+entity.", status_code=303)
@@ -740,6 +777,8 @@ async def organizations_remove_logo(org_id: int, request: Request):
     user, err = _require_setup_admin(request)
     if err:
         return err
+    if not _org_in_scope(user, request, org_id):  # H3
+        return _forbidden_entity()
     org = db.query_one(
         "SELECT logo_gcs_path FROM checkreq.organizations WHERE id = %s", (org_id,)
     )
@@ -791,11 +830,37 @@ async def organizations_save_approvers(request: Request):
     if err:
         return err
     body = await request.json()
+    rows = body.get("rows") or []
+
+    # H3 (Security Assessment 2026-09-19): a global_approvers row belongs to
+    # an entity (org_id) -- both the org the row is ALREADY assigned to (for
+    # an update/delete of an existing id) and the org the client is asking
+    # to assign it to must be in the caller's scope. Checked for the whole
+    # batch before any write; one out-of-scope row refuses the whole save.
+    # A NULL org_id (never appended to any chain -- see organizations_page)
+    # is inert and therefore always in scope.
+    def _row_org_ids(r) -> list:
+        wanted = []
+        rid = r.get("id")
+        if rid not in (None, "", "null"):
+            existing = db.query_one("SELECT org_id FROM checkreq.global_approvers WHERE id = %s", (rid,))
+            if existing and existing["org_id"] is not None:
+                wanted.append(existing["org_id"])
+        if not r.get("_delete"):
+            new_org = r.get("org_id")
+            if new_org not in (None, "", "null"):
+                wanted.append(new_org)
+        return wanted
+
+    for r in rows:
+        if any(not _org_in_scope(user, request, oid) for oid in _row_org_ids(r)):
+            return _forbidden_entity()
+
     results = []
 
     with db.connect() as conn:
         with conn.cursor() as cur:
-            for i, r in enumerate(body.get("rows") or []):
+            for i, r in enumerate(rows):
                 row_id = r.get("id")  # None/blank => create
                 new_id = None
                 try:

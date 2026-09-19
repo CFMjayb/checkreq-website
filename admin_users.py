@@ -75,6 +75,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import db
+import notifications
 import rbac
 import parish_roles
 import registry
@@ -615,6 +616,47 @@ def user_detail_page(user_id: int, request: Request):
     })
 
 
+def _footprint_org_ids(user_id: int) -> set[int]:
+    """Every entity this login has ANY real footing at: a live
+    checkreq.user_roles grant, a checkreq.user_program_areas assignment, or
+    (for a Parish login) the diocese a live portal.parish_user_roles grant
+    rolls up to. Used by the M7 identity-change scope check below."""
+    rows = db.query(
+        """
+        SELECT ur.org_id FROM checkreq.user_roles ur
+         WHERE ur.user_id = %s AND ur.revoked_at IS NULL
+        UNION
+        SELECT pa.org_id FROM checkreq.user_program_areas upa
+          JOIN checkreq.program_areas pa ON pa.id = upa.program_area_id
+         WHERE upa.user_id = %s
+        UNION
+        SELECT p.org_id FROM portal.parish_user_roles pur
+          JOIN portal.parishes p ON p.id = pur.parish_id
+         WHERE pur.user_id = %s AND pur.revoked_at IS NULL
+        """,
+        (user_id, user_id, user_id),
+    )
+    return {r["org_id"] for r in rows}
+
+
+def _may_change_identity(actor_id: int, target_id: int) -> bool:
+    """M7 (Security Assessment 2026-09-19): user_update let ANY beacon_admin
+    (checked with org_id=None, "holds it anywhere") change ANY user's login
+    email -- the identity the SSO/code/password flows all key on -- including
+    users at entities the admin has no footing in. That is account-takeover-
+    capable. Now the acting admin must share at least one entity with the
+    target (both hold some live role / program-area / parish footing at a
+    common org). Holding beacon_admin AT an org the target has footing at is
+    the same condition (the admin's own grant there is a footing), so it
+    needs no separate branch. A target with NO footing anywhere (a legacy
+    or never-provisioned account) has nothing to take over and stays
+    editable, so an admin can still fix a typo in a fresh account's email."""
+    target_orgs = _footprint_org_ids(target_id)
+    if not target_orgs:
+        return True
+    return bool(target_orgs & _footprint_org_ids(actor_id))
+
+
 @router.post("/admin/setup/users/{user_id}/update")
 async def user_update(user_id: int, request: Request):
     user, err = _require_beacon_admin(request)
@@ -628,6 +670,17 @@ async def user_update(user_id: int, request: Request):
     if not email:
         return JSONResponse({"error": "Email is required."}, status_code=400)
 
+    target = db.query_one("SELECT id, email FROM checkreq.app_users WHERE id = %s", (user_id,))
+    if not target:
+        return JSONResponse({"error": "User not found."}, status_code=404)
+    old_email = (target["email"] or "").strip().lower()
+    email_changing = email != old_email
+    if email_changing and not _may_change_identity(user["id"], user_id):  # M7
+        return JSONResponse(
+            {"error": "Not authorized to change this user's login email -- you don't share an entity with them."},
+            status_code=403,
+        )
+
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -635,6 +688,29 @@ async def user_update(user_id: int, request: Request):
                 "is_active = %s WHERE id = %s",
                 (email, display_name, first_name, is_active, user_id),
             )
+
+    if email_changing:
+        # M7 audit trail. checkreq.audit_log is keyed on a payment_request_id
+        # (NOT NULL), so a user-identity change can't live there; the in-app
+        # notifications table is the one durable per-user record this app
+        # has for "something happened to your account" -- one row on the
+        # target (visible to whoever signs in as that account next) and one
+        # on the acting admin, plus a server-side log line. Fails open by
+        # design (create_notification never raises) -- a notification hiccup
+        # must never roll back or hide an already-applied identity change.
+        actor_label = user.get("display_name") or user.get("email") or f"user #{user['id']}"
+        print(f"[admin-users] login email changed for app_users id {user_id}: "
+              f"{old_email!r} -> {email!r} by {actor_label} (id {user['id']})")
+        notifications.create_notification(
+            user_id, "email_changed",
+            f"Your Beacon login email was changed from {old_email} to {email} by {actor_label}.",
+            f"/admin/setup/users/{user_id}",
+        )
+        notifications.create_notification(
+            user["id"], "email_changed",
+            f"You changed the login email for app_users #{user_id} from {old_email} to {email}.",
+            f"/admin/setup/users/{user_id}",
+        )
     return RedirectResponse(f"/admin/setup/users/{user_id}?saved=1", status_code=303)
 
 
@@ -782,6 +858,19 @@ async def user_grant_parish_role(user_id: int, request: Request):
 
     if not role_key or not parish_id:
         return RedirectResponse(f"/admin/setup/users/{user_id}?error=Pick+a+parish+and+role.", status_code=303)
+
+    # M7 (Security Assessment 2026-09-19): the parish must belong to the
+    # CURRENTLY SELECTED entity -- the picker on the detail page is already
+    # scoped that way (registry.list_parishes(current_org)), and
+    # parish_access.py enforces the identical rule on its own grant path,
+    # but this route trusted the posted parish_id from any diocese.
+    current_org = _current_org(request)
+    parish = db.query_one("SELECT org_id FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
+    if not current_org or not parish or parish["org_id"] != current_org["id"]:
+        return RedirectResponse(
+            f"/admin/setup/users/{user_id}?error=That+parish+is+not+in+the+currently+selected+entity.",
+            status_code=303,
+        )
 
     try:
         parish_roles.grant_parish_role(user_id, parish_id, role_key, user["id"], note)

@@ -2188,6 +2188,29 @@ def _require_ap_reviewer(request: Request):
     return user, None
 
 
+def _require_role_for_org(user: dict, role_key: str, org_id: int | None):
+    """Record-level entity check for the AP Review / Vendor Approver ACTION
+    routes (Security Assessment 2026-09-19, finding H1). _require_ap_reviewer
+    / _require_vendor_approver above are deliberately existence checks
+    (org_id=None -- "holds the role at >=1 entity", so one screen can serve
+    someone granted at several entities), and the LIST pages already narrow
+    their queries to rbac.get_granted_org_ids(). But until 2026-09-19 the
+    action routes -- approve/reject/w9-received a vendor request, post-to-qbo
+    (single + batch), request-existing-vendor-w9, ap-return -- never
+    compared the TARGET record's own org_id to that set, so an ap_reviewer
+    or vendor_approver at one entity could act on (and post real QBO Bills
+    for) another entity's requests. assign_gl_coding already did this
+    correctly; this is that same check, shared.
+
+    Returns None when `org_id` is one the user actually holds `role_key` at,
+    else a 403 JSONResponse the caller returns as-is. A None org_id (record
+    not found / no org) is always denied -- never let it fall through to
+    rbac.py's "check every org" meaning."""
+    if org_id is None or org_id not in rbac.get_granted_org_ids(user["id"], role_key):
+        return JSONResponse({"error": "Not authorized for this entity."}, status_code=403)
+    return None
+
+
 def _user_display_name(user_id: int | None) -> str | None:
     if not user_id:
         return None
@@ -2266,8 +2289,14 @@ def api_vendors(org_id: int, request: Request, q: str = ""):
     # found live 2026-07-25 while hardening for the first public Cloud Run
     # deploy. Matches /api/program-areas' pattern: login required, no
     # further org-membership restriction (same as that endpoint).
-    if not _current_user(request):
+    user = _current_user(request)
+    if not user:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
+    # M3 (Security Assessment 2026-09-19): the URL's org_id was never
+    # checked against the caller's own access -- the 2026-07-25 fix added
+    # the login gate but never the org gate. Same helper /select-entity uses.
+    if not _user_has_org_access(user["id"], org_id):
+        return JSONResponse({"error": "Not authorized for this entity."}, status_code=403)
     if q:
         return db.query(
             "SELECT id, display_name FROM checkreq.vendors "
@@ -2305,8 +2334,13 @@ def api_gl_accounts(org_id: int, request: Request, program_area_id: int | None =
     sort_order) versus the curated per-program-area view, not a bug; the
     Check Request form always supplies a real program_area_id and is
     completely unaffected by this branch."""
-    if not _current_user(request):
+    user = _current_user(request)
+    if not user:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
+    # M3 (Security Assessment 2026-09-19): same org-access gate as
+    # /api/vendors/{org_id} -- see that route's comment.
+    if not _user_has_org_access(user["id"], org_id):
+        return JSONResponse({"error": "Not authorized for this entity."}, status_code=403)
 
     if program_area_id is None:
         base_sql = "SELECT id, account_number, account_name, NULL AS sort_order " \
@@ -3223,6 +3257,11 @@ def _existing_vendor_by_w9_upload_token(token: str) -> dict | None:
 # added without updating this dict too.
 _REQUEST_TYPE_ABBR = {"check_request": "CR", "invoice_payment": "IV"}
 
+# M4 (Security Assessment 2026-09-19): the only two request types this app
+# knows. new_request_submit used to accept any string the form posted and
+# write it straight into payment_requests.request_type.
+_ALLOWED_REQUEST_TYPES = frozenset(_REQUEST_TYPE_ABBR)
+
 
 def _next_request_number(request_type: str) -> str:
     """New format (2026-07-26, Task 5): '{CR|IV}{YY}-{NNN}', e.g. 'CR26-001',
@@ -3262,6 +3301,8 @@ async def new_request_submit(request: Request):
 
     form = await request.form()
     request_type = form.get("request_type", "check_request")
+    if request_type not in _ALLOWED_REQUEST_TYPES:
+        return JSONResponse({"error": "Invalid request type."}, status_code=400)
 
     # Invoice Processing Intake Plan.md (Tier 3, 2026-08-02): "Program Area
     # defaults to All" -- an Invoice Intake coder, unlike a Check Request
@@ -3468,7 +3509,10 @@ async def new_request_submit(request: Request):
     # application code rather than a DB constraint, per the plan's own
     # stated preference for this codebase.
     using_new_vendor = form.get("using_new_vendor") == "1"
-    vendor_id = int(form["vendor_id"]) if (not using_new_vendor and form.get("vendor_id")) else None
+    try:
+        vendor_id = int(form["vendor_id"]) if (not using_new_vendor and form.get("vendor_id")) else None
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Please select a vendor from the list, or add a new vendor."}, status_code=400)
 
     new_vendor_fields: dict | None = None
     if using_new_vendor:
@@ -3521,6 +3565,16 @@ async def new_request_submit(request: Request):
             {"error": "Please select a vendor from the list, or add a new vendor."},
             status_code=400,
         )
+    # M4 (Security Assessment 2026-09-19): the posted vendor_id must be one
+    # of THIS entity's own checkreq.vendors rows -- the picker only ever
+    # offers those, but the id arrives from the client and was never
+    # re-checked, so a crafted POST could bill against another entity's
+    # vendor (or a nonexistent id, which used to surface only as an FK
+    # error later). Rejects, never silently substitutes.
+    if vendor_id is not None and not db.query_one(
+        "SELECT 1 FROM checkreq.vendors WHERE id = %s AND org_id = %s", (vendor_id, org_id),
+    ):
+        return JSONResponse({"error": "The selected vendor is not valid for this entity."}, status_code=400)
 
     requested_pay_date = form.get("requested_pay_date") or None
     if not requested_pay_date:
@@ -3559,12 +3613,52 @@ async def new_request_submit(request: Request):
         gl_account_ids = form.getlist("gl_account_id")
         gl_amounts = form.getlist("gl_amount")
         gl_memos = form.getlist("gl_memo")
-        gl_lines = [
-            (int(a), float(amt), memo)
-            for a, amt, memo in zip(gl_account_ids, gl_amounts, gl_memos)
-            if a and amt
-        ]
+        try:
+            gl_lines = [
+                (int(a), float(amt), memo)
+                for a, amt, memo in zip(gl_account_ids, gl_amounts, gl_memos)
+                if a and amt
+            ]
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "Each GL coding line needs a valid account and amount."}, status_code=400)
         total_amount = round(sum(amt for _, amt, _ in gl_lines), 2)
+
+        # M4 (Security Assessment 2026-09-19): every posted gl_account_id
+        # must be one the GL picker would actually have offered for this
+        # exact context -- i.e. exactly /api/gl-accounts/{org_id}'s own
+        # rule, re-applied server-side: with a program area chosen, a
+        # checkreq.program_area_gl_accounts mapping for THAT area with
+        # allow_post=TRUE (never a header/grouping row), on an active GL
+        # account of THIS entity; with no program area (Invoice Intake's
+        # "defaults to All"), any active GL account of this entity. Until
+        # now these ids were written straight through from the client, and
+        # _evaluate_gl_line_budgets `continue`d past an unmapped line --
+        # which also meant the budget check was skipped for exactly those
+        # lines. Rejects rather than skips.
+        if gl_lines:
+            posted_ids = [acct_id for acct_id, _, _ in gl_lines]
+            if program_area_id is not None:
+                allowed_rows = db.query(
+                    "SELECT pga.gl_account_id FROM checkreq.program_area_gl_accounts pga "
+                    "JOIN checkreq.program_areas pa ON pa.id = pga.program_area_id "
+                    "JOIN checkreq.gl_accounts ga ON ga.id = pga.gl_account_id "
+                    "WHERE pga.program_area_id = %s AND pa.org_id = %s AND ga.org_id = %s "
+                    "  AND pga.allow_post AND ga.is_active AND pga.gl_account_id = ANY(%s)",
+                    (program_area_id, org_id, org_id, posted_ids),
+                )
+            else:
+                allowed_rows = db.query(
+                    "SELECT id AS gl_account_id FROM checkreq.gl_accounts "
+                    "WHERE org_id = %s AND is_active AND id = ANY(%s)",
+                    (org_id, posted_ids),
+                )
+            allowed_ids = {r["gl_account_id"] for r in allowed_rows}
+            if any(acct_id not in allowed_ids for acct_id in posted_ids):
+                return JSONResponse(
+                    {"error": "One or more GL accounts are not available for this program area "
+                              "and entity. Please re-select the GL coding lines and try again."},
+                    status_code=400,
+                )
 
     # Approval Workflow Corrections (2026-07-31): three-tier budget check,
     # runs BEFORE any database write, for both the new-submission and edit
@@ -5705,7 +5799,14 @@ def vendor_request_approve(vr_id: int, request: Request):
         "JOIN checkreq.organizations o ON o.id = vr.org_id WHERE vr.id = %s",
         (vr_id,),
     )
-    if not vr or vr["status"] != "pending_approval":
+    if not vr:
+        return RedirectResponse("/admin/vendor-requests", status_code=303)
+    # H1 (Security Assessment 2026-09-19): the vendor request's own entity
+    # must be one this approver actually holds vendor_approver at.
+    denied = _require_role_for_org(user, "vendor_approver", vr["org_id"])
+    if denied:
+        return denied
+    if vr["status"] != "pending_approval":
         return RedirectResponse("/admin/vendor-requests", status_code=303)
 
     with db.connect() as conn:
@@ -5745,6 +5846,14 @@ async def vendor_request_reject(vr_id: int, request: Request):
     form = await request.form()
     reason = form.get("rejected_reason", "").strip() or None
 
+    # H1 (Security Assessment 2026-09-19): entity check before any write.
+    vr = db.query_one("SELECT org_id FROM checkreq.vendor_requests WHERE id = %s", (vr_id,))
+    if not vr:
+        return JSONResponse({"error": "Vendor request not found"}, status_code=404)
+    denied = _require_role_for_org(user, "vendor_approver", vr["org_id"])
+    if denied:
+        return denied
+
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -5766,6 +5875,14 @@ def vendor_request_w9_received(vr_id: int, request: Request):
     user, err = _require_vendor_approver(request)
     if err:
         return err
+
+    # H1 (Security Assessment 2026-09-19): entity check before any write.
+    vr = db.query_one("SELECT org_id FROM checkreq.vendor_requests WHERE id = %s", (vr_id,))
+    if not vr:
+        return JSONResponse({"error": "Vendor request not found"}, status_code=404)
+    denied = _require_role_for_org(user, "vendor_approver", vr["org_id"])
+    if denied:
+        return denied
 
     with db.connect() as conn:
         with conn.cursor() as cur:
@@ -6141,6 +6258,13 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
     )
     if not pr:
         return False, "Request not found"
+    # H1 (Security Assessment 2026-09-19): this request's own entity must be
+    # one the reviewer actually holds ap_reviewer at -- checked here, inside
+    # the shared core, so the single-request route AND every item of the
+    # batch route get it identically (a batch failure surfaces per item via
+    # the existing "posted N / failed: ..." result format).
+    if pr["org_id"] not in rbac.get_granted_org_ids(user["id"], "ap_reviewer"):
+        return False, "not authorized for this request's entity"
     if pr["status"] != "Approved":
         return False, f"someone already acted on this request (status is now {pr['status']})"
 
@@ -6414,12 +6538,19 @@ def ap_review_request_existing_vendor_w9(request_number: str, request: Request):
         return err
 
     pr = db.query_one(
-        "SELECT pr.vendor_id, o.name AS org_name FROM checkreq.payment_requests pr "
+        "SELECT pr.vendor_id, pr.org_id, o.name AS org_name FROM checkreq.payment_requests pr "
         "JOIN checkreq.organizations o ON o.id = pr.org_id "
         "WHERE pr.request_number = %s",
         (request_number,),
     )
-    if not pr or not pr["vendor_id"]:
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    # H1 (Security Assessment 2026-09-19): entity check before touching the
+    # vendor row or sending anything.
+    denied = _require_role_for_org(user, "ap_reviewer", pr["org_id"])
+    if denied:
+        return denied
+    if not pr["vendor_id"]:
         return RedirectResponse(
             "/admin/ap-review?post_error=" + quote("No existing vendor found on this request."),
             status_code=303,
@@ -6491,6 +6622,10 @@ async def ap_return_request(request_number: str, request: Request):
     )
     if not pr:
         return JSONResponse({"error": "Request not found"}, status_code=404)
+    # H1 (Security Assessment 2026-09-19): entity check before any write.
+    denied = _require_role_for_org(user, "ap_reviewer", pr["org_id"])
+    if denied:
+        return denied
     if pr["status"] != "Approved":
         return JSONResponse({"error": "This request is not on the AP review queue right now."}, status_code=400)
 

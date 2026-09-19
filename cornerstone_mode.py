@@ -31,7 +31,7 @@ right now", not an assumed-always-true fact.
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import db
 import rbac
@@ -317,18 +317,41 @@ def cfm_items(request: Request):
     return _render(request, "cfm_items.html", user, {"fund_masks": masks, "fund_mask_company": company})
 
 
+def _fund_mask_write_denied(user: dict, org: dict):
+    """M6 (Security Assessment 2026-09-19): the three fund-mask WRITE routes
+    below used to require only "signed in + the current entity is a served
+    client" -- no role at all -- while writing straight into
+    fund_account_masks in cfmqbo, the live configuration qbo-mcp-server's
+    Fund Summary Report reads for real. Reaching a served client's context
+    already requires some grant there (/select-entity's own check), but
+    that could be a mere entity_member. Writing report configuration now
+    requires cornerstone_employee or beacon_admin AT this specific client
+    -- the same role the Cornerstone Mode picker already requires to list
+    it. Returns None when allowed, else the 403 to return."""
+    if not rbac.user_has_any_role(user["id"], ["cornerstone_employee", "beacon_admin"], org_id=org["id"]):
+        return JSONResponse(
+            {"error": "Cornerstone Employee or Beacon Admin access at this client is required."},
+            status_code=403,
+        )
+    return None
+
+
 @router.post("/admin/cfm-items/fund-masks/add")
 async def cfm_items_fund_mask_add(request: Request):
     """Add (or reactivate/update) one Fund Summary Report account mask row
     for the currently-selected served client's own QBO company -- see the
     module-level comment above for why this lives here. Same access gate as
-    the page itself (must be inside this specific client's own org context)."""
+    the page itself (must be inside this specific client's own org context),
+    plus the M6 role gate (_fund_mask_write_denied)."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
     org = _current_org(request)
     if not org or not is_cornerstone_org(org["id"]):
         return RedirectResponse("/portal")
+    denied = _fund_mask_write_denied(user, org)
+    if denied:
+        return denied
     form = await request.form()
     account_mask = (form.get("account_mask") or "").strip()
     if account_mask:
@@ -353,6 +376,9 @@ async def cfm_items_fund_mask_update(mask_id: int, request: Request):
     org = _current_org(request)
     if not org or not is_cornerstone_org(org["id"]):
         return RedirectResponse("/portal")
+    denied = _fund_mask_write_denied(user, org)  # M6
+    if denied:
+        return denied
     form = await request.form()
     try:
         sort_order = int(form.get("sort_order") or 999)
@@ -375,5 +401,8 @@ def cfm_items_fund_mask_delete(mask_id: int, request: Request):
     org = _current_org(request)
     if not org or not is_cornerstone_org(org["id"]):
         return RedirectResponse("/portal")
+    denied = _fund_mask_write_denied(user, org)  # M6
+    if denied:
+        return denied
     deactivate_fund_account_mask(mask_id, _fund_mask_company_code(org))
     return RedirectResponse("/admin/cfm-items", status_code=303)
