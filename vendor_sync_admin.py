@@ -25,6 +25,7 @@ get new files, main.py gains wiring only.
 """
 from __future__ import annotations
 
+import hmac
 import re
 from urllib.parse import quote
 
@@ -243,8 +244,11 @@ def sync_vendors_hourly_route(request: Request):
     vendor-sync-daily Cloud Run Job (26-124, 11:05 PM ET) -- Jay wants
     same-day vendor changes to show up in Beacon's picker sooner than the
     next morning, not a replacement for the nightly job."""
+    # L8 (Security Assessment 2026-09-19): constant-time compare, matching
+    # main.py's /internal/send-daily-digest and auth_code.py.
     supplied = request.headers.get("x-internal-key", "")
-    if not supplied or not _get_internal_key or supplied != _get_internal_key():
+    expected = _get_internal_key() if _get_internal_key else ""
+    if not supplied or not expected or not hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8")):
         return JSONResponse({"error": "unauthorized"}, status_code=403)
 
     result = sync_all_orgs_now()

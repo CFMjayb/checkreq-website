@@ -85,12 +85,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hmac
 import os
 import re
 import secrets as pysecrets
 import threading
 from datetime import date, datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Request, Form, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
@@ -134,6 +135,7 @@ import qbo_mcp_client
 import app_settings
 import notifications
 import art_preapproval
+import security_headers
 
 ATTACHMENTS_BUCKET = "cfm-checkreq-attachments"
 
@@ -192,7 +194,11 @@ def _get_internal_key() -> str:
         _cached_internal_key = client.access_secret_version(name=name).payload.data.decode("utf-8").strip()
     return _cached_internal_key
 
-app = FastAPI(title="Beacon")
+# M1 (Security Assessment 2026-09-19): FastAPI's auto-docs were being served
+# publicly on both environments -- /openapi.json alone was a 161 KB map of
+# all 210 routes, form fields and parameters, handed to any visitor. Nothing
+# in this app consumes them; disabled outright.
+app = FastAPI(title="Beacon", docs_url=None, redoc_url=None, openapi_url=None)
 
 # INSTANCE_CONNECTION_NAME only ever exists in the Cloud Run environment (see
 # db.py's connection logic) -- reused here and by /dev/auth-as below as the
@@ -214,11 +220,29 @@ ON_CLOUD_RUN = bool(os.environ.get("INSTANCE_CONNECTION_NAME"))
 # confirmation this flag gates.
 BEACON_ENV = os.environ.get("BEACON_ENV", "dev")
 
+# L7 (Security Assessment 2026-09-19): the hardcoded fallback secret was
+# harmless only as long as every Cloud Run deploy actually set SESSION_SECRET
+# -- a deploy that ever shipped without it would have silently signed every
+# session with a public string. Fail closed at startup on Cloud Run instead;
+# the fallback stays for plain local dev. The RAW env value is passed through
+# untouched (only the emptiness test is stripped) so the effective signing
+# key on Cloud Run is byte-identical to before -- existing sessions survive.
+_SESSION_SECRET_RAW = os.environ.get("SESSION_SECRET", "")
+if ON_CLOUD_RUN and not _SESSION_SECRET_RAW.strip():
+    raise RuntimeError("SESSION_SECRET must be set on Cloud Run")
+
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.environ.get("SESSION_SECRET", "dev-only-not-secure"),
+    secret_key=_SESSION_SECRET_RAW or "dev-only-not-secure",
     https_only=ON_CLOUD_RUN,
 )
+# M2 (Security Assessment 2026-09-19): X-Frame-Options / nosniff / Referrer-
+# Policy / Permissions-Policy on every response, Cache-Control: no-store on
+# authenticated HTML, HSTS only on Cloud Run, and a REPORT-ONLY CSP derived
+# from a real asset inventory -- see security_headers.py for the policy and
+# the reasoning behind every directive. Added after SessionMiddleware so it
+# wraps outside it and sees the finished response.
+app.add_middleware(security_headers.SecurityHeadersMiddleware, on_cloud_run=ON_CLOUD_RUN)
 
 
 @app.middleware("http")
@@ -963,10 +987,25 @@ def select_entity(org_id: int, request: Request, next: str = "/portal"):
         return RedirectResponse("/portal")
 
     request.session["current_org_id"] = org_id
-    # Only ever redirect to a same-app relative path -- never trust `next`
-    # as an open redirect target.
-    target = next if next.startswith("/") and not next.startswith("//") else "/portal"
-    return RedirectResponse(target, status_code=303)
+    return RedirectResponse(_safe_next_path(next), status_code=303)
+
+
+def _safe_next_path(next_value: str | None) -> str:
+    """Only ever redirect to a same-app relative path -- never trust `next`
+    as an open redirect target. L2 (Security Assessment 2026-09-19): the
+    original check (`startswith("/") and not startswith("//")`) rejected
+    `//evil` but not `/\\evil`, which browsers normalize to `//evil`.
+    Now parsed properly: no scheme, no netloc, no backslash, no control
+    characters, and it must start with exactly one leading slash."""
+    candidate = next_value or ""
+    if not candidate or "\\" in candidate or any(ord(ch) < 32 for ch in candidate):
+        return "/portal"
+    parsed = urlparse(candidate)
+    if parsed.scheme or parsed.netloc:
+        return "/portal"
+    if not candidate.startswith("/") or candidate.startswith("//"):
+        return "/portal"
+    return candidate
 
 
 @app.get("/org-logo/{org_id}")
@@ -5358,8 +5397,12 @@ async def send_daily_digest(request: Request):
     per approver, covering every request currently waiting on them across
     every org/entity, not scoped to whichever entity a human happened to
     have selected in their session."""
+    # L8 (Security Assessment 2026-09-19): constant-time compare, same as
+    # auth_code.py already does -- `!=` short-circuits on the first differing
+    # byte and leaks timing.
     supplied = request.headers.get("x-internal-key", "")
-    if not supplied or supplied != _get_internal_key():
+    expected = _get_internal_key()
+    if not supplied or not expected or not hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8")):
         return JSONResponse({"error": "unauthorized"}, status_code=403)
 
     approvers = db.query(
