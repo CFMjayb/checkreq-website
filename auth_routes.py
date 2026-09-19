@@ -334,16 +334,36 @@ def _complete_login(request: Request, email: str, display_name: str, provider: s
 
     updates = ["display_name = %s", "last_login_provider = %s", "last_login_at = NOW()"]
     params: list = [display_name, provider]
+    subject_column = None
     if provider == "microsoft":
+        subject_column = "azure_ad_object_id"
         updates.append("azure_ad_object_id = %s")
         params.append(provider_subject_id)
     elif provider == "google":
+        subject_column = "google_subject_id"
         updates.append("google_subject_id = %s")
         params.append(provider_subject_id)
     params.append(row["id"])
 
     with db.connect() as conn:
         with conn.cursor() as cur:
+            if subject_column and provider_subject_id:
+                # I1 (Security Assessment 2026-09-19): azure_ad_object_id and
+                # google_subject_id are both UNIQUE. If this same real
+                # Microsoft/Google identity previously signed in under a
+                # DIFFERENT app_users row (an admin changed that person's
+                # login email -- see admin_users.py's H/M7 email-change path
+                # -- or the row was recreated), the UPDATE below would
+                # violate the column's unique constraint and 500 the
+                # callback (confirmed live in dev, 2026-09-16, on the Google
+                # path). Clear the stale link first, in the same
+                # transaction, so the subject id always ends up on the one
+                # row that just proved it via a real sign-in.
+                cur.execute(
+                    f"UPDATE checkreq.app_users SET {subject_column} = NULL "
+                    f"WHERE {subject_column} = %s AND id != %s",
+                    (provider_subject_id, row["id"]),
+                )
             cur.execute(f"UPDATE checkreq.app_users SET {', '.join(updates)} WHERE id = %s", tuple(params))
     request.session["user_id"] = row["id"]
     return row["id"], None

@@ -10,6 +10,8 @@
 {% if request.query_params.get('deleted') %}<div class="banner banner-success">Removed.</div>{% endif %}
 {% if request.query_params.get('error') == 'nofolder' %}<div class="banner banner-error">This parish's SharePoint folder hasn't been matched yet — contact the diocesan office.</div>{% endif %}
 {% if request.query_params.get('error') == 'toolarge' %}<div class="banner banner-error">That file is too large (25MB limit).</div>{% endif %}
+{% if request.query_params.get('error') == 'badtype' %}<div class="banner banner-error">That file's contents don't match an accepted type — only PDF and JPG/PNG/GIF/WebP images are accepted.</div>{% endif %}
+{% if request.query_params.get('error') == 'badname' %}<div class="banner banner-error">That file's name isn't usable — please rename it and try again.</div>{% endif %}
 {% if list_error %}<div class="banner banner-error">Couldn't load documents right now: {{ list_error }}</div>{% endif %}
 
 {% if not folder %}

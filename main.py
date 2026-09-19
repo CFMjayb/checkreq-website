@@ -136,6 +136,7 @@ import app_settings
 import notifications
 import art_preapproval
 import security_headers
+import upload_guard
 
 ATTACHMENTS_BUCKET = "cfm-checkreq-attachments"
 
@@ -1031,7 +1032,10 @@ def org_logo(org_id: int, request: Request):
     if not result:
         return JSONResponse({"error": "Logo file missing."}, status_code=404)
     data, _ = result
-    return Response(content=data, media_type=org["logo_content_type"] or "application/octet-stream")
+    # M12 (Security Assessment 2026-09-19): type from the bytes, not the
+    # stored column; a legacy stored SVG stays inline but sandboxed.
+    media_type, extra = upload_guard.serve_logo_headers(data, org["logo_content_type"], "logo")
+    return Response(content=data, media_type=media_type, headers=extra)
 
 
 @app.get("/parish-logo/{parish_id}")
@@ -1053,7 +1057,9 @@ def parish_logo(parish_id: int, request: Request):
     if not result:
         return JSONResponse({"error": "Logo file missing."}, status_code=404)
     data, _ = result
-    return Response(content=data, media_type=parish["logo_content_type"] or "application/octet-stream")
+    # M12 -- same treatment as org_logo above.
+    media_type, extra = upload_guard.serve_logo_headers(data, parish["logo_content_type"], "logo")
+    return Response(content=data, media_type=media_type, headers=extra)
 
 
 @app.get("/admin/impersonate", response_class=HTMLResponse)
@@ -3740,7 +3746,20 @@ async def new_request_submit(request: Request):
         if getattr(f, "filename", None):
             content = await f.read()
             if content:
-                uploaded_attachments.append((f.filename, f.content_type or "application/octet-stream", content))
+                # H2 (Security Assessment 2026-09-19): this path used to
+                # store whatever content_type the client declared, with no
+                # allowlist and no size cap -- and view_attachment served
+                # it back inline under that type. Now: 25MB cap (same as
+                # parish_documents.py), and the stored type is what the
+                # bytes actually are (PDF/JPEG/PNG/GIF/WebP only), never
+                # the client's claim. Rejects the whole submission -- an
+                # approver must never be handed an unreviewable file.
+                if len(content) > upload_guard.MAX_UPLOAD_BYTES:
+                    return JSONResponse({"error": "An attachment is too large (max 25MB per file)."}, status_code=400)
+                ok, sniffed = upload_guard.sniff_allowed(content, f.content_type)
+                if not ok:
+                    return JSONResponse({"error": f"Attachment rejected: {sniffed}"}, status_code=400)
+                uploaded_attachments.append((f.filename, sniffed, content))
 
     # Pre-Approved Submission Designation (Pre-Approved Submission Plan.md,
     # 2026-08-01): "certain submitters are allowed to designate that the
@@ -4547,11 +4566,11 @@ def view_attachment(request_number: str, attachment_id: int, request: Request):
     site_id = sharepoint_client.get_site_id(token, org["sp_hostname"], org["sp_site_path"])
     content = sharepoint_client.download_bytes(token, site_id, att["sp_file_path"])
 
-    return Response(
-        content=content,
-        media_type=att["content_type"] or "application/octet-stream",
-        headers={"Content-Disposition": f'inline; filename="{att["archived_filename"]}"'},
-    )
+    # H2 (Security Assessment 2026-09-19): the served Content-Type comes
+    # from the bytes, never the stored (once client-declared) type; only an
+    # allowlisted image/PDF is ever inline, everything else downloads.
+    media_type, disposition = upload_guard.serve_headers(content, att["archived_filename"])
+    return Response(content=content, media_type=media_type, headers={"Content-Disposition": disposition})
 
 
 @app.post("/requests/{request_number}/attachments/{attachment_id}/remove")
@@ -4687,8 +4706,18 @@ async def add_attachment(request_number: str, request: Request):
         content = await f.read()
         if not content:
             continue
+        # H2 (Security Assessment 2026-09-19): same cap + magic-byte
+        # allowlist as the submission path; a rejected file is reported
+        # per-file (this route's existing convention) and never stored.
+        if len(content) > upload_guard.MAX_UPLOAD_BYTES:
+            errors.append(f"{f.filename}: too large (max 25MB)")
+            continue
+        ok, sniffed = upload_guard.sniff_allowed(content, f.content_type)
+        if not ok:
+            errors.append(f"{f.filename}: {sniffed}")
+            continue
         try:
-            content_type = f.content_type or "application/octet-stream"
+            content_type = sniffed
             _archive_one_file(org, pr["id"], request_number, "user_upload",
                                f.filename, content_type, content, user["id"])
             with db.connect() as conn:
@@ -4768,6 +4797,15 @@ async def invoice_intake_upload(request: Request, file: UploadFile):
             f"/invoice-intake?add_error={quote('Unsupported file type -- use a PDF or JPG/PNG/GIF/WebP image.')}",
             status_code=303,
         )
+    # H2 (Security Assessment 2026-09-19): the declared type above is the
+    # client's claim; the bytes decide what gets archived and extracted.
+    ok, sniffed = upload_guard.sniff_allowed(content, mime_type)
+    if not ok:
+        return RedirectResponse(
+            f"/invoice-intake?add_error={quote('The file contents are not a PDF or JPG/PNG/GIF/WebP image.')}",
+            status_code=303,
+        )
+    mime_type = sniffed
 
     try:
         result = await asyncio.to_thread(document_extract.extract_fields, content, mime_type)
@@ -6777,6 +6815,20 @@ async def vendor_w9_upload_submit(token: str, request: Request, file: UploadFile
             "error": f"Unsupported file type ({mime_type or 'unknown'}). Please upload a PDF, "
                      f"or a JPG/PNG/GIF/WebP photo of the completed form.",
         })
+    # H2 (Security Assessment 2026-09-19): this is the app's one
+    # unauthenticated upload -- the declared type is only the caller's
+    # claim; the bytes must actually be a PDF/image, and the archived
+    # copy is typed by what they are. (10MB cap above kept -- stricter
+    # than the 25MB attachment cap, deliberately.)
+    ok, sniffed = upload_guard.sniff_allowed(content, mime_type)
+    if not ok:
+        return templates.TemplateResponse(request, "vendor_w9_upload.html", {
+            "already_uploaded": False, "vendor_name": vendor_name, "org_name": org_row["org_name"],
+            "token": token,
+            "error": "The file's contents aren't a PDF or a JPG/PNG/GIF/WebP image. Please upload "
+                     "a PDF, or a photo of the completed form.",
+        })
+    mime_type = sniffed
 
     ext = _guess_extension(file.filename or "w9", mime_type)
     archived_filename = (

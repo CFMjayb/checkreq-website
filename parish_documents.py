@@ -91,7 +91,9 @@ import parish_roles
 import parish_mode
 import cornerstone_mode
 import cornerstone_documents
+import path_guard
 import sharepoint_client
+import upload_guard
 
 router = APIRouter()
 
@@ -337,13 +339,16 @@ def upload_to_diocese(org: dict, folder_name: str, filename: str, data: bytes, c
 
 
 def delete_parish_file(org: dict, folder_name: str, rel_path: str) -> None:
+    # H4 (Security Assessment 2026-09-19): the Graph path is built through
+    # path_guard.safe_rel_path, which raises unless the joined, normalized
+    # path still sits under this parish's own root -- no ".." can climb out.
     token, site_id = _site_and_token(org)
-    sharepoint_client.delete_file(token, site_id, f"{_parish_root(org, folder_name)}/{rel_path}")
+    sharepoint_client.delete_file(token, site_id, path_guard.safe_rel_path(rel_path, _parish_root(org, folder_name)))
 
 
 def download_parish_file(org: dict, folder_name: str, rel_path: str) -> bytes:
     token, site_id = _site_and_token(org)
-    return sharepoint_client.download_bytes(token, site_id, f"{_parish_root(org, folder_name)}/{rel_path}")
+    return sharepoint_client.download_bytes(token, site_id, path_guard.safe_rel_path(rel_path, _parish_root(org, folder_name)))
 
 
 # ── Resource library (diocese-wide) ──────────────────────────────────────────
@@ -366,12 +371,12 @@ def upload_library(org: dict, filename: str, data: bytes, content_type: str) -> 
 
 def delete_library(org: dict, filename: str) -> None:
     token, site_id = _site_and_token(org)
-    sharepoint_client.delete_file(token, site_id, f"{_library_root(org)}/{filename}")
+    sharepoint_client.delete_file(token, site_id, path_guard.safe_rel_path(filename, _library_root(org)))  # H4
 
 
 def download_library_file(org: dict, filename: str) -> bytes:
     token, site_id = _site_and_token(org)
-    return sharepoint_client.download_bytes(token, site_id, f"{_library_root(org)}/{filename}")
+    return sharepoint_client.download_bytes(token, site_id, path_guard.safe_rel_path(filename, _library_root(org)))  # H4
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -538,11 +543,20 @@ async def parish_documents_upload(request: Request, file: UploadFile = File(...)
     data = await file.read()
     if len(data) > MAX_UPLOAD_BYTES:
         return RedirectResponse("/parish-documents?error=toolarge", status_code=303)
-    content_type = file.content_type or "application/octet-stream"
+    # H2 (Security Assessment 2026-09-19): stored type comes from the bytes,
+    # never the client's declared content_type -- a non-PDF/image is refused
+    # outright rather than archived under a spoofed type.
+    ok, sniffed = upload_guard.sniff_allowed(data, file.content_type)
+    if not ok:
+        return RedirectResponse("/parish-documents?error=badtype", status_code=303)
+    try:
+        safe_name = path_guard.safe_filename(file.filename)
+    except path_guard.PathGuardError:
+        return RedirectResponse("/parish-documents?error=badname", status_code=303)
     if target == "diocese":
-        upload_to_diocese(org, folder, file.filename, data, content_type)
+        upload_to_diocese(org, folder, safe_name, data, sniffed)
     else:
-        upload_editable(org, folder, file.filename, data, content_type)
+        upload_editable(org, folder, safe_name, data, sniffed)
     return RedirectResponse("/parish-documents?uploaded=1", status_code=303)
 
 
@@ -562,7 +576,10 @@ async def parish_documents_delete(request: Request):
         return JSONResponse({"error": "You can't remove that file."}, status_code=403)
     folder, _stale = get_parish_folder(org, parish)
     if folder and rel_path:
-        delete_parish_file(org, folder, rel_path)
+        try:
+            delete_parish_file(org, folder, rel_path)
+        except path_guard.PathGuardError:
+            return JSONResponse({"error": "You can't remove that file."}, status_code=400)
     return RedirectResponse("/parish-documents?deleted=1", status_code=303)
 
 
@@ -576,11 +593,13 @@ def parish_documents_download(rel_path: str, request: Request, download: int = 0
         return JSONResponse({"error": "Not found"}, status_code=404)
     try:
         data = download_parish_file(org, folder, rel_path)
-    except RuntimeError:
+    except (RuntimeError, path_guard.PathGuardError):
         return JSONResponse({"error": "Not found"}, status_code=404)
     filename = rel_path.rsplit("/", 1)[-1]
-    return Response(content=data, media_type=sharepoint_client.guess_media_type(filename),
-                     headers={"Content-Disposition": sharepoint_client.content_disposition(filename, bool(download))})
+    # H2 (Security Assessment 2026-09-19): media type + disposition come
+    # from the bytes, not the filename extension.
+    media_type, disposition = sharepoint_client.serve_headers(data, filename, bool(download))
+    return Response(content=data, media_type=media_type, headers={"Content-Disposition": disposition})
 
 
 @router.get("/resource-library", response_class=HTMLResponse)
@@ -624,11 +643,11 @@ def resource_library_download(filename: str, request: Request, download: int = 0
         return JSONResponse({"error": "Not found"}, status_code=404)
     try:
         data = download_library_file(org, filename)
-    except RuntimeError:
+    except (RuntimeError, path_guard.PathGuardError):
         return JSONResponse({"error": "Not found"}, status_code=404)
     display_name = filename.rsplit("/", 1)[-1]
-    return Response(content=data, media_type=sharepoint_client.guess_media_type(display_name),
-                     headers={"Content-Disposition": sharepoint_client.content_disposition(display_name, bool(download))})
+    media_type, disposition = sharepoint_client.serve_headers(data, display_name, bool(download))
+    return Response(content=data, media_type=media_type, headers={"Content-Disposition": disposition})
 
 
 # ── Diocesan admin routes ─────────────────────────────────────────────────────
@@ -678,7 +697,18 @@ async def admin_parish_documents_upload(parish_id: int, request: Request, file: 
     if folder:
         data = await file.read()
         if len(data) <= MAX_UPLOAD_BYTES:
-            upload_readonly(org, folder, file.filename, data, file.content_type or "application/octet-stream")
+            # H2/H4 (Security Assessment 2026-09-19): stored type from the
+            # bytes, filename reduced to a safe basename -- same rule as the
+            # parish-facing upload; a bad file is silently skipped here,
+            # matching this route's existing silent-skip-on-toolarge style.
+            ok, sniffed = upload_guard.sniff_allowed(data, file.content_type)
+            if ok:
+                try:
+                    safe_name = path_guard.safe_filename(file.filename)
+                except path_guard.PathGuardError:
+                    ok = False
+            if ok:
+                upload_readonly(org, folder, safe_name, data, sniffed)
     return RedirectResponse(f"/admin/parish-documents?parish_id={parish_id}&uploaded=1", status_code=303)
 
 
@@ -699,7 +729,10 @@ async def admin_parish_documents_delete(parish_id: int, request: Request):
     org = _current_org(request)
     folder, _stale = get_parish_folder(org, parish)
     if folder and rel_path:
-        delete_parish_file(org, folder, rel_path)
+        try:
+            delete_parish_file(org, folder, rel_path)
+        except path_guard.PathGuardError:
+            pass
     return RedirectResponse(f"/admin/parish-documents?parish_id={parish_id}&deleted=1", status_code=303)
 
 
@@ -717,11 +750,11 @@ def admin_parish_documents_download(parish_id: int, rel_path: str, request: Requ
         return JSONResponse({"error": "Not found"}, status_code=404)
     try:
         data = download_parish_file(org, folder, rel_path)
-    except RuntimeError:
+    except (RuntimeError, path_guard.PathGuardError):
         return JSONResponse({"error": "Not found"}, status_code=404)
     filename = rel_path.rsplit("/", 1)[-1]
-    return Response(content=data, media_type=sharepoint_client.guess_media_type(filename),
-                     headers={"Content-Disposition": sharepoint_client.content_disposition(filename, bool(download))})
+    media_type, disposition = sharepoint_client.serve_headers(data, filename, bool(download))
+    return Response(content=data, media_type=media_type, headers={"Content-Disposition": disposition})
 
 
 @router.post("/admin/parish-documents/{parish_id}/resolve")
@@ -795,7 +828,14 @@ async def admin_resource_library_upload(request: Request, file: UploadFile = Fil
     if org:
         data = await file.read()
         if len(data) <= MAX_UPLOAD_BYTES:
-            upload_library(org, file.filename, data, file.content_type or "application/octet-stream")
+            ok, sniffed = upload_guard.sniff_allowed(data, file.content_type)
+            if ok:
+                try:
+                    safe_name = path_guard.safe_filename(file.filename)
+                except path_guard.PathGuardError:
+                    ok = False
+            if ok:
+                upload_library(org, safe_name, data, sniffed)
     return RedirectResponse("/admin/resource-library?uploaded=1", status_code=303)
 
 
@@ -816,5 +856,8 @@ async def admin_resource_library_delete(request: Request):
     # rel_path IS its path relative to the library root either way.
     rel_path = (form.get("rel_path") or "").strip()
     if org and rel_path:
-        delete_library(org, rel_path)
+        try:
+            delete_library(org, rel_path)
+        except path_guard.PathGuardError:
+            pass
     return RedirectResponse("/admin/resource-library?deleted=1", status_code=303)

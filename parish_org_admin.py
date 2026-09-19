@@ -43,6 +43,7 @@ import org_branding
 import rbac
 import registry
 import sharepoint_client
+import upload_guard
 
 router = APIRouter()
 
@@ -396,12 +397,21 @@ async def upload_parish_logo(parish_id: int, request: Request, logo: UploadFile)
     content_type = logo.content_type or ""
     if content_type not in org_branding.ALLOWED_LOGO_CONTENT_TYPES:
         return RedirectResponse(
-            "/admin/manage-parishes?error=Logo+must+be+a+PNG,+JPEG,+SVG,+or+WebP+image.",
+            "/admin/manage-parishes?error=Logo+must+be+a+PNG,+JPEG,+or+WebP+image.",
             status_code=303,
         )
     data = await logo.read()
     if len(data) > org_branding.MAX_LOGO_BYTES:
         return RedirectResponse("/admin/manage-parishes?error=Logo+file+is+too+large+(2MB+max).", status_code=303)
+    # H2/M12 (Security Assessment 2026-09-19): bytes must really be an
+    # allowed raster format; stored type is the sniffed one.
+    ok, sniffed = upload_guard.sniff_allowed(data, content_type)
+    if not ok or sniffed not in org_branding.ALLOWED_LOGO_CONTENT_TYPES:
+        return RedirectResponse(
+            "/admin/manage-parishes?error=Logo+file+contents+must+be+a+real+PNG,+JPEG,+or+WebP+image.",
+            status_code=303,
+        )
+    content_type = sniffed
     blob_path = org_branding.parish_logo_path(parish_id, content_type)
     gcs_client.upload_bytes(org_branding.LOGO_BUCKET, blob_path, data, content_type)
     registry.update_parish(parish_id, org["id"], logo_gcs_path=blob_path, logo_content_type=content_type)

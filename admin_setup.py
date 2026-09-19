@@ -92,6 +92,7 @@ import gcs_client
 import org_branding
 import org_features
 import rbac
+import upload_guard
 
 router = APIRouter()
 
@@ -755,12 +756,21 @@ async def organizations_upload_logo(org_id: int, request: Request, logo: UploadF
     content_type = logo.content_type or ""
     if content_type not in org_branding.ALLOWED_LOGO_CONTENT_TYPES:
         return RedirectResponse(
-            "/admin/setup/organizations?error=Logo+must+be+a+PNG,+JPEG,+SVG,+or+WebP+image.",
+            "/admin/setup/organizations?error=Logo+must+be+a+PNG,+JPEG,+or+WebP+image.",
             status_code=303,
         )
     data = await logo.read()
     if len(data) > org_branding.MAX_LOGO_BYTES:
         return RedirectResponse("/admin/setup/organizations?error=Logo+file+is+too+large+(2MB+max).", status_code=303)
+    # H2/M12 (Security Assessment 2026-09-19): the bytes must really be one
+    # of the allowed raster formats; the stored type is the sniffed one.
+    ok, sniffed = upload_guard.sniff_allowed(data, content_type)
+    if not ok or sniffed not in org_branding.ALLOWED_LOGO_CONTENT_TYPES:
+        return RedirectResponse(
+            "/admin/setup/organizations?error=Logo+file+contents+must+be+a+real+PNG,+JPEG,+or+WebP+image.",
+            status_code=303,
+        )
+    content_type = sniffed
     blob_path = org_branding.logo_path(org_id, content_type)
     gcs_client.upload_bytes(org_branding.LOGO_BUCKET, blob_path, data, content_type)
     with db.connect() as conn:

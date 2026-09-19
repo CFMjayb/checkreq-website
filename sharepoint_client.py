@@ -26,6 +26,8 @@ import time
 
 import requests
 
+import upload_guard
+
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 SCOPE = "https://graph.microsoft.com/.default"
 
@@ -189,7 +191,13 @@ def guess_media_type(filename: str) -> str:
     browser's own built-in viewer, not force a download regardless of
     Content-Disposition: inline -- every download route in this app used
     to hardcode application/octet-stream, which makes every browser
-    download rather than render even a plain PDF."""
+    download rather than render even a plain PDF.
+
+    SUPERSEDED for SERVING as of 2026-09-19 (Security Assessment, H2): a
+    filename-derived type let a stored .html/.svg render on this origin.
+    Every download route now calls serve_headers() below, which types the
+    response from the file's own bytes. Kept only as a hint for callers
+    that need a guess with no bytes in hand (none in this app today)."""
     guessed, _ = mimetypes.guess_type(filename)
     return guessed or "application/octet-stream"
 
@@ -197,9 +205,23 @@ def guess_media_type(filename: str) -> str:
 def content_disposition(filename: str, force_download: bool) -> str:
     """2026-08-16, Jay: View should open in a new browser tab/window,
     Download should be its own separate, real download button -- both hit
-    the same route, distinguished only by this one flag."""
-    kind = "attachment" if force_download else "inline"
-    return f'{kind}; filename="{filename}"'
+    the same route, distinguished only by this one flag.
+
+    2026-09-19: delegates to upload_guard.content_disposition, which
+    header-escapes the filename (the old f-string quoted it raw)."""
+    return upload_guard.content_disposition(filename, force_download)
+
+
+def serve_headers(data: bytes, filename: str, force_download: bool = False) -> tuple[str, str]:
+    """(media_type, Content-Disposition) for serving a SharePoint file back
+    to the browser -- the one call every document download route in this
+    app (parish_documents.py x3, cornerstone_documents.py x1) now makes
+    instead of guess_media_type()+content_disposition(). Typed from the
+    bytes via upload_guard.serve_headers(): an allowlisted image/PDF may
+    render inline (unless the Download button was used); anything else --
+    Office documents included -- is application/octet-stream + attachment,
+    which for a .docx/.xlsx is what every browser did anyway."""
+    return upload_guard.serve_headers(data, filename, force_download)
 
 
 def ensure_folder(token: str, site_id: str, parent_path: str, name: str) -> None:

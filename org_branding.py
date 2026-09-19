@@ -38,7 +38,14 @@ DEFAULT_PARISH_COLOR = "#7a1f2b"       # tokens.css's own --color-parish-red
 LOGO_BUCKET = "cfm-checkreq-attachments"
 LOGO_GCS_PREFIX = "org-logos"
 MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2MB -- a header logo has no business being bigger
-ALLOWED_LOGO_CONTENT_TYPES = {"image/png", "image/jpeg", "image/svg+xml", "image/webp"}
+# M12 (Security Assessment 2026-09-19): image/svg+xml removed. SVG is an XML
+# document that can carry <script>; /org-logo/{id} is public and was serving
+# it inline. Six already-stored SVG logos keep rendering via
+# upload_guard.serve_logo_headers()'s sandboxed legacy branch until they are
+# re-uploaded as raster images; no NEW SVG can be stored. Uploads are also
+# verified by magic bytes (upload_guard.sniff_allowed), not just this
+# declared-type list.
+ALLOWED_LOGO_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp"}
 
 
 def is_valid_hex(value: str | None) -> bool:

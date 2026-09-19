@@ -50,6 +50,8 @@ import rbac
 import cornerstone_mode
 import cfm_sharepoint_client as cfm_sp
 import sharepoint_client  # reused unchanged -- generic Graph mechanics only
+import path_guard
+import upload_guard
 
 router = APIRouter()
 
@@ -187,11 +189,19 @@ async def cornerstone_documents_upload(request: Request, file: UploadFile = File
     data = await file.read()
     if len(data) > MAX_UPLOAD_BYTES:
         return RedirectResponse("/parish-documents?error=toolarge", status_code=303)
-    content_type = file.content_type or "application/octet-stream"
+    # H2 (Security Assessment 2026-09-19): stored type from the bytes, never
+    # the client's declared content_type -- same rule as parish_documents.py.
+    ok, sniffed = upload_guard.sniff_allowed(data, file.content_type)
+    if not ok:
+        return RedirectResponse("/parish-documents?error=badtype", status_code=303)
+    try:
+        safe_name = path_guard.safe_filename(file.filename)
+    except path_guard.PathGuardError:
+        return RedirectResponse("/parish-documents?error=badname", status_code=303)
     if target == "to_parish_rw":
-        upload_to_parish_readwrite(entity_folder, file.filename, data, content_type)
+        upload_to_parish_readwrite(entity_folder, safe_name, data, sniffed)
     else:
-        upload_from_parish(entity_folder, file.filename, data, content_type)
+        upload_from_parish(entity_folder, safe_name, data, sniffed)
     return RedirectResponse("/parish-documents?uploaded=1", status_code=303)
 
 
@@ -211,7 +221,14 @@ async def cornerstone_documents_delete(request: Request):
         return JSONResponse({"error": "You can't remove that file."}, status_code=403)
     if entity_folder and rel_path:
         token, site_id = _site_and_token()
-        sharepoint_client.delete_file(token, site_id, f"{_beacon_docs_root(entity_folder)}/{rel_path}")
+        # H4 (Security Assessment 2026-09-19): confinement check -- the
+        # startswith() above only restricts which AREA, not whether the
+        # rest of rel_path can still climb out via "..".
+        try:
+            safe_path = path_guard.safe_rel_path(rel_path, _beacon_docs_root(entity_folder))
+        except path_guard.PathGuardError:
+            return JSONResponse({"error": "You can't remove that file."}, status_code=400)
+        sharepoint_client.delete_file(token, site_id, safe_path)
     return RedirectResponse("/parish-documents?deleted=1", status_code=303)
 
 
@@ -224,9 +241,10 @@ def cornerstone_documents_download(rel_path: str, request: Request, download: in
         return JSONResponse({"error": "Not found"}, status_code=404)
     token, site_id = _site_and_token()
     try:
-        data = sharepoint_client.download_bytes(token, site_id, f"{_beacon_docs_root(entity_folder)}/{rel_path}")
-    except RuntimeError:
+        safe_path = path_guard.safe_rel_path(rel_path, _beacon_docs_root(entity_folder))
+        data = sharepoint_client.download_bytes(token, site_id, safe_path)
+    except (RuntimeError, path_guard.PathGuardError):
         return JSONResponse({"error": "Not found"}, status_code=404)
     filename = rel_path.rsplit("/", 1)[-1]
-    return Response(content=data, media_type=sharepoint_client.guess_media_type(filename),
-                     headers={"Content-Disposition": sharepoint_client.content_disposition(filename, bool(download))})
+    media_type, disposition = sharepoint_client.serve_headers(data, filename, bool(download))
+    return Response(content=data, media_type=media_type, headers={"Content-Disposition": disposition})
