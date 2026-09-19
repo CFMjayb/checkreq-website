@@ -14,8 +14,8 @@ import psycopg
 from psycopg.rows import dict_row
 
 
-def _connkwargs() -> dict:
-    dbname = os.environ.get("PGDATABASE", "cfmqbo")
+def _connkwargs(dbname: str | None = None) -> dict:
+    dbname = dbname or os.environ.get("PGDATABASE", "cfmqbo")
     user   = os.environ.get("PGUSER", "postgres")
     pwd    = os.environ.get("PGPASSWORD", "")
     inst   = os.environ.get("INSTANCE_CONNECTION_NAME", "")
@@ -27,8 +27,12 @@ def _connkwargs() -> dict:
 
 
 @contextmanager
-def connect():
-    conn = psycopg.connect(**_connkwargs(), row_factory=dict_row)
+def connect(dbname: str | None = None):
+    """dbname: explicit override, bypassing PGDATABASE. Only needed for a
+    table that deliberately has no dev/prod split (e.g. fund_account_masks,
+    2026-09-19 -- see cornerstone_mode.py) and must be reached the same way
+    regardless of which environment this app is running as."""
+    conn = psycopg.connect(**_connkwargs(dbname), row_factory=dict_row)
     try:
         yield conn
         conn.commit()
@@ -39,13 +43,13 @@ def connect():
         conn.close()
 
 
-def query(sql: str, params: tuple = ()) -> list[dict]:
-    with connect() as conn:
+def query(sql: str, params: tuple = (), dbname: str | None = None) -> list[dict]:
+    with connect(dbname) as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
             return cur.fetchall()
 
 
-def query_one(sql: str, params: tuple = ()) -> dict | None:
-    rows = query(sql, params)
+def query_one(sql: str, params: tuple = (), dbname: str | None = None) -> dict | None:
+    rows = query(sql, params, dbname=dbname)
     return rows[0] if rows else None

@@ -47,6 +47,18 @@ import rbac
 # `code`, lowercased) -- no DME-style override needed here, since DME is a
 # diocese, not a served parish-org, and can never reach this route (see
 # is_cornerstone_org() below).
+#
+# 2026-09-19: this table has NO dev/prod split by design -- qbo-mcp-server's
+# own fund_mask_api.py hardcodes _pg_conn("dev") for the identical reason
+# (QBO itself has no dev/prod realm per company, so there's nothing to
+# mirror to cfmqbo_prod). Every query below explicitly targets `cfmqbo`
+# regardless of which environment this app is running as (PGDATABASE would
+# otherwise resolve to cfmqbo_prod on the live production service) --
+# without this, production's CFM Items page would either 500 (table doesn't
+# exist there) or, worse, write into a silent second copy qbo-mcp-server's
+# own Fund Summary Report would never see.
+_FUND_MASK_DB = "cfmqbo"
+
 
 def _fund_mask_company_code(org: dict) -> str:
     return (org.get("code") or "").lower()
@@ -57,7 +69,7 @@ def get_fund_account_masks(company: str) -> list[dict]:
         "SELECT id, account_mask, display_label, sort_order, fund_group, active "
         "FROM fund_account_masks WHERE lower(company) = %s AND active "
         "ORDER BY sort_order, account_mask",
-        (company,),
+        (company,), dbname=_FUND_MASK_DB,
     )
 
 
@@ -69,7 +81,7 @@ def add_fund_account_mask(company: str, account_mask: str, display_label: str,
         "ON CONFLICT (company, account_mask) DO UPDATE SET "
         "display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, "
         "fund_group = EXCLUDED.fund_group, active = TRUE, updated_at = now(), updated_by = EXCLUDED.updated_by",
-        (company, account_mask, display_label, sort_order, fund_group, updated_by),
+        (company, account_mask, display_label, sort_order, fund_group, updated_by), dbname=_FUND_MASK_DB,
     )
 
 
@@ -78,7 +90,7 @@ def update_fund_account_mask(mask_id: int, company: str, display_label: str,
     db.query(
         "UPDATE fund_account_masks SET display_label = %s, sort_order = %s, fund_group = %s, "
         "updated_at = now(), updated_by = %s WHERE id = %s AND lower(company) = %s",
-        (display_label, sort_order, fund_group, updated_by, mask_id, company),
+        (display_label, sort_order, fund_group, updated_by, mask_id, company), dbname=_FUND_MASK_DB,
     )
 
 
@@ -86,7 +98,7 @@ def deactivate_fund_account_mask(mask_id: int, company: str) -> None:
     db.query(
         "UPDATE fund_account_masks SET active = FALSE, updated_at = now() "
         "WHERE id = %s AND lower(company) = %s",
-        (mask_id, company),
+        (mask_id, company), dbname=_FUND_MASK_DB,
     )
 
 router = APIRouter()
