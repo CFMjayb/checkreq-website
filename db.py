@@ -53,3 +53,5 @@ def query(sql: str, params: tuple = (), dbname: str | None = None) -> list[dict]
 def query_one(sql: str, params: tuple = (), dbname: str | None = None) -> dict | None:
     rows = query(sql, params, dbname=dbname)
     return rows[0] if rows else None
+
+# H6 deploy-identity-split verification marker (2026-09-19) -- comment-only, no behavior change.
