@@ -240,9 +240,16 @@ async function refreshArtBanner(vendorId) {
     const r = await fetch(`/api/vendor-preapproval-status?vendor_id=${encodeURIComponent(vendorId)}`);
     const data = await r.json();
     if (!data.has_art) { banner.style.display = 'none'; return; }
-    let html = `<strong>ART Preapproved</strong> (${data.vendor_display_name}) -- skips the approval chain, goes straight to AP Review.`;
+    // L5 (Security Assessment 2026-09-19): both values below are
+    // admin-controlled (an ART entry's own vendor link + free-text special
+    // handling notes, set on the Setup Tables ART screen), not user-typed
+    // on this page -- but escapeHtml() every other innerHTML sink in this
+    // file already uses is cheap insurance regardless of who can currently
+    // set the value, so applied here too rather than left as the one
+    // sink that assumed its input was safe.
+    let html = `<strong>ART Preapproved</strong> (${escapeHtml(data.vendor_display_name)}) -- skips the approval chain, goes straight to AP Review.`;
     if (data.is_monkey_see_monkey_do) html += ' <em>Monkey-See-Monkey-Do: GL coding below was auto-filled from last month’s invoice -- please review.</em>';
-    if (data.special_handling_notes) html += `<br>${data.special_handling_notes}`;
+    if (data.special_handling_notes) html += `<br>${escapeHtml(data.special_handling_notes)}`;
     banner.innerHTML = html;
     banner.style.display = '';
   } catch (e) {

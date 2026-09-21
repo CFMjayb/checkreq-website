@@ -95,11 +95,13 @@ from datetime import date, datetime
 from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Request, Form, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+import psycopg
 import session_guard
 import db
 import rbac
@@ -291,6 +293,21 @@ _CANONICAL_HOST = "beacon.cfmins.org" if BEACON_ENV == "prod" else "beacondev.cf
 app.add_middleware(session_guard.RateLimitMiddleware, client_ip_fn=lambda r: _client_ip(r))
 if ON_CLOUD_RUN:
     app.add_middleware(session_guard.RawRunAppRedirectMiddleware, canonical_host=_CANONICAL_HOST)
+
+
+# L14 (Security Assessment 2026-09-19): FastAPI's DEFAULT 422 handler echoes
+# the raw offending input and the exact parameter path back to the caller
+# (e.g. GET /org-logo/abc -> {"detail":[{"loc":["path","org_id"],...,
+# "input":"abc"}]}) -- JSON, not XSS-exploitable, but real reconnaissance
+# value it doesn't need to hand out for free, and inconsistent with every
+# other error response in this app (404s already leak nothing -- see the
+# "Confirmed good" list in Security Assessment 2026-09-19.md). Replaces the
+# whole body with the same generic shape a 404 already uses; never logs or
+# otherwise drops the real validation detail -- FastAPI's own request
+# logging still has it if anyone needs to debug a genuine client bug.
+@app.exception_handler(RequestValidationError)
+async def _validation_error_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse({"detail": "Not Found"}, status_code=422)
 
 
 @app.middleware("http")
@@ -1851,11 +1868,19 @@ def _mint_approval_email_token(cur, payment_request_id: int, approver_user_id: i
     group). Takes an open cursor so it can be minted in the same transaction
     as the approval_actions rows it corresponds to (submission, edit-reset,
     and chain-advance all already hold one)."""
+    # I2 (Security Assessment 2026-09-19): the '%s days' placeholder sat
+    # INSIDE a string literal -- psycopg3 still parameterizes it correctly
+    # (confirmed not injectable), but it relies on Postgres implicitly
+    # casting a bare string to INTERVAL rather than a real typed
+    # parameter. make_interval() takes the integer directly, no implicit
+    # string-to-interval cast anywhere in the path. Verified live against
+    # real Postgres before changing this (SELECT NOW() + make_interval(days
+    # => %s), a real integer parameter, returns the expected timestamp).
     token = pysecrets.token_urlsafe(32)
     cur.execute(
         "INSERT INTO checkreq.approval_email_tokens "
         "(token, payment_request_id, approver_user_id, serial_group, expires_at) "
-        "VALUES (%s, %s, %s, %s, NOW() + INTERVAL '%s days')",
+        "VALUES (%s, %s, %s, %s, NOW() + make_interval(days => %s))",
         (token, payment_request_id, approver_user_id, serial_group, APPROVAL_EMAIL_TOKEN_DAYS),
     )
     return token
@@ -3513,6 +3538,61 @@ def _next_request_number(request_type: str) -> str:
     return f"{full_prefix}{max_seq + 1:03d}"
 
 
+# I3 (Security Assessment 2026-09-19, approved by Jay 2026-09-21): "Request
+# number generation is MAX+1 with no unique constraint -- a concurrency
+# race." The second half of that finding was already wrong when written --
+# checkreq.payment_requests.request_number has carried a real UNIQUE
+# constraint (payment_requests_request_number_key) since the very first
+# migration (001_checkreq_schema.sql, 2026-07-17), confirmed live by reading
+# pg_constraint directly before touching anything, so no NEW schema change
+# was needed here despite Jay's go-ahead to make one. The race itself is
+# still real, though: two submissions computing the same MAX+1 in the same
+# instant would both pass their own _next_request_number() call, then the
+# SECOND one's INSERT would correctly fail on the constraint -- but nothing
+# caught that failure, so that submitter would see a raw 500 and lose their
+# whole submission (not silently corrupted data -- the constraint already
+# prevented that -- just an ugly crash instead of a transparent retry).
+# _RETRY_MAX chosen generously for a race this narrow (a handful of
+# concurrent submissions per day, at most): if 3 fresh numbers in a row all
+# collide, something else is wrong and the real exception should surface.
+_REQUEST_NUMBER_RETRIES = 3
+
+
+def _is_request_number_conflict(exc: BaseException) -> bool:
+    """True ONLY for the specific request_number UNIQUE constraint -- never
+    swallows any other UniqueViolation (a real bug in a different table
+    should still surface as a real 500, not be silently retried as if it
+    were this race)."""
+    return (
+        isinstance(exc, psycopg.errors.UniqueViolation)
+        and "payment_requests_request_number_key" in str(exc)
+    )
+
+
+def _submit_with_request_number_retry(request_type: str, do_insert):
+    """Shared retry wrapper for both places this app mints a request_number
+    and inserts inside one db.connect() transaction (the new-submission
+    branch and the save-as-draft branch of new_request_submit, below) --
+    generates a fresh number, hands it to do_insert(request_number) (which
+    performs its own complete db.connect()-wrapped transaction and returns
+    whatever the caller needs), and on the one specific conflict this
+    exists for, discards that attempt's already-rolled-back transaction
+    (db.connect() itself guarantees the rollback on any exception -- see
+    its own docstring) and tries again with a newly-computed number. Any
+    other exception, or the conflict recurring past _REQUEST_NUMBER_RETRIES
+    attempts, propagates unchanged."""
+    last_exc = None
+    for attempt in range(_REQUEST_NUMBER_RETRIES):
+        request_number = _next_request_number(request_type)
+        try:
+            return request_number, do_insert(request_number)
+        except Exception as exc:
+            if not _is_request_number_conflict(exc):
+                raise
+            last_exc = exc
+    raise last_exc
+
+
 @app.post("/new-request")
 async def new_request_submit(request: Request):
     user = _current_user(request)
@@ -3676,11 +3756,33 @@ async def new_request_submit(request: Request):
             except ValueError:
                 d_total = 0.0
 
-        with db.connect() as conn:
-            with conn.cursor() as cur:
-                if existing_pr:
-                    d_request_number = existing_pr["request_number"]
-                    d_pr_id = existing_pr["id"]
+        # I3: replacing coding lines + logging the audit row is identical
+        # either way -- pulled into one small local helper so the retry
+        # wrapper below (which only wraps the NEW-draft path, the only one
+        # that mints a request_number and can therefore hit the conflict)
+        # doesn't have to duplicate it.
+        def _finish_draft_txn(cur, pr_id):
+            cur.execute("DELETE FROM checkreq.payment_request_gl_lines "
+                        "WHERE payment_request_id = %s", (pr_id,))
+            for acct_id, amt, memo in d_gl_lines:
+                cur.execute(
+                    "INSERT INTO checkreq.payment_request_gl_lines "
+                    "(payment_request_id, gl_account_id, amount, memo) "
+                    "VALUES (%s, %s, %s, %s)", (pr_id, acct_id, amt, memo))
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, new_status, comment) "
+                "VALUES (%s, %s, 'Draft Saved', 'Draft', %s)",
+                (pr_id, user["id"],
+                 "Saved as draft -- not submitted, no approvers notified."))
+
+        if existing_pr:
+            # No request_number is minted on this path (existing_pr already
+            # has one) -- no race, no retry needed.
+            d_request_number = existing_pr["request_number"]
+            d_pr_id = existing_pr["id"]
+            with db.connect() as conn:
+                with conn.cursor() as cur:
                     cur.execute(
                         "UPDATE checkreq.payment_requests SET program_area_id = %s, "
                         "  vendor_id = %s, amount = %s, requested_pay_date = %s, "
@@ -3688,37 +3790,26 @@ async def new_request_submit(request: Request):
                         "WHERE id = %s AND org_id = %s",
                         (d_program_area_id, d_vendor_id, d_total, d_pay_date,
                          d_description, d_special, d_pr_id, org_id))
-                else:
-                    d_request_number = _next_request_number("check_request")
-                    cur.execute(
-                        "INSERT INTO checkreq.payment_requests "
-                        "(request_number, request_type, org_id, program_area_id, "
-                        " submitter_user_id, vendor_id, amount, requested_pay_date, "
-                        " description, special_instructions, status) "
-                        "VALUES (%s, 'check_request', %s, %s, %s, %s, %s, %s, %s, %s, 'Draft') "
-                        "RETURNING id",
-                        (d_request_number, org_id, d_program_area_id, user["id"],
-                         d_vendor_id, d_total, d_pay_date, d_description, d_special))
-                    d_pr_id = cur.fetchone()["id"]
+                    _finish_draft_txn(cur, d_pr_id)
+        else:
+            def _do_new_draft_insert(request_number):
+                with db.connect() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "INSERT INTO checkreq.payment_requests "
+                            "(request_number, request_type, org_id, program_area_id, "
+                            " submitter_user_id, vendor_id, amount, requested_pay_date, "
+                            " description, special_instructions, status) "
+                            "VALUES (%s, 'check_request', %s, %s, %s, %s, %s, %s, %s, %s, 'Draft') "
+                            "RETURNING id",
+                            (request_number, org_id, d_program_area_id, user["id"],
+                             d_vendor_id, d_total, d_pay_date, d_description, d_special))
+                        pr_id = cur.fetchone()["id"]
+                        _finish_draft_txn(cur, pr_id)
+                        return pr_id
 
-                # Replace coding lines wholesale, matching the edit path's own
-                # settled approach -- simpler than diffing, and a draft's lines
-                # carry no downstream state.
-                cur.execute("DELETE FROM checkreq.payment_request_gl_lines "
-                            "WHERE payment_request_id = %s", (d_pr_id,))
-                for acct_id, amt, memo in d_gl_lines:
-                    cur.execute(
-                        "INSERT INTO checkreq.payment_request_gl_lines "
-                        "(payment_request_id, gl_account_id, amount, memo) "
-                        "VALUES (%s, %s, %s, %s)", (d_pr_id, acct_id, amt, memo))
-
-                cur.execute(
-                    "INSERT INTO checkreq.audit_log "
-                    "(payment_request_id, action_by_user_id, action_type, new_status, comment) "
-                    "VALUES (%s, %s, 'Draft Saved', 'Draft', %s)",
-                    (d_pr_id, user["id"],
-                     "Saved as draft -- not submitted, no approvers notified."))
-            conn.commit()
+            d_request_number, d_pr_id = _submit_with_request_number_retry(
+                "check_request", _do_new_draft_insert)
 
         # A draft cannot carry an in-progress NEW vendor: checkreq.vendor_requests
         # is CHECK-constrained to pending_approval/approved/rejected/posted_to_qbo
@@ -4474,107 +4565,117 @@ async def new_request_submit(request: Request):
             _notify_approvers_for_group(payment_request_id, notify_group, request)
         return RedirectResponse(f"/my-requests?edited={request_number}", status_code=303)
 
-    # ── NEW SUBMISSION branch (unchanged from before this session) ────────
-    request_number = _next_request_number(request_type)
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO checkreq.payment_requests
-                    (request_number, request_type, org_id, program_area_id, submitter_user_id,
-                     vendor_id, amount, requested_pay_date, description, special_instructions,
-                     status, current_approver_id, serial_group_current, approval_chain_summary,
-                     overspend_flagged, overspend_detail,
-                     existing_vendor_w9_flagged, existing_vendor_w9_detail,
-                     pre_approved, budget_checked_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                RETURNING id
-                """,
-                (request_number, request_type, org_id, program_area_id, user["id"],
-                 vendor_id, total_amount, requested_pay_date, description, special_instructions,
-                 initial_status,
-                 first_display_approver, first_serial_group,
-                 chain_summary, overspend_flagged, overspend_detail,
-                 existing_vendor_w9_flagged, existing_vendor_w9_detail, pre_approved),
-            )
-            payment_request_id = cur.fetchone()["id"]
-
-            for acct_id, amt, memo in gl_lines:
-                cur.execute(
-                    "INSERT INTO checkreq.payment_request_gl_lines "
-                    "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
-                    (payment_request_id, acct_id, amt, memo),
-                )
-
-            # Approval Workflow Corrections (Jay, 2026-07-31): one
-            # budget_overage_log row per tier-2/tier-3 GL line, for CFO
-            # reporting (how often, how much, which accounts) -- not just a
-            # one-off comment on the request. Written in the same
-            # transaction as everything else, since it's plain bookkeeping,
-            # not an external side effect (unlike the tier-2 email below).
-            for tier, entries in (("buffer_notice", budget_result["buffer_notice"]),
-                                   ("cfo_required", budget_result["cfo_required"])):
-                for e in entries:
-                    cur.execute(
-                        "INSERT INTO checkreq.budget_overage_log "
-                        "(payment_request_id, gl_account_id, tier, annual_budget, projected_spend, buffer_amount) "
-                        "VALUES (%s, %s, %s, %s, %s, %s)",
-                        (payment_request_id, e["gl_account_id"], tier,
-                         e["annual_budget"], e["projected"], e["buffer_amount"]),
-                    )
-
-            # AP Review Workflow Plan.md, Section 1a: materialize the whole
-            # computed chain as its own set of 'pending' approval_actions
-            # rows -- this, not current_approver_id, is the real gate
-            # /requests/{request_number}/approve checks.
-            _materialize_approval_actions(cur, payment_request_id, chain)
-
-            # action_type "Submitted" describes the ACTION the user just took
-            # (submitting) and stays "Submitted" even though the request's
-            # STATUS the row transitions into is now "UnderReview" -- these
-            # are two different things (Task 3, 2026-07-26): action_type is a
-            # verb describing what happened, new_status is the state that
-            # resulted. Conflating them would make the audit trail read as if
-            # the request were literally in a status called "Submitted".
-            cur.execute(
-                "INSERT INTO checkreq.audit_log "
-                "(payment_request_id, action_by_user_id, action_type, comment, new_status, impersonated_by_user_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                (payment_request_id, user["id"], "Submitted", chain_summary, initial_status, impersonated_by),
-            )
-
-            # New Vendor Onboarding (Section 1/2): the vendor_requests row
-            # references payment_request_id (NOT NULL), so it can only be
-            # created after the payment_request row above already has an
-            # id -- then payment_requests.vendor_request_id is set to point
-            # back, in the same transaction (both inserts commit together
-            # or not at all).
-            if new_vendor_fields:
-                requires_w9 = total_amount > _w9_threshold_amount()
-                upload_token = pysecrets.token_urlsafe(32)
+    # ── NEW SUBMISSION branch ──────────────────────────────────────────────
+    # I3 (Security Assessment 2026-09-19, approved by Jay 2026-09-21): the
+    # whole transaction below is now the retryable unit -- see
+    # _submit_with_request_number_retry's own docstring for why (the
+    # UNIQUE constraint on request_number already existed; what was
+    # missing was catching the resulting conflict and trying again with a
+    # fresh number instead of a submitter seeing a raw 500).
+    def _do_new_submission_insert(request_number):
+        with db.connect() as conn:
+            with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO checkreq.vendor_requests
-                        (org_id, payment_request_id, entity_type, first_name, last_name,
-                         company_name, dba_name, address_line1, address_line2, city, state, zip,
-                         phone, contact_name, contact_email, requires_w9, upload_token,
-                         created_by_user_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO checkreq.payment_requests
+                        (request_number, request_type, org_id, program_area_id, submitter_user_id,
+                         vendor_id, amount, requested_pay_date, description, special_instructions,
+                         status, current_approver_id, serial_group_current, approval_chain_summary,
+                         overspend_flagged, overspend_detail,
+                         existing_vendor_w9_flagged, existing_vendor_w9_detail,
+                         pre_approved, budget_checked_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                     RETURNING id
                     """,
-                    (org_id, payment_request_id, new_vendor_fields["entity_type"],
-                     new_vendor_fields["first_name"], new_vendor_fields["last_name"],
-                     new_vendor_fields["company_name"], new_vendor_fields["dba_name"],
-                     new_vendor_fields["address_line1"], new_vendor_fields["address_line2"],
-                     new_vendor_fields["city"], new_vendor_fields["state"], new_vendor_fields["zip"],
-                     new_vendor_fields["phone"], new_vendor_fields["contact_name"],
-                     new_vendor_fields["contact_email"], requires_w9, upload_token, user["id"]),
+                    (request_number, request_type, org_id, program_area_id, user["id"],
+                     vendor_id, total_amount, requested_pay_date, description, special_instructions,
+                     initial_status,
+                     first_display_approver, first_serial_group,
+                     chain_summary, overspend_flagged, overspend_detail,
+                     existing_vendor_w9_flagged, existing_vendor_w9_detail, pre_approved),
                 )
-                vendor_request_id = cur.fetchone()["id"]
+                payment_request_id = cur.fetchone()["id"]
+
+                for acct_id, amt, memo in gl_lines:
+                    cur.execute(
+                        "INSERT INTO checkreq.payment_request_gl_lines "
+                        "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
+                        (payment_request_id, acct_id, amt, memo),
+                    )
+
+                # Approval Workflow Corrections (Jay, 2026-07-31): one
+                # budget_overage_log row per tier-2/tier-3 GL line, for CFO
+                # reporting (how often, how much, which accounts) -- not just a
+                # one-off comment on the request. Written in the same
+                # transaction as everything else, since it's plain bookkeeping,
+                # not an external side effect (unlike the tier-2 email below).
+                for tier, entries in (("buffer_notice", budget_result["buffer_notice"]),
+                                       ("cfo_required", budget_result["cfo_required"])):
+                    for e in entries:
+                        cur.execute(
+                            "INSERT INTO checkreq.budget_overage_log "
+                            "(payment_request_id, gl_account_id, tier, annual_budget, projected_spend, buffer_amount) "
+                            "VALUES (%s, %s, %s, %s, %s, %s)",
+                            (payment_request_id, e["gl_account_id"], tier,
+                             e["annual_budget"], e["projected"], e["buffer_amount"]),
+                        )
+
+                # AP Review Workflow Plan.md, Section 1a: materialize the whole
+                # computed chain as its own set of 'pending' approval_actions
+                # rows -- this, not current_approver_id, is the real gate
+                # /requests/{request_number}/approve checks.
+                _materialize_approval_actions(cur, payment_request_id, chain)
+
+                # action_type "Submitted" describes the ACTION the user just took
+                # (submitting) and stays "Submitted" even though the request's
+                # STATUS the row transitions into is now "UnderReview" -- these
+                # are two different things (Task 3, 2026-07-26): action_type is a
+                # verb describing what happened, new_status is the state that
+                # resulted. Conflating them would make the audit trail read as if
+                # the request were literally in a status called "Submitted".
                 cur.execute(
-                    "UPDATE checkreq.payment_requests SET vendor_request_id = %s WHERE id = %s",
-                    (vendor_request_id, payment_request_id),
+                    "INSERT INTO checkreq.audit_log "
+                    "(payment_request_id, action_by_user_id, action_type, comment, new_status, impersonated_by_user_id) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    (payment_request_id, user["id"], "Submitted", chain_summary, initial_status, impersonated_by),
                 )
+
+                # New Vendor Onboarding (Section 1/2): the vendor_requests row
+                # references payment_request_id (NOT NULL), so it can only be
+                # created after the payment_request row above already has an
+                # id -- then payment_requests.vendor_request_id is set to point
+                # back, in the same transaction (both inserts commit together
+                # or not at all).
+                if new_vendor_fields:
+                    requires_w9 = total_amount > _w9_threshold_amount()
+                    upload_token = pysecrets.token_urlsafe(32)
+                    cur.execute(
+                        """
+                        INSERT INTO checkreq.vendor_requests
+                            (org_id, payment_request_id, entity_type, first_name, last_name,
+                             company_name, dba_name, address_line1, address_line2, city, state, zip,
+                             phone, contact_name, contact_email, requires_w9, upload_token,
+                             created_by_user_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (org_id, payment_request_id, new_vendor_fields["entity_type"],
+                         new_vendor_fields["first_name"], new_vendor_fields["last_name"],
+                         new_vendor_fields["company_name"], new_vendor_fields["dba_name"],
+                         new_vendor_fields["address_line1"], new_vendor_fields["address_line2"],
+                         new_vendor_fields["city"], new_vendor_fields["state"], new_vendor_fields["zip"],
+                         new_vendor_fields["phone"], new_vendor_fields["contact_name"],
+                         new_vendor_fields["contact_email"], requires_w9, upload_token, user["id"]),
+                    )
+                    vendor_request_id = cur.fetchone()["id"]
+                    cur.execute(
+                        "UPDATE checkreq.payment_requests SET vendor_request_id = %s WHERE id = %s",
+                        (vendor_request_id, payment_request_id),
+                    )
+                return payment_request_id
+
+    request_number, payment_request_id = _submit_with_request_number_retry(
+        request_type, _do_new_submission_insert)
 
     # Tier-2 budget overage: FYI-only CFO notification, after commit (a real
     # external email send, matching every other notification's post-commit
