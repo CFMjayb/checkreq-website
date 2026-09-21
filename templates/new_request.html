@@ -192,7 +192,7 @@
           <span class="attachment-meta">{{ (a.size_bytes / 1024) | round(1) }} KB</span>
           <form method="post" action="/requests/{{ edit_data.editing_request_number }}/attachments/{{ a.id }}/remove"
                 class="attachment-remove-form"
-                onsubmit="return confirm('Remove this file from the list? The archived copy stays on file in SharePoint -- this only hides it here.');">
+                data-confirm="Remove this file from the list? The archived copy stays on file in SharePoint -- this only hides it here.">
             <button type="submit" class="attachment-remove-btn" title="Remove">&times;</button>
           </form>
         </li>

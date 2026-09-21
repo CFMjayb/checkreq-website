@@ -41,7 +41,7 @@
         <td>{{ s.display_name or "—" }}</td>
         <td>
           <form method="post" action="/admin/setup/program-areas/{{ pa.id }}/submitters/revoke"
-                onsubmit="return confirm('Remove {{ s.email }} from this program area?');">
+                data-confirm="Remove {{ s.email }} from this program area?">
             <input type="hidden" name="upa_id" value="{{ s.upa_id }}">
             <button type="submit" class="btn btn-secondary">Remove</button>
           </form>

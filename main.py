@@ -86,6 +86,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hmac
+import html
 import os
 import re
 import secrets as pysecrets
@@ -1683,9 +1684,9 @@ def _send_budget_buffer_notice_email(request_number: str, org_name: str, org_id:
         return
     subject = f"Budget notice: {request_number} is over budget (within buffer)"
     body_html = (
-        f"<p>FYI — <strong>{request_number}</strong> ({org_name}) was submitted over budget on "
+        f"<p>FYI — <strong>{_esc(request_number)}</strong> ({_esc(org_name)}) was submitted over budget on "
         f"one or more GL lines, but within that account's allowed buffer. No action is needed.</p>"
-        f"<ul>" + "".join(f"<li>{d}</li>" for d in details) + "</ul>"
+        f"<ul>" + "".join(f"<li>{_esc(d)}</li>" for d in details) + "</ul>"
     )
     body_text = (
         f"FYI -- {request_number} ({org_name}) was over budget, within buffer:\n\n"
@@ -1862,18 +1863,32 @@ def _approval_action_email_html(request_body: str, sign_in_url: str) -> str:
 """
 
 
+def _esc(value) -> str:
+    """M10 (Security Assessment 2026-09-19): every one of these email
+    _*_html() builders interpolates real user-typed text (a check request's
+    own Description, a rejection reason, a new vendor's name/contact,
+    someone's own self-editable display name) directly into an HTML email
+    body with no escaping -- an approver's mail client renders whatever a
+    submitter (or, for the rejection-reason case, an approver/AP reviewer)
+    typed. html.escape() everywhere one of these values is interpolated
+    into *_html (never *_text, which is already safe -- there's no markup
+    to break out of in a plain-text email). None/blank passes through as
+    '' rather than the literal string 'None'."""
+    return html.escape(str(value)) if value not in (None, "") else ""
+
+
 def _request_summary_table_html(ctx: dict) -> str:
     needed_by = ctx["requested_pay_date"].strftime("%Y-%m-%d") if ctx.get("requested_pay_date") else "—"
     return f"""
     <table style="width:100%; border-collapse:collapse; margin:12px 0;">
-      <tr><td style="padding:4px 0; color:#555; width:150px;">Request #</td><td style="padding:4px 0; font-weight:bold;">{ctx['request_number']}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Entity</td><td style="padding:4px 0;">{ctx['org_code']}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Vendor</td><td style="padding:4px 0;">{ctx['vendor_name']}</td></tr>
+      <tr><td style="padding:4px 0; color:#555; width:150px;">Request #</td><td style="padding:4px 0; font-weight:bold;">{_esc(ctx['request_number'])}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Entity</td><td style="padding:4px 0;">{_esc(ctx['org_code'])}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Vendor</td><td style="padding:4px 0;">{_esc(ctx['vendor_name'])}</td></tr>
       <tr><td style="padding:4px 0; color:#555;">Amount</td><td style="padding:4px 0; font-weight:bold;">${float(ctx['amount']):,.2f}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Program Area</td><td style="padding:4px 0;">{ctx['program_area_title']}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Program Area</td><td style="padding:4px 0;">{_esc(ctx['program_area_title'])}</td></tr>
       <tr><td style="padding:4px 0; color:#555;">Needed By</td><td style="padding:4px 0;">{needed_by}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Submitted By</td><td style="padding:4px 0;">{ctx.get('submitter_name') or ctx.get('submitter_email') or '—'}</td></tr>
-      <tr><td style="padding:4px 0; color:#555; vertical-align:top;">Description</td><td style="padding:4px 0;">{ctx.get('description') or '—'}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Submitted By</td><td style="padding:4px 0;">{_esc(ctx.get('submitter_name') or ctx.get('submitter_email')) or '—'}</td></tr>
+      <tr><td style="padding:4px 0; color:#555; vertical-align:top;">Description</td><td style="padding:4px 0;">{_esc(ctx.get('description')) or '—'}</td></tr>
     </table>
     """
 
@@ -1909,7 +1924,7 @@ def _send_approval_needed_email(ctx: dict, approver_email: str, approver_name: s
     sign_in_url = f"{base}/my-approvals"
     subject = f"Approval needed: {ctx['request_number']} ({ctx['vendor_name']}) — ${float(ctx['amount']):,.2f}"
     body = f"""
-    <p>Hello {approver_name or ''},</p>
+    <p>Hello {_esc(approver_name) or ''},</p>
     <p>A check request is waiting for your review as an approver in the chain.</p>
     {_request_summary_table_html(ctx)}
     {_email_action_buttons_html(action_url)}
@@ -1948,8 +1963,8 @@ def _send_daily_digest_email(approver: dict, rows: list[dict], request: Request)
         needed_by = r["requested_pay_date"].strftime("%Y-%m-%d") if r.get("requested_pay_date") else "—"
         items_html += f"""
         <tr>
-          <td style="padding:8px; border-bottom:1px solid #eee;"><strong>{r['request_number']}</strong><br><span style="color:#888; font-size:0.85em;">{r['org_code']}</span></td>
-          <td style="padding:8px; border-bottom:1px solid #eee;">{r['vendor_name']}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;"><strong>{_esc(r['request_number'])}</strong><br><span style="color:#888; font-size:0.85em;">{_esc(r['org_code'])}</span></td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{_esc(r['vendor_name'])}</td>
           <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">${float(r['amount']):,.2f}</td>
           <td style="padding:8px; border-bottom:1px solid #eee;">{needed_by}</td>
           <td style="padding:8px; border-bottom:1px solid #eee;">
@@ -1964,7 +1979,7 @@ def _send_daily_digest_email(approver: dict, rows: list[dict], request: Request)
 
     plural = "s" if len(rows) != 1 else ""
     body = f"""
-    <p>Hello {approver.get('display_name') or ''},</p>
+    <p>Hello {_esc(approver.get('display_name')) or ''},</p>
     <p>You have <strong>{len(rows)}</strong> check request{plural} waiting for your approval:</p>
     <table style="width:100%; border-collapse:collapse; margin:16px 0; font-size:0.92rem;">
       <tr style="background:#f5f5f5;">
@@ -2375,15 +2390,15 @@ def _send_rejection_email(pr: dict, new_status: str, reason: str, request: Reque
     amount_str = f"${float(pr['amount']):,.2f}" if pr.get("amount") is not None else "—"
     rejected_by = rejected_by_name or "—"
     body_html = (
-        f"<p>Hello {pr.get('submitter_name') or ''},</p>"
-        f"<p>Your check request <strong>{pr['request_number']}</strong> "
-        f"({pr['org_name']}) was {verb}.</p>"
+        f"<p>Hello {_esc(pr.get('submitter_name')) or ''},</p>"
+        f"<p>Your check request <strong>{_esc(pr['request_number'])}</strong> "
+        f"({_esc(pr['org_name'])}) was {verb}.</p>"
         f"<table style=\"border-collapse:collapse; margin:12px 0;\">"
-        f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">Vendor</td><td style=\"padding:3px 0;\">{vendor_name}</td></tr>"
+        f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">Vendor</td><td style=\"padding:3px 0;\">{_esc(vendor_name)}</td></tr>"
         f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">Amount</td><td style=\"padding:3px 0; font-weight:bold;\">{amount_str}</td></tr>"
-        f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">{'Returned by' if new_status == 'Returned by AP' else 'Rejected by'}</td><td style=\"padding:3px 0;\">{rejected_by}</td></tr>"
+        f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">{'Returned by' if new_status == 'Returned by AP' else 'Rejected by'}</td><td style=\"padding:3px 0;\">{_esc(rejected_by)}</td></tr>"
         f"</table>"
-        f"<p><strong>Reason:</strong> {reason}</p>"
+        f"<p><strong>Reason:</strong> {_esc(reason)}</p>"
         f"<p>The original check request is attached. You can edit and resubmit it here: <a href=\"{edit_url}\">{edit_url}</a></p>"
     )
     body_text = (
@@ -3247,13 +3262,13 @@ def _send_w9_request_email(vr: dict, org_name: str, request: Request) -> dict:
     upload_url = f"{base_url}/vendor-w9-upload/{vr['upload_token']}"
     subject = f"W-9 Request — {vendor_name}"
     body_html = (
-        f"<p>Hello {vr.get('contact_name') or ''},</p>"
-        f"<p>{org_name} is setting up <strong>{vendor_name}</strong> as a new payee and "
+        f"<p>Hello {_esc(vr.get('contact_name')) or ''},</p>"
+        f"<p>{_esc(org_name)} is setting up <strong>{_esc(vendor_name)}</strong> as a new payee and "
         f"needs a completed IRS Form W-9 on file before any payment can be issued.</p>"
         f"<p>A blank W-9 is attached for reference. Please complete it and upload it "
         f"using the secure link below:</p>"
         f'<p><a href="{upload_url}">{upload_url}</a></p>'
-        f"<p>Thank you,<br>{org_name} Business Office</p>"
+        f"<p>Thank you,<br>{_esc(org_name)} Business Office</p>"
     )
     body_text = (
         f"Hello {vr.get('contact_name') or ''},\n\n"
@@ -3301,12 +3316,12 @@ def _send_existing_vendor_w9_request_email(vendor: dict, org_name: str, request:
     subject = f"W-9 Request — {vendor_name}"
     body_html = (
         f"<p>Hello,</p>"
-        f"<p>{org_name} needs a completed IRS Form W-9 on file for <strong>{vendor_name}</strong>, "
+        f"<p>{_esc(org_name)} needs a completed IRS Form W-9 on file for <strong>{_esc(vendor_name)}</strong>, "
         f"based on total payments so far this year.</p>"
         f"<p>A blank W-9 is attached for reference. Please complete it and upload it "
         f"using the secure link below:</p>"
         f'<p><a href="{upload_url}">{upload_url}</a></p>'
-        f"<p>Thank you,<br>{org_name} Business Office</p>"
+        f"<p>Thank you,<br>{_esc(org_name)} Business Office</p>"
     )
     body_text = (
         f"Hello,\n\n"
@@ -3339,13 +3354,28 @@ def _send_existing_vendor_w9_request_email(vendor: dict, org_name: str, request:
     )
 
 
+_W9_TOKEN_LIFETIME_DAYS = 7  # M11 (Security Assessment 2026-09-19): "W-9 tokens expire (7 d)"
+
+
 def _vendor_request_by_upload_token(token: str) -> dict | None:
     """404-safe lookup for the unauthenticated /vendor-w9-upload/{token}
     route (Section 4a). Returns None (never a distinguishing error) for a
     bad token OR a token whose vendor_request has left 'approved' status --
     the upload window closes automatically the moment approval status
     changes (rejected / posted_to_qbo), without relying on the vendor to
-    notice."""
+    notice.
+
+    M11: also requires the token be genuinely live -- w9_email_sent_at
+    IS NOT NULL (the email actually sent; a token minted but never
+    delivered was never meant to be usable) AND within
+    _W9_TOKEN_LIFETIME_DAYS of that send. Unlike the existing-vendor
+    sibling below, this path does NOT also require w9_uploaded_at IS NULL
+    (single-use) -- there is no resend action for THIS path that could
+    re-open a closed window (see vendor_request_resend_w9 below, which
+    fixes that gap for expiry but a vendor re-uploading a corrected file
+    before staff ever reviews the first one is legitimate and harmless
+    here, since w9_received -- a real human confirming it -- is always the
+    actual gate, never the upload alone)."""
     if not token:
         return None
     return db.query_one(
@@ -3355,18 +3385,27 @@ def _vendor_request_by_upload_token(token: str) -> dict | None:
         FROM checkreq.vendor_requests vr
         JOIN checkreq.organizations o ON o.id = vr.org_id
         WHERE vr.upload_token = %s AND vr.status = 'approved'
+          AND vr.w9_email_sent_at IS NOT NULL
+          AND vr.w9_email_sent_at > NOW() - INTERVAL '1 day' * %s
         """,
-        (token,),
+        (token, _W9_TOKEN_LIFETIME_DAYS),
     )
 
 
 def _existing_vendor_by_w9_upload_token(token: str) -> dict | None:
     """404-safe lookup for /vendor-w9-upload/{token} -- the EXISTING-vendor
-    sibling of _vendor_request_by_upload_token above (2026-09-14). No
-    status gate to check (unlike vendor_requests' own 'approved'
-    requirement) -- an existing checkreq.vendors row is, by definition,
-    already a real, active vendor; the token itself being unguessable is
-    the only real access control this route needs."""
+    sibling of _vendor_request_by_upload_token above (2026-09-14).
+
+    M11: unlike the new-vendor path, THIS one also requires
+    w9_uploaded_at IS NULL (single-use) -- the real gap M11 named was
+    specifically here: an upload alone used to flip w9_on_file directly
+    with zero staff review, so a stale/leaked link staying live forever
+    AND reusable indefinitely was a genuine risk. Once used, the token is
+    spent; ap_review_request_existing_vendor_w9's "Resend W-9 Request"
+    action (the only way this token is ever issued in the first place)
+    explicitly clears w9_uploaded_at back to NULL when clicked, which is
+    the intended, staff-initiated way to re-open the window -- e.g. after
+    reviewing an uploaded file and finding it illegible or wrong."""
     if not token:
         return None
     return db.query_one(
@@ -3376,8 +3415,11 @@ def _existing_vendor_by_w9_upload_token(token: str) -> dict | None:
         FROM checkreq.vendors v
         JOIN checkreq.organizations o ON o.id = v.org_id
         WHERE v.w9_upload_token = %s
+          AND v.w9_uploaded_at IS NULL
+          AND v.w9_requested_at IS NOT NULL
+          AND v.w9_requested_at > NOW() - INTERVAL '1 day' * %s
         """,
-        (token,),
+        (token, _W9_TOKEN_LIFETIME_DAYS),
     )
 
 
@@ -5918,7 +5960,8 @@ def _require_vendor_approver(request: Request):
 
 
 @app.get("/admin/vendor-requests", response_class=HTMLResponse)
-def vendor_requests_list(request: Request, email_warning: str = "", entity: str = ""):
+def vendor_requests_list(request: Request, email_warning: str = "", entity: str = "",
+                          resend_error: str = "", resend_sent: str = ""):
     user, err = _require_vendor_approver(request)
     if err:
         return err
@@ -5951,6 +5994,7 @@ def vendor_requests_list(request: Request, email_warning: str = "", entity: str 
 
     return _render(request, "vendor_requests.html", user, {
         "rows": rows, "email_warning": email_warning,
+        "resend_error": resend_error, "resend_sent": resend_sent,
         "all_orgs_list": all_orgs_list, "filter_entity": entity,
     })
 
@@ -6066,6 +6110,55 @@ def vendor_request_w9_received(vr_id: int, request: Request):
     return RedirectResponse("/admin/vendor-requests", status_code=303)
 
 
+@app.post("/admin/vendor-requests/{vr_id}/resend-w9")
+def vendor_request_resend_w9(vr_id: int, request: Request):
+    """M11 (Security Assessment 2026-09-19): companion to the new
+    _W9_TOKEN_LIFETIME_DAYS expiry on _vendor_request_by_upload_token --
+    without this, a vendor who genuinely takes longer than 7 days to get
+    around to a W-9 would hit a dead, unrecoverable 404 with no staff
+    action able to help them (there was previously no resend for this
+    path at all, only the one-shot email vendor_request_approve fires on
+    approval). Reuses the SAME upload_token (never rotates it, matching
+    ap_review_request_existing_vendor_w9's identical reasoning for its own
+    sibling action) -- only w9_email_sent_at moves forward, extending the
+    expiry window; an already-shared link keeps working."""
+    user, err = _require_vendor_approver(request)
+    if err:
+        return err
+
+    vr = db.query_one(
+        "SELECT vr.*, o.name AS org_name FROM checkreq.vendor_requests vr "
+        "JOIN checkreq.organizations o ON o.id = vr.org_id WHERE vr.id = %s",
+        (vr_id,),
+    )
+    if not vr:
+        return JSONResponse({"error": "Vendor request not found"}, status_code=404)
+    # H1 (Security Assessment 2026-09-19): entity check before any write.
+    denied = _require_role_for_org(user, "vendor_approver", vr["org_id"])
+    if denied:
+        return denied
+    if vr["status"] != "approved" or not vr["requires_w9"] or vr["w9_received"]:
+        return RedirectResponse(
+            "/admin/vendor-requests?resend_error="
+            + quote("This vendor isn't in a state that needs a W-9 request sent."),
+            status_code=303,
+        )
+
+    result = _send_w9_request_email(vr, vr["org_name"], request)
+    if result.get("status") == "sent":
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE checkreq.vendor_requests SET w9_email_sent_at = NOW() WHERE id = %s",
+                    (vr_id,),
+                )
+        return RedirectResponse("/admin/vendor-requests?resend_sent=1", status_code=303)
+    return RedirectResponse(
+        "/admin/vendor-requests?resend_error=" + quote(f"W-9 email failed: {result.get('error', 'unknown error')}"),
+        status_code=303,
+    )
+
+
 # ── AP Review screen (AP Review Workflow Plan.md, Section 3/4) ─────────────
 # Gated on is_ap_reviewer (Section 1b) -- a new, dedicated role, deliberately
 # NOT folded into is_cfo or is_vendor_approver. No per-org scoping table for
@@ -6076,7 +6169,7 @@ def vendor_request_w9_received(vr_id: int, request: Request):
 @app.get("/admin/ap-review", response_class=HTMLResponse)
 def ap_review_list(request: Request, posted: str = "", returned: str = "",
                     post_error: str = "", email_warning: str = "", view: str = "pending",
-                    entity: str = ""):
+                    entity: str = "", w9_confirmed: str = ""):
     """2026-08-02 feedback batch, Item 6: Jay assumed this screen was
     already scoped to a single entity and asked to drop its redundant
     Entity column -- checked the actual query and it is NOT: `_require_
@@ -6182,7 +6275,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
                COALESCE(pa.title, 'All Program Areas') AS program_area_title, u.display_name AS submitter_name,
                u.email AS submitter_email,
                v.id AS existing_vendor_id, v.display_name AS vendor_display_name,
-               v.w9_on_file, v.w9_requested_at,
+               v.w9_on_file, v.w9_requested_at, v.w9_uploaded_at,
                vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
                vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
                vr.dba_name AS vr_dba_name, vr.status AS vr_status,
@@ -6231,9 +6324,23 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
             # gate re-check below) -- same "hold here, visibly, until it
             # clears" shape as the new-vendor gate above, just keyed off
             # checkreq.vendors.w9_on_file instead of vendor_requests.status.
-            r["vendor_gate_wait"] = "W-9 not yet received (year-to-date threshold)"
+            # M11: distinguish "still waiting on the vendor" from "a file
+            # arrived, waiting on US" -- otherwise staff have no visible
+            # signal that there's something to actually go review.
+            r["vendor_gate_wait"] = (
+                "W-9 uploaded -- awaiting AP confirmation" if r.get("w9_uploaded_at")
+                else "W-9 not yet received (year-to-date threshold)"
+            )
         else:
             r["vendor_gate_wait"] = None
+        # M11: a file has arrived (w9_uploaded_at) but no AP reviewer has
+        # confirmed it yet (w9_on_file still false) -- the "Confirm W-9
+        # Received" action becomes available exactly here, distinct from
+        # "Resend" (which is for before anything's arrived, or after staff
+        # decides an uploaded file was no good and wants a redo).
+        r["existing_vendor_w9_needs_review"] = bool(
+            r.get("existing_vendor_w9_flagged") and r.get("w9_uploaded_at") and not r.get("w9_on_file")
+        )
 
     # Ask My Accountant (2026-08-16): requests waiting on AP to assign GL
     # coding before the approval chain can even start -- same screen/role
@@ -6279,7 +6386,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
 
     return _render(request, "ap_review.html", user, {
         "rows": rows, "coding_rows": coding_rows, "posted": posted, "returned": returned,
-        "post_error": post_error, "email_warning": email_warning,
+        "post_error": post_error, "email_warning": email_warning, "w9_confirmed": w9_confirmed,
         "all_orgs_list": all_orgs_list, "filter_entity": entity,
     })
 
@@ -6751,8 +6858,17 @@ def ap_review_request_existing_vendor_w9(request_number: str, request: Request):
     if result.get("status") == "sent":
         with db.connect() as conn:
             with conn.cursor() as cur:
+                # M11: w9_requested_at = NOW() extends the 7-day expiry
+                # window (_W9_TOKEN_LIFETIME_DAYS), same token reused
+                # (never rotated -- an already-shared link must keep
+                # working, per this function's own docstring). w9_uploaded_at
+                # is explicitly cleared back to NULL here -- this is the
+                # ONE intended way to re-open the upload window once
+                # already used (e.g. staff reviewed a bad/illegible file
+                # and wants a genuine redo), matching
+                # _existing_vendor_by_w9_upload_token's own docstring.
                 cur.execute(
-                    "UPDATE checkreq.vendors SET w9_requested_at = NOW() WHERE id = %s",
+                    "UPDATE checkreq.vendors SET w9_requested_at = NOW(), w9_uploaded_at = NULL WHERE id = %s",
                     (vendor["id"],),
                 )
         return RedirectResponse("/admin/ap-review?w9_requested=1", status_code=303)
@@ -6761,6 +6877,51 @@ def ap_review_request_existing_vendor_w9(request_number: str, request: Request):
         "/admin/ap-review?post_error=" + quote(f"W-9 email failed: {result.get('error', 'unknown error')}"),
         status_code=303,
     )
+
+
+@app.post("/admin/ap-review/{request_number}/confirm-existing-vendor-w9")
+def ap_review_confirm_existing_vendor_w9(request_number: str, request: Request):
+    """M11 (Security Assessment 2026-09-19): the real fix -- an upload via
+    /vendor-w9-upload/{token} only ever sets checkreq.vendors.w9_uploaded_at
+    now (see vendor_w9_upload_submit), never w9_on_file directly. This is
+    the one action that actually sets w9_on_file = TRUE, and it requires a
+    real, entity-scoped AP reviewer to click it -- mirrors
+    vendor_request_w9_received's own "staff still confirms it, rather than
+    the upload alone flipping the gate" reasoning exactly, just for the
+    existing-vendor sibling table. Scoped through the blocked REQUEST
+    (like ap_review_request_existing_vendor_w9 above), not a standalone
+    vendor id, so the entity check and the AP Review screen's own
+    request-centric navigation both stay consistent."""
+    from urllib.parse import quote
+
+    user, err = _require_ap_reviewer(request)
+    if err:
+        return err
+
+    pr = db.query_one(
+        "SELECT pr.vendor_id, pr.org_id FROM checkreq.payment_requests pr WHERE pr.request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    # H1 (Security Assessment 2026-09-19): entity check before touching the
+    # vendor row, same pattern as every other AP action route.
+    denied = _require_role_for_org(user, "ap_reviewer", pr["org_id"])
+    if denied:
+        return denied
+    if not pr["vendor_id"]:
+        return RedirectResponse(
+            "/admin/ap-review?post_error=" + quote("No existing vendor found on this request."),
+            status_code=303,
+        )
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.vendors SET w9_on_file = TRUE WHERE id = %s",
+                (pr["vendor_id"],),
+            )
+    return RedirectResponse("/admin/ap-review?w9_confirmed=1", status_code=303)
 
 
 @app.post("/requests/{request_number}/ap-return")
@@ -6851,7 +7012,18 @@ def vendor_w9_upload_form(token: str, request: Request):
     tries the original vendor_requests lookup first (unchanged), falls back
     to the new vendors-table lookup, 404s only if neither matches. Same
     shared template either way, same "already_uploaded" semantics (bool),
-    just sourced from a different column depending on which table matched."""
+    just sourced from a different column depending on which table matched.
+
+    M11: _existing_vendor_by_w9_upload_token now requires w9_uploaded_at
+    IS NULL to match at all (single-use) -- meaning a vendor re-visiting
+    the SAME link after a successful upload would otherwise 404 instead
+    of seeing the friendly "we've received it" page the POST handler
+    itself already shows right after a fresh upload. The lenient,
+    token-only fallback below (ignores the single-use/expiry WHERE
+    clauses) exists purely so a revisit after use still resolves to that
+    same friendly message -- it is NEVER used to authorize anything, only
+    to distinguish "this token was real and already used" from "this
+    token was never real" for messaging."""
     vr = _vendor_request_by_upload_token(token)
     if vr:
         return templates.TemplateResponse(request, "vendor_w9_upload.html", {
@@ -6865,9 +7037,23 @@ def vendor_w9_upload_form(token: str, request: Request):
     v = _existing_vendor_by_w9_upload_token(token)
     if v:
         return templates.TemplateResponse(request, "vendor_w9_upload.html", {
-            "already_uploaded": bool(v["w9_on_file"]),
+            "already_uploaded": False,
             "vendor_name": v["display_name"],
             "org_name": v["org_name"],
+            "token": token,
+            "error": "",
+        })
+
+    v_any = db.query_one(
+        "SELECT v.display_name, o.name AS org_name, v.w9_uploaded_at "
+        "FROM checkreq.vendors v JOIN checkreq.organizations o ON o.id = v.org_id "
+        "WHERE v.w9_upload_token = %s", (token,),
+    )
+    if v_any and v_any["w9_uploaded_at"]:
+        return templates.TemplateResponse(request, "vendor_w9_upload.html", {
+            "already_uploaded": True,
+            "vendor_name": v_any["display_name"],
+            "org_name": v_any["org_name"],
             "token": token,
             "error": "",
         })
@@ -6956,9 +7142,16 @@ async def vendor_w9_upload_submit(token: str, request: Request, file: UploadFile
                     (gcs_path, sp_path, vr["id"]),
                 )
             else:
+                # M11: no longer sets w9_on_file directly -- that's now the
+                # separate, staff-confirmed action (AP Review's "Confirm W-9
+                # Received" button, ap_review_confirm_existing_vendor_w9
+                # below), matching the vendor_requests branch's own
+                # upload-vs-received split above exactly. An upload alone
+                # only ever proves a FILE arrived, never that it's a real,
+                # correctly-completed W-9.
                 cur.execute(
                     "UPDATE checkreq.vendors SET w9_file_gcs_path = %s, w9_file_sp_path = %s, "
-                    "w9_on_file = TRUE WHERE id = %s",
+                    "w9_uploaded_at = NOW() WHERE id = %s",
                     (gcs_path, sp_path, v["id"]),
                 )
 

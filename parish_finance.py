@@ -33,6 +33,7 @@ invoices are already scoped to this one parish via its own AR Customer id.
 """
 from __future__ import annotations
 
+import html
 import re
 
 from fastapi import APIRouter, Request
@@ -494,9 +495,12 @@ def _submit_and_notify(parish: dict, diocese_org: dict, user: dict, subject: str
         to=email,
         subject=subject,
         body_text=body_text,
-        body_html=f"<p><strong>Parish:</strong> {parish['name']}</p>"
-                   f"<p><strong>Submitted by:</strong> {user.get('display_name') or user.get('email')}</p>"
-                   f"<p>{message}</p>",
+        # M10 (Security Assessment 2026-09-19): `message` is free-text typed
+        # by a parish user; `display_name` is self-editable via Profile.
+        # html.escape() both before interpolating into an HTML email body.
+        body_html=f"<p><strong>Parish:</strong> {html.escape(parish['name'])}</p>"
+                   f"<p><strong>Submitted by:</strong> {html.escape(user.get('display_name') or user.get('email') or '')}</p>"
+                   f"<p>{html.escape(message)}</p>",
         sender=email,
     )
 

@@ -35,7 +35,7 @@
         <a href="{{ download_url_prefix }}{{ n.rel_path|urlencode }}" target="_blank" rel="noopener">View</a>
         <a href="{{ download_url_prefix }}{{ n.rel_path|urlencode }}?download=1">Download</a>
         {% if delete_action_url %}
-        <form method="post" action="{{ delete_action_url }}" onsubmit="return confirm('Remove this file?');">
+        <form method="post" action="{{ delete_action_url }}" data-confirm="Remove this file?">
           <input type="hidden" name="rel_path" value="{{ n.rel_path }}">
           <button type="submit" class="btn-link">Remove</button>
         </form>

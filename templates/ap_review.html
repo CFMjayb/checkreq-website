@@ -11,6 +11,7 @@ that writes to QuickBooks.</p>
 {% if posted %}<div class="banner banner-success">Posted to QBO: {{ posted }}</div>{% endif %}
 {% if returned %}<div class="banner banner-info">Returned to submitter: {{ returned }}</div>{% endif %}
 {% if request.query_params.get('w9_requested') %}<div class="banner banner-success">W-9 request email sent.</div>{% endif %}
+{% if w9_confirmed %}<div class="banner banner-success">W-9 confirmed received.</div>{% endif %}
 {% if post_error %}
 <div class="banner banner-error">
   {% if post_error.startswith('Batch post') %}
@@ -94,7 +95,7 @@ that writes to QuickBooks.</p>
    THIS (pending) view -- ap_review_completed.html has no equivalent, its
    rows are already posted. #}
 <form id="batchPostForm" method="post" action="/admin/ap-review/post-batch"
-      {% if BEACON_ENV == 'dev' %}onsubmit="return confirmBatchPost(this)"{% endif %}>
+      {% if BEACON_ENV == 'dev' %}data-dev-confirm="1"{% endif %}>
   <input type="hidden" name="dev_confirmed" value="1">
   <button type="submit" class="btn btn-primary" id="batchPostBtn" disabled>Post Selected to QBO</button>
   <span class="sub" id="batchSelectedCount">0 selected</span>
@@ -155,6 +156,17 @@ that writes to QuickBooks.</p>
            vendor_request_id) so it never appears alongside the unrelated
            new-vendor gate. #}
         {% if r.existing_vendor_w9_flagged and not r.w9_on_file %}
+        {# M11 (Security Assessment 2026-09-19): a file arriving no longer
+           confirms anything by itself -- once w9_uploaded_at is set, this
+           becomes the real gate (Confirm W-9 Received, sets w9_on_file).
+           Resend still shows alongside it -- staff who open the uploaded
+           file and find it wrong can click Resend to re-open the window
+           for a redo, same as before anything was uploaded at all. #}
+        {% if r.existing_vendor_w9_needs_review %}
+        · <form method="post" action="/admin/ap-review/{{ r.request_number }}/confirm-existing-vendor-w9" style="display:inline">
+            <button type="submit" class="btn btn-primary btn-sm">Confirm W-9 Received</button>
+          </form>
+        {% endif %}
         · <form method="post" action="/admin/ap-review/{{ r.request_number }}/request-existing-vendor-w9" style="display:inline">
             <button type="submit" class="btn btn-secondary btn-sm">
               {{ "Resend W-9 Request" if r.w9_requested_at else "Send W-9 Request" }}
@@ -168,12 +180,12 @@ that writes to QuickBooks.</p>
            server-side check in main.py's post_to_qbo() is the real
            backstop; this dialog is the actual UX Jay asked for. #}
         · <form method="post" action="/requests/{{ r.request_number }}/post-to-qbo" style="display:inline"
-                {% if BEACON_ENV == 'dev' %}onsubmit="return confirm('DEV ENVIRONMENT: this will create a REAL Vendor/Bill in the live, production {{ r.org_code }} QuickBooks company. There is no dev/test QuickBooks -- this is not a drill. Continue?')"{% endif %}>
+                {% if BEACON_ENV == 'dev' %}data-confirm="DEV ENVIRONMENT: this will create a REAL Vendor/Bill in the live, production {{ r.org_code }} QuickBooks company. There is no dev/test QuickBooks -- this is not a drill. Continue?"{% endif %}>
             <input type="hidden" name="dev_confirmed" value="1">
             <button type="submit" class="btn btn-primary btn-sm"
                     {% if r.vendor_gate_wait %}disabled title="{{ r.vendor_gate_wait }}"{% endif %}>Post to QBO</button>
           </form>
-        · <form method="post" action="/requests/{{ r.request_number }}/ap-return" style="display:inline" onsubmit="return promptReturnReason(this)">
+        · <form method="post" action="/requests/{{ r.request_number }}/ap-return" style="display:inline" data-prompt-reason="return_reason">
             <input type="hidden" name="return_reason" value="">
             <button type="submit" class="btn btn-secondary btn-sm">Return to Submitter</button>
           </form>
@@ -189,12 +201,18 @@ that writes to QuickBooks.</p>
 {% endblock %}
 {% block extra_js %}
 <script>
-function promptReturnReason(form) {
-  const reason = prompt("Reason for returning this request to the submitter (required):", "");
-  if (!reason) { alert("A reason is required."); return false; }
-  form.querySelector('input[name="return_reason"]').value = reason;
-  return true;
-}
+// M9 (Security Assessment 2026-09-19): was onsubmit="return promptReturnReason(this)"
+// -- moved to a delegated listener keyed on data-prompt-reason (the hidden
+// field's own name) so no template value is ever spliced into an inline
+// event-handler attribute, matching confirm_submit.js's pattern for the
+// simpler confirm()-only case this page also uses.
+document.addEventListener('submit', function (e) {
+  var form = e.target;
+  if (!(form && form.hasAttribute && form.hasAttribute('data-prompt-reason'))) return;
+  var reason = prompt("Reason for returning this request to the submitter (required):", "");
+  if (!reason) { alert("A reason is required."); e.preventDefault(); return; }
+  form.querySelector('input[name="' + form.getAttribute('data-prompt-reason') + '"]').value = reason;
+});
 
 // Ask My Accountant (2026-08-16): populate each "Needs GL Coding" row's
 // account picker(s) once, from that request's own org (not the session's
@@ -266,16 +284,22 @@ document.querySelectorAll('.batchSelectCheckbox').forEach(cb => cb.addEventListe
   updateBatchPostButton();
 }));
 
-function confirmBatchPost(form) {
-  const n = document.querySelectorAll('.batchSelectCheckbox:checked').length;
-  return confirm(
-    `DEV ENVIRONMENT: this will create REAL Vendor/Bill records in the live, production QuickBooks ` +
-    `for ${n} selected request(s). There is no dev/test QuickBooks -- this is not a drill. Continue?`
-  );
-}
-
+// M9 (Security Assessment 2026-09-19): was onsubmit="return confirmBatchPost(this)"
+// -- the count of selected rows is only known client-side at submit time,
+// so (unlike every other confirm() on this page) this can't become a
+// static data-confirm string; instead the check moved into this form's
+// own submit listener, gated by the data-dev-confirm marker set above
+// (dev only -- prod never shows this dialog at all, same as before).
 document.getElementById('batchPostForm').addEventListener('submit', (e) => {
   if (e.defaultPrevented) return;
+  if (e.target.hasAttribute('data-dev-confirm')) {
+    const n = document.querySelectorAll('.batchSelectCheckbox:checked').length;
+    const ok = confirm(
+      `DEV ENVIRONMENT: this will create REAL Vendor/Bill records in the live, production QuickBooks ` +
+      `for ${n} selected request(s). There is no dev/test QuickBooks -- this is not a drill. Continue?`
+    );
+    if (!ok) { e.preventDefault(); return; }
+  }
   document.querySelectorAll('.batchSelectCheckbox:checked').forEach(cb => {
     const hidden = document.createElement('input');
     hidden.type = 'hidden';

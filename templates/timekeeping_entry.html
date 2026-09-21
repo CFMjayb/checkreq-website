@@ -115,7 +115,7 @@
 </form>
 
 {% if not diocese_mode and can_enter and not locked %}
-<form method="post" action="/timekeeping/submit" onsubmit="return confirm('Submit this period to the diocese? You will not be able to make further changes unless the diocese reopens it.');" style="margin-top:8px">
+<form method="post" action="/timekeeping/submit" data-confirm="Submit this period to the diocese? You will not be able to make further changes unless the diocese reopens it." style="margin-top:8px">
   <button type="submit" class="btn btn-primary">Submit Period to Diocese</button>
   <p class="sub" style="margin-top:8px">
     Submitting locks this period's hours and also sends along any staff roster changes you've

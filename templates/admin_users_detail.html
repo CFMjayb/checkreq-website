@@ -270,7 +270,7 @@
         <td>{{ pa.program_area_title }}</td>
         <td>
           <form method="post" action="/admin/setup/users/{{ target.id }}/revoke-pa"
-                onsubmit="return confirm('Remove {{ pa.program_area_title }} ({{ pa.org_code|upper }}) from this person?');">
+                data-confirm="Remove {{ pa.program_area_title }} ({{ pa.org_code|upper }}) from this person?">
             <input type="hidden" name="upa_id" value="{{ pa.upa_id }}">
             <button type="submit" class="btn btn-secondary">Remove</button>
           </form>
@@ -345,7 +345,7 @@
         <td>{{ r.serial_group }}</td>
         <td>
           <form method="post" action="/admin/setup/users/{{ target.id }}/revoke-approval-rule"
-                onsubmit="return confirm('Remove this approval rule for {{ r.program_area_title }} ({{ r.org_code|upper }}) entirely?');">
+                data-confirm="Remove this approval rule for {{ r.program_area_title }} ({{ r.org_code|upper }}) entirely?">
             <input type="hidden" name="rule_id" value="{{ r.id }}">
             <input type="hidden" name="role" value="approver">
             <button type="submit" class="btn btn-secondary">Remove</button>
@@ -362,7 +362,7 @@
         <td class="sub">—</td>
         <td>
           <form method="post" action="/admin/setup/users/{{ target.id }}/revoke-approval-rule"
-                onsubmit="return confirm('Remove {{ target.display_name or target.email }} as backup approver for {{ r.program_area_title }} ({{ r.org_code|upper }})? The rule itself (approver {{ r.approver_email }}) stays.');">
+                data-confirm="Remove {{ target.display_name or target.email }} as backup approver for {{ r.program_area_title }} ({{ r.org_code|upper }})? The rule itself (approver {{ r.approver_email }}) stays.">
             <input type="hidden" name="rule_id" value="{{ r.id }}">
             <input type="hidden" name="role" value="backup">
             <button type="submit" class="btn btn-secondary">Remove</button>

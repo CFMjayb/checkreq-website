@@ -31,7 +31,7 @@
   </table>
   {% for m in fund_masks %}
   <form id="mask-update-{{ m.id }}" method="post" action="/admin/cfm-items/fund-masks/{{ m.id }}/update" hidden></form>
-  <form id="mask-delete-{{ m.id }}" method="post" action="/admin/cfm-items/fund-masks/{{ m.id }}/delete" onsubmit="return confirm('Remove this mask?');" hidden></form>
+  <form id="mask-delete-{{ m.id }}" method="post" action="/admin/cfm-items/fund-masks/{{ m.id }}/delete" data-confirm="Remove this mask?" hidden></form>
   {% endfor %}
   {% else %}
   <p class="sub">No masks defined yet for <code>{{ fund_mask_company }}</code>.</p>
