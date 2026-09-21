@@ -22,9 +22,12 @@ new bucket, no new IAM grant.
 """
 from __future__ import annotations
 
+import os
 import re
 
 import app_settings
+
+_BEACON_ENV = os.environ.get("BEACON_ENV", "dev")
 
 HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -33,9 +36,14 @@ DEFAULT_CORNERSTONE_COLOR = "#14294d"  # tokens.css's own --color-cornerstone-bl
 DEFAULT_DIOCESAN_COLOR = "#1f3d2e"     # tokens.css's own --color-franciscan-green
 DEFAULT_PARISH_COLOR = "#7a1f2b"       # tokens.css's own --color-parish-red
 
-# Same bucket main.py's attachment pipeline already uses -- logos live
-# under their own prefix in it, so no new bucket or IAM grant was needed.
-LOGO_BUCKET = "cfm-checkreq-attachments"
+# M14 (Security Assessment 2026-09-19): logos moved off cfm-checkreq-attachments
+# (shared dev/prod, an unscoped 180-day delete rule meant for transient check-request
+# staging -- the wrong home for a permanent diocese/parish logo) onto a dedicated,
+# no-lifecycle-rule bucket per environment. All 70 existing blobs (org-logos/,
+# parish-logos/ prefixes) were copied over byte-identical on 2026-09-20; the old
+# bucket's own copies were left in place (harmless -- nothing reads from there once
+# this deploys) rather than deleted, in case anything else still needs them.
+LOGO_BUCKET = "cfm-beacon-files-prod" if _BEACON_ENV == "prod" else "cfm-beacon-files-dev"
 LOGO_GCS_PREFIX = "org-logos"
 MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2MB -- a header logo has no business being bigger
 # M12 (Security Assessment 2026-09-19): image/svg+xml removed. SVG is an XML

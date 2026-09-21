@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import os
 import secrets as pysecrets
+import time
 from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Response
@@ -366,6 +367,16 @@ def _complete_login(request: Request, email: str, display_name: str, provider: s
                 )
             cur.execute(f"UPDATE checkreq.app_users SET {', '.join(updates)} WHERE id = %s", tuple(params))
     request.session["user_id"] = row["id"]
+    # L9 (Security Assessment 2026-09-19, Jay: "60/8"): stamped once here,
+    # the ONE gate every provider funnels through -- main.py's
+    # session_absolute_cap middleware reads this to force a fresh login
+    # after 8 real hours regardless of activity. The 60-min IDLE half of
+    # "60/8" is the SessionMiddleware cookie's own max_age (main.py) --
+    # Starlette re-sets the cookie's Max-Age on every response, so it
+    # naturally expires 60 min after the LAST request, not from login.
+    # Two different mechanisms for two different clocks; neither alone
+    # covers both cases.
+    request.session["_login_at"] = time.time()
     return row["id"], None
 
 

@@ -99,6 +99,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+import session_guard
 import db
 import rbac
 import parish_roles
@@ -232,10 +233,30 @@ _SESSION_SECRET_RAW = os.environ.get("SESSION_SECRET", "")
 if ON_CLOUD_RUN and not _SESSION_SECRET_RAW.strip():
     raise RuntimeError("SESSION_SECRET must be set on Cloud Run")
 
+# L9 continued: the 8-hour absolute cap. Starlette's add_middleware() PREPENDS
+# to the middleware list, and the stack is built by wrapping in REVERSED list
+# order -- so the middleware added MOST RECENTLY ends up OUTERMOST (runs
+# FIRST on the way in), and the one added EARLIEST ends up INNERMOST (runs
+# LAST, closest to the route). Confirmed live by canonicalize_localhost's own
+# docstring below, which is added after everything here and is proven to run
+# before SessionMiddleware ever touches the session. So to have this
+# middleware see request.session already populated, it must be added BEFORE
+# SessionMiddleware, not after (a real bug in an earlier draft of this code --
+# added after, it 500'd on every single request with "SessionMiddleware must
+# be installed to access request.session", caught by booting the app and
+# hitting a real route, not by py_compile).
+app.add_middleware(session_guard.SessionAbsoluteCapMiddleware)
+# L9 (Security Assessment 2026-09-19, Jay: "60/8"): max_age=1h gives the
+# IDLE half of "60/8" for free -- Starlette re-issues this cookie's Max-Age
+# on every response, so it naturally expires 60 minutes after the LAST
+# request, not from login. See session_guard.py for the separate 8-hour
+# ABSOLUTE-cap middleware above, which needs its own clock since cookie
+# max_age alone can never measure "time since login."
 app.add_middleware(
     SessionMiddleware,
     secret_key=_SESSION_SECRET_RAW or "dev-only-not-secure",
     https_only=ON_CLOUD_RUN,
+    max_age=session_guard.SESSION_MAX_AGE_SECONDS,
 )
 # M2 (Security Assessment 2026-09-19): X-Frame-Options / nosniff / Referrer-
 # Policy / Permissions-Policy on every response, Cache-Control: no-store on
@@ -244,6 +265,19 @@ app.add_middleware(
 # the reasoning behind every directive. Added after SessionMiddleware so it
 # wraps outside it and sees the finished response.
 app.add_middleware(security_headers.SecurityHeadersMiddleware, on_cloud_run=ON_CLOUD_RUN)
+# M15 (Security Assessment 2026-09-19): app-level rate limiting on the
+# pre-authentication surface (/login, /auth/*, /internal/*) and a redirect
+# for the raw *.run.app hostname to this environment's real branded domain
+# -- see session_guard.py for why an in-process limiter is the right call
+# for this app's actual scale, and Jay's approved option (a) over a real
+# edge/Cloud Armor deployment (b).
+_CANONICAL_HOST = "beacon.cfmins.org" if BEACON_ENV == "prod" else "beacondev.cfmins.org"
+# _client_ip isn't defined until later in this file -- a lambda defers the
+# name lookup to CALL time (once the app is actually serving requests),
+# not to this add_middleware() call itself, so no NameError at import time.
+app.add_middleware(session_guard.RateLimitMiddleware, client_ip_fn=lambda r: _client_ip(r))
+if ON_CLOUD_RUN:
+    app.add_middleware(session_guard.RawRunAppRedirectMiddleware, canonical_host=_CANONICAL_HOST)
 
 
 @app.middleware("http")
@@ -615,13 +649,19 @@ def _client_ip(request: Request) -> str | None:
     """Real client IP for the approval-chain audit trail (Jay, 2026-07-29:
     "the exact approvers with their date/time and IP"). Cloud Run terminates
     TLS at a proxy, so request.client.host would be the proxy's own address,
-    not the real caller -- X-Forwarded-For's first entry is the original
-    client (standard convention, and the header Cloud Run itself sets).
-    Falls back to request.client.host for local dev, where no proxy sits
-    in front."""
+    not the real caller.
+
+    L1 (Security Assessment 2026-09-19): the FIRST X-Forwarded-For entry is
+    whatever the CLIENT put there -- a request can arrive with an
+    attacker-supplied fake IP already prepended. Google's own front end
+    APPENDS the real connecting IP as the LAST entry in the chain rather
+    than replacing it, so the last entry is the one entry no client-side
+    request can forge. Falls back to request.client.host for local dev,
+    where no proxy sits in front and there is no header to trust or
+    distrust either way."""
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
-        return fwd.split(",")[0].strip()
+        return fwd.split(",")[-1].strip()
     return request.client.host if request.client else None
 
 
@@ -1105,10 +1145,17 @@ def impersonate_picker(request: Request):
     real = _real_user(request)
     if not real:
         return RedirectResponse("/login")
-    # RBAC (2026-08-01): cross-entity by design, same as today -- an
-    # EDOM-only CFO could impersonate before RBAC too (is_cfo was global).
-    if not rbac.user_has_role(real["id"], "cfo", org_id=None):
-        return JSONResponse({"error": "CFO access required"}, status_code=403)
+    # M5 (Security Assessment 2026-09-19): gate widened cfo -> beacon_admin,
+    # matching impersonate_start's own gate -- every live cfo holder already
+    # holds beacon_admin, so this changes nobody's real access. NOTE: this
+    # list is not yet filtered to exactly the orgs/users impersonate_start
+    # will actually allow (that route enforces the real boundary) -- a
+    # listed user could still be refused there if they hold a role the
+    # viewer lacks. Flagged as a follow-up, not a security gap: the POST
+    # route is the actual enforcement point and cannot be bypassed by what
+    # this page merely displays.
+    if not rbac.user_has_role(real["id"], "beacon_admin", org_id=None):
+        return JSONResponse({"error": "Beacon Administrator access required"}, status_code=403)
 
     current_org = _current_org(request)
 
@@ -1206,17 +1253,55 @@ def impersonate_stop(request: Request):
 
 @app.post("/admin/impersonate/{user_id}")
 def impersonate_start(user_id: int, request: Request):
+    """M5 (Security Assessment 2026-09-19), both parts Jay approved:
+    (1) gate widened from bare `cfo` to `beacon_admin` -- every live cfo
+    holder already holds beacon_admin, so this changes nobody's real access.
+    (2) a server-side target rule: the target must belong to (hold ANY live
+    role at) an org where the impersonator holds beacon_admin, AND must
+    hold no role anywhere that the impersonator doesn't also hold --
+    impersonation can never be used to temporarily gain a capability the
+    real, logged-in identity doesn't already have. Previously any cfo
+    anywhere could impersonate any active user system-wide, including
+    another entity's beacon_admin."""
     real = _real_user(request)
     if not real:
         return RedirectResponse("/login")
-    if not rbac.user_has_role(real["id"], "cfo", org_id=None):
-        return JSONResponse({"error": "CFO access required"}, status_code=403)
+    if not rbac.user_has_role(real["id"], "beacon_admin", org_id=None):
+        return JSONResponse({"error": "Beacon Administrator access required"}, status_code=403)
 
     target = db.query_one(
         "SELECT id FROM checkreq.app_users WHERE id = %s AND is_active", (user_id,)
     )
     if not target:
         return RedirectResponse("/admin/impersonate")
+
+    impersonator_admin_orgs = set(rbac.get_granted_org_ids(real["id"], "beacon_admin"))
+    target_orgs = set(rbac.get_entity_org_ids(user_id))
+    if not (impersonator_admin_orgs & target_orgs):
+        return JSONResponse(
+            {"error": "You can only impersonate a user who belongs to an entity you administer."},
+            status_code=403,
+        )
+    # _BASELINE_ROLES excluded from the comparison: entity_member/parish_member
+    # are auto-granted to nearly every real login (rbac.ENTITY_BASE_ROLE /
+    # parish_roles.PARISH_BASE_ROLE) and carry no privilege beyond "is a real
+    # login" -- Jay's own admin account predates that convention and was never
+    # granted entity_member itself, so treating it as an "escalation" blocked
+    # impersonating literally any ordinary user (caught live: impersonating
+    # mdickson-patrick, who holds nothing but entity_member, 403'd with "this
+    # user holds a role you don't hold yourself" -- the exact case this
+    # feature exists for). The real intent -- never let impersonation grant a
+    # capability the real identity doesn't already have -- only concerns
+    # roles that actually DO something beyond baseline membership.
+    _BASELINE_ROLES = {rbac.ENTITY_BASE_ROLE, parish_roles.PARISH_BASE_ROLE}
+    escalation = (
+        rbac.get_role_keys(user_id, org_id=None) - _BASELINE_ROLES
+    ) - rbac.get_role_keys(real["id"], org_id=None)
+    if escalation:
+        return JSONResponse(
+            {"error": "This user holds a role you don't hold yourself -- impersonation refused."},
+            status_code=403,
+        )
 
     _close_open_impersonation(real["id"])
     with db.connect() as conn:
@@ -5764,13 +5849,20 @@ async def test_mode_save(request: Request):
 # routing). Currently just the W-9 threshold; a natural home for any
 # future AP policy value that shouldn't be a hardcoded constant.
 
+# L3 (Security Assessment 2026-09-19, Jay: "beacon_admin only"): this is an
+# APP-WIDE, cross-entity setting (the W-9 threshold has no org dimension at
+# all -- app_settings, not checkreq.organizations) -- an entity-scoped
+# setup_admin at any one diocese could previously change a value every
+# other diocese is also bound by. Tightened to beacon_admin, matching
+# every other genuinely app-wide setting in this codebase (/admin/test-mode).
+
 @app.get("/admin/ap-settings", response_class=HTMLResponse)
 def ap_settings_form(request: Request, saved: bool = False):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
-    if not rbac.user_has_role(user["id"], "setup_admin", org_id=None):
-        return JSONResponse({"error": "Setup Administrator access required"}, status_code=403)
+    if not rbac.user_has_role(user["id"], "beacon_admin", org_id=None):
+        return JSONResponse({"error": "Beacon Administrator access required"}, status_code=403)
     return _render(request, "admin_ap_settings.html", user, {
         "w9_threshold_amount": _w9_threshold_amount(), "saved": saved,
     })
@@ -5781,8 +5873,8 @@ async def ap_settings_save(request: Request):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
-    if not rbac.user_has_role(user["id"], "setup_admin", org_id=None):
-        return JSONResponse({"error": "Setup Administrator access required"}, status_code=403)
+    if not rbac.user_has_role(user["id"], "beacon_admin", org_id=None):
+        return JSONResponse({"error": "Beacon Administrator access required"}, status_code=403)
 
     form = await request.form()
     try:
