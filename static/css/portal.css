@@ -8,6 +8,12 @@
 .entity-picker h2 { color: #f4f1e8; margin-bottom: var(--space-2); }
 .entity-picker .sub { color: #cfc8b3; margin-bottom: var(--space-5); }
 .entity-cards { display: flex; gap: var(--space-4); flex-wrap: wrap; }
+/* M8 (Security Assessment 2026-09-19): each card is now a <form><button>
+   instead of a bare <a> -- display:contents makes the wrapping <form>
+   itself invisible to the flex layout, so .entity-card (now a <button>)
+   is still the direct flex item .entity-cards expects, sized by its own
+   flex: 1 1 200px below exactly as the old <a> was. */
+.entity-card-form { display: contents; }
 .entity-card {
   flex: 1 1 200px;
   background: rgba(255,255,255,0.08);
@@ -18,6 +24,9 @@
   text-decoration: none;
   color: #f4f1e8;
   transition: background 0.15s ease, transform 0.1s ease;
+  /* button-element reset, harmless on the pre-existing <a> usage elsewhere */
+  cursor: pointer;
+  font: inherit;
 }
 .entity-card:hover { background: rgba(255,255,255,0.16); transform: translateY(-2px); }
 .entity-card .code { font-family: var(--font-display); font-size: 1.4rem; font-weight: 700; color: var(--color-gold-light); }

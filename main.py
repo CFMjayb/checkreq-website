@@ -139,6 +139,7 @@ import notifications
 import art_preapproval
 import security_headers
 import upload_guard
+import csrf_guard
 
 ATTACHMENTS_BUCKET = "cfm-checkreq-attachments"
 
@@ -246,6 +247,17 @@ if ON_CLOUD_RUN and not _SESSION_SECRET_RAW.strip():
 # added after, it 500'd on every single request with "SessionMiddleware must
 # be installed to access request.session", caught by booting the app and
 # hitting a real route, not by py_compile).
+#
+# M8 (Security Assessment 2026-09-19): CSRFMiddleware is added EVEN EARLIER
+# than SessionAbsoluteCapMiddleware below, for the same "added earliest =
+# innermost = runs LAST, closest to the route" rule -- it also needs
+# request.session (populated by SessionMiddleware, which runs before it
+# either way), and running it AFTER SessionAbsoluteCapMiddleware means an
+# already-expired session gets force-cleared and redirected to /login
+# before its stale token is ever even compared, rather than the two checks
+# racing in an undefined order. See csrf_guard.py's own docstring for the
+# token-replay gotcha this middleware works around.
+app.add_middleware(csrf_guard.CSRFMiddleware)
 app.add_middleware(session_guard.SessionAbsoluteCapMiddleware)
 # L9 (Security Assessment 2026-09-19, Jay: "60/8"): max_age=1h gives the
 # IDLE half of "60/8" for free -- Starlette re-issues this cookie's Max-Age
@@ -325,6 +337,9 @@ def _asset_version(rel_path: str) -> int:
 
 templates.env.globals["asset_version"] = _asset_version
 templates.env.globals["BEACON_ENV"] = BEACON_ENV
+# M8: {{ csrf_token(request) }}, same registration pattern as the two lines
+# above and as auth_routes.py's login_branding -- see csrf_guard.py.
+csrf_guard.register_globals(templates)
 
 if os.environ.get("ENABLE_DEV_AUTH_BYPASS") == "1":
     print("*** DEV AUTH BYPASS ENABLED — LOCAL ONLY — /dev/auth-as/{email} is live ***")
@@ -969,7 +984,18 @@ def portal(request: Request):
     if not org:
         dioceses = _accessible_diocese_orgs(user["id"])
         if len(dioceses) == 1:
-            return RedirectResponse(f"/select-entity/{dioceses[0]['id']}", status_code=303)
+            # M8 (Security Assessment 2026-09-19): used to redirect to
+            # POST /select-entity/{org_id} -- a 3xx redirect is ALWAYS
+            # followed as GET regardless of the target route's own method,
+            # so once that route became POST-only this would have 405'd on
+            # every single-entity user's very first /portal load. Calls
+            # _select_entity_core() directly instead (same module, defined
+            # further down -- resolved at call time, not import time, so
+            # the forward reference is fine) -- the identical authorize-
+            # then-set-session logic the real route body uses, just
+            # without the redirect hop.
+            _select_entity_core(request, dioceses[0]["id"])
+            return RedirectResponse("/portal", status_code=303)
 
     modules = MODULES
     if org and cornerstone_mode.is_cornerstone_org(org["id"]):
@@ -1016,20 +1042,51 @@ def _accessible_diocese_orgs(user_id: int) -> list[dict]:
     ) if _user_has_org_access(user_id, o["id"]) and not cornerstone_mode.is_cornerstone_org(o["id"])]
 
 
-@app.get("/select-entity/{org_id}")
-def select_entity(org_id: int, request: Request, next: str = "/portal"):
+def _select_entity_core(request: Request, org_id: int) -> bool:
+    """The actual org-switch mutation (authorize, then set
+    session['current_org_id']) -- extracted so cornerstone_mode.py's own
+    POST /admin/cornerstone-mode/{org_id} can call it directly instead of
+    (as it did before M8) issuing an HTTP redirect to this route: a 3xx
+    redirect is ALWAYS followed by the browser as a GET regardless of the
+    Location's own method requirements, so once /select-entity became
+    POST-only (M8, Security Assessment 2026-09-19), that redirect would
+    have 405'd in production. Injected into cornerstone_mode.register() as
+    select_entity_core -- same dependency-injection pattern already used
+    for accessible_diocese_orgs on that same call, not a circular import
+    (main.py imports cornerstone_mode, so the reverse would be one).
+    Returns True on success (session updated); False if denied, leaving it
+    to the caller to decide where to bounce."""
     user = _current_user(request)
     if not user:
-        return RedirectResponse("/login")
-
+        return False
     org = db.query_one(
         "SELECT id FROM checkreq.organizations WHERE id = %s AND is_active", (org_id,)
     )
     if not org or not _user_has_org_access(user["id"], org_id):
-        return RedirectResponse("/portal")
-
+        return False
     request.session["current_org_id"] = org_id
-    return RedirectResponse(_safe_next_path(next), status_code=303)
+    return True
+
+
+@app.post("/select-entity/{org_id}")
+async def select_entity(org_id: int, request: Request):
+    """M8 (Security Assessment 2026-09-19): was GET -- reachable cross-site
+    under SameSite=Lax (a top-level GET navigation still carries the
+    cookie), and this route WRITES to the session (current_org_id), exactly
+    the class of action M8 is about. Converted to POST; every caller
+    (base.html's #entitySwitcherForm, portal.html's entity cards,
+    cornerstone_mode.html's "Enter a Diocese" table) now submits a real
+    <form> instead of navigating a plain <a href>. `next` still accepted
+    from either the form body (the new callers) or the query string (kept
+    for robustness, costs nothing) -- _safe_next_path() below is unchanged
+    and still the one thing standing between this and an open redirect."""
+    if not _current_user(request):
+        return RedirectResponse("/login")
+    if not _select_entity_core(request, org_id):
+        return RedirectResponse("/portal")
+    form = await request.form()
+    next_path = str(form.get("next") or request.query_params.get("next") or "/portal")
+    return RedirectResponse(_safe_next_path(next_path), status_code=303)
 
 
 def _safe_next_path(next_value: str | None) -> str:
@@ -7421,7 +7478,8 @@ parish_mode.register(app, current_user=_current_user, current_org=_current_org, 
 # same register() pattern as everything else, thin wiring only.
 parish_org_admin.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 cornerstone_mode.register(app, current_user=_current_user, current_org=_current_org, render=_render,
-                           accessible_diocese_orgs=_accessible_diocese_orgs)
+                           accessible_diocese_orgs=_accessible_diocese_orgs,
+                           select_entity_core=_select_entity_core)
 # Parish Portal S4+S5 (2026-08-08): announcements, document archive/library,
 # and parish feedback/general-requests -- three more new modules, same thin
 # register() wiring, no logic added here.

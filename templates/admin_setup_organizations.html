@@ -71,10 +71,12 @@
             <img src="/org-logo/{{ o.id }}" alt="{{ o.name }} logo"
                  style="height:24px;width:auto;background:#fff;border-radius:2px;padding:1px;display:block;margin-bottom:4px;">
             <form method="post" action="/admin/setup/organizations/{{ o.id }}/remove-logo" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
               <button type="submit" class="btn btn-secondary btn-sm">Remove</button>
             </form>
             {% else %}
             <form method="post" action="/admin/setup/organizations/{{ o.id }}/upload-logo" enctype="multipart/form-data">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
               <input type="file" name="logo" accept="image/png,image/jpeg,image/svg+xml,image/webp" required
                      style="max-width:140px;">
               <button type="submit" class="btn btn-secondary btn-sm">Upload</button>
@@ -108,6 +110,7 @@
   <div class="card">
     <form method="post" action="/admin/setup/organizations/save-cornerstone-color"
           style="display:flex; align-items:center; gap:12px;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
       <input type="color" name="cornerstone_mode_color" value="{{ cornerstone_color }}">
       <button type="submit" class="btn btn-primary btn-sm">Save Color</button>
     </form>
@@ -144,6 +147,7 @@
           {% set is_on = feature_matrix.get((o.id, key), False) %}
           <td>
             <form method="post" action="/admin/setup/organizations/toggle-feature">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
               <input type="hidden" name="org_id" value="{{ o.id }}">
               <input type="hidden" name="feature_key" value="{{ key }}">
               <input type="hidden" name="enabled" value="{{ '0' if is_on else '1' }}">

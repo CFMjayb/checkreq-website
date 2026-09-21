@@ -40,6 +40,7 @@
 <details class="card setup-section">
   <summary><h2>Add User</h2></summary>
   <form method="post" action="/admin/setup/users/add" class="filter-bar" style="align-items:flex-end;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="field">
       <label for="email">Email</label>
       <input type="email" id="email" name="email" required>

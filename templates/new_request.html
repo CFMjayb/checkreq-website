@@ -38,6 +38,7 @@
   </div>
   <p class="back-link"><a href="{% if edit_data and edit_data.request_type == 'invoice_payment' %}/invoice-intake{% else %}/my-requests{% endif %}">&larr; Back to {% if edit_data and edit_data.request_type == 'invoice_payment' %}Invoice Intake{% else %}My Requests{% endif %}</a></p>
   <form method="post" action="/new-request" id="reqForm" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <input type="hidden" name="org_id" value="{{ current_org.id }}">
     <input type="hidden" name="request_type" value="{{ edit_data.request_type if edit_data else 'check_request' }}">
     {% if edit_data %}
@@ -193,6 +194,7 @@
           <form method="post" action="/requests/{{ edit_data.editing_request_number }}/attachments/{{ a.id }}/remove"
                 class="attachment-remove-form"
                 data-confirm="Remove this file from the list? The archived copy stays on file in SharePoint -- this only hides it here.">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button type="submit" class="attachment-remove-btn" title="Remove">&times;</button>
           </form>
         </li>
@@ -203,6 +205,7 @@
       {% endif %}
       <form method="post" action="/requests/{{ edit_data.editing_request_number }}/attachments/add"
             enctype="multipart/form-data" class="attachment-add-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <input type="file" name="attachments" multiple
                accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
         <button type="submit" class="btn btn-secondary btn-sm">Add</button>

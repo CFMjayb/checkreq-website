@@ -42,6 +42,7 @@
   {% endif %}
   {% if can_edit %}
   <form method="post" action="/parish-documents/upload" enctype="multipart/form-data" class="doc-upload-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <input type="hidden" name="target" value="parish">
     <input type="file" name="file" required>
     <button type="submit" class="btn btn-secondary">Upload</button>
@@ -59,6 +60,7 @@
   {% endif %}
   {% if can_edit %}
   <form method="post" action="/parish-documents/upload" enctype="multipart/form-data" class="doc-upload-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <input type="hidden" name="target" value="diocese">
     <input type="file" name="file" required>
     <button type="submit" class="btn btn-secondary">Send to Diocese</button>
@@ -91,6 +93,7 @@
   {% endif %}
   {% if cornerstone_section.can_edit %}
   <form method="post" action="/cornerstone-documents/upload" enctype="multipart/form-data" class="doc-upload-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <input type="hidden" name="target" value="from_parish">
     <input type="file" name="file" required>
     <button type="submit" class="btn btn-secondary">Upload</button>
@@ -118,6 +121,7 @@
   {% endif %}
   {% if cornerstone_section.can_edit %}
   <form method="post" action="/cornerstone-documents/upload" enctype="multipart/form-data" class="doc-upload-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <input type="hidden" name="target" value="to_parish_rw">
     <input type="file" name="file" required>
     <button type="submit" class="btn btn-secondary">Upload</button>

@@ -47,6 +47,7 @@ diocese for the Parish Finance role if you need access.</div>
     {% else %}
       <span class="sub">Not enrolled</span>
       <form method="post" action="/parish-finance/request-direct-debit" style="display:inline; margin-left:8px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <button type="submit" class="btn btn-sm btn-secondary">Request Enrollment</button>
       </form>
     {% endif %}
@@ -95,6 +96,7 @@ diocese for the Parish Finance role if you need access.</div>
 <div class="card">
   <h2 style="margin-bottom:4px">Ask the Business Office</h2>
   <form method="post" action="/parish-finance/ask-business-office">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="field">
       <textarea name="message" rows="3" style="width:100%" placeholder="What would you like to ask?"></textarea>
     </div>

@@ -30,8 +30,10 @@
     </tbody>
   </table>
   {% for m in fund_masks %}
-  <form id="mask-update-{{ m.id }}" method="post" action="/admin/cfm-items/fund-masks/{{ m.id }}/update" hidden></form>
-  <form id="mask-delete-{{ m.id }}" method="post" action="/admin/cfm-items/fund-masks/{{ m.id }}/delete" data-confirm="Remove this mask?" hidden></form>
+  <form id="mask-update-{{ m.id }}" method="post" action="/admin/cfm-items/fund-masks/{{ m.id }}/update" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"></form>
+  <form id="mask-delete-{{ m.id }}" method="post" action="/admin/cfm-items/fund-masks/{{ m.id }}/delete" data-confirm="Remove this mask?" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"></form>
   {% endfor %}
   {% else %}
   <p class="sub">No masks defined yet for <code>{{ fund_mask_company }}</code>.</p>
@@ -40,6 +42,7 @@
   <details>
     <summary>+ Add a mask</summary>
     <form method="post" action="/admin/cfm-items/fund-masks/add" class="add-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
       <div class="fld">
         <label>Account Mask (glob '3*' or range '3100-3199')</label>
         <input type="text" name="account_mask" required>

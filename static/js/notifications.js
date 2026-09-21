@@ -81,7 +81,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const id = item.dataset.id;
     const link = item.dataset.link;
     try {
-      await fetch('/api/notifications/' + id + '/read', { method: 'POST', credentials: 'same-origin' });
+      await fetch('/api/notifications/' + id + '/read', {
+        method: 'POST', credentials: 'same-origin', headers: window.csrfHeader(),
+      });
     } catch (err) {
       // A mark-read hiccup must never block navigation -- proceed anyway.
     }

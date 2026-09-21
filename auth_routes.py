@@ -56,6 +56,7 @@ import auth_azure
 import auth_code
 import auth_google
 import auth_password
+import csrf_guard
 import db
 
 ON_CLOUD_RUN = bool(os.environ.get("INSTANCE_CONNECTION_NAME"))
@@ -377,6 +378,16 @@ def _complete_login(request: Request, email: str, display_name: str, provider: s
     # Two different mechanisms for two different clocks; neither alone
     # covers both cases.
     request.session["_login_at"] = time.time()
+    # M8 (Security Assessment 2026-09-19): a fresh CSRF token every real
+    # login, same "one gate every provider funnels through" reasoning as
+    # _login_at just above. csrf_guard.ensure_token() is get-or-create, not
+    # unconditional-overwrite -- see its own docstring for why a session
+    # that already carries a token (this same helper is also called from
+    # main.py's _render() on every authenticated page load, so an already-
+    # signed-in session from before this shipped gets backfilled there
+    # instead of forced to re-login) is left alone rather than rotated on
+    # every subsequent sign-in of an already-open session.
+    csrf_guard.ensure_token(request)
     return row["id"], None
 
 
@@ -616,7 +627,7 @@ def create_router(templates) -> APIRouter:
         _remember_email(resp, email)
         return resp
 
-    @router.get("/logout")
+    @router.post("/logout")
     def logout(request: Request):
         """2026-09-14 fix (Jay): logging off on a branded hostname (e.g.
         beacon.episcopalmaryland.org) used to log the user right back in
@@ -628,7 +639,15 @@ def create_router(templates) -> APIRouter:
         session was also still alive (see get_auth_url's new prompt default
         for that second half of the fix). Deleting the cookie here means a
         post-logout visit always lands on the normal email-entry screen,
-        not an instant silent re-login."""
+        not an instant silent re-login.
+
+        M8 (Security Assessment 2026-09-19): was GET, reachable cross-site
+        under SameSite=Lax (a GET is still sent on a top-level cross-site
+        navigation). Converted to POST -- base.html's Log off link is now a
+        one-button <form>, same pattern as the Diocese Mode / Parish Mode
+        button right above it -- and covered like every other POST route by
+        csrf_guard.CSRFMiddleware, which is enough on its own; no bespoke
+        check needed here."""
         request.session.clear()
         resp = RedirectResponse("/login", status_code=303)
         resp.delete_cookie(_REMEMBER_COOKIE)

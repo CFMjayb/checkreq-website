@@ -14,6 +14,7 @@
 <div class="form-card">
   <h2>{% if editing %}Edit Announcement{% else %}New Announcement{% endif %}</h2>
   <form method="post" action="{% if editing %}/admin/announcements/{{ editing.id }}{% else %}/admin/announcements{% endif %}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     {# 2026-08-16 fix: was a cross-diocese <select> (every active org,
        including served parish-orgs) -- the entity is now the session's
        own currently-selected one (switch entities via the top nav to
@@ -112,9 +113,11 @@
         <td>
           <a href="/admin/announcements/{{ r.id }}/edit">Edit</a>
           {% if r.is_active %}
-          <form method="post" action="/admin/announcements/{{ r.id }}/deactivate" style="display:inline"><button type="submit" class="btn-link">Deactivate</button></form>
+          <form method="post" action="/admin/announcements/{{ r.id }}/deactivate" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button type="submit" class="btn-link">Deactivate</button></form>
           {% else %}
-          <form method="post" action="/admin/announcements/{{ r.id }}/reactivate" style="display:inline"><button type="submit" class="btn-link">Reactivate</button></form>
+          <form method="post" action="/admin/announcements/{{ r.id }}/reactivate" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button type="submit" class="btn-link">Reactivate</button></form>
           {% endif %}
         </td>
       </tr>

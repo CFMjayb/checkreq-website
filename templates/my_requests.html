@@ -115,6 +115,7 @@
         <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
         {% if r.editable %}
         · <form method="post" action="/requests/{{ r.request_number }}/cancel" class="cancel-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button type="submit" class="link-button cancel-btn">Cancel</button>
           </form>
         {% endif %}

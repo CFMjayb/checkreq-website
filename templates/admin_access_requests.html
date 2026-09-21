@@ -37,9 +37,11 @@
         <td>{{ r.note or "—" }}</td>
         <td class="actions-cell">
           <form method="post" action="/admin/access-requests/{{ r.id }}/approve" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button type="submit" class="btn btn-primary">Approve</button>
           </form>
           <form method="post" action="/admin/access-requests/{{ r.id }}/reject" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button type="submit" class="btn btn-secondary">Reject</button>
           </form>
         </td>

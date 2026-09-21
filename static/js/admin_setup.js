@@ -173,7 +173,7 @@
 
       fetch(opts.saveUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: Object.assign({ 'Content-Type': 'application/json' }, window.csrfHeader()),
         body: JSON.stringify({ rows: rows }),
       })
         .then(function (r) { return r.json(); })
@@ -361,7 +361,7 @@
       addMsg.textContent = 'Adding...';
       fetch('/admin/setup/gl-mapping/add', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: Object.assign({ 'Content-Type': 'application/json' }, window.csrfHeader()),
         body: JSON.stringify(body),
       })
         .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
@@ -458,7 +458,7 @@
       addMsg.textContent = 'Adding...';
       fetch('/admin/setup/program-areas/add', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: Object.assign({ 'Content-Type': 'application/json' }, window.csrfHeader()),
         body: JSON.stringify(body),
       })
         .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
@@ -601,7 +601,7 @@
       addMsg.textContent = 'Adding...';
       fetch('/admin/setup/art/add', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: Object.assign({ 'Content-Type': 'application/json' }, window.csrfHeader()),
         body: JSON.stringify(body),
       })
         .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
@@ -630,7 +630,7 @@
       checkAllBtn.addEventListener('click', function () {
         checkAllBtn.disabled = true;
         checkAllMsg.textContent = 'Checking every active entry against live QuickBooks -- this can take a moment...';
-        fetch('/admin/setup/art/check-all', { method: 'POST' })
+        fetch('/admin/setup/art/check-all', { method: 'POST', headers: window.csrfHeader() })
           .then(function (r) { return r.json(); })
           .then(function (d) {
             checkAllBtn.disabled = false;
@@ -713,7 +713,7 @@
       checkBtn.addEventListener('click', function () {
         checkBtn.disabled = true;
         checkMsg.textContent = 'Checking against live QuickBooks...';
-        fetch(checkBtn.dataset.checkUrl, { method: 'POST' })
+        fetch(checkBtn.dataset.checkUrl, { method: 'POST', headers: window.csrfHeader() })
           .then(function (r) { return r.json(); })
           .then(function (d) {
             if (d.error) { checkMsg.textContent = 'Failed: ' + d.error; checkBtn.disabled = false; return; }

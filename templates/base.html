@@ -3,6 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {# M8 (Security Assessment 2026-09-19): the same per-session token every
+     <form> below carries as a hidden csrf_token field, exposed here for the
+     handful of fetch() calls that POST with no <form> of their own (a JSON
+     body, or an intentionally field-less POST) -- see static/js/csrf.js.
+     Rendered unconditionally (even for an anonymous visitor on /login) --
+     csrf_token(request) is get-or-create, so this just means their session
+     picks up a token a little earlier than their first form submit would
+     have caused anyway; harmless, and one code path instead of two. #}
+  <meta name="csrf-token" content="{{ csrf_token(request) }}">
   <title>{% block title %}Beacon{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -26,7 +35,8 @@
   {% if impersonating %}
   <div class="impersonation-bar">
     Viewing as <strong>{{ user.display_name or user.email }}</strong> — impersonated by {{ real_user.display_name or real_user.email }}
-    <form method="post" action="/admin/impersonate/stop"><button type="submit">Exit Impersonation</button></form>
+    <form method="post" action="/admin/impersonate/stop">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button type="submit">Exit Impersonation</button></form>
   </div>
   {% endif %}
   {# Parish Mode (S4, 2026-08-08). Jay, correcting the first cut: a NATIVE
@@ -41,7 +51,8 @@
   {% if parish_view and parish_mode_preview %}
   <div class="impersonation-bar">
     Parish Mode: viewing <strong>{{ parish_view.name }}</strong> ({{ parish_view.org_code }})
-    <form method="post" action="/admin/parish-mode/stop"><button type="submit">Exit Parish Mode</button></form>
+    <form method="post" action="/admin/parish-mode/stop">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button type="submit">Exit Parish Mode</button></form>
   </div>
   {% endif %}
   {# Full-screen toggle (2026-08-02): rendered unconditionally, on every
@@ -112,14 +123,24 @@
          actually selected; "the only switcher [in Cornerstone Mode] is
          back to Diocese Mode" (the user-menu button), not this dropdown. #}
       {% if current_org and not parish_view and not cornerstone_context %}
-      <div class="entity-badge">
-        <span class="label">Entity</span>
-        <select id="entitySwitcher">
-          {% for o in all_orgs %}
-          <option value="{{ o.id }}" {% if current_org and o.id == current_org.id %}selected{% endif %}>{{ o.code|upper }}</option>
-          {% endfor %}
-        </select>
-      </div>
+      {# M8 (Security Assessment 2026-09-19): /select-entity/{org_id} is now
+         POST (was GET, reachable cross-site under SameSite=Lax). This
+         dropdown drives it via a real form submit, not window.location --
+         see static/js/entity_switcher.js. `display:contents` makes the
+         <form> itself invisible to layout, so .entity-badge still
+         participates directly in <nav>'s own flex row exactly as before. #}
+      <form id="entitySwitcherForm" method="post" style="display:contents">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="next" value="{{ request.url.path }}">
+        <div class="entity-badge">
+          <span class="label">Entity</span>
+          <select id="entitySwitcher">
+            {% for o in all_orgs %}
+            <option value="{{ o.id }}" {% if current_org and o.id == current_org.id %}selected{% endif %}>{{ o.code|upper }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </form>
       {% endif %}
       {# In-App Notifications (2026-08-02): bell + unread badge -- NOT scoped
          to the currently-selected entity, per the plan's own recommendation
@@ -182,6 +203,7 @@
              pickers, never a direct switch between them. #}
           {% if parish_mode_preview or cornerstone_context %}
           <form method="post" action="/admin/parish-mode/stop" class="user-menu-item-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button type="submit" class="user-menu-item">Diocese Mode</button>
           </form>
           {% else %}
@@ -211,7 +233,14 @@
           {% endif %}
           <a href="/account/profile" class="user-menu-item">Profile</a>
           <a href="/account/password" class="user-menu-item">Change Password</a>
-          <a href="/logout" class="user-menu-item">Log off</a>
+          {# M8 (Security Assessment 2026-09-19): was <a href="/logout">, a
+             plain GET -- reachable cross-site under SameSite=Lax, which
+             still sends the cookie on a top-level GET navigation. Same
+             form+button pattern as Diocese Mode above. #}
+          <form method="post" action="/logout" class="user-menu-item-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <button type="submit" class="user-menu-item">Log off</button>
+          </form>
         </div>
       </div>
     </nav>
@@ -227,6 +256,11 @@
   {% if user %}<script src="/static/js/submit_loading.js?v={{ asset_version('js/submit_loading.js') }}"></script>{% endif %}
   {% if user %}<script src="/static/js/confirm_submit.js?v={{ asset_version('js/confirm_submit.js') }}"></script>{% endif %}
   <script src="/static/js/fullscreen.js?v={{ asset_version('js/fullscreen.js') }}"></script>
+  {# M8: unconditional and loaded early, like fullscreen.js above -- a plain
+     declaration script (window.csrfToken/csrfHeader), no side effects at
+     load time, so order relative to page-specific extra_js scripts below
+     only matters in that this must come first, which it does. #}
+  <script src="/static/js/csrf.js?v={{ asset_version('js/csrf.js') }}"></script>
   {% block extra_js %}{% endblock %}
 </body>
 </html>

@@ -71,6 +71,7 @@ so it renders cleanly with no session at all.
 
       {% if action == "reject" %}
         <form method="post" action="/email-action/{{ token }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
           <input type="hidden" name="action" value="reject">
           <div class="field">
             <label>Reason (required)</label>
@@ -80,6 +81,7 @@ so it renders cleanly with no session at all.
         </form>
       {% else %}
         <form method="post" action="/email-action/{{ token }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
           <input type="hidden" name="action" value="approve">
           <div class="field">
             <label>Note (optional)</label>

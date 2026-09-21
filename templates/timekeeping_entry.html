@@ -78,6 +78,7 @@
 {% else %}
 
 <form method="post" action="{{ save_url or '/timekeeping/save' }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
   {% for s in staff %}
   <div class="card">
     <h2 style="margin-bottom:4px">{{ s.first_name }} {{ s.last_name }}{% if s.position %} <span class="sub">— {{ s.position }}</span>{% endif %}</h2>
@@ -116,6 +117,7 @@
 
 {% if not diocese_mode and can_enter and not locked %}
 <form method="post" action="/timekeeping/submit" data-confirm="Submit this period to the diocese? You will not be able to make further changes unless the diocese reopens it." style="margin-top:8px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
   <button type="submit" class="btn btn-primary">Submit Period to Diocese</button>
   <p class="sub" style="margin-top:8px">
     Submitting locks this period's hours and also sends along any staff roster changes you've

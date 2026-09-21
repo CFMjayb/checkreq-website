@@ -44,6 +44,7 @@ that writes to QuickBooks.</p>
   line(s) below to start the approval chain.</p>
   {% for r in coding_rows %}
   <form method="post" action="/requests/{{ r.request_number }}/assign-gl-coding" class="coding-row" style="padding:16px;border-top:1px solid var(--border,#e0dccf)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="coding-row-head">
       <b>{{ r.request_number }}</b> &middot; {{ r.org_code }} &middot; {{ r.vendor_name }} &middot;
       ${{ "%.2f"|format(r.amount) }} &middot; {{ r.program_area_title }} &middot;
@@ -96,6 +97,7 @@ that writes to QuickBooks.</p>
    rows are already posted. #}
 <form id="batchPostForm" method="post" action="/admin/ap-review/post-batch"
       {% if BEACON_ENV == 'dev' %}data-dev-confirm="1"{% endif %}>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
   <input type="hidden" name="dev_confirmed" value="1">
   <button type="submit" class="btn btn-primary" id="batchPostBtn" disabled>Post Selected to QBO</button>
   <span class="sub" id="batchSelectedCount">0 selected</span>
@@ -164,10 +166,12 @@ that writes to QuickBooks.</p>
            for a redo, same as before anything was uploaded at all. #}
         {% if r.existing_vendor_w9_needs_review %}
         · <form method="post" action="/admin/ap-review/{{ r.request_number }}/confirm-existing-vendor-w9" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button type="submit" class="btn btn-primary btn-sm">Confirm W-9 Received</button>
           </form>
         {% endif %}
         · <form method="post" action="/admin/ap-review/{{ r.request_number }}/request-existing-vendor-w9" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button type="submit" class="btn btn-secondary btn-sm">
               {{ "Resend W-9 Request" if r.w9_requested_at else "Send W-9 Request" }}
             </button>
@@ -181,11 +185,13 @@ that writes to QuickBooks.</p>
            backstop; this dialog is the actual UX Jay asked for. #}
         · <form method="post" action="/requests/{{ r.request_number }}/post-to-qbo" style="display:inline"
                 {% if BEACON_ENV == 'dev' %}data-confirm="DEV ENVIRONMENT: this will create a REAL Vendor/Bill in the live, production {{ r.org_code }} QuickBooks company. There is no dev/test QuickBooks -- this is not a drill. Continue?"{% endif %}>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <input type="hidden" name="dev_confirmed" value="1">
             <button type="submit" class="btn btn-primary btn-sm"
                     {% if r.vendor_gate_wait %}disabled title="{{ r.vendor_gate_wait }}"{% endif %}>Post to QBO</button>
           </form>
         · <form method="post" action="/requests/{{ r.request_number }}/ap-return" style="display:inline" data-prompt-reason="return_reason">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <input type="hidden" name="return_reason" value="">
             <button type="submit" class="btn btn-secondary btn-sm">Return to Submitter</button>
           </form>

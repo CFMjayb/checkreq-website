@@ -76,7 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const resp = await fetch('/feedback/message', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        headers: Object.assign({ 'Content-Type': 'application/json' }, window.csrfHeader()),
         body: JSON.stringify({ message: text, conversation_id: conversationId }),
       });
       const data = await resp.json();
@@ -108,6 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const resp = await fetch('/feedback/' + conversationId + '/close', {
         method: 'POST',
         credentials: 'same-origin',
+        headers: window.csrfHeader(),
       });
       const data = await resp.json();
       if (!resp.ok) {

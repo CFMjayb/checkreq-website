@@ -32,6 +32,7 @@
     -->
     <p class="tagline">We emailed a 6-digit code to<br><strong>{{ email }}</strong>. Enter it below to sign in.</p>
     <form method="post" action="/auth/code/verify" class="login-email-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
       <input type="hidden" name="email" value="{{ email }}">
       <label for="code" class="sr-only">6-digit code</label>
       <input type="text" id="code" name="code" required autofocus autocomplete="one-time-code"
@@ -40,6 +41,7 @@
       <button type="submit" class="btn btn-primary btn-block">Verify code</button>
     </form>
     <form method="post" action="/auth/code/request" class="login-resend-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
       <input type="hidden" name="email" value="{{ email }}">
       <button type="submit" class="link-btn">Send a new code</button>
     </form>
@@ -60,6 +62,7 @@
 
     {% if domain_has_password %}
     <form method="post" action="/auth/password/verify" class="login-email-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
       <input type="hidden" name="email" value="{{ email }}">
       <label for="password" class="sr-only">Password</label>
       <input type="password" id="password" name="password" autofocus
@@ -70,6 +73,7 @@
     {% else %}
     <p class="sub">We don't have a password on file for this address.</p>
     <form method="post" action="/auth/code/request" class="login-email-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
       <input type="hidden" name="email" value="{{ email }}">
       <button type="submit" class="btn btn-primary btn-block">Email me a code</button>
     </form>
@@ -95,6 +99,7 @@
     {% endif %}
 
     <form method="post" action="/auth/route" class="login-email-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
       <label for="email" class="sr-only">Email address</label>
       <input type="email" id="email" name="email" required autofocus
              placeholder="you@yourorganization.org" value="{{ email or remembered_email or '' }}"

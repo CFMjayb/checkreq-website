@@ -17,6 +17,7 @@ the diocese as a whole. Currently activated: <strong>{{ enabled_count }}</strong
 {% endif %}
 
 <form method="post" action="/admin/timekeeping/parishes">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
 <div class="card">
 <div class="table-scroll">
 <table class="simple-table">

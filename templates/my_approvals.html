@@ -83,6 +83,7 @@ involved and who has already acted. Click a Request # to view the full check req
         <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
         ·
         <form method="post" action="/requests/{{ r.request_number }}/approve" class="approve-form" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
           <input type="hidden" name="approval_comment" value="">
           <span class="split-btn">
             <button type="submit" class="btn btn-primary btn-sm">Approve</button>
@@ -93,6 +94,7 @@ involved and who has already acted. Click a Request # to view the full check req
           </span>
         </form>
         · <form method="post" action="/requests/{{ r.request_number }}/reject" class="reject-form" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <input type="hidden" name="rejected_reason" value="">
             <button type="submit" class="btn btn-secondary btn-sm">Reject</button>
           </form>
