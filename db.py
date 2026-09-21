@@ -15,9 +15,14 @@ from psycopg.rows import dict_row
 
 
 def _connkwargs(dbname: str | None = None) -> dict:
+    # .strip() -- 2026-09-21 H7 incident: Secret-Manager-mounted PGPASSWORD
+    # consistently failed auth from inside Cloud Run while the identical
+    # byte-verified value worked as a plain literal env var and over a
+    # separate local TCP connection -- same bug class as 26-141's
+    # qbo_client.py._secret() fix. See db_pre_h7_password_strip_fix.py.
     dbname = dbname or os.environ.get("PGDATABASE", "cfmqbo")
-    user   = os.environ.get("PGUSER", "postgres")
-    pwd    = os.environ.get("PGPASSWORD", "")
+    user   = os.environ.get("PGUSER", "postgres").strip()
+    pwd    = os.environ.get("PGPASSWORD", "").strip()
     inst   = os.environ.get("INSTANCE_CONNECTION_NAME", "")
     if inst:
         return dict(host=f"/cloudsql/{inst}", dbname=dbname, user=user, password=pwd)
