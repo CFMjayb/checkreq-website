@@ -85,6 +85,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import difflib
 import hmac
 import html
 import os
@@ -1442,22 +1443,18 @@ def new_request_form(request: Request):
     })
 
 
-@app.get("/new-request-easy", response_class=HTMLResponse)
-def new_request_easy_form(request: Request):
-    """Phase D (Cornerstone Served Parishes Plan.md): an alternate, simpler
-    New Request layout for a brand-new check_request submission only -- no
-    edit_data support (editing an existing request still uses the classic
-    /requests/{request_number}/edit page). Posts to the same /new-request
-    route as the classic form; new_request_submit's own ui_variant=easy
-    branch (see that route) is the only difference in what happens after
-    submit."""
-    user = _current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-    org = _current_org(request)
-    if not org:
-        return RedirectResponse("/portal")
-    return _render(request, "new_request_easy.html", user, {"today": date.today().isoformat()})
+@app.get("/new-request-easy")
+def new_request_easy_form():
+    """Retired 2026-09-22 (Jay's feedback batch): Easy View and the classic
+    two-pane form were unified into one page at /new-request -- Easy View
+    had no edit-mode support and no live check-voucher mirror, both of
+    which the classic template already had, so the classic template became
+    the single surviving New Request page instead of building those two
+    things into Easy View from scratch. This redirect exists only so any
+    old bookmark/link to /new-request-easy still lands somewhere real
+    instead of 404ing. See templates/new_request_easy_pre_easy_view_unification.html
+    (and the matching .js/.css) for the retired implementation."""
+    return RedirectResponse("/new-request")
 
 
 @app.get("/requests/{request_number}/edit", response_class=HTMLResponse)
@@ -2768,6 +2765,82 @@ def _check_and_increment_extract_document_usage(user_id: int) -> tuple[bool, int
     return today_count <= cap, today_count, cap
 
 
+_NAME_NORM_RE = re.compile(r"[^a-z0-9 ]")
+
+
+def _vendor_match_candidates(org_id: int, vendor_name: str, vendor_city: str | None,
+                              vendor_zip: str | None, limit: int = 5) -> list[dict]:
+    """Scored vendor matching for the upload-to-prefill extraction flow
+    (2026-09-22 feedback batch) -- see api_extract_document's own comment
+    for the incident that prompted this. Combines a fuzzy name-similarity
+    score (difflib.SequenceMatcher, plus token-containment credit for a
+    reordered name like "Ford, Jane" vs. "Jane Ford") with an
+    address-corroboration boost from the extracted city/zip against
+    checkreq.vendors.address (one flat text column, not structured fields).
+    Returns candidates sorted by score descending, score in [0, 1]; a
+    candidate below 0.35 isn't returned at all -- not worth surfacing."""
+    rows = db.query(
+        "SELECT id, display_name, address FROM checkreq.vendors WHERE org_id = %s AND is_active",
+        (org_id,),
+    )
+    name_norm = _NAME_NORM_RE.sub("", vendor_name.lower()).strip()
+    name_tokens = [t for t in name_norm.split() if len(t) > 1]
+    cand_norms = [_NAME_NORM_RE.sub("", (r["display_name"] or "").lower()).strip() for r in rows]
+
+    # Real case found live 2026-09-22 (IV26-002, Jay's own "LandCare -
+    # Baltimore" invoice): a PLAIN token-containment count (each matched
+    # token worth the same) ranked several unrelated "___ Baltimore" parish
+    # vendors ABOVE the real match ("LandCare USA, LLC"), since "baltimore"
+    # alone is shared by dozens of real EDOM vendor names while "landcare"
+    # is nearly unique -- an equal-weight count can't tell a distinctive
+    # word from a common one. Weight each token's contribution by
+    # 1/(how many candidates contain it) -- a token only 1-2 vendors share
+    # counts far more than one dozens share, so a name made of one rare +
+    # one common word still correctly favors the vendor holding the rare
+    # one. (A name made entirely of common words can still reach 1.0 if
+    # every one of them matches the same candidate.)
+    token_doc_freq = {t: (sum(1 for cn in cand_norms if t in cn) or 1) for t in name_tokens}
+    token_weights = [1.0 / token_doc_freq[t] for t in name_tokens]
+    total_weight = sum(token_weights) or 1.0
+
+    scored = []
+    for r, cand_norm in zip(rows, cand_norms):
+        if not cand_norm:
+            continue
+        name_score = difflib.SequenceMatcher(None, name_norm, cand_norm).ratio()
+        if name_tokens:
+            hit_weight = sum(w for t, w in zip(name_tokens, token_weights) if t in cand_norm)
+            name_score = max(name_score, hit_weight / total_weight)
+        # Anything the OLD plain ILIKE '%name%' match would have caught
+        # (a literal substring either direction) stays a high-confidence
+        # match here too, regardless of what difflib's whole-string ratio
+        # says -- no regression from today's exact-match behavior.
+        if name_norm and (name_norm in cand_norm or cand_norm in name_norm):
+            name_score = max(name_score, 0.95)
+
+        address = (r["address"] or "").lower()
+        addr_boost = 0.0
+        if vendor_city and vendor_city.strip().lower() in address:
+            addr_boost += 0.15
+        if vendor_zip and str(vendor_zip).strip() in address:
+            addr_boost += 0.15
+
+        total = min(1.0, name_score + addr_boost)
+        # 0.55 floor, tuned against real EDOM data (2026-09-22): a
+        # genuinely unrelated name still scores ~0.42-0.45 against a couple
+        # of vendors purely from generic word/length overlap (difflib's
+        # whole-string ratio on two longer strings) -- below 0.55, a
+        # "possible match" would be noise, not a real near-miss. Every real
+        # near-miss variant tested (spacing/suffix/OCR-style differences on
+        # a real vendor name) scored 1.0 via the token-containment credit
+        # above, comfortably clear of this floor.
+        if total >= 0.55:
+            scored.append({"id": r["id"], "display_name": r["display_name"], "score": round(total, 3)})
+
+    scored.sort(key=lambda c: -c["score"])
+    return scored[:limit]
+
+
 @app.post("/api/extract-document")
 async def api_extract_document(request: Request, file: UploadFile):
     """Reads an uploaded invoice/receipt and tries to prefill the check-
@@ -2808,46 +2881,40 @@ async def api_extract_document(request: Request, file: UploadFile):
         return JSONResponse({"error": "Couldn't read this document. Please fill in the form manually."})
 
     matched_vendor_id = None
+    possible_vendor_matches: list[dict] = []
     vendor_name = result.get("vendor_name")
     if vendor_name:
-        # Plain substring match first -- handles company names and any
-        # individual vendor already stored in the same word order the
-        # invoice printed.
-        match = db.query_one(
-            "SELECT id FROM checkreq.vendors WHERE org_id = %s AND is_active AND display_name ILIKE %s "
-            "ORDER BY display_name LIMIT 1",
-            (org["id"], f"%{vendor_name}%"),
+        # 2026-09-22 (Jay's feedback batch): a real lawn-care invoice failed
+        # to match an existing vendor it should have -- the old matching
+        # (plain ILIKE substring, then a token-containment fallback, both
+        # name-only, first-hit-wins) never used the vendor's own extracted
+        # address at all, and never surfaced a near-miss for a human to
+        # confirm -- it either matched or silently gave up. Replaced with a
+        # scored comparison across every active vendor: fuzzy name
+        # similarity (difflib, plus the same token-containment credit the
+        # old fallback used, since that already handles real cases like
+        # "Ford, Jane" vs. "Jane Ford") corroborated by whether the
+        # extracted city/zip appear in the vendor's own stored address
+        # (checkreq.vendors.address is one flat text column from the QBO
+        # sync, not structured fields -- this is a substring-presence
+        # check, not a field match). Anything the OLD exact-substring match
+        # would have caught still scores >=0.95 here (see the containment
+        # check below), so this can only find MORE real matches than
+        # before, never fewer.
+        candidates = _vendor_match_candidates(
+            org["id"], vendor_name, result.get("vendor_city"), result.get("vendor_zip"),
         )
-        if not match:
-            # Real bug found live 2026-09-10 (Jay): a real, already-onboarded
-            # vendor ("Ford, Jane") was reported as "no matching vendor
-            # found" for an invoice printing the same person as "Jane
-            # Ford" -- many individual vendors in this codebase's real
-            # data are stored "Last, First", but an invoice/check
-            # requisition prints a name "First Last". A plain substring
-            # match can never find "Jane Ford" inside "Ford, Jane", since
-            # the word order differs and ILIKE has no reordering concept.
-            # Fall back to a token match: every whitespace/comma-separated
-            # word in the extracted name must appear somewhere in
-            # display_name, in any order. Single-character tokens (e.g. a
-            # middle initial) are dropped so they can't make the match
-            # spuriously permissive.
-            tokens = [t for t in re.split(r"[\s,]+", vendor_name) if len(t) > 1]
-            if tokens:
-                conditions = " AND ".join(["display_name ILIKE %s"] * len(tokens))
-                params = tuple([org["id"]] + [f"%{t}%" for t in tokens])
-                match = db.query_one(
-                    f"SELECT id FROM checkreq.vendors WHERE org_id = %s AND is_active AND {conditions} "
-                    "ORDER BY display_name LIMIT 1",
-                    params,
-                )
-        if match:
-            matched_vendor_id = match["id"]
-        else:
+        if candidates and candidates[0]["score"] >= 0.82:
+            matched_vendor_id = candidates[0]["id"]
+        elif candidates:
+            # Plausible but not confident -- surface the top few for a
+            # one-click human confirm instead of silently opening "Add a
+            # new vendor" underneath a real existing match.
+            possible_vendor_matches = candidates[:3]
+        if matched_vendor_id is None and not possible_vendor_matches:
             # 2026-09-10 (Jay, relayed via a separate "Vendor lookup in
-            # Beacon" session): both local checks above just failed --
-            # before reporting "no matching vendor found" and pushing the
-            # submitter into "Add a new vendor," do one live QBO lookup.
+            # Beacon" session): nothing plausible found locally -- before
+            # reporting "no matching vendor found," do one live QBO lookup.
             # This catches a real vendor that exists in QBO but hasn't
             # reached checkreq.vendors yet (created after last night's
             # 11:05 PM sync, or simply never synced) -- if found, it's
@@ -2860,6 +2927,7 @@ async def api_extract_document(request: Request, file: UploadFile):
                 matched_vendor_id = live_vendor_id
 
     result["matched_vendor_id"] = matched_vendor_id
+    result["possible_vendor_matches"] = possible_vendor_matches
 
     # 2026-09-10 (Jay): "if you see account coding on the check request, you
     # should prefill in the gl coding and then backfill the program so you
@@ -2897,6 +2965,92 @@ async def api_extract_document(request: Request, file: UploadFile):
     result["matched_gl_account_name"] = matched_gl_account_name
     result["matched_program_area_id"] = matched_program_area_id
     return result
+
+
+@app.get("/api/vendor-coding-history")
+def api_vendor_coding_history(vendor_id: int, request: Request):
+    """"Research Coding" (2026-09-22 feedback batch): "many of these
+    invoices have already been entered in once before... you should be
+    able to pick the GL coding" (Jay). Given a vendor already selected on
+    the New Request form, suggests GL coding from precedent -- first
+    Beacon's own submission history for that vendor (most-used accounts
+    across recent, non-cancelled requests), falling back to a live QBO
+    lookup of the vendor's most recent Bill (the same qbo_mcp_client call
+    _prefill_msmd_gl_lines already uses for Invoice Intake's
+    Monkey-See-Monkey-Do flow) when Beacon has no history for this vendor
+    yet. Unlike MSMD, this is available on demand for ANY vendor -- not
+    gated behind an ART is_monkey_see_monkey_do flag. Every suggestion is
+    applied client-side as a normal, fully-editable GL line -- never
+    written here, never silently final."""
+    user = _current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not signed in"}, status_code=401)
+    org = _current_org(request)
+    if not org:
+        return JSONResponse({"error": "No entity selected"}, status_code=400)
+
+    vendor = db.query_one(
+        "SELECT id, display_name, qbo_vendor_id FROM checkreq.vendors WHERE id = %s AND org_id = %s",
+        (vendor_id, org["id"]),
+    )
+    if not vendor:
+        return JSONResponse({"error": "Vendor not found"}, status_code=404)
+
+    rows = db.query(
+        """
+        SELECT ga.id AS gl_account_id, ga.account_number, ga.account_name,
+               COUNT(*) AS line_count, MAX(pr.created_at) AS last_used
+        FROM checkreq.payment_request_gl_lines gl
+        JOIN checkreq.payment_requests pr ON pr.id = gl.payment_request_id
+        JOIN checkreq.gl_accounts ga ON ga.id = gl.gl_account_id
+        WHERE pr.vendor_id = %s AND pr.org_id = %s AND pr.status != 'Cancelled'
+        GROUP BY ga.id, ga.account_number, ga.account_name
+        ORDER BY MAX(pr.created_at) DESC
+        LIMIT 5
+        """,
+        (vendor_id, org["id"]),
+    )
+    if rows:
+        return {
+            "source": "beacon_history",
+            "vendor_display_name": vendor["display_name"],
+            "suggestions": [
+                {
+                    "gl_account_id": r["gl_account_id"],
+                    "label": f"{r['account_name']} ({r['account_number']})",
+                    "times_used": r["line_count"],
+                }
+                for r in rows
+            ],
+        }
+
+    # No Beacon history yet -- fall back to the same live-QBO last-bill
+    # lookup _prefill_msmd_gl_lines already trusts for Invoice Intake.
+    if vendor.get("qbo_vendor_id"):
+        result, err = qbo_mcp_client.get_vendor_last_bill((org.get("code") or "").lower(), vendor["qbo_vendor_id"])
+        if not err and result and result.get("found") and result.get("bill"):
+            bill = result["bill"]
+            suggestions = []
+            for ln in (bill.get("lines") or []):
+                acct = db.query_one(
+                    "SELECT id, account_name, account_number FROM checkreq.gl_accounts "
+                    "WHERE org_id = %s AND account_number = %s",
+                    (org["id"], ln["acct_num"]),
+                )
+                if acct:
+                    suggestions.append({
+                        "gl_account_id": acct["id"],
+                        "label": f"{acct['account_name']} ({acct['account_number']})",
+                    })
+            if suggestions:
+                return {
+                    "source": "qbo_last_bill",
+                    "vendor_display_name": vendor["display_name"],
+                    "bill_date": bill.get("txn_date"),
+                    "suggestions": suggestions,
+                }
+
+    return {"source": None, "vendor_display_name": vendor["display_name"], "suggestions": []}
 
 
 _ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",

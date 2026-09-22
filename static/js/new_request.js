@@ -18,6 +18,23 @@ async function loadProgramAreas() {
   const areas = await r.json();
   sel.innerHTML = '<option value="">Select...</option>' +
     areas.map(a => `<option value="${a.id}">${a.title}</option>`).join('');
+  // Program Area default (2026-09-22, Jay's feedback batch): "if the user
+  // has access to the master program area, then that should default.
+  // Otherwise, the program area should default to the first in the list."
+  // Only for a brand-new submission -- edit mode (including Invoice
+  // Intake's deliberate "leave blank for All Program Areas" case) sets
+  // this itself in applyEditPrefill(), which runs after this resolves and
+  // must be allowed to win over this default.
+  if (!window.EDIT_DATA && areas.length) {
+    // Found via live testing against real EDOM data (2026-09-22): the real
+    // "master" area is titled "EDOM Master", not literally "Master" -- an
+    // exact-string match missed it entirely. Matches the whole word
+    // "master" anywhere in the title (word-boundaried, so it won't
+    // false-positive on something like "Grantmaster") to handle each
+    // org's own per-diocese naming.
+    const master = areas.find(a => /\bmaster\b/i.test(a.title || ''));
+    sel.value = String((master || areas[0]).id);
+  }
 }
 
 // ---- GL Account picker (Task 5/6, 2026-07-26 batch) ----
@@ -155,7 +172,7 @@ function computeNewVendorDisplayName() {
 }
 
 function setVendorConfirmedMessage(show) {
-  document.getElementById('vendorConfirmedMsg').style.display = show ? '' : 'none';
+  setStatus('vendorConfirmed', show);
   document.getElementById('addNewVendorLink').style.display = show ? 'none' : '';
 }
 
@@ -164,6 +181,7 @@ function showNewVendorPanel(show) {
   document.getElementById('newVendorPanel').style.display = show ? '' : 'none';
   setVendorValidationMessage(''); // whichever mode is now active, the prior error no longer applies
   setVendorConfirmedMessage(false); // no existing vendor is selected once the new-vendor panel is active
+  setStatus('vendorMatches', null); // any pending "possible matches" suggestion no longer applies either
   if (vendorTomSelect) {
     // Real bug (Jay, 2026-07-29): clicking "Use an existing vendor instead"
     // after an unmatched-vendor extraction left the dropdown completely
@@ -225,21 +243,22 @@ function initVendorSelect() {
   });
 }
 
-// Invoice Intake (Tier 3, 2026-08-02): ART/Monkey-See-Monkey-Do status
-// banner -- only rendered on the coding screen for an invoice_payment
-// Draft (see new_request.html's own {% if %} guard), so this is a no-op
-// everywhere else (a plain Check Request page has no #artStatusBanner
-// element at all). Just exposes what new_request_submit already computes
-// at submission time, same "live-preview" pattern as the approval-chain-
-// preview/budget-status calls.
+// ART/Monkey-See-Monkey-Do status (Invoice Intake, Tier 3, 2026-08-02) --
+// used to be its own standalone banner, only rendered on the Invoice
+// Intake coding screen. Folded into the shared Status & Messages panel
+// (2026-09-22 unification) -- the underlying data is keyed on
+// (vendor_id, org_id), not request_type, so there's no real reason a plain
+// Check Request submitter shouldn't also see "this vendor has a
+// pre-approved workflow" if it applies. Just exposes what
+// new_request_submit already computes at submission time, same
+// "live-preview" pattern as the approval-chain-preview/budget-status
+// calls.
 async function refreshArtBanner(vendorId) {
-  const banner = document.getElementById('artStatusBanner');
-  if (!banner) return;
-  if (!vendorId) { banner.style.display = 'none'; return; }
+  if (!vendorId) { setStatus('art', null); return; }
   try {
     const r = await fetch(`/api/vendor-preapproval-status?vendor_id=${encodeURIComponent(vendorId)}`);
     const data = await r.json();
-    if (!data.has_art) { banner.style.display = 'none'; return; }
+    if (!data.has_art) { setStatus('art', null); return; }
     // L5 (Security Assessment 2026-09-19): both values below are
     // admin-controlled (an ART entry's own vendor link + free-text special
     // handling notes, set on the Setup Tables ART screen), not user-typed
@@ -250,10 +269,9 @@ async function refreshArtBanner(vendorId) {
     let html = `<strong>ART Preapproved</strong> (${escapeHtml(data.vendor_display_name)}) -- skips the approval chain, goes straight to AP Review.`;
     if (data.is_monkey_see_monkey_do) html += ' <em>Monkey-See-Monkey-Do: GL coding below was auto-filled from last month’s invoice -- please review.</em>';
     if (data.special_handling_notes) html += `<br>${escapeHtml(data.special_handling_notes)}`;
-    banner.innerHTML = html;
-    banner.style.display = '';
+    setStatus('art', html);
   } catch (e) {
-    banner.style.display = 'none';
+    setStatus('art', null);
   }
 }
 
@@ -489,15 +507,195 @@ function markAutoFilled(el) {
   el.addEventListener('change', clear);
 }
 
+// ---- Status & Messages panel (2026-09-22, Jay's feedback batch) ----
+// Consolidates every status message this page shows -- was scattered
+// inline (#uploadStatus under the upload row, #vendorConfirmedMsg/
+// #vendorValidationMsg under Vendor, the pre-approved-attachment warning,
+// the invoice-intake-only ART banner) -- into one panel under GL Coding.
+// Ported from Easy View's own already-built version (new_request_easy.js,
+// retired the same session -- see new_request_easy_pre_easy_view_
+// unification.js) rather than re-derived. setStatus(key, value) upserts
+// one slot and re-renders the whole panel from state; the panel is small
+// enough that a full re-render on every change isn't worth optimizing away.
+
+const statusState = {
+  upload: null,             // { text, kind, caveats } | null
+  vendorValidation: null,   // string | null
+  vendorConfirmed: false,
+  vendorMatches: null,      // { candidates, vendorName } | null -- near-miss suggestions from extraction
+  art: null,                // pre-built safe HTML string | null -- ART/MSMD vendor note
+  preApprovedWarning: false,
+  research: null,           // { text, kind } | { source, suggestions, ... } | null -- Research Coding result
+};
+
+function setStatus(key, value) {
+  statusState[key] = value;
+  renderStatusPanel();
+}
+
 function setUploadStatus(message, kind, caveats) {
-  const el = document.getElementById('uploadStatus');
-  el.className = 'upload-status' + (kind ? ' ' + kind : '');
-  el.innerHTML = escapeHtml(message);
-  (caveats || []).forEach(c => {
-    const span = document.createElement('span');
-    span.className = 'caveat';
-    span.textContent = c;
-    el.appendChild(span);
+  setStatus('upload', { text: message, kind, caveats });
+}
+
+function renderStatusPanel() {
+  const body = document.getElementById('statusPanelBody');
+  if (!body) return;
+  const parts = [];
+
+  if (statusState.upload) {
+    const kindClass = statusState.upload.kind ? ' ' + statusState.upload.kind : '';
+    let html = `<div class="status-msg${kindClass}"><strong>Document upload</strong>${escapeHtml(statusState.upload.text)}`;
+    (statusState.upload.caveats || []).forEach(c => { html += `<span class="caveat">${escapeHtml(c)}</span>`; });
+    html += '</div>';
+    parts.push(html);
+  }
+  if (statusState.vendorConfirmed) {
+    parts.push('<div class="status-msg success"><strong>Vendor</strong>&#10003; Vendor confirmed and active</div>');
+  }
+  if (statusState.vendorValidation) {
+    parts.push(`<div class="status-msg error"><strong>Vendor</strong>${escapeHtml(statusState.vendorValidation)}</div>`);
+  }
+  if (statusState.vendorMatches) {
+    // 2026-09-22 (Jay): a real invoice failed to match an existing vendor
+    // it should have -- widened matching (main.py's _vendor_match_candidates,
+    // name-similarity + extracted city/zip corroboration) now surfaces
+    // plausible near-misses here instead of silently opening "Add a new
+    // vendor" underneath a real existing match. Never auto-applies one --
+    // always a one-click human confirm.
+    const { candidates, vendorName } = statusState.vendorMatches;
+    let html = `<div class="status-msg warning"><strong>Possible vendor matches</strong>No confident match for "${escapeHtml(vendorName)}" -- did you mean:<ul class="status-action-list">`;
+    candidates.forEach(c => {
+      html += `<li><button type="button" class="btn btn-secondary btn-sm vendor-match-btn" data-vendor-id="${c.id}" data-vendor-name="${escapeHtml(c.display_name)}">${escapeHtml(c.display_name)}</button></li>`;
+    });
+    html += '</ul>Or use "Add a new vendor" above.</div>';
+    parts.push(html);
+  }
+  if (statusState.art) {
+    parts.push(`<div class="status-msg"><strong>Vendor Note</strong>${statusState.art}</div>`);
+  }
+  if (statusState.preApprovedWarning) {
+    parts.push('<div class="status-msg error"><strong>Pre-Approved Submission</strong>Attach at least one file showing the approval before submitting this way.</div>');
+  }
+  if (statusState.research) {
+    const r = statusState.research;
+    if (r.suggestions && r.suggestions.length) {
+      let html = '<div class="status-msg"><strong>Research Coding</strong>';
+      html += r.source === 'qbo_last_bill'
+        ? `From this vendor's most recent QBO bill${r.bill_date ? ' (' + escapeHtml(r.bill_date) + ')' : ''}:`
+        : `Based on this vendor's prior submissions in Beacon:`;
+      html += '<ul class="status-action-list">';
+      r.suggestions.forEach(s => {
+        html += `<li><button type="button" class="btn btn-secondary btn-sm coding-suggestion-btn" data-gl-account-id="${s.gl_account_id}" data-gl-label="${escapeHtml(s.label)}">${escapeHtml(s.label)}</button>${s.times_used ? ` <span class="sub">(used ${s.times_used}x)</span>` : ''}</li>`;
+      });
+      html += '</ul></div>';
+      parts.push(html);
+    } else if (r.text) {
+      parts.push(`<div class="status-msg${r.kind ? ' ' + r.kind : ''}"><strong>Research Coding</strong>${escapeHtml(r.text)}</div>`);
+    }
+  }
+
+  body.innerHTML = parts.length
+    ? parts.join('')
+    : '<p class="status-panel-empty">Nothing to report yet — upload a document or fill in the form.</p>';
+}
+
+function applyVendorMatch(id, name) {
+  vendorTomSelect.addOption({ id: String(id), display_name: name });
+  vendorTomSelect.addItem(String(id)); // triggers onItemAdd -> setVendorConfirmedMessage/refreshPreview
+  setStatus('vendorMatches', null);
+}
+
+function applyCodingSuggestion(glAccountId, label) {
+  // Fills the first empty GL line, or adds a new one if every line already
+  // has an account -- same "please review, fully editable" treatment
+  // Monkey-See-Monkey-Do's own existing prefill already uses, never
+  // silently final.
+  const rows = [...document.querySelectorAll('#glLines .gl-line')];
+  let target = rows.find(row => !row.querySelector('.glAccount').value);
+  if (!target) {
+    addGlLine();
+    const updated = [...document.querySelectorAll('#glLines .gl-line')];
+    target = updated[updated.length - 1];
+  }
+  const sel = target.querySelector('.glAccount');
+  const ts = sel && sel.tomselect;
+  if (ts) {
+    if (!ts.options[String(glAccountId)]) ts.addOption({ id: String(glAccountId), label, depth: 0 });
+    ts.addItem(String(glAccountId));
+  }
+  const memo = target.querySelector('.glMemo');
+  if (memo && !memo.value) memo.value = 'Suggested by Research Coding -- please review';
+  refreshPreview();
+}
+
+async function researchCoding() {
+  const usingNewVendor = document.getElementById('usingNewVendor').value === '1';
+  const vendorId = usingNewVendor ? '' : document.getElementById('vendorSelect').value;
+  if (!vendorId) {
+    setStatus('research', { text: 'Select an existing vendor first -- Research Coding looks up prior coding for a vendor already on file.', kind: 'error' });
+    return;
+  }
+  setStatus('research', { text: 'Looking up prior coding...' });
+  try {
+    const r = await fetch(`/api/vendor-coding-history?vendor_id=${encodeURIComponent(vendorId)}`);
+    const data = await r.json();
+    if (!data.suggestions || !data.suggestions.length) {
+      setStatus('research', { text: `No prior coding found for ${data.vendor_display_name || 'this vendor'}.`, kind: 'warning' });
+      return;
+    }
+    setStatus('research', data);
+  } catch {
+    setStatus('research', { text: "Couldn't look up prior coding.", kind: 'error' });
+  }
+}
+
+// ---- Resizable divider between the two panes (2026-09-22, Jay's feedback
+// batch): "have a vertical scroll bar between the data entry section on
+// the left and the ... check request form on the right... in case the
+// space is needed." No such mechanism existed anywhere in this codebase --
+// built from scratch. Drags .split-form's flex-basis directly (in px);
+// .split-preview keeps flex:1 and absorbs whatever's left automatically.
+// "When the window is resized... the left side should not [shrink]... the
+// right side of the screen should decrease in size" -- the min-width on
+// .split-form (new_request.css) is what actually enforces that; this drag
+// handler just clamps the SAME floor when the user drags, so the two
+// behaviors can never disagree. Persisted in localStorage -- a plain
+// per-browser convenience, not shared state. ----
+
+const SPLIT_MIN_PX = 420;
+const SPLIT_MAX_PX = 900;
+const SPLIT_WIDTH_KEY = 'beacon_new_request_split_width';
+
+function initSplitDivider() {
+  const divider = document.getElementById('splitDivider');
+  const formPane = document.querySelector('.split-form');
+  if (!divider || !formPane) return;
+
+  let saved = parseInt(localStorage.getItem(SPLIT_WIDTH_KEY) || '', 10);
+  if (saved && saved >= SPLIT_MIN_PX) formPane.style.flexBasis = saved + 'px';
+
+  let dragging = false;
+  divider.addEventListener('mousedown', (e) => {
+    dragging = true;
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const shellRect = formPane.parentElement.getBoundingClientRect();
+    const width = Math.max(SPLIT_MIN_PX, Math.min(SPLIT_MAX_PX, e.clientX - shellRect.left));
+    formPane.style.flexBasis = width + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.userSelect = '';
+    try {
+      localStorage.setItem(SPLIT_WIDTH_KEY, String(Math.round(formPane.getBoundingClientRect().width)));
+    } catch {
+      // localStorage can throw in a private/locked-down browser context --
+      // the divider still works for this session, it just won't persist.
+    }
   });
 }
 
@@ -529,6 +727,15 @@ function applyExtractedFields(data, filename) {
     if (data.matched_vendor_id && vendorTomSelect) {
       vendorTomSelect.addOption({ id: String(data.matched_vendor_id), display_name: data.vendor_name });
       vendorTomSelect.addItem(String(data.matched_vendor_id));
+      setStatus('vendorMatches', null);
+    } else if (data.possible_vendor_matches && data.possible_vendor_matches.length && vendorTomSelect) {
+      // 2026-09-22 (Jay): a real invoice failed to match an existing vendor
+      // it should have -- widened matching now surfaces plausible
+      // near-misses instead of silently giving up. Deliberately does NOT
+      // open the "Add a new vendor" panel here (unlike the truly-unmatched
+      // branch below) -- there's a real, existing vendor that's probably
+      // the right one, so defaulting to "add a new vendor" would be worse.
+      setStatus('vendorMatches', { candidates: data.possible_vendor_matches, vendorName: data.vendor_name });
     } else if (vendorTomSelect) {
       // Real bug found live 2026-09-10 (Jay): an unmatched vendor name
       // (e.g. "Jane Ford") sat in the Tom Select search box looking
@@ -599,7 +806,18 @@ function applyExtractedFields(data, filename) {
 
   refreshPreview();
 
-  const vendorNote = data.matched_vendor_id ? '' : (data.vendor_name ? ' (no matching vendor found -- the "Add a new vendor" panel below has been opened and prefilled from this document -- please review)' : '');
+  // Bug found live 2026-09-22, testing the new possible-vendor-matches path:
+  // this note used to only check matched_vendor_id, so it kept claiming
+  // "the Add a new vendor panel below has been opened" even when a
+  // possible-matches suggestion was shown instead (that branch deliberately
+  // does NOT open the new-vendor panel -- see the vendor_name handling
+  // above). Now reflects all three real outcomes.
+  let vendorNote = '';
+  if (!data.matched_vendor_id && data.vendor_name) {
+    vendorNote = (data.possible_vendor_matches && data.possible_vendor_matches.length)
+      ? ' (see "Possible vendor matches" below)'
+      : ' (no matching vendor found -- the "Add a new vendor" panel below has been opened and prefilled from this document -- please review)';
+  }
   const glNote = (data.coded_gl_account && !data.matched_gl_account_id)
     ? ` (this document appears to be coded to GL account "${data.coded_gl_account}", but no matching account was found for this entity -- please code it manually)`
     : '';
@@ -621,9 +839,7 @@ function applyExtractedFields(data, filename) {
 // round-trip and gives a clearer inline message than a generic 400 would.
 
 function setVendorValidationMessage(msg) {
-  const el = document.getElementById('vendorValidationMsg');
-  el.textContent = msg;
-  el.style.display = msg ? '' : 'none';
+  setStatus('vendorValidation', msg || null);
 }
 
 function vendorSelectionIsValid() {
@@ -796,6 +1012,25 @@ function initPreviewToggle() {
 document.addEventListener('DOMContentLoaded', () => {
   initPreviewToggle();
   initVendorSelect();
+  initSplitDivider();
+
+  // Event delegation for buttons the Status & Messages panel injects
+  // dynamically (possible-vendor-match confirms, Research Coding
+  // suggestions) -- the panel is fully re-rendered on every state change,
+  // so a direct listener on any one button would be destroyed the next
+  // render; delegating to the panel's own stable container avoids that.
+  const statusPanelBody = document.getElementById('statusPanelBody');
+  if (statusPanelBody) {
+    statusPanelBody.addEventListener('click', (e) => {
+      const vendorBtn = e.target.closest('.vendor-match-btn');
+      if (vendorBtn) { applyVendorMatch(vendorBtn.dataset.vendorId, vendorBtn.dataset.vendorName); return; }
+      const codingBtn = e.target.closest('.coding-suggestion-btn');
+      if (codingBtn) { applyCodingSuggestion(codingBtn.dataset.glAccountId, codingBtn.dataset.glLabel); return; }
+    });
+  }
+  const researchBtn = document.getElementById('researchCodingBtn');
+  if (researchBtn) researchBtn.addEventListener('click', researchCoding);
+
   loadProgramAreas().then(() => {
     if (window.EDIT_DATA) {
       applyEditPrefill();
@@ -824,11 +1059,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const alreadyAttached = window.EXISTING_ATTACHMENT_COUNT || 0;
       if (newlyAttached === 0 && alreadyAttached === 0) {
         e.preventDefault();
-        document.getElementById('preApprovedWarning').style.display = 'block';
+        setStatus('preApprovedWarning', true);
         document.getElementById('preApprovedRow').scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
       }
-      document.getElementById('preApprovedWarning').style.display = 'none';
+      setStatus('preApprovedWarning', false);
     }
 
     // Three-tier budget design (Approval Workflow Corrections, 2026-07-31):
