@@ -7722,6 +7722,17 @@ gl_vendors_reference.register(
     render=_render,
 )
 
+# 26-149 (2026-09-22): Actual vs Budget report templates admin screen -- Run Now
+# builds a template's workbook on demand via qbo-mcp-server. Wiring only.
+import report_templates
+
+report_templates.register(
+    app,
+    current_user=_current_user,
+    current_org=_current_org,
+    render=_render,
+)
+
 # 2026-09-10: on-demand "Sync Vendors Now" admin trigger + the live-QBO
 # single-vendor fallback used inside api_extract_document() below -- see
 # vendor_sync_admin.py's own docstring for the full "why" (Jay's request,

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Report Templates — Beacon{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<h1>Report Templates</h1>
+<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+<p class="sub">
+  {{ current_org.code }} &mdash; Actual vs Budget reports built live from QuickBooks. <strong>Run Now</strong>
+  builds the report for the month you pick and downloads it to you. It does not email anyone or start a review;
+  scheduled sending with review is still being built.
+</p>
+
+<div id="reportRunStatus" class="banner" hidden></div>
+
+{% if templates %}
+<div class="card">
+  <div class="table-scroll">
+    <table class="simple-table">
+      <thead>
+        <tr>
+          <th>Template</th>
+          <th>Lines</th>
+          <th>Schedule</th>
+          <th>Reviewer</th>
+          <th>Recipients</th>
+          <th>Run for month</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in templates %}
+        <tr{% if not t.is_active %} style="opacity:.6;"{% endif %}>
+          <td>
+            <strong>{{ t.name }}</strong>
+            {% if not t.is_active %}<span class="badge badge-cancelled">Inactive</span>{% endif %}
+            {% if t.description %}<div class="sub">{{ t.description }}</div>{% endif %}
+            <div class="sub">
+              Review {{ 'on' if t.requires_review else 'off (sends automatically)' }}
+              &middot; Budget: {{ t.budget_name or 'auto (the one active QBO budget for the year)' }}
+            </div>
+          </td>
+          <td>{{ t.lines or '—' }}</td>
+          <td>{{ t.schedule or '—' }}</td>
+          <td>{{ t.reviewer_name or t.reviewer_email or '—' }}</td>
+          <td>{{ t.recipients or '—' }}</td>
+          <td style="white-space:nowrap;">
+            {% if t.is_active %}
+            <form class="report-run-form" method="post" action="/admin/report-templates/{{ t.id }}/run"
+                  data-template-name="{{ t.name }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+              <input type="month" name="month" id="month-{{ t.id }}" value="{{ default_month }}"
+                     max="{{ max_month }}" required>
+              <button type="submit" class="btn btn-primary btn-sm">Run Now</button>
+            </form>
+            {% else %}
+            <span class="sub">Inactive</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="sub" style="margin-top:12px;">
+    A report takes up to a minute &mdash; it pulls the ledger, Profit &amp; Loss and budget from QuickBooks
+    and checks every account against QuickBooks' own Profit &amp; Loss before handing it back.
+  </p>
+</div>
+{% else %}
+<div class="card">
+  <p>No report templates are set up for {{ current_org.name }} yet.</p>
+</div>
+{% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/report_templates.js?v={{ asset_version('js/report_templates.js') }}"></script>
+{% endblock %}
