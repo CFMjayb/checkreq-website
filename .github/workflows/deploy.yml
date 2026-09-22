@@ -137,13 +137,28 @@ jobs:
             --max-instances          2 \
             --port                   8080
 
+      # Smoke test: -L added 2026-09-22 (Security Assessment 2026-09-19.md,
+      # M15). session_guard.py's RawRunAppRedirectMiddleware, deployed tonight,
+      # now 307-redirects EVERY request on the raw *.run.app hostname
+      # (including /health -- no exemption, by design) to the branded
+      # beacondev.cfmins.org host. This step still hits $URL (the raw
+      # Cloud Run URL -- the one thing reliably known immediately post-
+      # deploy with no dependency on DNS/cert state on the custom domain),
+      # so without -L it always got a 307 back, never a 200 -- reporting
+      # every deploy since M15 landed as "failed" even though the build,
+      # push, and actual Cloud Run deploy all genuinely succeeded (confirmed
+      # directly via `gcloud run services describe` against 3 separate
+      # "failed" runs, all healthy). curl -L follows the redirect and lands
+      # on the real /health response, restoring a real pass/fail signal.
+      # Prior version preserved in deploy_pre_m15_redirect_smoketest_fix.yml.bak
+      # in this same folder.
       - name: Smoke test
         run: |
           URL=$(gcloud run services describe $SERVICE \
                   --region $REGION \
                   --format 'value(status.url)')
           echo "Service URL: $URL"
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/health")
+          STATUS=$(curl -sL -o /dev/null -w "%{http_code}" "$URL/health")
           echo "Health check status: $STATUS"
           if [ "$STATUS" != "200" ]; then
             echo "Health check failed!"
