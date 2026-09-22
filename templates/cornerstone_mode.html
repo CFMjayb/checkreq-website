@@ -15,7 +15,15 @@
       <tr>
         <td>{{ o.name }}</td>
         <td>{{ o.code|upper }}</td>
-        <td><a href="/select-entity/{{ o.id }}" class="btn btn-secondary btn-sm">Enter</a></td>
+        {# M8 (Security Assessment 2026-09-19): was <a href>, GET --
+           /select-entity/{org_id} is now POST, same form+button pattern
+           as "Enter a Client" below. #}
+        <td>
+          <form method="post" action="/select-entity/{{ o.id }}" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <button type="submit" class="btn btn-secondary btn-sm">Enter</button>
+          </form>
+        </td>
       </tr>
       {% else %}
       <tr><td colspan="3">No diocese-level access set up for you yet.</td></tr>
@@ -38,6 +46,7 @@
         <td>{{ o.city or "—" }}</td>
         <td>
           <form method="post" action="/admin/cornerstone-mode/{{ o.org_id }}" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button type="submit" class="btn btn-secondary btn-sm">Enter</button>
           </form>
         </td>

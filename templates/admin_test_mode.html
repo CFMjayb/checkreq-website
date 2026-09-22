@@ -26,6 +26,7 @@ have gone to.</p>
 
 <div class="card">
   <form method="post" action="/admin/test-mode">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="field">
       <label>
         <input type="checkbox" name="enabled" value="1" {% if enabled %}checked{% endif %}>

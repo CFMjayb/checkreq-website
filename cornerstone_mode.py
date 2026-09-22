@@ -107,12 +107,19 @@ _current_user = None
 _current_org = None
 _render = None
 _accessible_diocese_orgs = None
+_select_entity_core = None
 
 
-def register(app, *, current_user, current_org, render, accessible_diocese_orgs) -> None:
-    global _current_user, _current_org, _render, _accessible_diocese_orgs
+def register(app, *, current_user, current_org, render, accessible_diocese_orgs, select_entity_core) -> None:
+    global _current_user, _current_org, _render, _accessible_diocese_orgs, _select_entity_core
     _current_user, _current_org, _render = current_user, current_org, render
     _accessible_diocese_orgs = accessible_diocese_orgs
+    # M8 (Security Assessment 2026-09-19): the actual authorize+set-session
+    # mutation main.py's own POST /select-entity/{org_id} uses -- see
+    # cornerstone_mode_select() below for why this can no longer be reached
+    # via an HTTP redirect the way it was before /select-entity became
+    # POST-only.
+    _select_entity_core = select_entity_core
     app.include_router(router)
 
 
@@ -282,14 +289,27 @@ def cornerstone_mode_select(org_id: int, request: Request):
     authorization check (_user_has_org_access() in main.py) so a crafted
     org_id this user doesn't actually hold cornerstone_employee at, or that
     isn't even a served parish-org, is rejected the identical way any other
-    unauthorized entity-switch attempt would be."""
+    unauthorized entity-switch attempt would be.
+
+    M8 (Security Assessment 2026-09-19): used to just issue an HTTP
+    redirect to POST /select-entity/{org_id} -- worked only because that
+    route was GET at the time. A browser ALWAYS follows a 3xx redirect as
+    GET regardless of what the target route actually requires, so once
+    /select-entity became POST-only, redirecting into it here would 405
+    instead of switching anything. Now calls _select_entity_core()
+    directly -- the exact same authorize-then-set-session logic
+    /select-entity's own route body calls -- injected via register() (see
+    this module's own top, same DI pattern as accessible_diocese_orgs)
+    rather than importing main.py, which would be circular."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
     org = _current_org(request)
     if _parish_preview_active(request) or (org and is_cornerstone_org(org["id"])):
         return RedirectResponse("/portal")
-    return RedirectResponse(f"/select-entity/{org_id}", status_code=303)
+    if not _select_entity_core(request, org_id):
+        return RedirectResponse("/admin/cornerstone-mode")
+    return RedirectResponse("/portal", status_code=303)
 
 
 @router.get("/admin/cfm-items", response_class=HTMLResponse)

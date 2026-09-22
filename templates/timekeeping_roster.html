@@ -17,6 +17,7 @@ change — it takes effect once your diocese's HR Admin approves it.{% endif %}<
 <details>
   <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ Propose a New Staff Member</summary>
   <form method="post" action="/timekeeping/roster/create" style="margin-top:12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="field"><label>First Name</label><input type="text" name="first_name" required></div>
     <div class="field"><label>Last Name</label><input type="text" name="last_name" required></div>
     <div class="field"><label>Position</label><input type="text" name="position" placeholder="e.g. Sexton"></div>
@@ -62,6 +63,7 @@ change — it takes effect once your diocese's HR Admin approves it.{% endif %}<
       <details>
         <summary class="btn btn-secondary btn-sm" style="display:inline-block;cursor:pointer">Propose Edit&hellip;</summary>
         <form method="post" action="/timekeeping/roster/{{ s.id }}/update" style="margin-top:8px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
           <div class="field"><label>First Name</label><input type="text" name="first_name" value="{{ s.first_name }}" required></div>
           <div class="field"><label>Last Name</label><input type="text" name="last_name" value="{{ s.last_name }}" required></div>
           <div class="field"><label>Position</label><input type="text" name="position" value="{{ s.position or '' }}"></div>
@@ -70,6 +72,7 @@ change — it takes effect once your diocese's HR Admin approves it.{% endif %}<
         </form>
       </details>
       <form method="post" action="/timekeeping/roster/{{ s.id }}/toggle-active" style="display:inline;margin-left:6px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <button type="submit" class="btn btn-secondary btn-sm">Propose {{ 'Deactivate' if s.is_active else 'Reactivate' }}</button>
       </form>
     </td>

@@ -31,6 +31,7 @@
 
 <div class="card">
   <form method="post" action="/access-request">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <label for="org_id">Entity</label>
     <select id="org_id" name="org_id" required>
       <option value="">Select an entity...</option>

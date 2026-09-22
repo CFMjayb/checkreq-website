@@ -9,11 +9,19 @@
     <h2>Select an Entity</h2>
     <p class="sub">Choose which organization you want to work on. You can switch at any time from the header once one is picked.</p>
     <div class="entity-cards">
+      {# M8 (Security Assessment 2026-09-19): was a plain <a href>, GET --
+         /select-entity/{org_id} is now POST. display:contents keeps this
+         <form> out of the .entity-cards flex layout so each card still
+         sizes/wraps exactly as the bare <a> did before. #}
       {% for o in all_orgs %}
-      <a class="entity-card" href="/select-entity/{{ o.id }}?next=/portal">
-        <div class="code">{{ o.code|upper }}</div>
-        <div class="name">{{ o.name }}</div>
-      </a>
+      <form method="post" action="/select-entity/{{ o.id }}" class="entity-card-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="next" value="/portal">
+        <button type="submit" class="entity-card">
+          <div class="code">{{ o.code|upper }}</div>
+          <div class="name">{{ o.name }}</div>
+        </button>
+      </form>
       {% endfor %}
     </div>
   </div>

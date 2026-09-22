@@ -21,6 +21,7 @@ right for a vendor contact with no account here.
       <p class="tagline">Please upload a completed IRS Form W-9 for <strong>{{ vendor_name }}</strong>.</p>
       {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
       <form method="post" action="/vendor-w9-upload/{{ token }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <div class="field">
           <label>Completed W-9 (PDF or a clear photo)</label>
           <input type="file" name="file" accept="application/pdf,image/jpeg,image/png,image/gif,image/webp" required>

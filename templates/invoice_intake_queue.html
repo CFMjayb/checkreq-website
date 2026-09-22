@@ -14,6 +14,7 @@
   <p class="sub">Beacon reads what it can off the document and creates a Draft below for you to finish coding.
      GL coding is never guessed at this step -- that stays your decision.</p>
   <form method="post" action="/invoice-intake" enctype="multipart/form-data" class="upload-row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <input type="file" name="file" required
            accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
     <button type="submit" class="btn btn-primary btn-sm">Upload</button>

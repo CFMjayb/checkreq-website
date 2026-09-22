@@ -17,6 +17,7 @@
 <div class="card">
   <h2>Program Area</h2>
   <form method="post" action="/admin/setup/program-areas/{{ pa.id }}/update">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <label for="title">Title</label>
     <input type="text" id="title" name="title" value="{{ pa.title }}" required>
     <label for="description">Description</label>
@@ -41,7 +42,8 @@
         <td>{{ s.display_name or "—" }}</td>
         <td>
           <form method="post" action="/admin/setup/program-areas/{{ pa.id }}/submitters/revoke"
-                onsubmit="return confirm('Remove {{ s.email }} from this program area?');">
+                data-confirm="Remove {{ s.email }} from this program area?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <input type="hidden" name="upa_id" value="{{ s.upa_id }}">
             <button type="submit" class="btn btn-secondary">Remove</button>
           </form>
@@ -56,6 +58,7 @@
   <h3>Add a Submitter</h3>
   <form method="post" action="/admin/setup/program-areas/{{ pa.id }}/submitters/grant"
         class="filter-bar" style="align-items:flex-end;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="field">
       <label for="submitterUser">User</label>
       <select id="submitterUser" name="user_id" required>

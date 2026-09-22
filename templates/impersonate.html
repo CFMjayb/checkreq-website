@@ -36,6 +36,7 @@
         </td>
         <td class="col-action">
           <form method="post" action="/admin/impersonate/{{ u.id }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button type="submit" class="btn btn-secondary btn-sm">Impersonate</button>
           </form>
         </td>

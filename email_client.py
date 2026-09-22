@@ -41,32 +41,34 @@ _cached_api_key: str | None = None
 _BEACON_ENV = os.environ.get("BEACON_ENV", "dev")
 
 
-def _apply_test_mode(to: str, subject: str) -> tuple[str, str]:
-    """Test Mode (Jay, 2026-07-28): when on, EVERY outgoing email -- from any
-    call site, present or future -- gets redirected to one designated test
-    address instead of its real recipient, with the subject prefixed to show
-    who it *would* have gone to. Centralized here (the one real send_email()
-    choke point) rather than at each call site in main.py, so a future email
-    feature can never accidentally forget to check this.
+def _apply_test_mode(to: str, subject: str) -> tuple[str, str] | None:
+    """Test Mode (Jay, 2026-07-28), HARD-LOCKED on non-prod as of M17
+    (Security Assessment 2026-09-19, direction: "dev never emails real
+    users, only the test address; prod sends for real").
 
-    Fails open to "off" (sends to the real recipient unchanged) on any
-    settings-read error -- a DB hiccup must never silently swallow a real
-    email that was never meant to be redirected.
+    Dev/Prod Split Plan.md (2026-07-31), Decision 5 already made this a
+    real code-level lock in PRODUCTION -- checked first, below, so a stale
+    'on' value can never redirect a real production email regardless of
+    what the database says. What M17 closes is the OTHER direction: the
+    original design still let a toggle (checkreq.app_settings
+    'email_test_mode') decide whether DEV redirected at all -- if that
+    setting were ever 'false' on dev (its own default value, in fact, until
+    someone explicitly turns it on), dev would silently send real email to
+    real recipients. Dev must NEVER be able to do that, full stop, so the
+    toggle is no longer consulted for the redirect DECISION on dev at all
+    -- only whether a real production send happens. On dev, this function
+    unconditionally redirects to the configured test address; if none is
+    configured, it SUPPRESSES the send entirely (returns None) rather than
+    ever letting an unconfigured dev fall through to a real recipient.
 
-    Dev/Prod Split Plan.md (2026-07-31), Decision 5: Test Mode must NEVER be
-    active in production, as a real code-level lock -- not just a policy to
-    remember. Checked FIRST, before checkreq.app_settings is even read, so a
-    stale 'on' value left over from dev testing (or someone flipping it on
-    by mistake) can never redirect a real production email, regardless of
-    what the database says."""
+    Returns None to mean "do not send this email at all" -- callers
+    (send_email(), below) must check for this."""
     if _BEACON_ENV == "prod":
-        return to, subject
-    if app_settings.get_setting("email_test_mode", "false") != "true":
         return to, subject
     test_address = app_settings.get_setting("email_test_mode_address")
     if not test_address:
-        return to, subject
-    return test_address, f"[TEST MODE — would have gone to: {to}] {subject}"
+        return None
+    return test_address, f"[DEV — would have gone to: {to}] {subject}"
 
 
 def _get_api_key() -> str:
@@ -97,7 +99,14 @@ def send_email(
     {"name", "content_type", "content_base64"} dicts, same shape as
     26-122's own send_email MCP tool (3MB/file, 9MB combined cap enforced
     server-side)."""
-    to, subject = _apply_test_mode(to, subject)
+    routed = _apply_test_mode(to, subject)
+    if routed is None:
+        # M17: dev has no test address configured -- suppress rather than
+        # ever fall through to the real recipient. Same shape as a real
+        # failure ({"error": ...}) so every existing caller's "did it send"
+        # check already handles this correctly with no changes needed.
+        return {"error": "Suppressed: dev environment has no email_test_mode_address configured.", "status": "suppressed"}
+    to, subject = routed
     try:
         resp = requests.post(
             f"{EMAIL_SERVER_URL}/api/send-email",

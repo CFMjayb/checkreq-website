@@ -47,9 +47,11 @@ reason — the parish sees it and can correct and resubmit.</p>
     <td>{{ c.submitted_at.strftime("%Y-%m-%d") if c.submitted_at else "—" }}</td>
     <td>
       <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/approve" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <button type="submit" class="btn btn-primary btn-sm">Approve</button>
       </form>
       <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/reject" style="display:inline" onsubmit="return promptRejectReason(this)">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <input type="hidden" name="review_note" value="">
         <button type="submit" class="btn btn-secondary btn-sm">Reject</button>
       </form>

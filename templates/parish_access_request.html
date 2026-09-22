@@ -20,6 +20,7 @@
 
 <div class="card">
   <form method="post" action="/parish-access-request">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <label for="parish_id">Parish</label>
     {% if locked_parish %}
     <input type="text" value="{{ parishes[0].name }}{% if parishes[0].city %}, {{ parishes[0].city }}{% endif %}" disabled>
@@ -88,9 +89,11 @@
         <td>{{ r.note or "—" }}</td>
         <td class="actions-cell">
           <form method="post" action="/admin/parish-access-requests/{{ r.id }}/approve" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button type="submit" class="btn btn-primary">Approve</button>
           </form>
           <form method="post" action="/admin/parish-access-requests/{{ r.id }}/reject" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <button type="submit" class="btn btn-secondary">Reject</button>
           </form>
         </td>
@@ -131,7 +134,8 @@
         <td>{{ r.granted_by_email or "—" }}</td>
         <td class="actions-cell">
           <form method="post" action="/parish-access-request/{{ manage_parish.id }}/revoke" style="display:inline"
-                onsubmit="return confirm('Revoke {{ r.role_label }} access for {{ r.email }}?');">
+                data-confirm="Revoke {{ r.role_label }} access for {{ r.email }}?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <input type="hidden" name="user_id" value="{{ r.user_id }}">
             <input type="hidden" name="role_key" value="{{ r.role_key }}">
             <button type="submit" class="btn btn-secondary">Revoke</button>
@@ -148,6 +152,7 @@
 <h3 style="margin-top:var(--space-5);">Grant Access</h3>
 <div class="card">
   <form method="post" action="/parish-access-request/{{ manage_parish.id }}/grant">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <label for="grant_email">Email</label>
     <input type="email" id="grant_email" name="email" required placeholder="person@example.org">
 

@@ -10,6 +10,7 @@
 
 <div class="card">
   <form method="post" action="/account/profile">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <label for="display_name">Display Name</label>
     <input type="text" id="display_name" name="display_name" required
            value="{{ (form_values.display_name if form_values else user.display_name) or '' }}">

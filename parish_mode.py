@@ -426,11 +426,18 @@ def parish_view_page(request: Request):
     })
 
 
-@router.get("/parish-view/switch")
+@router.post("/parish-view/switch")
 def parish_view_switch(request: Request):
     """The rare multi-parish native user's "view a different one of my own
     parishes" link -- just clears the remembered choice so /parish-view
-    re-renders the (own-parishes-only) picker."""
+    re-renders the (own-parishes-only) picker.
+
+    M8 (Security Assessment 2026-09-19): was GET -- reachable cross-site
+    under SameSite=Lax (a top-level GET navigation still carries the
+    cookie). Converted to POST; parish_view.html's own link is now a real
+    <form> for the branch that targets this route (the CFO-preview branch,
+    which targets /admin/parish-mode instead, stays a plain link -- that
+    route is GET-safe, it only ever RENDERS a picker, never mutates)."""
     request.session.pop("native_parish_id", None)
     return RedirectResponse("/parish-view", status_code=303)
 

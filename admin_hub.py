@@ -76,8 +76,11 @@ _CARDS = [
      "url": "/admin/vendor-requests", "role": "vendor_approver", "group": "ap"},
     {"title": "Setup Tables", "desc": "Program areas, GL account mapping, entities, global approvers.",
      "url": "/admin/setup", "role": "setup_admin", "group": "ap"},
+    # L3 (Security Assessment 2026-09-19, Jay: "beacon_admin only") --
+    # an app-wide, cross-entity setting; tile gate must match the route's
+    # own gate (main.py) or a setup_admin sees this tile and gets a 403.
     {"title": "AP Settings", "desc": "Editable AP policy values, e.g. the new-vendor W-9 threshold.",
-     "url": "/admin/ap-settings", "role": "setup_admin", "group": "ap"},
+     "url": "/admin/ap-settings", "role": "beacon_admin", "group": "ap"},
 
     # Parish Mode (S4, 2026-08-08) -- gated on the "real_parish_mode"
     # sentinel (widened 2026-09-14, see below): hidden while already
@@ -203,7 +206,12 @@ def admin_hub(request: Request):
     cards = []
     for c in _CARDS:
         if c["role"] == "real_cfo":
-            visible = (not is_impersonating) and real_uid and rbac.user_has_role(real_uid, "cfo", org_id=None)
+            # M5 (Security Assessment 2026-09-19): Impersonate a User's own
+            # gate widened cfo -> beacon_admin in main.py; matched here so
+            # the tile stays visible to exactly who the route now allows.
+            visible = (not is_impersonating) and real_uid and rbac.user_has_any_role(
+                real_uid, ["cfo", "beacon_admin"], org_id=None,
+            )
         elif c["role"] == "real_parish_mode":
             # 2026-09-14: same "real identity, hidden while impersonating"
             # shape as real_cfo above, but against the wider role set

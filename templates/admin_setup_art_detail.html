@@ -21,6 +21,7 @@
     to change them, delete this entry and add a new one. Everything else can be edited and saved here.
   </p>
   <form method="post" action="/admin/setup/art/{{ art.id }}/update" id="artForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="add-grid" style="grid-template-columns: 1fr 1fr; align-items:start;">
       <div class="fld"><label>Vendor</label><input type="text" value="{{ art.vendor_display_name }}" disabled></div>
       <div class="fld"><label>Entity</label><input type="text" value="{{ current_org.code }}" disabled></div>
@@ -253,8 +254,9 @@
         <td>
           {% if p.status not in ('posted', 'manually_resolved') %}
           <form method="post" action="/admin/setup/art/{{ art.id }}/periods/{{ p.id }}/resolve"
-                onsubmit="return confirm('Mark {{ p.period_label }} as manually resolved? This stops the automated check from ever flagging this period again.');"
+                data-confirm="Mark {{ p.period_label }} as manually resolved? This stops the automated check from ever flagging this period again."
                 style="display:flex; gap:4px;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <input type="text" name="resolved_note" placeholder="Why?" style="width:110px;">
             <button type="submit" class="btn btn-secondary btn-sm">Resolve</button>
           </form>
@@ -272,7 +274,8 @@
   <h2 style="color:var(--color-danger);">Delete This ART Entry</h2>
   <p class="setup-hint">Removes this ART designation entirely, including its completeness history. This does not affect any check request already submitted.</p>
   <form method="post" action="/admin/setup/art/{{ art.id }}/delete"
-        onsubmit="return confirm('Delete the ART entry for {{ art.vendor_display_name }}? This also removes its completeness-check history. This cannot be undone.');">
+        data-confirm="Delete the ART entry for {{ art.vendor_display_name }}? This also removes its completeness-check history. This cannot be undone.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <button type="submit" class="btn btn-secondary" style="color:var(--color-danger);border-color:var(--color-danger);">Delete ART Entry</button>
   </form>
 </div>

@@ -58,6 +58,7 @@
   </div>
   <p class="back-link"><a href="/my-requests">&larr; Back to My Requests</a></p>
   <form method="post" action="/new-request" id="reqForm" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <input type="hidden" name="org_id" value="{{ current_org.id }}">
     <input type="hidden" name="request_type" value="check_request">
     {# The one piece of wiring new_request_submit needs to know this came

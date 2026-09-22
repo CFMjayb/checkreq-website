@@ -14,6 +14,7 @@ diocese shares the same periods — opening one here is what lets those parishes
 <details>
   <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ New Payroll Period</summary>
   <form method="post" action="/admin/timekeeping/periods/create" style="margin-top:12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="field"><label>Start Date</label><input type="date" name="period_start" required></div>
     <div class="field"><label>End Date</label><input type="date" name="period_end" required></div>
     <div class="field"><label>Submission Deadline (optional)</label><input type="date" name="submission_deadline"></div>

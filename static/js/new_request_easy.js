@@ -404,7 +404,7 @@ async function handleAttachmentUpload(fileInput) {
   const body = new FormData();
   body.append('file', first);
   try {
-    const r = await fetch('/api/extract-document', { method: 'POST', body });
+    const r = await fetch('/api/extract-document', { method: 'POST', body, headers: window.csrfHeader() });
     const data = await r.json();
     applyExtractedFields(data, first.name);
   } catch {

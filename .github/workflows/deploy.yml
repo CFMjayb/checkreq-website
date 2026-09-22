@@ -108,6 +108,17 @@ jobs:
       # secretAccessor on the new beacon-db-password-dev secret before this
       # change shipped (2026-09-20). Old config preserved in
       # deploy.yml.pre_h7_db_role_cutover.bak in this same folder.
+      #
+      # M17 timeout raise (2026-09-21, Security Assessment 2026-09-19.md):
+      # --timeout 30 was the confirmed root cause of the hourly vendor-sync
+      # job's recurring 504s -- sync_vendors_now() (all 4 companies, one HTTP
+      # request) regularly ran longer than 30s; real Cloud Run logs show
+      # frequent 30.000s timeouts and one real successful completion at
+      # 118s. Raised to 300 (Cloud Run's own per-request ceiling for a
+      # synchronous HTTP service) rather than a smaller number, since real
+      # data already exceeds the handoff doc's own example test value of
+      # ~90s. Prior 30s config preserved in
+      # deploy.yml.pre_m17_timeout_fix.bak in this same folder.
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy $SERVICE \
@@ -121,18 +132,33 @@ jobs:
             --service-account        beacon-runtime-sa@cfm-qbo-mcp.iam.gserviceaccount.com \
             --memory                 1Gi \
             --cpu                    2 \
-            --timeout                30 \
+            --timeout                300 \
             --min-instances          0 \
             --max-instances          2 \
             --port                   8080
 
+      # Smoke test: -L added 2026-09-22 (Security Assessment 2026-09-19.md,
+      # M15). session_guard.py's RawRunAppRedirectMiddleware, deployed tonight,
+      # now 307-redirects EVERY request on the raw *.run.app hostname
+      # (including /health -- no exemption, by design) to the branded
+      # beacondev.cfmins.org host. This step still hits $URL (the raw
+      # Cloud Run URL -- the one thing reliably known immediately post-
+      # deploy with no dependency on DNS/cert state on the custom domain),
+      # so without -L it always got a 307 back, never a 200 -- reporting
+      # every deploy since M15 landed as "failed" even though the build,
+      # push, and actual Cloud Run deploy all genuinely succeeded (confirmed
+      # directly via `gcloud run services describe` against 3 separate
+      # "failed" runs, all healthy). curl -L follows the redirect and lands
+      # on the real /health response, restoring a real pass/fail signal.
+      # Prior version preserved in deploy_pre_m15_redirect_smoketest_fix.yml.bak
+      # in this same folder.
       - name: Smoke test
         run: |
           URL=$(gcloud run services describe $SERVICE \
                   --region $REGION \
                   --format 'value(status.url)')
           echo "Service URL: $URL"
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/health")
+          STATUS=$(curl -sL -o /dev/null -w "%{http_code}" "$URL/health")
           echo "Health check status: $STATUS"
           if [ "$STATUS" != "200" ]; then
             echo "Health check failed!"

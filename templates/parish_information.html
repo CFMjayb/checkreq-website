@@ -85,6 +85,7 @@
     <details class="correction-details">
       <summary>Report a correction</summary>
       <form method="post" action="/parish-information/correction">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <textarea name="message" rows="3" placeholder="What needs to be corrected or added?" required></textarea>
         <button type="submit" class="btn btn-sm">Submit correction</button>
       </form>

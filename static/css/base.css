@@ -288,6 +288,15 @@ body.beacon-env-dev .site-header {
 .back-link { margin: 2px 0 var(--space-3); font-size: 0.9rem; }
 .back-link a { color: var(--color-muted, #667); text-decoration: none; }
 .back-link a:hover { text-decoration: underline; }
+/* M8 (Security Assessment 2026-09-19): a POST-driven back-link (e.g.
+   parish_view.html's "Choose a different parish") needs a <button> to
+   read exactly like the plain <a> version above it. */
+.back-link .link-button {
+  background: none; border: none; padding: 0; margin: 0;
+  font: inherit; cursor: pointer;
+  color: var(--color-muted, #667); text-decoration: none;
+}
+.back-link .link-button:hover { text-decoration: underline; }
 
 /* 2026-09-10: generic h1-plus-primary-action row, for a page whose title
    needs a button next to it (e.g. My Requests' "+ New Request"). Same

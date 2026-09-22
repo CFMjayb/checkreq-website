@@ -25,6 +25,7 @@
            style="max-width:320px;">
     <span class="sub" id="vendorCount">{{ rows|length }} vendor{{ '' if rows|length == 1 else 's' }}</span>
     <form method="post" action="/admin/vendors/sync-now" style="display:inline; margin-left:16px;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
       <button type="submit" class="btn btn-sm">Sync Vendors Now</button>
     </form>
   </p>

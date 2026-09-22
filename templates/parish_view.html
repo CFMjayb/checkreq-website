@@ -35,7 +35,22 @@
   <span>{{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</span>
 </h1>
 {% if can_switch %}
+{# M8 (Security Assessment 2026-09-19): switch_url is /admin/parish-mode
+   (a CFO's preview picker -- stays GET, it only ever renders, never
+   mutates) or /parish-view/switch (a native multi-parish user's own
+   "forget my remembered choice" action -- was GET, now POST, since it
+   writes to the session; see parish_mode.py). Branch on is_preview
+   (already in context) rather than the url string itself. #}
+{% if is_preview %}
 <p class="back-link"><a href="{{ switch_url }}">&larr; Choose a different parish</a></p>
+{% else %}
+<p class="back-link">
+  <form method="post" action="{{ switch_url }}" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <button type="submit" class="link-button">&larr; Choose a different parish</button>
+  </form>
+</p>
+{% endif %}
 {% endif %}
 
 {# Announcements feed (Parish Portal S4, 2026-08-08) -- fetched client-side

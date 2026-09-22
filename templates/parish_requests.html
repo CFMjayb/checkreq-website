@@ -11,6 +11,7 @@
 <div class="form-card">
   <h2>Send Feedback or Make a Request</h2>
   <form method="post" action="/parish-requests">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="field">
       <label>Type</label>
       <label><input type="radio" name="kind" value="feedback" checked> Feedback</label>

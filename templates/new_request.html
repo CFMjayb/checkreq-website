@@ -38,6 +38,7 @@
   </div>
   <p class="back-link"><a href="{% if edit_data and edit_data.request_type == 'invoice_payment' %}/invoice-intake{% else %}/my-requests{% endif %}">&larr; Back to {% if edit_data and edit_data.request_type == 'invoice_payment' %}Invoice Intake{% else %}My Requests{% endif %}</a></p>
   <form method="post" action="/new-request" id="reqForm" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <input type="hidden" name="org_id" value="{{ current_org.id }}">
     <input type="hidden" name="request_type" value="{{ edit_data.request_type if edit_data else 'check_request' }}">
     {% if edit_data %}
@@ -173,45 +174,54 @@
       <input type="number" step="0.01" id="askMyAccountantAmount" name="ask_my_accountant_amount" placeholder="0.00" oninput="refreshPreview()">
     </div>
 
-    {% if edit_data %}
-    <!-- Task 8 (2026-07-26 batch): moved to the BOTTOM of the left panel,
-         after GL Coding and before Submit -- Jay's exact request: "After
-         [the new-request prefill upload box], and then during an edit, the
-         attachments box and all of its functionality is at the bottom of
-         the left panel." Only rendered in Edit mode (edit_data is set) --
-         unchanged from before. -->
-    <div class="attachments-section">
-      <label>Attachments</label>
-      {% if attachments %}
-      <ul class="attachment-list">
-        {% for a in attachments %}
-        <li class="attachment-item">
-          <a href="/requests/{{ edit_data.editing_request_number }}/attachments/{{ a.id }}/view" target="_blank" rel="noopener">
-            {% if a.source == 'generated_pdf' %}Generated Check Request (PDF){% else %}{{ a.original_filename }}{% endif %}
-          </a>
-          <span class="attachment-meta">{{ (a.size_bytes / 1024) | round(1) }} KB</span>
-          <form method="post" action="/requests/{{ edit_data.editing_request_number }}/attachments/{{ a.id }}/remove"
-                class="attachment-remove-form"
-                onsubmit="return confirm('Remove this file from the list? The archived copy stays on file in SharePoint -- this only hides it here.');">
-            <button type="submit" class="attachment-remove-btn" title="Remove">&times;</button>
-          </form>
-        </li>
-        {% endfor %}
-      </ul>
-      {% else %}
-      <div class="attachment-empty">No attachments on file.</div>
-      {% endif %}
-      <form method="post" action="/requests/{{ edit_data.editing_request_number }}/attachments/add"
-            enctype="multipart/form-data" class="attachment-add-form">
-        <input type="file" name="attachments" multiple
-               accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
-        <button type="submit" class="btn btn-secondary btn-sm">Add</button>
-      </form>
-      {% if add_error %}<div class="upload-status error">{{ add_error }}</div>{% endif %}
-    </div>
-    {% endif %}
-
   </form>
+
+  {% if edit_data %}
+  <!-- Task 8 (2026-07-26 batch): moved to the BOTTOM of the left panel,
+       after GL Coding and before Submit -- Jay's exact request: "After
+       [the new-request prefill upload box], and then during an edit, the
+       attachments box and all of its functionality is at the bottom of
+       the left panel." Only rendered in Edit mode (edit_data is set) --
+       unchanged from before.
+       Kept as a SIBLING of #reqForm, not a child -- a <form> nested inside
+       another <form> is invalid HTML5 (browsers tolerate it, but the two
+       action forms below don't need to submit alongside the main request
+       form anyway), same reasoning already applied to the header's own
+       Submit/Save-as-Draft buttons, which live outside #reqForm and target
+       it via form="reqForm" instead. -->
+  <div class="attachments-section">
+    <label>Attachments</label>
+    {% if attachments %}
+    <ul class="attachment-list">
+      {% for a in attachments %}
+      <li class="attachment-item">
+        <a href="/requests/{{ edit_data.editing_request_number }}/attachments/{{ a.id }}/view" target="_blank" rel="noopener">
+          {% if a.source == 'generated_pdf' %}Generated Check Request (PDF){% else %}{{ a.original_filename }}{% endif %}
+        </a>
+        <span class="attachment-meta">{{ (a.size_bytes / 1024) | round(1) }} KB</span>
+        <form method="post" action="/requests/{{ edit_data.editing_request_number }}/attachments/{{ a.id }}/remove"
+              class="attachment-remove-form"
+              data-confirm="Remove this file from the list? The archived copy stays on file in SharePoint -- this only hides it here.">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <button type="submit" class="attachment-remove-btn" title="Remove">&times;</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="attachment-empty">No attachments on file.</div>
+    {% endif %}
+    <form method="post" action="/requests/{{ edit_data.editing_request_number }}/attachments/add"
+          enctype="multipart/form-data" class="attachment-add-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <input type="file" name="attachments" multiple
+             accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
+      <button type="submit" class="btn btn-secondary btn-sm">Add</button>
+    </form>
+    {% if add_error %}<div class="upload-status error">{{ add_error }}</div>{% endif %}
+  </div>
+  {% endif %}
+
 </div>
 
 <div class="split-pane split-preview">

@@ -39,6 +39,7 @@
   {% endif %}
   <form method="post" action="/admin/timekeeping/status/{{ period.id }}/set-status"
         style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <label>Set this period to
       <select name="status">
         <option value="open"{% if period.status == 'open' %} selected{% endif %}>Open — accepting hours</option>

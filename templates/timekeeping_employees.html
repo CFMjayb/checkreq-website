@@ -35,6 +35,7 @@ report hours.</p>
 <details class="setup-section">
   <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ Add an employee</summary>
   <form method="post" action="/admin/timekeeping/employees/add" style="margin-top:12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="field"><label>Parish / department *</label>
       <select name="parish_id" required>
         <option value="">Choose&hellip;</option>
@@ -90,6 +91,7 @@ report hours.</p>
   the row and waits for Save Changes.
 #}
 <form method="post" action="/admin/timekeeping/employees/save">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
 <div class="card">
 <div class="table-scroll">
 <table class="simple-table">

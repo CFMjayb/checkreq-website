@@ -31,6 +31,7 @@
         <td><span class="badge badge-request-{{ r.status|lower }}">{{ r.status }}</span></td>
         <td>
           <form method="post" action="/admin/parish-requests/{{ r.id }}/respond">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <select name="status">
               <option value="Reviewed" {% if r.status == 'Reviewed' %}selected{% endif %}>Reviewed</option>
               <option value="Closed" {% if r.status == 'Closed' %}selected{% endif %}>Closed</option>

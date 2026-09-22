@@ -86,6 +86,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hmac
+import html
 import os
 import re
 import secrets as pysecrets
@@ -94,11 +95,14 @@ from datetime import date, datetime
 from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Request, Form, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+import psycopg
+import session_guard
 import db
 import rbac
 import parish_roles
@@ -137,6 +141,7 @@ import notifications
 import art_preapproval
 import security_headers
 import upload_guard
+import csrf_guard
 
 ATTACHMENTS_BUCKET = "cfm-checkreq-attachments"
 
@@ -232,10 +237,41 @@ _SESSION_SECRET_RAW = os.environ.get("SESSION_SECRET", "")
 if ON_CLOUD_RUN and not _SESSION_SECRET_RAW.strip():
     raise RuntimeError("SESSION_SECRET must be set on Cloud Run")
 
+# L9 continued: the 8-hour absolute cap. Starlette's add_middleware() PREPENDS
+# to the middleware list, and the stack is built by wrapping in REVERSED list
+# order -- so the middleware added MOST RECENTLY ends up OUTERMOST (runs
+# FIRST on the way in), and the one added EARLIEST ends up INNERMOST (runs
+# LAST, closest to the route). Confirmed live by canonicalize_localhost's own
+# docstring below, which is added after everything here and is proven to run
+# before SessionMiddleware ever touches the session. So to have this
+# middleware see request.session already populated, it must be added BEFORE
+# SessionMiddleware, not after (a real bug in an earlier draft of this code --
+# added after, it 500'd on every single request with "SessionMiddleware must
+# be installed to access request.session", caught by booting the app and
+# hitting a real route, not by py_compile).
+#
+# M8 (Security Assessment 2026-09-19): CSRFMiddleware is added EVEN EARLIER
+# than SessionAbsoluteCapMiddleware below, for the same "added earliest =
+# innermost = runs LAST, closest to the route" rule -- it also needs
+# request.session (populated by SessionMiddleware, which runs before it
+# either way), and running it AFTER SessionAbsoluteCapMiddleware means an
+# already-expired session gets force-cleared and redirected to /login
+# before its stale token is ever even compared, rather than the two checks
+# racing in an undefined order. See csrf_guard.py's own docstring for the
+# token-replay gotcha this middleware works around.
+app.add_middleware(csrf_guard.CSRFMiddleware)
+app.add_middleware(session_guard.SessionAbsoluteCapMiddleware)
+# L9 (Security Assessment 2026-09-19, Jay: "60/8"): max_age=1h gives the
+# IDLE half of "60/8" for free -- Starlette re-issues this cookie's Max-Age
+# on every response, so it naturally expires 60 minutes after the LAST
+# request, not from login. See session_guard.py for the separate 8-hour
+# ABSOLUTE-cap middleware above, which needs its own clock since cookie
+# max_age alone can never measure "time since login."
 app.add_middleware(
     SessionMiddleware,
     secret_key=_SESSION_SECRET_RAW or "dev-only-not-secure",
     https_only=ON_CLOUD_RUN,
+    max_age=session_guard.SESSION_MAX_AGE_SECONDS,
 )
 # M2 (Security Assessment 2026-09-19): X-Frame-Options / nosniff / Referrer-
 # Policy / Permissions-Policy on every response, Cache-Control: no-store on
@@ -244,6 +280,34 @@ app.add_middleware(
 # the reasoning behind every directive. Added after SessionMiddleware so it
 # wraps outside it and sees the finished response.
 app.add_middleware(security_headers.SecurityHeadersMiddleware, on_cloud_run=ON_CLOUD_RUN)
+# M15 (Security Assessment 2026-09-19): app-level rate limiting on the
+# pre-authentication surface (/login, /auth/*, /internal/*) and a redirect
+# for the raw *.run.app hostname to this environment's real branded domain
+# -- see session_guard.py for why an in-process limiter is the right call
+# for this app's actual scale, and Jay's approved option (a) over a real
+# edge/Cloud Armor deployment (b).
+_CANONICAL_HOST = "beacon.cfmins.org" if BEACON_ENV == "prod" else "beacondev.cfmins.org"
+# _client_ip isn't defined until later in this file -- a lambda defers the
+# name lookup to CALL time (once the app is actually serving requests),
+# not to this add_middleware() call itself, so no NameError at import time.
+app.add_middleware(session_guard.RateLimitMiddleware, client_ip_fn=lambda r: _client_ip(r))
+if ON_CLOUD_RUN:
+    app.add_middleware(session_guard.RawRunAppRedirectMiddleware, canonical_host=_CANONICAL_HOST)
+
+
+# L14 (Security Assessment 2026-09-19): FastAPI's DEFAULT 422 handler echoes
+# the raw offending input and the exact parameter path back to the caller
+# (e.g. GET /org-logo/abc -> {"detail":[{"loc":["path","org_id"],...,
+# "input":"abc"}]}) -- JSON, not XSS-exploitable, but real reconnaissance
+# value it doesn't need to hand out for free, and inconsistent with every
+# other error response in this app (404s already leak nothing -- see the
+# "Confirmed good" list in Security Assessment 2026-09-19.md). Replaces the
+# whole body with the same generic shape a 404 already uses; never logs or
+# otherwise drops the real validation detail -- FastAPI's own request
+# logging still has it if anyone needs to debug a genuine client bug.
+@app.exception_handler(RequestValidationError)
+async def _validation_error_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse({"detail": "Not Found"}, status_code=422)
 
 
 @app.middleware("http")
@@ -290,6 +354,9 @@ def _asset_version(rel_path: str) -> int:
 
 templates.env.globals["asset_version"] = _asset_version
 templates.env.globals["BEACON_ENV"] = BEACON_ENV
+# M8: {{ csrf_token(request) }}, same registration pattern as the two lines
+# above and as auth_routes.py's login_branding -- see csrf_guard.py.
+csrf_guard.register_globals(templates)
 
 if os.environ.get("ENABLE_DEV_AUTH_BYPASS") == "1":
     print("*** DEV AUTH BYPASS ENABLED — LOCAL ONLY — /dev/auth-as/{email} is live ***")
@@ -615,13 +682,19 @@ def _client_ip(request: Request) -> str | None:
     """Real client IP for the approval-chain audit trail (Jay, 2026-07-29:
     "the exact approvers with their date/time and IP"). Cloud Run terminates
     TLS at a proxy, so request.client.host would be the proxy's own address,
-    not the real caller -- X-Forwarded-For's first entry is the original
-    client (standard convention, and the header Cloud Run itself sets).
-    Falls back to request.client.host for local dev, where no proxy sits
-    in front."""
+    not the real caller.
+
+    L1 (Security Assessment 2026-09-19): the FIRST X-Forwarded-For entry is
+    whatever the CLIENT put there -- a request can arrive with an
+    attacker-supplied fake IP already prepended. Google's own front end
+    APPENDS the real connecting IP as the LAST entry in the chain rather
+    than replacing it, so the last entry is the one entry no client-side
+    request can forge. Falls back to request.client.host for local dev,
+    where no proxy sits in front and there is no header to trust or
+    distrust either way."""
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
-        return fwd.split(",")[0].strip()
+        return fwd.split(",")[-1].strip()
     return request.client.host if request.client else None
 
 
@@ -928,7 +1001,18 @@ def portal(request: Request):
     if not org:
         dioceses = _accessible_diocese_orgs(user["id"])
         if len(dioceses) == 1:
-            return RedirectResponse(f"/select-entity/{dioceses[0]['id']}", status_code=303)
+            # M8 (Security Assessment 2026-09-19): used to redirect to
+            # POST /select-entity/{org_id} -- a 3xx redirect is ALWAYS
+            # followed as GET regardless of the target route's own method,
+            # so once that route became POST-only this would have 405'd on
+            # every single-entity user's very first /portal load. Calls
+            # _select_entity_core() directly instead (same module, defined
+            # further down -- resolved at call time, not import time, so
+            # the forward reference is fine) -- the identical authorize-
+            # then-set-session logic the real route body uses, just
+            # without the redirect hop.
+            _select_entity_core(request, dioceses[0]["id"])
+            return RedirectResponse("/portal", status_code=303)
 
     modules = MODULES
     if org and cornerstone_mode.is_cornerstone_org(org["id"]):
@@ -975,20 +1059,51 @@ def _accessible_diocese_orgs(user_id: int) -> list[dict]:
     ) if _user_has_org_access(user_id, o["id"]) and not cornerstone_mode.is_cornerstone_org(o["id"])]
 
 
-@app.get("/select-entity/{org_id}")
-def select_entity(org_id: int, request: Request, next: str = "/portal"):
+def _select_entity_core(request: Request, org_id: int) -> bool:
+    """The actual org-switch mutation (authorize, then set
+    session['current_org_id']) -- extracted so cornerstone_mode.py's own
+    POST /admin/cornerstone-mode/{org_id} can call it directly instead of
+    (as it did before M8) issuing an HTTP redirect to this route: a 3xx
+    redirect is ALWAYS followed by the browser as a GET regardless of the
+    Location's own method requirements, so once /select-entity became
+    POST-only (M8, Security Assessment 2026-09-19), that redirect would
+    have 405'd in production. Injected into cornerstone_mode.register() as
+    select_entity_core -- same dependency-injection pattern already used
+    for accessible_diocese_orgs on that same call, not a circular import
+    (main.py imports cornerstone_mode, so the reverse would be one).
+    Returns True on success (session updated); False if denied, leaving it
+    to the caller to decide where to bounce."""
     user = _current_user(request)
     if not user:
-        return RedirectResponse("/login")
-
+        return False
     org = db.query_one(
         "SELECT id FROM checkreq.organizations WHERE id = %s AND is_active", (org_id,)
     )
     if not org or not _user_has_org_access(user["id"], org_id):
-        return RedirectResponse("/portal")
-
+        return False
     request.session["current_org_id"] = org_id
-    return RedirectResponse(_safe_next_path(next), status_code=303)
+    return True
+
+
+@app.post("/select-entity/{org_id}")
+async def select_entity(org_id: int, request: Request):
+    """M8 (Security Assessment 2026-09-19): was GET -- reachable cross-site
+    under SameSite=Lax (a top-level GET navigation still carries the
+    cookie), and this route WRITES to the session (current_org_id), exactly
+    the class of action M8 is about. Converted to POST; every caller
+    (base.html's #entitySwitcherForm, portal.html's entity cards,
+    cornerstone_mode.html's "Enter a Diocese" table) now submits a real
+    <form> instead of navigating a plain <a href>. `next` still accepted
+    from either the form body (the new callers) or the query string (kept
+    for robustness, costs nothing) -- _safe_next_path() below is unchanged
+    and still the one thing standing between this and an open redirect."""
+    if not _current_user(request):
+        return RedirectResponse("/login")
+    if not _select_entity_core(request, org_id):
+        return RedirectResponse("/portal")
+    form = await request.form()
+    next_path = str(form.get("next") or request.query_params.get("next") or "/portal")
+    return RedirectResponse(_safe_next_path(next_path), status_code=303)
 
 
 def _safe_next_path(next_value: str | None) -> str:
@@ -1105,10 +1220,17 @@ def impersonate_picker(request: Request):
     real = _real_user(request)
     if not real:
         return RedirectResponse("/login")
-    # RBAC (2026-08-01): cross-entity by design, same as today -- an
-    # EDOM-only CFO could impersonate before RBAC too (is_cfo was global).
-    if not rbac.user_has_role(real["id"], "cfo", org_id=None):
-        return JSONResponse({"error": "CFO access required"}, status_code=403)
+    # M5 (Security Assessment 2026-09-19): gate widened cfo -> beacon_admin,
+    # matching impersonate_start's own gate -- every live cfo holder already
+    # holds beacon_admin, so this changes nobody's real access. NOTE: this
+    # list is not yet filtered to exactly the orgs/users impersonate_start
+    # will actually allow (that route enforces the real boundary) -- a
+    # listed user could still be refused there if they hold a role the
+    # viewer lacks. Flagged as a follow-up, not a security gap: the POST
+    # route is the actual enforcement point and cannot be bypassed by what
+    # this page merely displays.
+    if not rbac.user_has_role(real["id"], "beacon_admin", org_id=None):
+        return JSONResponse({"error": "Beacon Administrator access required"}, status_code=403)
 
     current_org = _current_org(request)
 
@@ -1206,17 +1328,55 @@ def impersonate_stop(request: Request):
 
 @app.post("/admin/impersonate/{user_id}")
 def impersonate_start(user_id: int, request: Request):
+    """M5 (Security Assessment 2026-09-19), both parts Jay approved:
+    (1) gate widened from bare `cfo` to `beacon_admin` -- every live cfo
+    holder already holds beacon_admin, so this changes nobody's real access.
+    (2) a server-side target rule: the target must belong to (hold ANY live
+    role at) an org where the impersonator holds beacon_admin, AND must
+    hold no role anywhere that the impersonator doesn't also hold --
+    impersonation can never be used to temporarily gain a capability the
+    real, logged-in identity doesn't already have. Previously any cfo
+    anywhere could impersonate any active user system-wide, including
+    another entity's beacon_admin."""
     real = _real_user(request)
     if not real:
         return RedirectResponse("/login")
-    if not rbac.user_has_role(real["id"], "cfo", org_id=None):
-        return JSONResponse({"error": "CFO access required"}, status_code=403)
+    if not rbac.user_has_role(real["id"], "beacon_admin", org_id=None):
+        return JSONResponse({"error": "Beacon Administrator access required"}, status_code=403)
 
     target = db.query_one(
         "SELECT id FROM checkreq.app_users WHERE id = %s AND is_active", (user_id,)
     )
     if not target:
         return RedirectResponse("/admin/impersonate")
+
+    impersonator_admin_orgs = set(rbac.get_granted_org_ids(real["id"], "beacon_admin"))
+    target_orgs = set(rbac.get_entity_org_ids(user_id))
+    if not (impersonator_admin_orgs & target_orgs):
+        return JSONResponse(
+            {"error": "You can only impersonate a user who belongs to an entity you administer."},
+            status_code=403,
+        )
+    # _BASELINE_ROLES excluded from the comparison: entity_member/parish_member
+    # are auto-granted to nearly every real login (rbac.ENTITY_BASE_ROLE /
+    # parish_roles.PARISH_BASE_ROLE) and carry no privilege beyond "is a real
+    # login" -- Jay's own admin account predates that convention and was never
+    # granted entity_member itself, so treating it as an "escalation" blocked
+    # impersonating literally any ordinary user (caught live: impersonating
+    # mdickson-patrick, who holds nothing but entity_member, 403'd with "this
+    # user holds a role you don't hold yourself" -- the exact case this
+    # feature exists for). The real intent -- never let impersonation grant a
+    # capability the real identity doesn't already have -- only concerns
+    # roles that actually DO something beyond baseline membership.
+    _BASELINE_ROLES = {rbac.ENTITY_BASE_ROLE, parish_roles.PARISH_BASE_ROLE}
+    escalation = (
+        rbac.get_role_keys(user_id, org_id=None) - _BASELINE_ROLES
+    ) - rbac.get_role_keys(real["id"], org_id=None)
+    if escalation:
+        return JSONResponse(
+            {"error": "This user holds a role you don't hold yourself -- impersonation refused."},
+            status_code=403,
+        )
 
     _close_open_impersonation(real["id"])
     with db.connect() as conn:
@@ -1598,9 +1758,9 @@ def _send_budget_buffer_notice_email(request_number: str, org_name: str, org_id:
         return
     subject = f"Budget notice: {request_number} is over budget (within buffer)"
     body_html = (
-        f"<p>FYI — <strong>{request_number}</strong> ({org_name}) was submitted over budget on "
+        f"<p>FYI — <strong>{_esc(request_number)}</strong> ({_esc(org_name)}) was submitted over budget on "
         f"one or more GL lines, but within that account's allowed buffer. No action is needed.</p>"
-        f"<ul>" + "".join(f"<li>{d}</li>" for d in details) + "</ul>"
+        f"<ul>" + "".join(f"<li>{_esc(d)}</li>" for d in details) + "</ul>"
     )
     body_text = (
         f"FYI -- {request_number} ({org_name}) was over budget, within buffer:\n\n"
@@ -1708,11 +1868,19 @@ def _mint_approval_email_token(cur, payment_request_id: int, approver_user_id: i
     group). Takes an open cursor so it can be minted in the same transaction
     as the approval_actions rows it corresponds to (submission, edit-reset,
     and chain-advance all already hold one)."""
+    # I2 (Security Assessment 2026-09-19): the '%s days' placeholder sat
+    # INSIDE a string literal -- psycopg3 still parameterizes it correctly
+    # (confirmed not injectable), but it relies on Postgres implicitly
+    # casting a bare string to INTERVAL rather than a real typed
+    # parameter. make_interval() takes the integer directly, no implicit
+    # string-to-interval cast anywhere in the path. Verified live against
+    # real Postgres before changing this (SELECT NOW() + make_interval(days
+    # => %s), a real integer parameter, returns the expected timestamp).
     token = pysecrets.token_urlsafe(32)
     cur.execute(
         "INSERT INTO checkreq.approval_email_tokens "
         "(token, payment_request_id, approver_user_id, serial_group, expires_at) "
-        "VALUES (%s, %s, %s, %s, NOW() + INTERVAL '%s days')",
+        "VALUES (%s, %s, %s, %s, NOW() + make_interval(days => %s))",
         (token, payment_request_id, approver_user_id, serial_group, APPROVAL_EMAIL_TOKEN_DAYS),
     )
     return token
@@ -1777,18 +1945,32 @@ def _approval_action_email_html(request_body: str, sign_in_url: str) -> str:
 """
 
 
+def _esc(value) -> str:
+    """M10 (Security Assessment 2026-09-19): every one of these email
+    _*_html() builders interpolates real user-typed text (a check request's
+    own Description, a rejection reason, a new vendor's name/contact,
+    someone's own self-editable display name) directly into an HTML email
+    body with no escaping -- an approver's mail client renders whatever a
+    submitter (or, for the rejection-reason case, an approver/AP reviewer)
+    typed. html.escape() everywhere one of these values is interpolated
+    into *_html (never *_text, which is already safe -- there's no markup
+    to break out of in a plain-text email). None/blank passes through as
+    '' rather than the literal string 'None'."""
+    return html.escape(str(value)) if value not in (None, "") else ""
+
+
 def _request_summary_table_html(ctx: dict) -> str:
     needed_by = ctx["requested_pay_date"].strftime("%Y-%m-%d") if ctx.get("requested_pay_date") else "—"
     return f"""
     <table style="width:100%; border-collapse:collapse; margin:12px 0;">
-      <tr><td style="padding:4px 0; color:#555; width:150px;">Request #</td><td style="padding:4px 0; font-weight:bold;">{ctx['request_number']}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Entity</td><td style="padding:4px 0;">{ctx['org_code']}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Vendor</td><td style="padding:4px 0;">{ctx['vendor_name']}</td></tr>
+      <tr><td style="padding:4px 0; color:#555; width:150px;">Request #</td><td style="padding:4px 0; font-weight:bold;">{_esc(ctx['request_number'])}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Entity</td><td style="padding:4px 0;">{_esc(ctx['org_code'])}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Vendor</td><td style="padding:4px 0;">{_esc(ctx['vendor_name'])}</td></tr>
       <tr><td style="padding:4px 0; color:#555;">Amount</td><td style="padding:4px 0; font-weight:bold;">${float(ctx['amount']):,.2f}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Program Area</td><td style="padding:4px 0;">{ctx['program_area_title']}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Program Area</td><td style="padding:4px 0;">{_esc(ctx['program_area_title'])}</td></tr>
       <tr><td style="padding:4px 0; color:#555;">Needed By</td><td style="padding:4px 0;">{needed_by}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Submitted By</td><td style="padding:4px 0;">{ctx.get('submitter_name') or ctx.get('submitter_email') or '—'}</td></tr>
-      <tr><td style="padding:4px 0; color:#555; vertical-align:top;">Description</td><td style="padding:4px 0;">{ctx.get('description') or '—'}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Submitted By</td><td style="padding:4px 0;">{_esc(ctx.get('submitter_name') or ctx.get('submitter_email')) or '—'}</td></tr>
+      <tr><td style="padding:4px 0; color:#555; vertical-align:top;">Description</td><td style="padding:4px 0;">{_esc(ctx.get('description')) or '—'}</td></tr>
     </table>
     """
 
@@ -1824,7 +2006,7 @@ def _send_approval_needed_email(ctx: dict, approver_email: str, approver_name: s
     sign_in_url = f"{base}/my-approvals"
     subject = f"Approval needed: {ctx['request_number']} ({ctx['vendor_name']}) — ${float(ctx['amount']):,.2f}"
     body = f"""
-    <p>Hello {approver_name or ''},</p>
+    <p>Hello {_esc(approver_name) or ''},</p>
     <p>A check request is waiting for your review as an approver in the chain.</p>
     {_request_summary_table_html(ctx)}
     {_email_action_buttons_html(action_url)}
@@ -1863,8 +2045,8 @@ def _send_daily_digest_email(approver: dict, rows: list[dict], request: Request)
         needed_by = r["requested_pay_date"].strftime("%Y-%m-%d") if r.get("requested_pay_date") else "—"
         items_html += f"""
         <tr>
-          <td style="padding:8px; border-bottom:1px solid #eee;"><strong>{r['request_number']}</strong><br><span style="color:#888; font-size:0.85em;">{r['org_code']}</span></td>
-          <td style="padding:8px; border-bottom:1px solid #eee;">{r['vendor_name']}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;"><strong>{_esc(r['request_number'])}</strong><br><span style="color:#888; font-size:0.85em;">{_esc(r['org_code'])}</span></td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{_esc(r['vendor_name'])}</td>
           <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">${float(r['amount']):,.2f}</td>
           <td style="padding:8px; border-bottom:1px solid #eee;">{needed_by}</td>
           <td style="padding:8px; border-bottom:1px solid #eee;">
@@ -1879,7 +2061,7 @@ def _send_daily_digest_email(approver: dict, rows: list[dict], request: Request)
 
     plural = "s" if len(rows) != 1 else ""
     body = f"""
-    <p>Hello {approver.get('display_name') or ''},</p>
+    <p>Hello {_esc(approver.get('display_name')) or ''},</p>
     <p>You have <strong>{len(rows)}</strong> check request{plural} waiting for your approval:</p>
     <table style="width:100%; border-collapse:collapse; margin:16px 0; font-size:0.92rem;">
       <tr style="background:#f5f5f5;">
@@ -2290,15 +2472,15 @@ def _send_rejection_email(pr: dict, new_status: str, reason: str, request: Reque
     amount_str = f"${float(pr['amount']):,.2f}" if pr.get("amount") is not None else "—"
     rejected_by = rejected_by_name or "—"
     body_html = (
-        f"<p>Hello {pr.get('submitter_name') or ''},</p>"
-        f"<p>Your check request <strong>{pr['request_number']}</strong> "
-        f"({pr['org_name']}) was {verb}.</p>"
+        f"<p>Hello {_esc(pr.get('submitter_name')) or ''},</p>"
+        f"<p>Your check request <strong>{_esc(pr['request_number'])}</strong> "
+        f"({_esc(pr['org_name'])}) was {verb}.</p>"
         f"<table style=\"border-collapse:collapse; margin:12px 0;\">"
-        f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">Vendor</td><td style=\"padding:3px 0;\">{vendor_name}</td></tr>"
+        f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">Vendor</td><td style=\"padding:3px 0;\">{_esc(vendor_name)}</td></tr>"
         f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">Amount</td><td style=\"padding:3px 0; font-weight:bold;\">{amount_str}</td></tr>"
-        f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">{'Returned by' if new_status == 'Returned by AP' else 'Rejected by'}</td><td style=\"padding:3px 0;\">{rejected_by}</td></tr>"
+        f"<tr><td style=\"padding:3px 12px 3px 0; color:#555;\">{'Returned by' if new_status == 'Returned by AP' else 'Rejected by'}</td><td style=\"padding:3px 0;\">{_esc(rejected_by)}</td></tr>"
         f"</table>"
-        f"<p><strong>Reason:</strong> {reason}</p>"
+        f"<p><strong>Reason:</strong> {_esc(reason)}</p>"
         f"<p>The original check request is attached. You can edit and resubmit it here: <a href=\"{edit_url}\">{edit_url}</a></p>"
     )
     body_text = (
@@ -2560,6 +2742,30 @@ async def api_budget_check_submission(request: Request):
 
 _EXTRACT_MAX_BYTES = 10 * 1024 * 1024
 _EXTRACT_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/gif", "image/webp"}
+_EXTRACT_DOCUMENT_DAILY_CAP_DEFAULT = 25
+
+
+def _check_and_increment_extract_document_usage(user_id: int) -> tuple[bool, int, int]:
+    """L4 (Security Assessment 2026-09-19): /api/extract-document is a paid
+    Anthropic vision call with no per-user rate limit -- a buggy retry loop
+    or repeated manual testing by a signed-in staffer is the realistic risk
+    here (the route already requires login), not an anonymous cost attack.
+    Tracked in Postgres, not in-memory, so the count survives a Cloud Run
+    cold start on this scale-to-zero service. The INSERT...ON CONFLICT
+    increment is atomic -- this always increments (cheap, no cost incurred
+    yet) and only the caller decides whether to proceed with the real paid
+    call based on the returned count. Returns (allowed, today_count, cap)."""
+    cap = int(app_settings.get_setting("extract_document_daily_cap", str(_EXTRACT_DOCUMENT_DAILY_CAP_DEFAULT)))
+    row = db.query_one(
+        "INSERT INTO checkreq.extract_document_daily_usage (user_id, usage_date, call_count) "
+        "VALUES (%s, CURRENT_DATE, 1) "
+        "ON CONFLICT (user_id, usage_date) DO UPDATE SET "
+        "call_count = checkreq.extract_document_daily_usage.call_count + 1, updated_at = now() "
+        "RETURNING call_count",
+        (user_id,),
+    )
+    today_count = row["call_count"]
+    return today_count <= cap, today_count, cap
 
 
 @app.post("/api/extract-document")
@@ -2574,6 +2780,14 @@ async def api_extract_document(request: Request, file: UploadFile):
     org = _current_org(request)
     if not org:
         return JSONResponse({"error": "No entity selected"}, status_code=400)
+
+    allowed, today_count, cap = _check_and_increment_extract_document_usage(user["id"])
+    if not allowed:
+        return JSONResponse(
+            {"error": f"You've reached today's limit ({cap}) for automatic document reading. "
+                      f"Please fill in the form manually, or try again tomorrow."},
+            status_code=429,
+        )
 
     content = await file.read()
     if len(content) > _EXTRACT_MAX_BYTES:
@@ -3162,13 +3376,13 @@ def _send_w9_request_email(vr: dict, org_name: str, request: Request) -> dict:
     upload_url = f"{base_url}/vendor-w9-upload/{vr['upload_token']}"
     subject = f"W-9 Request — {vendor_name}"
     body_html = (
-        f"<p>Hello {vr.get('contact_name') or ''},</p>"
-        f"<p>{org_name} is setting up <strong>{vendor_name}</strong> as a new payee and "
+        f"<p>Hello {_esc(vr.get('contact_name')) or ''},</p>"
+        f"<p>{_esc(org_name)} is setting up <strong>{_esc(vendor_name)}</strong> as a new payee and "
         f"needs a completed IRS Form W-9 on file before any payment can be issued.</p>"
         f"<p>A blank W-9 is attached for reference. Please complete it and upload it "
         f"using the secure link below:</p>"
         f'<p><a href="{upload_url}">{upload_url}</a></p>'
-        f"<p>Thank you,<br>{org_name} Business Office</p>"
+        f"<p>Thank you,<br>{_esc(org_name)} Business Office</p>"
     )
     body_text = (
         f"Hello {vr.get('contact_name') or ''},\n\n"
@@ -3216,12 +3430,12 @@ def _send_existing_vendor_w9_request_email(vendor: dict, org_name: str, request:
     subject = f"W-9 Request — {vendor_name}"
     body_html = (
         f"<p>Hello,</p>"
-        f"<p>{org_name} needs a completed IRS Form W-9 on file for <strong>{vendor_name}</strong>, "
+        f"<p>{_esc(org_name)} needs a completed IRS Form W-9 on file for <strong>{_esc(vendor_name)}</strong>, "
         f"based on total payments so far this year.</p>"
         f"<p>A blank W-9 is attached for reference. Please complete it and upload it "
         f"using the secure link below:</p>"
         f'<p><a href="{upload_url}">{upload_url}</a></p>'
-        f"<p>Thank you,<br>{org_name} Business Office</p>"
+        f"<p>Thank you,<br>{_esc(org_name)} Business Office</p>"
     )
     body_text = (
         f"Hello,\n\n"
@@ -3254,13 +3468,28 @@ def _send_existing_vendor_w9_request_email(vendor: dict, org_name: str, request:
     )
 
 
+_W9_TOKEN_LIFETIME_DAYS = 7  # M11 (Security Assessment 2026-09-19): "W-9 tokens expire (7 d)"
+
+
 def _vendor_request_by_upload_token(token: str) -> dict | None:
     """404-safe lookup for the unauthenticated /vendor-w9-upload/{token}
     route (Section 4a). Returns None (never a distinguishing error) for a
     bad token OR a token whose vendor_request has left 'approved' status --
     the upload window closes automatically the moment approval status
     changes (rejected / posted_to_qbo), without relying on the vendor to
-    notice."""
+    notice.
+
+    M11: also requires the token be genuinely live -- w9_email_sent_at
+    IS NOT NULL (the email actually sent; a token minted but never
+    delivered was never meant to be usable) AND within
+    _W9_TOKEN_LIFETIME_DAYS of that send. Unlike the existing-vendor
+    sibling below, this path does NOT also require w9_uploaded_at IS NULL
+    (single-use) -- there is no resend action for THIS path that could
+    re-open a closed window (see vendor_request_resend_w9 below, which
+    fixes that gap for expiry but a vendor re-uploading a corrected file
+    before staff ever reviews the first one is legitimate and harmless
+    here, since w9_received -- a real human confirming it -- is always the
+    actual gate, never the upload alone)."""
     if not token:
         return None
     return db.query_one(
@@ -3270,18 +3499,27 @@ def _vendor_request_by_upload_token(token: str) -> dict | None:
         FROM checkreq.vendor_requests vr
         JOIN checkreq.organizations o ON o.id = vr.org_id
         WHERE vr.upload_token = %s AND vr.status = 'approved'
+          AND vr.w9_email_sent_at IS NOT NULL
+          AND vr.w9_email_sent_at > NOW() - INTERVAL '1 day' * %s
         """,
-        (token,),
+        (token, _W9_TOKEN_LIFETIME_DAYS),
     )
 
 
 def _existing_vendor_by_w9_upload_token(token: str) -> dict | None:
     """404-safe lookup for /vendor-w9-upload/{token} -- the EXISTING-vendor
-    sibling of _vendor_request_by_upload_token above (2026-09-14). No
-    status gate to check (unlike vendor_requests' own 'approved'
-    requirement) -- an existing checkreq.vendors row is, by definition,
-    already a real, active vendor; the token itself being unguessable is
-    the only real access control this route needs."""
+    sibling of _vendor_request_by_upload_token above (2026-09-14).
+
+    M11: unlike the new-vendor path, THIS one also requires
+    w9_uploaded_at IS NULL (single-use) -- the real gap M11 named was
+    specifically here: an upload alone used to flip w9_on_file directly
+    with zero staff review, so a stale/leaked link staying live forever
+    AND reusable indefinitely was a genuine risk. Once used, the token is
+    spent; ap_review_request_existing_vendor_w9's "Resend W-9 Request"
+    action (the only way this token is ever issued in the first place)
+    explicitly clears w9_uploaded_at back to NULL when clicked, which is
+    the intended, staff-initiated way to re-open the window -- e.g. after
+    reviewing an uploaded file and finding it illegible or wrong."""
     if not token:
         return None
     return db.query_one(
@@ -3291,8 +3529,11 @@ def _existing_vendor_by_w9_upload_token(token: str) -> dict | None:
         FROM checkreq.vendors v
         JOIN checkreq.organizations o ON o.id = v.org_id
         WHERE v.w9_upload_token = %s
+          AND v.w9_uploaded_at IS NULL
+          AND v.w9_requested_at IS NOT NULL
+          AND v.w9_requested_at > NOW() - INTERVAL '1 day' * %s
         """,
-        (token,),
+        (token, _W9_TOKEN_LIFETIME_DAYS),
     )
 
 
@@ -3327,6 +3568,61 @@ def _next_request_number(request_type: str) -> str:
             )
             max_seq = cur.fetchone()["max_seq"]
     return f"{full_prefix}{max_seq + 1:03d}"
+
+
+# I3 (Security Assessment 2026-09-19, approved by Jay 2026-09-21): "Request
+# number generation is MAX+1 with no unique constraint -- a concurrency
+# race." The second half of that finding was already wrong when written --
+# checkreq.payment_requests.request_number has carried a real UNIQUE
+# constraint (payment_requests_request_number_key) since the very first
+# migration (001_checkreq_schema.sql, 2026-07-17), confirmed live by reading
+# pg_constraint directly before touching anything, so no NEW schema change
+# was needed here despite Jay's go-ahead to make one. The race itself is
+# still real, though: two submissions computing the same MAX+1 in the same
+# instant would both pass their own _next_request_number() call, then the
+# SECOND one's INSERT would correctly fail on the constraint -- but nothing
+# caught that failure, so that submitter would see a raw 500 and lose their
+# whole submission (not silently corrupted data -- the constraint already
+# prevented that -- just an ugly crash instead of a transparent retry).
+# _RETRY_MAX chosen generously for a race this narrow (a handful of
+# concurrent submissions per day, at most): if 3 fresh numbers in a row all
+# collide, something else is wrong and the real exception should surface.
+_REQUEST_NUMBER_RETRIES = 3
+
+
+def _is_request_number_conflict(exc: BaseException) -> bool:
+    """True ONLY for the specific request_number UNIQUE constraint -- never
+    swallows any other UniqueViolation (a real bug in a different table
+    should still surface as a real 500, not be silently retried as if it
+    were this race)."""
+    return (
+        isinstance(exc, psycopg.errors.UniqueViolation)
+        and "payment_requests_request_number_key" in str(exc)
+    )
+
+
+def _submit_with_request_number_retry(request_type: str, do_insert):
+    """Shared retry wrapper for both places this app mints a request_number
+    and inserts inside one db.connect() transaction (the new-submission
+    branch and the save-as-draft branch of new_request_submit, below) --
+    generates a fresh number, hands it to do_insert(request_number) (which
+    performs its own complete db.connect()-wrapped transaction and returns
+    whatever the caller needs), and on the one specific conflict this
+    exists for, discards that attempt's already-rolled-back transaction
+    (db.connect() itself guarantees the rollback on any exception -- see
+    its own docstring) and tries again with a newly-computed number. Any
+    other exception, or the conflict recurring past _REQUEST_NUMBER_RETRIES
+    attempts, propagates unchanged."""
+    last_exc = None
+    for attempt in range(_REQUEST_NUMBER_RETRIES):
+        request_number = _next_request_number(request_type)
+        try:
+            return request_number, do_insert(request_number)
+        except Exception as exc:
+            if not _is_request_number_conflict(exc):
+                raise
+            last_exc = exc
+    raise last_exc
 
 
 @app.post("/new-request")
@@ -3492,11 +3788,33 @@ async def new_request_submit(request: Request):
             except ValueError:
                 d_total = 0.0
 
-        with db.connect() as conn:
-            with conn.cursor() as cur:
-                if existing_pr:
-                    d_request_number = existing_pr["request_number"]
-                    d_pr_id = existing_pr["id"]
+        # I3: replacing coding lines + logging the audit row is identical
+        # either way -- pulled into one small local helper so the retry
+        # wrapper below (which only wraps the NEW-draft path, the only one
+        # that mints a request_number and can therefore hit the conflict)
+        # doesn't have to duplicate it.
+        def _finish_draft_txn(cur, pr_id):
+            cur.execute("DELETE FROM checkreq.payment_request_gl_lines "
+                        "WHERE payment_request_id = %s", (pr_id,))
+            for acct_id, amt, memo in d_gl_lines:
+                cur.execute(
+                    "INSERT INTO checkreq.payment_request_gl_lines "
+                    "(payment_request_id, gl_account_id, amount, memo) "
+                    "VALUES (%s, %s, %s, %s)", (pr_id, acct_id, amt, memo))
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, new_status, comment) "
+                "VALUES (%s, %s, 'Draft Saved', 'Draft', %s)",
+                (pr_id, user["id"],
+                 "Saved as draft -- not submitted, no approvers notified."))
+
+        if existing_pr:
+            # No request_number is minted on this path (existing_pr already
+            # has one) -- no race, no retry needed.
+            d_request_number = existing_pr["request_number"]
+            d_pr_id = existing_pr["id"]
+            with db.connect() as conn:
+                with conn.cursor() as cur:
                     cur.execute(
                         "UPDATE checkreq.payment_requests SET program_area_id = %s, "
                         "  vendor_id = %s, amount = %s, requested_pay_date = %s, "
@@ -3504,37 +3822,26 @@ async def new_request_submit(request: Request):
                         "WHERE id = %s AND org_id = %s",
                         (d_program_area_id, d_vendor_id, d_total, d_pay_date,
                          d_description, d_special, d_pr_id, org_id))
-                else:
-                    d_request_number = _next_request_number("check_request")
-                    cur.execute(
-                        "INSERT INTO checkreq.payment_requests "
-                        "(request_number, request_type, org_id, program_area_id, "
-                        " submitter_user_id, vendor_id, amount, requested_pay_date, "
-                        " description, special_instructions, status) "
-                        "VALUES (%s, 'check_request', %s, %s, %s, %s, %s, %s, %s, %s, 'Draft') "
-                        "RETURNING id",
-                        (d_request_number, org_id, d_program_area_id, user["id"],
-                         d_vendor_id, d_total, d_pay_date, d_description, d_special))
-                    d_pr_id = cur.fetchone()["id"]
+                    _finish_draft_txn(cur, d_pr_id)
+        else:
+            def _do_new_draft_insert(request_number):
+                with db.connect() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "INSERT INTO checkreq.payment_requests "
+                            "(request_number, request_type, org_id, program_area_id, "
+                            " submitter_user_id, vendor_id, amount, requested_pay_date, "
+                            " description, special_instructions, status) "
+                            "VALUES (%s, 'check_request', %s, %s, %s, %s, %s, %s, %s, %s, 'Draft') "
+                            "RETURNING id",
+                            (request_number, org_id, d_program_area_id, user["id"],
+                             d_vendor_id, d_total, d_pay_date, d_description, d_special))
+                        pr_id = cur.fetchone()["id"]
+                        _finish_draft_txn(cur, pr_id)
+                        return pr_id
 
-                # Replace coding lines wholesale, matching the edit path's own
-                # settled approach -- simpler than diffing, and a draft's lines
-                # carry no downstream state.
-                cur.execute("DELETE FROM checkreq.payment_request_gl_lines "
-                            "WHERE payment_request_id = %s", (d_pr_id,))
-                for acct_id, amt, memo in d_gl_lines:
-                    cur.execute(
-                        "INSERT INTO checkreq.payment_request_gl_lines "
-                        "(payment_request_id, gl_account_id, amount, memo) "
-                        "VALUES (%s, %s, %s, %s)", (d_pr_id, acct_id, amt, memo))
-
-                cur.execute(
-                    "INSERT INTO checkreq.audit_log "
-                    "(payment_request_id, action_by_user_id, action_type, new_status, comment) "
-                    "VALUES (%s, %s, 'Draft Saved', 'Draft', %s)",
-                    (d_pr_id, user["id"],
-                     "Saved as draft -- not submitted, no approvers notified."))
-            conn.commit()
+            d_request_number, d_pr_id = _submit_with_request_number_retry(
+                "check_request", _do_new_draft_insert)
 
         # A draft cannot carry an in-progress NEW vendor: checkreq.vendor_requests
         # is CHECK-constrained to pending_approval/approved/rejected/posted_to_qbo
@@ -4290,107 +4597,117 @@ async def new_request_submit(request: Request):
             _notify_approvers_for_group(payment_request_id, notify_group, request)
         return RedirectResponse(f"/my-requests?edited={request_number}", status_code=303)
 
-    # ── NEW SUBMISSION branch (unchanged from before this session) ────────
-    request_number = _next_request_number(request_type)
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO checkreq.payment_requests
-                    (request_number, request_type, org_id, program_area_id, submitter_user_id,
-                     vendor_id, amount, requested_pay_date, description, special_instructions,
-                     status, current_approver_id, serial_group_current, approval_chain_summary,
-                     overspend_flagged, overspend_detail,
-                     existing_vendor_w9_flagged, existing_vendor_w9_detail,
-                     pre_approved, budget_checked_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                RETURNING id
-                """,
-                (request_number, request_type, org_id, program_area_id, user["id"],
-                 vendor_id, total_amount, requested_pay_date, description, special_instructions,
-                 initial_status,
-                 first_display_approver, first_serial_group,
-                 chain_summary, overspend_flagged, overspend_detail,
-                 existing_vendor_w9_flagged, existing_vendor_w9_detail, pre_approved),
-            )
-            payment_request_id = cur.fetchone()["id"]
-
-            for acct_id, amt, memo in gl_lines:
-                cur.execute(
-                    "INSERT INTO checkreq.payment_request_gl_lines "
-                    "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
-                    (payment_request_id, acct_id, amt, memo),
-                )
-
-            # Approval Workflow Corrections (Jay, 2026-07-31): one
-            # budget_overage_log row per tier-2/tier-3 GL line, for CFO
-            # reporting (how often, how much, which accounts) -- not just a
-            # one-off comment on the request. Written in the same
-            # transaction as everything else, since it's plain bookkeeping,
-            # not an external side effect (unlike the tier-2 email below).
-            for tier, entries in (("buffer_notice", budget_result["buffer_notice"]),
-                                   ("cfo_required", budget_result["cfo_required"])):
-                for e in entries:
-                    cur.execute(
-                        "INSERT INTO checkreq.budget_overage_log "
-                        "(payment_request_id, gl_account_id, tier, annual_budget, projected_spend, buffer_amount) "
-                        "VALUES (%s, %s, %s, %s, %s, %s)",
-                        (payment_request_id, e["gl_account_id"], tier,
-                         e["annual_budget"], e["projected"], e["buffer_amount"]),
-                    )
-
-            # AP Review Workflow Plan.md, Section 1a: materialize the whole
-            # computed chain as its own set of 'pending' approval_actions
-            # rows -- this, not current_approver_id, is the real gate
-            # /requests/{request_number}/approve checks.
-            _materialize_approval_actions(cur, payment_request_id, chain)
-
-            # action_type "Submitted" describes the ACTION the user just took
-            # (submitting) and stays "Submitted" even though the request's
-            # STATUS the row transitions into is now "UnderReview" -- these
-            # are two different things (Task 3, 2026-07-26): action_type is a
-            # verb describing what happened, new_status is the state that
-            # resulted. Conflating them would make the audit trail read as if
-            # the request were literally in a status called "Submitted".
-            cur.execute(
-                "INSERT INTO checkreq.audit_log "
-                "(payment_request_id, action_by_user_id, action_type, comment, new_status, impersonated_by_user_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                (payment_request_id, user["id"], "Submitted", chain_summary, initial_status, impersonated_by),
-            )
-
-            # New Vendor Onboarding (Section 1/2): the vendor_requests row
-            # references payment_request_id (NOT NULL), so it can only be
-            # created after the payment_request row above already has an
-            # id -- then payment_requests.vendor_request_id is set to point
-            # back, in the same transaction (both inserts commit together
-            # or not at all).
-            if new_vendor_fields:
-                requires_w9 = total_amount > _w9_threshold_amount()
-                upload_token = pysecrets.token_urlsafe(32)
+    # ── NEW SUBMISSION branch ──────────────────────────────────────────────
+    # I3 (Security Assessment 2026-09-19, approved by Jay 2026-09-21): the
+    # whole transaction below is now the retryable unit -- see
+    # _submit_with_request_number_retry's own docstring for why (the
+    # UNIQUE constraint on request_number already existed; what was
+    # missing was catching the resulting conflict and trying again with a
+    # fresh number instead of a submitter seeing a raw 500).
+    def _do_new_submission_insert(request_number):
+        with db.connect() as conn:
+            with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO checkreq.vendor_requests
-                        (org_id, payment_request_id, entity_type, first_name, last_name,
-                         company_name, dba_name, address_line1, address_line2, city, state, zip,
-                         phone, contact_name, contact_email, requires_w9, upload_token,
-                         created_by_user_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO checkreq.payment_requests
+                        (request_number, request_type, org_id, program_area_id, submitter_user_id,
+                         vendor_id, amount, requested_pay_date, description, special_instructions,
+                         status, current_approver_id, serial_group_current, approval_chain_summary,
+                         overspend_flagged, overspend_detail,
+                         existing_vendor_w9_flagged, existing_vendor_w9_detail,
+                         pre_approved, budget_checked_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                     RETURNING id
                     """,
-                    (org_id, payment_request_id, new_vendor_fields["entity_type"],
-                     new_vendor_fields["first_name"], new_vendor_fields["last_name"],
-                     new_vendor_fields["company_name"], new_vendor_fields["dba_name"],
-                     new_vendor_fields["address_line1"], new_vendor_fields["address_line2"],
-                     new_vendor_fields["city"], new_vendor_fields["state"], new_vendor_fields["zip"],
-                     new_vendor_fields["phone"], new_vendor_fields["contact_name"],
-                     new_vendor_fields["contact_email"], requires_w9, upload_token, user["id"]),
+                    (request_number, request_type, org_id, program_area_id, user["id"],
+                     vendor_id, total_amount, requested_pay_date, description, special_instructions,
+                     initial_status,
+                     first_display_approver, first_serial_group,
+                     chain_summary, overspend_flagged, overspend_detail,
+                     existing_vendor_w9_flagged, existing_vendor_w9_detail, pre_approved),
                 )
-                vendor_request_id = cur.fetchone()["id"]
+                payment_request_id = cur.fetchone()["id"]
+
+                for acct_id, amt, memo in gl_lines:
+                    cur.execute(
+                        "INSERT INTO checkreq.payment_request_gl_lines "
+                        "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
+                        (payment_request_id, acct_id, amt, memo),
+                    )
+
+                # Approval Workflow Corrections (Jay, 2026-07-31): one
+                # budget_overage_log row per tier-2/tier-3 GL line, for CFO
+                # reporting (how often, how much, which accounts) -- not just a
+                # one-off comment on the request. Written in the same
+                # transaction as everything else, since it's plain bookkeeping,
+                # not an external side effect (unlike the tier-2 email below).
+                for tier, entries in (("buffer_notice", budget_result["buffer_notice"]),
+                                       ("cfo_required", budget_result["cfo_required"])):
+                    for e in entries:
+                        cur.execute(
+                            "INSERT INTO checkreq.budget_overage_log "
+                            "(payment_request_id, gl_account_id, tier, annual_budget, projected_spend, buffer_amount) "
+                            "VALUES (%s, %s, %s, %s, %s, %s)",
+                            (payment_request_id, e["gl_account_id"], tier,
+                             e["annual_budget"], e["projected"], e["buffer_amount"]),
+                        )
+
+                # AP Review Workflow Plan.md, Section 1a: materialize the whole
+                # computed chain as its own set of 'pending' approval_actions
+                # rows -- this, not current_approver_id, is the real gate
+                # /requests/{request_number}/approve checks.
+                _materialize_approval_actions(cur, payment_request_id, chain)
+
+                # action_type "Submitted" describes the ACTION the user just took
+                # (submitting) and stays "Submitted" even though the request's
+                # STATUS the row transitions into is now "UnderReview" -- these
+                # are two different things (Task 3, 2026-07-26): action_type is a
+                # verb describing what happened, new_status is the state that
+                # resulted. Conflating them would make the audit trail read as if
+                # the request were literally in a status called "Submitted".
                 cur.execute(
-                    "UPDATE checkreq.payment_requests SET vendor_request_id = %s WHERE id = %s",
-                    (vendor_request_id, payment_request_id),
+                    "INSERT INTO checkreq.audit_log "
+                    "(payment_request_id, action_by_user_id, action_type, comment, new_status, impersonated_by_user_id) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    (payment_request_id, user["id"], "Submitted", chain_summary, initial_status, impersonated_by),
                 )
+
+                # New Vendor Onboarding (Section 1/2): the vendor_requests row
+                # references payment_request_id (NOT NULL), so it can only be
+                # created after the payment_request row above already has an
+                # id -- then payment_requests.vendor_request_id is set to point
+                # back, in the same transaction (both inserts commit together
+                # or not at all).
+                if new_vendor_fields:
+                    requires_w9 = total_amount > _w9_threshold_amount()
+                    upload_token = pysecrets.token_urlsafe(32)
+                    cur.execute(
+                        """
+                        INSERT INTO checkreq.vendor_requests
+                            (org_id, payment_request_id, entity_type, first_name, last_name,
+                             company_name, dba_name, address_line1, address_line2, city, state, zip,
+                             phone, contact_name, contact_email, requires_w9, upload_token,
+                             created_by_user_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (org_id, payment_request_id, new_vendor_fields["entity_type"],
+                         new_vendor_fields["first_name"], new_vendor_fields["last_name"],
+                         new_vendor_fields["company_name"], new_vendor_fields["dba_name"],
+                         new_vendor_fields["address_line1"], new_vendor_fields["address_line2"],
+                         new_vendor_fields["city"], new_vendor_fields["state"], new_vendor_fields["zip"],
+                         new_vendor_fields["phone"], new_vendor_fields["contact_name"],
+                         new_vendor_fields["contact_email"], requires_w9, upload_token, user["id"]),
+                    )
+                    vendor_request_id = cur.fetchone()["id"]
+                    cur.execute(
+                        "UPDATE checkreq.payment_requests SET vendor_request_id = %s WHERE id = %s",
+                        (vendor_request_id, payment_request_id),
+                    )
+                return payment_request_id
+
+    request_number, payment_request_id = _submit_with_request_number_retry(
+        request_type, _do_new_submission_insert)
 
     # Tier-2 budget overage: FYI-only CFO notification, after commit (a real
     # external email send, matching every other notification's post-commit
@@ -5764,13 +6081,20 @@ async def test_mode_save(request: Request):
 # routing). Currently just the W-9 threshold; a natural home for any
 # future AP policy value that shouldn't be a hardcoded constant.
 
+# L3 (Security Assessment 2026-09-19, Jay: "beacon_admin only"): this is an
+# APP-WIDE, cross-entity setting (the W-9 threshold has no org dimension at
+# all -- app_settings, not checkreq.organizations) -- an entity-scoped
+# setup_admin at any one diocese could previously change a value every
+# other diocese is also bound by. Tightened to beacon_admin, matching
+# every other genuinely app-wide setting in this codebase (/admin/test-mode).
+
 @app.get("/admin/ap-settings", response_class=HTMLResponse)
 def ap_settings_form(request: Request, saved: bool = False):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
-    if not rbac.user_has_role(user["id"], "setup_admin", org_id=None):
-        return JSONResponse({"error": "Setup Administrator access required"}, status_code=403)
+    if not rbac.user_has_role(user["id"], "beacon_admin", org_id=None):
+        return JSONResponse({"error": "Beacon Administrator access required"}, status_code=403)
     return _render(request, "admin_ap_settings.html", user, {
         "w9_threshold_amount": _w9_threshold_amount(), "saved": saved,
     })
@@ -5781,8 +6105,8 @@ async def ap_settings_save(request: Request):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
-    if not rbac.user_has_role(user["id"], "setup_admin", org_id=None):
-        return JSONResponse({"error": "Setup Administrator access required"}, status_code=403)
+    if not rbac.user_has_role(user["id"], "beacon_admin", org_id=None):
+        return JSONResponse({"error": "Beacon Administrator access required"}, status_code=403)
 
     form = await request.form()
     try:
@@ -5826,7 +6150,8 @@ def _require_vendor_approver(request: Request):
 
 
 @app.get("/admin/vendor-requests", response_class=HTMLResponse)
-def vendor_requests_list(request: Request, email_warning: str = "", entity: str = ""):
+def vendor_requests_list(request: Request, email_warning: str = "", entity: str = "",
+                          resend_error: str = "", resend_sent: str = ""):
     user, err = _require_vendor_approver(request)
     if err:
         return err
@@ -5859,6 +6184,7 @@ def vendor_requests_list(request: Request, email_warning: str = "", entity: str 
 
     return _render(request, "vendor_requests.html", user, {
         "rows": rows, "email_warning": email_warning,
+        "resend_error": resend_error, "resend_sent": resend_sent,
         "all_orgs_list": all_orgs_list, "filter_entity": entity,
     })
 
@@ -5974,6 +6300,55 @@ def vendor_request_w9_received(vr_id: int, request: Request):
     return RedirectResponse("/admin/vendor-requests", status_code=303)
 
 
+@app.post("/admin/vendor-requests/{vr_id}/resend-w9")
+def vendor_request_resend_w9(vr_id: int, request: Request):
+    """M11 (Security Assessment 2026-09-19): companion to the new
+    _W9_TOKEN_LIFETIME_DAYS expiry on _vendor_request_by_upload_token --
+    without this, a vendor who genuinely takes longer than 7 days to get
+    around to a W-9 would hit a dead, unrecoverable 404 with no staff
+    action able to help them (there was previously no resend for this
+    path at all, only the one-shot email vendor_request_approve fires on
+    approval). Reuses the SAME upload_token (never rotates it, matching
+    ap_review_request_existing_vendor_w9's identical reasoning for its own
+    sibling action) -- only w9_email_sent_at moves forward, extending the
+    expiry window; an already-shared link keeps working."""
+    user, err = _require_vendor_approver(request)
+    if err:
+        return err
+
+    vr = db.query_one(
+        "SELECT vr.*, o.name AS org_name FROM checkreq.vendor_requests vr "
+        "JOIN checkreq.organizations o ON o.id = vr.org_id WHERE vr.id = %s",
+        (vr_id,),
+    )
+    if not vr:
+        return JSONResponse({"error": "Vendor request not found"}, status_code=404)
+    # H1 (Security Assessment 2026-09-19): entity check before any write.
+    denied = _require_role_for_org(user, "vendor_approver", vr["org_id"])
+    if denied:
+        return denied
+    if vr["status"] != "approved" or not vr["requires_w9"] or vr["w9_received"]:
+        return RedirectResponse(
+            "/admin/vendor-requests?resend_error="
+            + quote("This vendor isn't in a state that needs a W-9 request sent."),
+            status_code=303,
+        )
+
+    result = _send_w9_request_email(vr, vr["org_name"], request)
+    if result.get("status") == "sent":
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE checkreq.vendor_requests SET w9_email_sent_at = NOW() WHERE id = %s",
+                    (vr_id,),
+                )
+        return RedirectResponse("/admin/vendor-requests?resend_sent=1", status_code=303)
+    return RedirectResponse(
+        "/admin/vendor-requests?resend_error=" + quote(f"W-9 email failed: {result.get('error', 'unknown error')}"),
+        status_code=303,
+    )
+
+
 # ── AP Review screen (AP Review Workflow Plan.md, Section 3/4) ─────────────
 # Gated on is_ap_reviewer (Section 1b) -- a new, dedicated role, deliberately
 # NOT folded into is_cfo or is_vendor_approver. No per-org scoping table for
@@ -5984,7 +6359,7 @@ def vendor_request_w9_received(vr_id: int, request: Request):
 @app.get("/admin/ap-review", response_class=HTMLResponse)
 def ap_review_list(request: Request, posted: str = "", returned: str = "",
                     post_error: str = "", email_warning: str = "", view: str = "pending",
-                    entity: str = ""):
+                    entity: str = "", w9_confirmed: str = ""):
     """2026-08-02 feedback batch, Item 6: Jay assumed this screen was
     already scoped to a single entity and asked to drop its redundant
     Entity column -- checked the actual query and it is NOT: `_require_
@@ -6090,7 +6465,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
                COALESCE(pa.title, 'All Program Areas') AS program_area_title, u.display_name AS submitter_name,
                u.email AS submitter_email,
                v.id AS existing_vendor_id, v.display_name AS vendor_display_name,
-               v.w9_on_file, v.w9_requested_at,
+               v.w9_on_file, v.w9_requested_at, v.w9_uploaded_at,
                vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
                vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
                vr.dba_name AS vr_dba_name, vr.status AS vr_status,
@@ -6139,9 +6514,23 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
             # gate re-check below) -- same "hold here, visibly, until it
             # clears" shape as the new-vendor gate above, just keyed off
             # checkreq.vendors.w9_on_file instead of vendor_requests.status.
-            r["vendor_gate_wait"] = "W-9 not yet received (year-to-date threshold)"
+            # M11: distinguish "still waiting on the vendor" from "a file
+            # arrived, waiting on US" -- otherwise staff have no visible
+            # signal that there's something to actually go review.
+            r["vendor_gate_wait"] = (
+                "W-9 uploaded -- awaiting AP confirmation" if r.get("w9_uploaded_at")
+                else "W-9 not yet received (year-to-date threshold)"
+            )
         else:
             r["vendor_gate_wait"] = None
+        # M11: a file has arrived (w9_uploaded_at) but no AP reviewer has
+        # confirmed it yet (w9_on_file still false) -- the "Confirm W-9
+        # Received" action becomes available exactly here, distinct from
+        # "Resend" (which is for before anything's arrived, or after staff
+        # decides an uploaded file was no good and wants a redo).
+        r["existing_vendor_w9_needs_review"] = bool(
+            r.get("existing_vendor_w9_flagged") and r.get("w9_uploaded_at") and not r.get("w9_on_file")
+        )
 
     # Ask My Accountant (2026-08-16): requests waiting on AP to assign GL
     # coding before the approval chain can even start -- same screen/role
@@ -6187,7 +6576,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
 
     return _render(request, "ap_review.html", user, {
         "rows": rows, "coding_rows": coding_rows, "posted": posted, "returned": returned,
-        "post_error": post_error, "email_warning": email_warning,
+        "post_error": post_error, "email_warning": email_warning, "w9_confirmed": w9_confirmed,
         "all_orgs_list": all_orgs_list, "filter_entity": entity,
     })
 
@@ -6659,8 +7048,17 @@ def ap_review_request_existing_vendor_w9(request_number: str, request: Request):
     if result.get("status") == "sent":
         with db.connect() as conn:
             with conn.cursor() as cur:
+                # M11: w9_requested_at = NOW() extends the 7-day expiry
+                # window (_W9_TOKEN_LIFETIME_DAYS), same token reused
+                # (never rotated -- an already-shared link must keep
+                # working, per this function's own docstring). w9_uploaded_at
+                # is explicitly cleared back to NULL here -- this is the
+                # ONE intended way to re-open the upload window once
+                # already used (e.g. staff reviewed a bad/illegible file
+                # and wants a genuine redo), matching
+                # _existing_vendor_by_w9_upload_token's own docstring.
                 cur.execute(
-                    "UPDATE checkreq.vendors SET w9_requested_at = NOW() WHERE id = %s",
+                    "UPDATE checkreq.vendors SET w9_requested_at = NOW(), w9_uploaded_at = NULL WHERE id = %s",
                     (vendor["id"],),
                 )
         return RedirectResponse("/admin/ap-review?w9_requested=1", status_code=303)
@@ -6669,6 +7067,51 @@ def ap_review_request_existing_vendor_w9(request_number: str, request: Request):
         "/admin/ap-review?post_error=" + quote(f"W-9 email failed: {result.get('error', 'unknown error')}"),
         status_code=303,
     )
+
+
+@app.post("/admin/ap-review/{request_number}/confirm-existing-vendor-w9")
+def ap_review_confirm_existing_vendor_w9(request_number: str, request: Request):
+    """M11 (Security Assessment 2026-09-19): the real fix -- an upload via
+    /vendor-w9-upload/{token} only ever sets checkreq.vendors.w9_uploaded_at
+    now (see vendor_w9_upload_submit), never w9_on_file directly. This is
+    the one action that actually sets w9_on_file = TRUE, and it requires a
+    real, entity-scoped AP reviewer to click it -- mirrors
+    vendor_request_w9_received's own "staff still confirms it, rather than
+    the upload alone flipping the gate" reasoning exactly, just for the
+    existing-vendor sibling table. Scoped through the blocked REQUEST
+    (like ap_review_request_existing_vendor_w9 above), not a standalone
+    vendor id, so the entity check and the AP Review screen's own
+    request-centric navigation both stay consistent."""
+    from urllib.parse import quote
+
+    user, err = _require_ap_reviewer(request)
+    if err:
+        return err
+
+    pr = db.query_one(
+        "SELECT pr.vendor_id, pr.org_id FROM checkreq.payment_requests pr WHERE pr.request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    # H1 (Security Assessment 2026-09-19): entity check before touching the
+    # vendor row, same pattern as every other AP action route.
+    denied = _require_role_for_org(user, "ap_reviewer", pr["org_id"])
+    if denied:
+        return denied
+    if not pr["vendor_id"]:
+        return RedirectResponse(
+            "/admin/ap-review?post_error=" + quote("No existing vendor found on this request."),
+            status_code=303,
+        )
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE checkreq.vendors SET w9_on_file = TRUE WHERE id = %s",
+                (pr["vendor_id"],),
+            )
+    return RedirectResponse("/admin/ap-review?w9_confirmed=1", status_code=303)
 
 
 @app.post("/requests/{request_number}/ap-return")
@@ -6759,7 +7202,18 @@ def vendor_w9_upload_form(token: str, request: Request):
     tries the original vendor_requests lookup first (unchanged), falls back
     to the new vendors-table lookup, 404s only if neither matches. Same
     shared template either way, same "already_uploaded" semantics (bool),
-    just sourced from a different column depending on which table matched."""
+    just sourced from a different column depending on which table matched.
+
+    M11: _existing_vendor_by_w9_upload_token now requires w9_uploaded_at
+    IS NULL to match at all (single-use) -- meaning a vendor re-visiting
+    the SAME link after a successful upload would otherwise 404 instead
+    of seeing the friendly "we've received it" page the POST handler
+    itself already shows right after a fresh upload. The lenient,
+    token-only fallback below (ignores the single-use/expiry WHERE
+    clauses) exists purely so a revisit after use still resolves to that
+    same friendly message -- it is NEVER used to authorize anything, only
+    to distinguish "this token was real and already used" from "this
+    token was never real" for messaging."""
     vr = _vendor_request_by_upload_token(token)
     if vr:
         return templates.TemplateResponse(request, "vendor_w9_upload.html", {
@@ -6773,9 +7227,23 @@ def vendor_w9_upload_form(token: str, request: Request):
     v = _existing_vendor_by_w9_upload_token(token)
     if v:
         return templates.TemplateResponse(request, "vendor_w9_upload.html", {
-            "already_uploaded": bool(v["w9_on_file"]),
+            "already_uploaded": False,
             "vendor_name": v["display_name"],
             "org_name": v["org_name"],
+            "token": token,
+            "error": "",
+        })
+
+    v_any = db.query_one(
+        "SELECT v.display_name, o.name AS org_name, v.w9_uploaded_at "
+        "FROM checkreq.vendors v JOIN checkreq.organizations o ON o.id = v.org_id "
+        "WHERE v.w9_upload_token = %s", (token,),
+    )
+    if v_any and v_any["w9_uploaded_at"]:
+        return templates.TemplateResponse(request, "vendor_w9_upload.html", {
+            "already_uploaded": True,
+            "vendor_name": v_any["display_name"],
+            "org_name": v_any["org_name"],
             "token": token,
             "error": "",
         })
@@ -6864,9 +7332,16 @@ async def vendor_w9_upload_submit(token: str, request: Request, file: UploadFile
                     (gcs_path, sp_path, vr["id"]),
                 )
             else:
+                # M11: no longer sets w9_on_file directly -- that's now the
+                # separate, staff-confirmed action (AP Review's "Confirm W-9
+                # Received" button, ap_review_confirm_existing_vendor_w9
+                # below), matching the vendor_requests branch's own
+                # upload-vs-received split above exactly. An upload alone
+                # only ever proves a FILE arrived, never that it's a real,
+                # correctly-completed W-9.
                 cur.execute(
                     "UPDATE checkreq.vendors SET w9_file_gcs_path = %s, w9_file_sp_path = %s, "
-                    "w9_on_file = TRUE WHERE id = %s",
+                    "w9_uploaded_at = NOW() WHERE id = %s",
                     (gcs_path, sp_path, v["id"]),
                 )
 
@@ -7136,7 +7611,8 @@ parish_mode.register(app, current_user=_current_user, current_org=_current_org, 
 # same register() pattern as everything else, thin wiring only.
 parish_org_admin.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 cornerstone_mode.register(app, current_user=_current_user, current_org=_current_org, render=_render,
-                           accessible_diocese_orgs=_accessible_diocese_orgs)
+                           accessible_diocese_orgs=_accessible_diocese_orgs,
+                           select_entity_core=_select_entity_core)
 # Parish Portal S4+S5 (2026-08-08): announcements, document archive/library,
 # and parish feedback/general-requests -- three more new modules, same thin
 # register() wiring, no logic added here.
