@@ -2742,6 +2742,30 @@ async def api_budget_check_submission(request: Request):
 
 _EXTRACT_MAX_BYTES = 10 * 1024 * 1024
 _EXTRACT_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/gif", "image/webp"}
+_EXTRACT_DOCUMENT_DAILY_CAP_DEFAULT = 25
+
+
+def _check_and_increment_extract_document_usage(user_id: int) -> tuple[bool, int, int]:
+    """L4 (Security Assessment 2026-09-19): /api/extract-document is a paid
+    Anthropic vision call with no per-user rate limit -- a buggy retry loop
+    or repeated manual testing by a signed-in staffer is the realistic risk
+    here (the route already requires login), not an anonymous cost attack.
+    Tracked in Postgres, not in-memory, so the count survives a Cloud Run
+    cold start on this scale-to-zero service. The INSERT...ON CONFLICT
+    increment is atomic -- this always increments (cheap, no cost incurred
+    yet) and only the caller decides whether to proceed with the real paid
+    call based on the returned count. Returns (allowed, today_count, cap)."""
+    cap = int(app_settings.get_setting("extract_document_daily_cap", str(_EXTRACT_DOCUMENT_DAILY_CAP_DEFAULT)))
+    row = db.query_one(
+        "INSERT INTO checkreq.extract_document_daily_usage (user_id, usage_date, call_count) "
+        "VALUES (%s, CURRENT_DATE, 1) "
+        "ON CONFLICT (user_id, usage_date) DO UPDATE SET "
+        "call_count = checkreq.extract_document_daily_usage.call_count + 1, updated_at = now() "
+        "RETURNING call_count",
+        (user_id,),
+    )
+    today_count = row["call_count"]
+    return today_count <= cap, today_count, cap
 
 
 @app.post("/api/extract-document")
@@ -2756,6 +2780,14 @@ async def api_extract_document(request: Request, file: UploadFile):
     org = _current_org(request)
     if not org:
         return JSONResponse({"error": "No entity selected"}, status_code=400)
+
+    allowed, today_count, cap = _check_and_increment_extract_document_usage(user["id"])
+    if not allowed:
+        return JSONResponse(
+            {"error": f"You've reached today's limit ({cap}) for automatic document reading. "
+                      f"Please fill in the form manually, or try again tomorrow."},
+            status_code=429,
+        )
 
     content = await file.read()
     if len(content) > _EXTRACT_MAX_BYTES:
