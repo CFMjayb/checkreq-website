@@ -131,6 +131,23 @@ jobs:
       # prod Cloud Scheduler jobs, so they don't inherit the same ceiling.
       # Prior 30s config preserved in deploy-prod.yml.pre_m17_timeout_fix.bak
       # in this same folder.
+      #
+      # --concurrency 160 made explicit (2026-09-22, real usage/sizing
+      # review). Production's live concurrency was ALREADY 160 -- set by
+      # hand at some point, never actually written into this file (found
+      # only by comparing `gcloud run services describe` against this
+      # script). Dev's own deploy.yml had no --concurrency at all, silently
+      # defaulting to Cloud Run's own 80 -- matched to 160 there too the
+      # same session, after confirming via 7 real days of Cloud Monitoring
+      # data that both services have wide CPU/memory headroom (prod p99 CPU
+      # 3% of 2 vCPU, mem up to 45% of 1Gi -- still clear of the ~550MB
+      # level that caused the July 2026 Playwright/PDF OOM incident under
+      # the old, smaller memory limit). Explicit now on both scripts so a
+      # future deploy can never again silently diverge from what's actually
+      # live. Prior (unwritten, but live at 160) config preserved in
+      # deploy-prod.yml.pre_m15_redirect_smoketest_fix.yml.bak in this same
+      # folder (that backup predates this change; concurrency was already
+      # absent from the script then too).
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy $SERVICE \
@@ -145,6 +162,7 @@ jobs:
             --memory                 1Gi \
             --cpu                    2 \
             --timeout                300 \
+            --concurrency            160 \
             --min-instances          1 \
             --max-instances          2 \
             --port                   8080
