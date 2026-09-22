@@ -415,9 +415,6 @@
         var tr = tpl.content.firstElementChild.cloneNode(true);
         tr.dataset.isNew = '1';
         tr.setAttribute('data-is-new', '1');
-        tr.querySelectorAll('[data-field]').forEach(function (el) {
-          el.dataset.baseline = ' never';  // always counts as dirty
-        });
         body.appendChild(tr);
         appr.refreshState();
         var first = tr.querySelector('input');
@@ -510,9 +507,6 @@
         var tr = tpl.content.firstElementChild.cloneNode(true);
         tr.dataset.isNew = '1';
         tr.setAttribute('data-is-new', '1');
-        tr.querySelectorAll('[data-field]').forEach(function (el) {
-          el.dataset.baseline = ' never';  // always counts as dirty
-        });
         body.appendChild(tr);
         ar.refreshState();
         var first = tr.querySelector('input');
