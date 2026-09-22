@@ -119,6 +119,21 @@ jobs:
       # data already exceeds the handoff doc's own example test value of
       # ~90s. Prior 30s config preserved in
       # deploy.yml.pre_m17_timeout_fix.bak in this same folder.
+      #
+      # --concurrency 160 made explicit (2026-09-22, real usage/sizing
+      # review). Previously UNSET here -- every deploy silently fell back to
+      # Cloud Run's own default of 80, while production's live value was 160
+      # (set by hand at some point, never in either deploy script -- found
+      # only by comparing `gcloud run services describe` against this file).
+      # Confirmed via 7 real days of Cloud Monitoring data before matching
+      # them: CPU/memory on both services have wide headroom (dev p99 CPU
+      # 12% of 2 vCPU / mem 16% of 1Gi; prod p99 CPU 3% / mem up to 45%,
+      # still clear of the ~550MB level that caused the July 2026 OOM
+      # incident under the old 512Mi limit) -- 160 is safe for dev too, not
+      # just a number copied blindly. Explicit now so a future deploy can
+      # never again silently diverge from what's actually live. Prior
+      # (unset -> Cloud Run default 80) config preserved in
+      # deploy_pre_explicit_concurrency.yml.bak in this same folder.
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy $SERVICE \
@@ -133,6 +148,7 @@ jobs:
             --memory                 1Gi \
             --cpu                    2 \
             --timeout                300 \
+            --concurrency            160 \
             --min-instances          0 \
             --max-instances          2 \
             --port                   8080
