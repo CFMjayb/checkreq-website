@@ -2,7 +2,6 @@
 {% block title %}New Check Request{% endblock %}
 {% block extra_css %}
 <link rel="stylesheet" href="/static/vendor/tomselect/tom-select.default.min.css">
-<link rel="stylesheet" href="/static/css/check_voucher.css?v={{ asset_version('css/check_voucher.css') }}">
 <link rel="stylesheet" href="/static/css/new_request.css?v={{ asset_version('css/new_request.css') }}">
 {% endblock %}
 {% block content %}
@@ -38,11 +37,27 @@
     <input type="hidden" name="editing_request_number" value="{{ edit_data.editing_request_number }}">
     {% endif %}
 
+    {# 2026-09-22 (bulk Invoice Intake redesign): this box exists to let
+       someone actively filling out the form prefill it from a document
+       they're uploading right now. An invoice_payment Draft already went
+       through that step on the Invoice Intake queue screen -- possibly by
+       a different person, possibly days ago -- so re-showing "upload a
+       document to prefill this form" here is at best redundant and at
+       worst confusing ("I already did that, that's how I got here" --
+       Jay). The already-uploaded file is what the Attachments section
+       below shows; nothing further to upload to get to this screen. #}
+    {% if not (edit_data and edit_data.request_type == 'invoice_payment') %}
+    {# 2026-09-22 (Jay): "you don't need both Upload and Choose file, just
+       have Upload File, then go to the picker, select the file and begin
+       the upload process" -- one visible, custom-styled trigger; the real
+       file input stays hidden and its own change event (already wired,
+       see new_request.js) begins the upload immediately, no second click. #}
     <div class="upload-row">
-      <label for="attachmentsInput">📎 Upload a document to prefill this form</label>
-      <input type="file" name="attachments" id="attachmentsInput" multiple
+      <button type="button" class="btn btn-secondary btn-sm" id="attachmentsUploadBtn">📎 Upload File to Prefill Form</button>
+      <input type="file" name="attachments" id="attachmentsInput" multiple hidden
              accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
     </div>
+    {% endif %}
 
     {% if 'pre_approved_submitter' in entity_roles %}
     <div class="field-disclosure" id="preApprovedRow">
@@ -57,9 +72,15 @@
 
     <div class="field-row">
       <div class="field">
-        <label>Program Area{% if edit_data and edit_data.request_type == 'invoice_payment' %} <span class="sub">(optional — defaults to All)</span>{% endif %}</label>
-        <select name="program_area_id" id="programAreaSelect" {% if not (edit_data and edit_data.request_type == 'invoice_payment') %}required{% endif %}>
-          <option value="">{% if edit_data and edit_data.request_type == 'invoice_payment' %}All Program Areas{% else %}Loading...{% endif %}</option>
+        {# 2026-09-22 (Jay, restated a 4th time): Invoice Intake no longer
+           gets a special "optional, defaults to All" treatment -- every
+           request, either type, gets a real Program Area from the start
+           (Master-or-first default, see defaultProgramAreaId() in
+           new_request.js / _default_program_area_id() in main.py), always
+           editable, always required. #}
+        <label>Program Area</label>
+        <select name="program_area_id" id="programAreaSelect" required>
+          <option value="">Loading...</option>
         </select>
       </div>
       <div class="field">
@@ -69,7 +90,15 @@
     </div>
 
     <div class="field">
-      <label>Vendor</label>
+      <label>Vendor
+        {# 2026-09-22 (Jay): "used to show to the right of the Vendor
+           header... needs to return there" -- restored as its original
+           inline confirmation next to the label (was folded into the
+           Status & Messages panel during the same-day unification, which
+           lost this placement -- setVendorConfirmedMessage() in
+           new_request.js now targets this span directly, not the panel). #}
+        <span id="vendorConfirmedInline" class="vendor-confirmed-inline" style="display:none;">&#10003; Confirmed and active</span>
+      </label>
       <select name="vendor_id" id="vendorSelect" placeholder="Search vendors..."></select>
       <a href="#" id="addNewVendorLink" class="add-vendor-link">Can't find this vendor? Add a new one.</a>
     </div>
@@ -155,14 +184,29 @@
       </div>
       <button type="button" class="btn btn-secondary btn-sm" onclick="addGlLine()">+ Add GL line</button>
 
+      {# 2026-09-22 (Jay, same-day correction): "Approval Chain Preview...
+         needs to be moved to the left side above Status & Messages, as we
+         are removing the CR Form" -- previously lived inside
+         check_voucher.html on the right, which no longer renders live on
+         this page at all (see the right pane below). Live-updated the same
+         way it always was (scheduleChainPreview()/updateChainPreview() in
+         new_request.js), just targeting this element directly now instead
+         of a [data-field] node under the retired #voucherPreview. #}
+      <div class="approval-chain-preview">
+        <span class="label">Approval Chain Preview</span>
+        <div id="chainSummaryDisplay">—</div>
+      </div>
+
       {# Status & Messages panel (2026-09-22 feedback batch): consolidates
-         what used to be scattered inline (#uploadStatus/#vendorConfirmedMsg/
-         #vendorValidationMsg/#artStatusBanner/#preApprovedWarning) into one
-         place under GL Coding, per Jay's direct request. Ported from Easy
-         View's own already-built panel (retired the same session -- see
+         what used to be scattered inline (#uploadStatus/#vendorValidationMsg/
+         #artStatusBanner/#preApprovedWarning) into one place under GL
+         Coding, per Jay's direct request. Ported from Easy View's own
+         already-built panel (retired the same session -- see
          templates/new_request_easy_pre_easy_view_unification.html) rather
          than re-derived; new_request.js's setStatus()/renderStatusPanel()
-         own everything rendered here. #}
+         own everything rendered here. Vendor-confirmed no longer renders
+         here (moved back to an inline confirmation next to the Vendor
+         label itself, per Jay's same-day correction -- see that field). #}
       <div id="statusPanel" class="status-panel">
         <div class="status-panel-title">Status &amp; Messages</div>
         <div id="statusPanelBody" class="status-panel-body">
@@ -214,11 +258,14 @@
     <div class="attachment-empty">No attachments on file.</div>
     {% endif %}
     <form method="post" action="/requests/{{ edit_data.editing_request_number }}/attachments/add"
-          enctype="multipart/form-data" class="attachment-add-form">
+          enctype="multipart/form-data" class="attachment-add-form" id="attachmentAddForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-      <input type="file" name="attachments" multiple
+      {# 2026-09-22 (Jay): same "one Upload File button, no separate native
+         Choose-file + Add double control" fix as the top prefill box --
+         the hidden input's own change event submits this form immediately. #}
+      <button type="button" class="btn btn-secondary btn-sm" id="attachmentAddBtn">📎 Upload File</button>
+      <input type="file" name="attachments" multiple hidden id="attachmentAddInput"
              accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
-      <button type="submit" class="btn btn-secondary btn-sm">Add</button>
     </form>
     {% if add_error %}<div class="upload-status error">{{ add_error }}</div>{% endif %}
   </div>
@@ -233,13 +280,19 @@
    right pane absorbs the reduction first. #}
 <div class="split-divider" id="splitDivider" title="Drag to resize"></div>
 
+{# 2026-09-22 (Jay, same-day correction): "we said the Check Request...
+   would not show the Check Request on the right until the end, as was
+   the way easy view worked" -- Easy View's own original design (see
+   templates/new_request_easy_pre_easy_view_unification.html): the right
+   pane never mirrors the form live. It shows nothing until a document
+   exists (freshly uploaded, or already on file for an existing Draft),
+   at which point THAT document is what shows here -- never the CR form
+   itself. The completed voucher is only ever seen after submission, via
+   the existing /requests/{request_number}/view page. #}
 <div class="split-pane split-preview">
-  <div class="preview-toggle" id="previewToggle" style="display:none;">
-    <button type="button" class="preview-toggle-btn active" data-view="voucher">Check Request Preview</button>
-    <button type="button" class="preview-toggle-btn" data-view="document">Uploaded Document</button>
-  </div>
-  <div id="voucherPreviewWrap">
-    {% include "check_voucher.html" %}
+  <div id="documentPreviewEmpty" class="preview-empty-state">
+    <div class="preview-empty-icon" aria-hidden="true">🧾</div>
+    <p>The uploaded document will appear here.</p>
   </div>
   <div id="documentPreviewWrap" style="display:none;"></div>
 </div>
@@ -251,6 +304,15 @@
 const CURRENT_ORG_ID = {{ current_org.id }};
 window.EDIT_DATA = {{ (edit_data | tojson) if edit_data else 'null' }};
 window.EXISTING_ATTACHMENT_COUNT = {{ (attachments | length) if attachments else 0 }};
+{# 2026-09-22 (Jay): "I can't see the invoice... you must have a image
+   viewer on the right" -- an already-archived attachment (Invoice Intake's
+   real case: uploaded by someone else, possibly days ago -- no live file
+   input holds it anymore) needs to be fetched from the SAME view route the
+   Attachments list already links to, not the client-side-blob-URL trick
+   showDocumentPreview() uses for a file picked THIS session. First
+   non-generated_pdf attachment only -- the generated CR PDF isn't "the
+   invoice" and only exists post-submission anyway. #}
+window.EXISTING_DOCUMENT_ATTACHMENT = {{ (attachments | selectattr('source', 'ne', 'generated_pdf') | list | first | tojson) if attachments else 'null' }};
 </script>
 <script src="/static/vendor/tomselect/tom-select.complete.min.js"></script>
 <script src="/static/js/action_modal.js?v={{ asset_version('js/action_modal.js') }}"></script>

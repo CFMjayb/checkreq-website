@@ -10,14 +10,15 @@
 {% endif %}
 
 <div class="card">
-  <h2>Upload an Invoice</h2>
-  <p class="sub">Beacon reads what it can off the document and creates a Draft below for you to finish coding.
-     GL coding is never guessed at this step -- that stays your decision.</p>
-  <form method="post" action="/invoice-intake" enctype="multipart/form-data" class="upload-row">
+  <h2>Upload Invoices</h2>
+  <p class="sub">Select one or many at once -- a whole batch drops in as its own Draft each, ready to
+     review and code whenever you get to them. Beacon reads what it can off each document; GL coding
+     is never guessed at this step -- that stays your decision.</p>
+  <form method="post" action="/invoice-intake" enctype="multipart/form-data" id="invoiceUploadForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <input type="file" name="file" required
+    <input type="file" name="files" id="invoiceUploadInput" multiple required hidden
            accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
-    <button type="submit" class="btn btn-primary btn-sm">Upload</button>
+    <button type="button" id="invoiceUploadBtn" class="btn btn-primary btn-sm">Upload File</button>
   </form>
 </div>
 
@@ -26,7 +27,7 @@
 <p class="sub">Any invoice uploaded here (by anyone with the Invoice Intake role) sits as a Draft until someone
    finishes coding and submits it -- the same shared inbox, not tied to whoever uploaded it.</p>
 <div class="table-scroll">
-  <table class="simple-table approvals-table">
+  <table class="simple-table approvals-table" id="invoiceDraftsTable">
     <tr>
       <th class="col-reqnum">Request #</th>
       <th class="col-vendor">Vendor</th>
@@ -35,12 +36,20 @@
       <th class="col-actions">Actions</th>
     </tr>
     {% for d in drafts %}
-    <tr>
+    <tr id="row-{{ d.request_number }}" data-request-number="{{ d.request_number }}"
+        data-processing="{{ 'true' if d.processing else 'false' }}">
       <td class="col-reqnum">{{ d.request_number }}</td>
+      {% if d.processing %}
+      <td class="col-vendor" colspan="2"><em>Processing&hellip;</em></td>
+      {% else %}
       <td class="col-vendor">{{ d.vendor_name }}</td>
       <td class="col-amount">${{ "%.2f"|format(d.amount) }}</td>
+      {% endif %}
       <td class="col-date">{{ d.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-      <td class="col-actions"><a href="/requests/{{ d.request_number }}/edit">Code &amp; Submit</a></td>
+      <td class="col-actions">
+        {% if d.processing %}<span class="sub">&mdash;</span>
+        {% else %}<a href="/requests/{{ d.request_number }}/edit">Code &amp; Submit</a>{% endif %}
+      </td>
     </tr>
     {% else %}
     <tr><td colspan="5">No Drafts waiting -- upload an invoice above to get started.</td></tr>
@@ -49,4 +58,5 @@
 </div>
 </div>
 </div>
+<script src="/static/js/invoice_intake_queue.js?v={{ asset_version('js/invoice_intake_queue.js') }}"></script>
 {% endblock %}

@@ -88,6 +88,7 @@ import base64
 import difflib
 import hmac
 import html
+import json
 import os
 import re
 import secrets as pysecrets
@@ -95,7 +96,7 @@ import threading
 from datetime import date, datetime
 from urllib.parse import quote, urlparse
 
-from fastapi import FastAPI, Request, Form, UploadFile
+from fastapi import FastAPI, Request, Form, UploadFile, BackgroundTasks
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -1560,6 +1561,18 @@ def edit_request_form(request_number: str, request: Request, add_error: str = ""
         ],
         "vendor": vendor_prefill,
         "new_vendor": new_vendor_prefill,
+        # Bulk Invoice Intake (2026-09-22): whatever _ingest_invoice_file()
+        # found and persisted at intake time -- rendered by new_request.js's
+        # seedIntakeStatus() on page load, since there's no live upload event
+        # on THIS page load to re-derive it from (the file was uploaded
+        # earlier, possibly by someone else, possibly days ago). None/absent
+        # for a plain Check Request or an already-coded request. .get(), not
+        # a bracket lookup -- fails open to None (not a KeyError on every
+        # single edit page, of every request type) if this deploys before
+        # migration 065 has actually added the column, matching this
+        # codebase's established pattern for a not-yet-applied migration
+        # (see cornerstone_mode.py's own precedent).
+        "intake_status": pr.get("intake_status"),
     }
 
     ctx = _voucher_context(pr["id"]) or {}
@@ -1573,13 +1586,14 @@ def edit_request_form(request_number: str, request: Request, add_error: str = ""
     return _render(request, "new_request.html", user, ctx)
 
 
-@app.get("/api/program-areas/{org_id}")
-def api_program_areas(org_id: int, request: Request):
-    user = _current_user(request)
-    if not user:
-        return JSONResponse({"error": "Not signed in"}, status_code=401)
-
-    if rbac.user_has_role(user["id"], "cfo", org_id):
+def _accessible_program_areas(org_id: int, user_id: int) -> list[dict]:
+    """Every Program Area a given user can submit against for one org --
+    the CFO/everyone-else split shared by api_program_areas() (below) and
+    _default_program_area_id() (2026-09-22, for the same default this
+    endpoint's own JS caller already computes client-side, now also needed
+    server-side for a bulk-ingested Invoice Intake Draft nobody's opened
+    yet)."""
+    if rbac.user_has_role(user_id, "cfo", org_id):
         # CFO oversees everything — bypasses per-user assignment.
         return db.query(
             "SELECT id, title FROM checkreq.program_areas WHERE org_id = %s AND is_active ORDER BY sort_order",
@@ -1593,8 +1607,32 @@ def api_program_areas(org_id: int, request: Request):
         WHERE pa.org_id = %s AND pa.is_active AND upa.user_id = %s
         ORDER BY pa.sort_order
         """,
-        (org_id, user["id"]),
+        (org_id, user_id),
     )
+
+
+def _default_program_area_id(org_id: int, user_id: int) -> int | None:
+    """Server-side mirror of new_request.js's defaultProgramAreaId() --
+    "the Program Area that has Master in it if they have access to it, or
+    the first item in their program list" (Jay, 2026-09-22, restated a 4th
+    time same day). Needed here specifically for a bulk-ingested Invoice
+    Intake Draft: nobody has opened its edit page yet to run the client-side
+    version, but the Draft should never sit with no Program Area at all
+    (the old "leave blank, defaults to All" design is retired). None only
+    when the user genuinely has zero accessible Program Areas at this org."""
+    areas = _accessible_program_areas(org_id, user_id)
+    if not areas:
+        return None
+    master = next((a for a in areas if re.search(r"\bmaster\b", a["title"] or "", re.IGNORECASE)), None)
+    return (master or areas[0])["id"]
+
+
+@app.get("/api/program-areas/{org_id}")
+def api_program_areas(org_id: int, request: Request):
+    user = _current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not signed in"}, status_code=401)
+    return _accessible_program_areas(org_id, user["id"])
 
 
 def _request_is_editable(status: str) -> bool:
@@ -2841,44 +2879,29 @@ def _vendor_match_candidates(org_id: int, vendor_name: str, vendor_city: str | N
     return scored[:limit]
 
 
-@app.post("/api/extract-document")
-async def api_extract_document(request: Request, file: UploadFile):
-    """Reads an uploaded invoice/receipt and tries to prefill the check-
-    request form. Extraction failure must never block the manual-entry
-    path -- always returns a JSON body (never a 500 the JS can't handle),
-    with a soft {"error": ...} on any problem."""
-    user = _current_user(request)
-    if not user:
-        return JSONResponse({"error": "Not signed in"}, status_code=401)
-    org = _current_org(request)
-    if not org:
-        return JSONResponse({"error": "No entity selected"}, status_code=400)
+async def _extract_and_match_invoice(content: bytes, mime_type: str, org: dict) -> dict:
+    """Layer 1 of invoice ingestion (2026-09-22 redesign, prompted by Jay's
+    "you could have 30 invoices to ingest at once... reviewed later, and
+    eventually a scheduler will be scanning emails for these"). Pure
+    extraction + vendor/GL/program-area matching -- no rate limiting here
+    (the caller's job, since the same daily cap must apply whether this
+    runs once for a live upload or once per file in a batch), no created
+    Draft row, no archival. The one side effect it carries over unchanged
+    from before this refactor: a live QBO vendor-sync fallback lookup
+    (vendor_sync_admin.find_and_sync_one_vendor) that upserts a real
+    vendor into checkreq.vendors when it finds one Beacon didn't know
+    about yet.
 
-    allowed, today_count, cap = _check_and_increment_extract_document_usage(user["id"])
-    if not allowed:
-        return JSONResponse(
-            {"error": f"You've reached today's limit ({cap}) for automatic document reading. "
-                      f"Please fill in the form manually, or try again tomorrow."},
-            status_code=429,
-        )
-
-    content = await file.read()
-    if len(content) > _EXTRACT_MAX_BYTES:
-        return JSONResponse({"error": "File is too large (max 10MB)."})
-    mime_type = file.content_type or ""
-    if mime_type not in _EXTRACT_ALLOWED_TYPES:
-        return JSONResponse({"error": f"Unsupported file type ({mime_type or 'unknown'}). "
-                                       f"Use a PDF or JPG/PNG/GIF/WebP image -- note iPhone photos "
-                                       f"default to HEIC, which isn't supported; export as JPG or PDF."})
-
-    try:
-        result = await asyncio.to_thread(document_extract.extract_fields, content, mime_type)
-    except Exception as exc:
-        # Log the real detail server-side, but never echo a raw internal
-        # exception (could contain SDK/API error text) back to the client --
-        # tightened 2026-07-25 for the first public Cloud Run deploy.
-        print(f"[extract-document] {type(exc).__name__}: {exc}")
-        return JSONResponse({"error": "Couldn't read this document. Please fill in the form manually."})
+    Extracted out of api_extract_document's own body (which becomes a
+    thin wrapper below) specifically so Invoice Intake's bulk ingestion
+    can call the SAME scored vendor matcher Classic already uses, instead
+    of maintaining a second, weaker one -- see _ingest_invoice_file()'s
+    own docstring for the full "share the same guts" reasoning, and for
+    why this also has to be a plain callable function rather than
+    something wired to a live browser upload event: a future automated
+    email-scanning job will call this with no browser/session involved
+    at all."""
+    result = await asyncio.to_thread(document_extract.extract_fields, content, mime_type)
 
     matched_vendor_id = None
     possible_vendor_matches: list[dict] = []
@@ -2967,21 +2990,117 @@ async def api_extract_document(request: Request, file: UploadFile):
     return result
 
 
+@app.post("/api/extract-document")
+async def api_extract_document(request: Request, file: UploadFile):
+    """Reads an uploaded invoice/receipt and tries to prefill the check-
+    request form. Extraction failure must never block the manual-entry
+    path -- always returns a JSON body (never a 500 the JS can't handle),
+    with a soft {"error": ...} on any problem. Thin wrapper around
+    _extract_and_match_invoice() (2026-09-22) -- the real extraction/
+    matching logic lives there now, shared with Invoice Intake's bulk
+    ingestion."""
+    user = _current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not signed in"}, status_code=401)
+    org = _current_org(request)
+    if not org:
+        return JSONResponse({"error": "No entity selected"}, status_code=400)
+
+    allowed, today_count, cap = _check_and_increment_extract_document_usage(user["id"])
+    if not allowed:
+        return JSONResponse(
+            {"error": f"You've reached today's limit ({cap}) for automatic document reading. "
+                      f"Please fill in the form manually, or try again tomorrow."},
+            status_code=429,
+        )
+
+    content = await file.read()
+    if len(content) > _EXTRACT_MAX_BYTES:
+        return JSONResponse({"error": "File is too large (max 10MB)."})
+    mime_type = file.content_type or ""
+    if mime_type not in _EXTRACT_ALLOWED_TYPES:
+        return JSONResponse({"error": f"Unsupported file type ({mime_type or 'unknown'}). "
+                                       f"Use a PDF or JPG/PNG/GIF/WebP image -- note iPhone photos "
+                                       f"default to HEIC, which isn't supported; export as JPG or PDF."})
+
+    try:
+        return await _extract_and_match_invoice(content, mime_type, org)
+    except Exception as exc:
+        # Log the real detail server-side, but never echo a raw internal
+        # exception (could contain SDK/API error text) back to the client --
+        # tightened 2026-07-25 for the first public Cloud Run deploy.
+        print(f"[extract-document] {type(exc).__name__}: {exc}")
+        return JSONResponse({"error": "Couldn't read this document. Please fill in the form manually."})
+
+
+def _property_matched_suggestion(org_id: int, vendor_id: int, service_address: str) -> dict | None:
+    """2026-09-22 (Jay): "checking property location on a property-related
+    invoice... see if there are similar items being charged." A vendor like
+    a utility or landscaper can carry several ART entries for the SAME
+    vendor, one per property (checkreq.art_list.group_label -- see the
+    ART List admin screen), each with its own gl_account_id. If this
+    document named a specific service address, fuzzy-match it against each
+    property's own group_label and, on a confident match, suggest THAT
+    property's account first -- a plain vendor-wide history/last-bill
+    suggestion (below) can't tell two properties apart at all, so for a
+    multi-property vendor it's frequently just wrong. Returns None (falls
+    through to the ordinary history-based suggestions) when the vendor
+    isn't multi-property, no address was extracted, or nothing matches
+    confidently -- never guesses a property, same "no confident match,
+    stay silent" philosophy as the vendor matcher itself."""
+    if not service_address:
+        return None
+    rows = db.query(
+        "SELECT al.group_label, al.gl_account_id, ga.account_name, ga.account_number "
+        "FROM checkreq.art_list al "
+        "JOIN checkreq.gl_accounts ga ON ga.id = al.gl_account_id "
+        "WHERE al.vendor_id = %s AND al.org_id = %s AND al.is_active "
+        "AND al.group_label IS NOT NULL AND al.gl_account_id IS NOT NULL",
+        (vendor_id, org_id),
+    )
+    if len(rows) < 2:
+        return None  # not a multi-property vendor -- nothing to disambiguate
+    addr_norm = re.sub(r"[^a-z0-9]", "", service_address.lower())
+    best = None
+    best_score = 0.0
+    for r in rows:
+        label_norm = re.sub(r"[^a-z0-9]", "", (r["group_label"] or "").lower())
+        if not label_norm:
+            continue
+        score = difflib.SequenceMatcher(None, addr_norm, label_norm).ratio()
+        if addr_norm in label_norm or label_norm in addr_norm:
+            score = max(score, 0.9)
+        if score > best_score:
+            best_score, best = score, r
+    if not best or best_score < 0.6:
+        return None
+    return {
+        "gl_account_id": best["gl_account_id"],
+        "label": f"{best['account_name']} ({best['account_number']}) — {best['group_label']}",
+        "property_match": True,
+    }
+
+
 @app.get("/api/vendor-coding-history")
-def api_vendor_coding_history(vendor_id: int, request: Request):
+def api_vendor_coding_history(vendor_id: int, request: Request, service_address: str = ""):
     """"Research Coding" (2026-09-22 feedback batch): "many of these
     invoices have already been entered in once before... you should be
     able to pick the GL coding" (Jay). Given a vendor already selected on
-    the New Request form, suggests GL coding from precedent -- first
-    Beacon's own submission history for that vendor (most-used accounts
-    across recent, non-cancelled requests), falling back to a live QBO
+    the New Request form, suggests GL coding from precedent -- first a
+    property-specific match for a multi-property vendor (see
+    _property_matched_suggestion, restated the same day: "checking
+    property location on a property-related invoice"), then Beacon's own
+    submission history for that vendor (most-used accounts across recent,
+    non-cancelled requests -- this IS the "building history you can rely
+    on" Jay also asked for: every real submission feeds it, so it gets
+    better the more this vendor is used), falling back to a live QBO
     lookup of the vendor's most recent Bill (the same qbo_mcp_client call
     _prefill_msmd_gl_lines already uses for Invoice Intake's
-    Monkey-See-Monkey-Do flow) when Beacon has no history for this vendor
-    yet. Unlike MSMD, this is available on demand for ANY vendor -- not
-    gated behind an ART is_monkey_see_monkey_do flag. Every suggestion is
-    applied client-side as a normal, fully-editable GL line -- never
-    written here, never silently final."""
+    Monkey-See-Monkey-Do flow) only when Beacon has no history for this
+    vendor at all yet. Unlike MSMD, this is available on demand for ANY
+    vendor -- not gated behind an ART is_monkey_see_monkey_do flag. Every
+    suggestion is applied client-side as a normal, fully-editable GL line
+    -- never written here, never silently final."""
     user = _current_user(request)
     if not user:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
@@ -2995,6 +3114,8 @@ def api_vendor_coding_history(vendor_id: int, request: Request):
     )
     if not vendor:
         return JSONResponse({"error": "Vendor not found"}, status_code=404)
+
+    property_suggestion = _property_matched_suggestion(org["id"], vendor_id, service_address)
 
     rows = db.query(
         """
@@ -3010,8 +3131,19 @@ def api_vendor_coding_history(vendor_id: int, request: Request):
         """,
         (vendor_id, org["id"]),
     )
+    def _with_property_match(payload: dict) -> dict:
+        """Prepends the property-specific match (if one was found) ahead of
+        whatever this branch already suggests -- de-duplicating by
+        gl_account_id so the same account never appears twice just because
+        history also happens to agree with the property match."""
+        if not property_suggestion:
+            return payload
+        rest = [s for s in payload["suggestions"] if s["gl_account_id"] != property_suggestion["gl_account_id"]]
+        payload["suggestions"] = [property_suggestion] + rest
+        return payload
+
     if rows:
-        return {
+        return _with_property_match({
             "source": "beacon_history",
             "vendor_display_name": vendor["display_name"],
             "suggestions": [
@@ -3022,7 +3154,7 @@ def api_vendor_coding_history(vendor_id: int, request: Request):
                 }
                 for r in rows
             ],
-        }
+        })
 
     # No Beacon history yet -- fall back to the same live-QBO last-bill
     # lookup _prefill_msmd_gl_lines already trusts for Invoice Intake.
@@ -3043,12 +3175,18 @@ def api_vendor_coding_history(vendor_id: int, request: Request):
                         "label": f"{acct['account_name']} ({acct['account_number']})",
                     })
             if suggestions:
-                return {
+                return _with_property_match({
                     "source": "qbo_last_bill",
                     "vendor_display_name": vendor["display_name"],
                     "bill_date": bill.get("txn_date"),
                     "suggestions": suggestions,
-                }
+                })
+
+    if property_suggestion:
+        # No generic history/last-bill fallback fired at all -- a confident
+        # property match still stands on its own rather than being lost.
+        return {"source": "property_match", "vendor_display_name": vendor["display_name"],
+                "suggestions": [property_suggestion]}
 
     return {"source": None, "vendor_display_name": vendor["display_name"], "suggestions": []}
 
@@ -5225,7 +5363,7 @@ def invoice_intake_queue(request: Request, add_error: str = ""):
 
     drafts = db.query(
         """
-        SELECT pr.request_number, pr.created_at,
+        SELECT pr.request_number, pr.created_at, pr.intake_status,
                COALESCE(v.display_name, vr.company_name, vr.first_name || ' ' || vr.last_name,
                         pr.invoice_extracted_vendor, '—') AS vendor_name,
                COALESCE(pr.invoice_extracted_amount, pr.amount) AS amount
@@ -5237,67 +5375,76 @@ def invoice_intake_queue(request: Request, add_error: str = ""):
         """,
         (org["id"],),
     )
+    for d in drafts:
+        d["processing"] = bool((d.get("intake_status") or {}).get("processing"))
     return _render(request, "invoice_intake_queue.html", user, {"drafts": drafts, "add_error": add_error})
 
 
-@app.post("/invoice-intake")
-async def invoice_intake_upload(request: Request, file: UploadFile):
-    """Uploads one invoice, extracts what we can, best-effort vendor match,
-    checks ART/Monkey-See-Monkey-Do, creates the Draft row, archives the
-    raw file -- then hands off to the SAME edit/finalize screen a Check
-    Request uses (GET/POST /requests/{request_number}/edit), rather than a
-    second coding UI. Vendor recognition is deliberately the first real
-    step here, before anything else, per the plan's own framing."""
-    user = _current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-    org = _current_org(request)
-    if not org:
-        return RedirectResponse("/portal")
-    if not rbac.user_has_role(user["id"], "invoice_intake_submitter", org["id"]):
-        return HTMLResponse("Not authorized -- ask an admin to grant you the Invoice Intake role.", status_code=403)
+def _build_intake_status(result: dict, skipped_reason: str | None) -> dict:
+    """Builds the persisted Status & Messages seed for an Invoice Intake
+    Draft (2026-09-22, bulk-ingestion redesign). Mirrors new_request.js's
+    own statusState shape ({"upload": {text,kind,caveats}, "vendor_matches":
+    {candidates,vendor_name}}) closely so applyEditPrefill()/seedIntakeStatus()
+    can render it with almost no new client-side logic -- just a page-load
+    seed, plus a small key-name bridge (vendor_name -> vendorName) to match
+    the JS's existing camelCase field.
 
-    content = await file.read()
-    if len(content) > _EXTRACT_MAX_BYTES:
-        return RedirectResponse(
-            f"/invoice-intake?add_error={quote('File is too large (max 10MB).')}", status_code=303,
-        )
-    mime_type = file.content_type or ""
-    if mime_type not in _EXTRACT_ALLOWED_TYPES:
-        return RedirectResponse(
-            f"/invoice-intake?add_error={quote('Unsupported file type -- use a PDF or JPG/PNG/GIF/WebP image.')}",
-            status_code=303,
-        )
-    # H2 (Security Assessment 2026-09-19): the declared type above is the
-    # client's claim; the bytes decide what gets archived and extracted.
-    ok, sniffed = upload_guard.sniff_allowed(content, mime_type)
-    if not ok:
-        return RedirectResponse(
-            f"/invoice-intake?add_error={quote('The file contents are not a PDF or JPG/PNG/GIF/WebP image.')}",
-            status_code=303,
-        )
-    mime_type = sniffed
+    Persisted on the row (not held in a browser session) because a
+    bulk-ingested Draft is routinely opened for coding by a different
+    person, on a different day, with no live upload event left to
+    re-derive this from -- see _ingest_invoice_file()'s own docstring."""
+    caveats = list(result.get("caveats") or [])
+    if skipped_reason:
+        upload = {"text": skipped_reason, "kind": "warning", "caveats": []}
+    else:
+        vendor_name = result.get("vendor_name")
+        confidence = result.get("confidence") or "unknown"
+        if vendor_name or result.get("amount") is not None:
+            if vendor_name and not result.get("matched_vendor_id") and not result.get("possible_vendor_matches"):
+                caveats.append(f'No matching vendor found for "{vendor_name}" -- select or add one manually.')
+            upload = {
+                "text": f"Extracted from the uploaded invoice ({confidence} confidence) -- "
+                        f"please review before submitting.",
+                "kind": "success" if (confidence == "high" and not caveats) else "warning",
+                "caveats": caveats,
+            }
+        else:
+            upload = {
+                "text": "Couldn't extract vendor/amount from this document -- please fill in the fields manually.",
+                "kind": "error",
+                "caveats": caveats,
+            }
+    status = {"upload": upload}
+    if not result.get("matched_vendor_id") and result.get("possible_vendor_matches"):
+        status["vendor_matches"] = {
+            "candidates": result["possible_vendor_matches"],
+            "vendor_name": result.get("vendor_name"),
+        }
+    # 2026-09-22 (Jay): "checking property location on a property-related
+    # invoice" -- Research Coding needs this even when the Draft is coded
+    # long after intake (no live browser holds the extraction result by
+    # then), so it's persisted alongside everything else here.
+    if result.get("service_address"):
+        status["service_address"] = result["service_address"]
+    return status
 
-    try:
-        result = await asyncio.to_thread(document_extract.extract_fields, content, mime_type)
-    except Exception as exc:
-        print(f"[invoice-intake] extraction {type(exc).__name__}: {exc}")
-        result = {}
 
-    vendor_name = result.get("vendor_name")
-    vendor_id = None
-    if vendor_name:
-        match = db.query_one(
-            "SELECT id FROM checkreq.vendors WHERE org_id = %s AND is_active AND display_name ILIKE %s "
-            "ORDER BY display_name LIMIT 1",
-            (org["id"], f"%{vendor_name}%"),
-        )
-        if match:
-            vendor_id = match["id"]
-
-    extracted_amount = result.get("amount")
-
+def _create_invoice_stub(org: dict, user: dict, source_channel: str = "manual_upload") -> tuple[int, str]:
+    """Layer 2a of invoice ingestion (2026-09-22, split out of the original
+    one-shot _ingest_invoice_file): the ONLY synchronous part of bulk
+    intake now. Jay: "you have no way to know if it is working or not. I
+    would immediately show it on the list and have a 'processing' [state]
+    on the row until it is ready to be reviewed." A real Anthropic vision
+    call plus a real SharePoint upload, done once per file synchronously
+    for a 30-file batch, is exactly the kind of silent multi-minute wait
+    that provoked this complaint -- so this INSERT is deliberately the only
+    thing the request waits on; extraction, matching, and archival all
+    happen afterward via _finish_invoice_processing(), run as a
+    BackgroundTask (see invoice_intake_upload() below) so the browser gets
+    its redirect back almost immediately regardless of batch size.
+    Returns (payment_request_id, request_number)."""
     request_number = _next_request_number("invoice_payment")
+    intake_status = {"processing": True}
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -5305,24 +5452,97 @@ async def invoice_intake_upload(request: Request, file: UploadFile):
                 INSERT INTO checkreq.payment_requests
                     (request_number, request_type, org_id, program_area_id, submitter_user_id,
                      vendor_id, amount, requested_pay_date, description, status,
-                     source_channel, invoice_extracted_vendor, invoice_extracted_amount)
-                VALUES (%s, 'invoice_payment', %s, NULL, %s, %s, %s, %s, %s, 'Draft',
-                        'manual_upload', %s, %s)
+                     source_channel, intake_status)
+                VALUES (%s, 'invoice_payment', %s, NULL, %s, NULL, 0, %s, '', 'Draft',
+                        %s, %s::jsonb)
                 RETURNING id
                 """,
-                (request_number, org["id"], user["id"], vendor_id,
-                 extracted_amount or 0, date.today(), result.get("description") or "",
-                 vendor_name, extracted_amount),
+                (request_number, org["id"], user["id"], date.today(), source_channel, json.dumps(intake_status)),
             )
             payment_request_id = cur.fetchone()["id"]
+    return payment_request_id, request_number
+
+
+async def _finish_invoice_processing(payment_request_id: int, request_number: str, org: dict, user: dict,
+                                      filename: str, mime_type: str, content: bytes) -> None:
+    """Layer 2b (2026-09-22): the slow part of ingesting one invoice file --
+    extraction, vendor/GL/program-area matching, and archival -- run as a
+    BackgroundTask against a Draft _create_invoice_stub() already created
+    and the browser already got a response for. Updates (never re-inserts)
+    that same row when done, clearing the 'processing' flag so the Queue
+    page's poll (see /invoice-intake/status below) picks up the real
+    result. This is also the natural shape a future automated email-
+    scanning job would want: _create_invoice_stub() + this, called
+    separately, rather than one big synchronous function.
+
+    Never raises past extraction/matching -- a failure there degrades to a
+    plain, un-prefilled Draft with a clear note, never leaves the row stuck
+    'processing' forever. Archival failure is likewise caught and surfaced
+    ON THE ROW, not just a server log line -- a silent archival failure
+    (e.g. this entity has no SharePoint archive location configured) was
+    the real, confirmed root cause of an uploaded invoice "not showing" on
+    the coding screen later; the reviewer needs to see that, not just a
+    developer reading Cloud Run logs."""
+    allowed, _, cap = _check_and_increment_extract_document_usage(user["id"])
+    skipped_reason = None
+    result: dict = {}
+    if allowed:
+        try:
+            result = await _extract_and_match_invoice(content, mime_type, org)
+        except Exception as exc:
+            print(f"[invoice-intake] extraction {type(exc).__name__}: {exc}")
+            skipped_reason = "Extraction failed for this file -- please fill in the fields manually."
+    else:
+        skipped_reason = (
+            f"Today's automatic-document-reading limit ({cap}) was reached before this file -- "
+            f"queued without extraction. Please fill in the fields manually."
+        )
+
+    vendor_id = result.get("matched_vendor_id")
+    vendor_name = result.get("vendor_name")
+    extracted_amount = result.get("amount")
+    coded_gl_account_id = result.get("matched_gl_account_id")
+    # 2026-09-22 (Jay, restated a 4th time): never leave a Draft with no
+    # Program Area at all -- a coded-GL-account match (above) wins if
+    # present (it's a real, specific signal from the document itself);
+    # otherwise fall back to the same Master-or-first default the classic
+    # form already applies, so this Draft looks correct the moment it's
+    # first opened, not just after someone manually sets it.
+    program_area_id = result.get("matched_program_area_id") or _default_program_area_id(org["id"], user["id"])
+    intake_status = _build_intake_status(result, skipped_reason)
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE checkreq.payment_requests
+                SET program_area_id = %s, vendor_id = %s, amount = %s, description = %s,
+                    invoice_extracted_vendor = %s, invoice_extracted_amount = %s, intake_status = %s::jsonb
+                WHERE id = %s
+                """,
+                (program_area_id, vendor_id, extracted_amount or 0, result.get("description") or "",
+                 vendor_name, extracted_amount, json.dumps(intake_status), payment_request_id),
+            )
+            # A handwritten/stamped GL account found directly on the
+            # document is a stronger, more specific signal than MSMD's
+            # proportional last-bill replay below -- take it when present,
+            # rather than risk two competing pre-filled GL lines.
+            if coded_gl_account_id and extracted_amount:
+                cur.execute(
+                    "INSERT INTO checkreq.payment_request_gl_lines "
+                    "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
+                    (payment_request_id, coded_gl_account_id, extracted_amount,
+                     "Extracted from a coded account number on the document -- please review."),
+                )
 
     # Monkey-See-Monkey-Do pre-fill: only meaningful once a real vendor is
     # matched AND that vendor's ART entry designates it -- reads real QBO
     # Bill/Purchase history (Jay's direct correction, 2026-08-02), not
     # Beacon's own GL-line history, which would be empty for a brand-new
     # intake flow. Best-effort: any failure here just means no pre-fill,
-    # never blocks the Draft from being created.
-    if vendor_id:
+    # never blocks the Draft from being created. Skipped when a directly-
+    # coded account was already found above (see the comment there).
+    if vendor_id and not coded_gl_account_id:
         art = art_preapproval.vendor_preapproval_status(vendor_id, org["id"])
         if art and art["is_monkey_see_monkey_do"]:
             try:
@@ -5335,11 +5555,145 @@ async def invoice_intake_upload(request: Request, file: UploadFile):
     # new_request_submit).
     try:
         _archive_one_file(org, payment_request_id, request_number, "user_upload",
-                           file.filename or "invoice", mime_type, content, user["id"])
+                           filename or "invoice", mime_type, content, user["id"])
     except Exception as exc:
         print(f"[invoice-intake] archival failed for {request_number}: {exc}")
+        intake_status["upload"]["caveats"].append(
+            "The uploaded file itself could not be archived -- ask an admin to check this "
+            "entity's SharePoint archive configuration. The extracted data above is still correct."
+        )
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE checkreq.payment_requests SET intake_status = %s::jsonb WHERE id = %s",
+                    (json.dumps(intake_status), payment_request_id),
+                )
 
-    return RedirectResponse(f"/requests/{request_number}/edit?intake=1", status_code=303)
+
+@app.post("/invoice-intake")
+async def invoice_intake_upload(request: Request, background_tasks: BackgroundTasks):
+    """Bulk invoice intake (2026-09-22 redesign): accepts any number of
+    files in one submission, via the same request.form().getlist()
+    pattern add_attachment() already uses for multi-file uploads -- a
+    batch of 30 invoices dropped in at once doesn't need 30 separate page
+    round-trips.
+
+    Jay: "you have no way to know if it is working or not. I would
+    immediately show it on the list and have a 'processing' [state] on the
+    row until it is ready to be reviewed." Each file's Draft row is created
+    right here, synchronously (_create_invoice_stub -- one fast INSERT),
+    so the redirect below and the Queue page it lands on show every file
+    immediately, all in 'Processing...' state; the slow part (extraction,
+    matching, archival -- a real Anthropic vision call plus a real
+    SharePoint upload, per file) runs via FastAPI's BackgroundTasks
+    (_finish_invoice_processing), which fires AFTER this response is
+    already sent. The Queue page polls a small status endpoint (below) to
+    pick up each row's real result as it finishes, no manual reload needed.
+
+    Redirects to the Queue, never to a specific Draft's edit page -- with
+    many files in flight there's no single "next" screen to land on;
+    staff triage from the queue list instead, whenever they get to it,
+    same as any Draft a future automated email-scanning job ingests would
+    be."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    org = _current_org(request)
+    if not org:
+        return RedirectResponse("/portal")
+    if not rbac.user_has_role(user["id"], "invoice_intake_submitter", org["id"]):
+        return HTMLResponse("Not authorized -- ask an admin to grant you the Invoice Intake role.", status_code=403)
+
+    form = await request.form()
+    files = [f for f in form.getlist("files") if getattr(f, "filename", None)]
+    if not files:
+        return RedirectResponse(
+            f"/invoice-intake?add_error={quote('No file selected.')}", status_code=303,
+        )
+
+    created = 0
+    errors: list[str] = []
+    for f in files:
+        content = await f.read()
+        if not content:
+            continue
+        if len(content) > _EXTRACT_MAX_BYTES:
+            errors.append(f"{f.filename}: too large (max 10MB)")
+            continue
+        mime_type = f.content_type or ""
+        if mime_type not in _EXTRACT_ALLOWED_TYPES:
+            errors.append(f"{f.filename}: unsupported file type")
+            continue
+        # H2 (Security Assessment 2026-09-19): the declared type above is
+        # the client's claim; the bytes decide what gets archived/extracted.
+        ok, sniffed = upload_guard.sniff_allowed(content, mime_type)
+        if not ok:
+            errors.append(f"{f.filename}: file contents don't match a supported type")
+            continue
+        try:
+            payment_request_id, request_number = _create_invoice_stub(org, user)
+            background_tasks.add_task(
+                _finish_invoice_processing, payment_request_id, request_number, org, user,
+                f.filename, sniffed, content,
+            )
+            created += 1
+        except Exception as exc:
+            print(f"[invoice-intake] stub creation failed for {f.filename}: {type(exc).__name__}: {exc}")
+            errors.append(f"{f.filename}: could not be added -- please try again or contact an admin")
+
+    msg_parts = []
+    if created:
+        msg_parts.append(f"{created} invoice(s) added to the queue -- processing now.")
+    if errors:
+        msg_parts.append(" ".join(errors))
+    msg = " ".join(msg_parts) if msg_parts else "No files were uploaded."
+    return RedirectResponse(f"/invoice-intake?add_error={quote(msg)}", status_code=303)
+
+
+@app.get("/invoice-intake/status")
+def invoice_intake_status(request: Request):
+    """2026-09-22 (Jay): "update the row once it is ready for review" --
+    polled by invoice_intake_queue.html's own small JS (static/js/
+    invoice_intake_queue.js) every few seconds while at least one row is
+    still 'Processing...', so a batch visibly fills in without a manual
+    reload. Deliberately returns every Draft's current state (not just
+    the still-processing ones) -- simplest to keep the client-side
+    patch logic as one uniform "replace this row's cells" pass rather than
+    two different code paths for "new" vs. "updated" rows."""
+    user = _current_user(request)
+    if not user:
+        return JSONResponse({"error": "Not signed in"}, status_code=401)
+    org = _current_org(request)
+    if not org:
+        return JSONResponse({"error": "No entity selected"}, status_code=400)
+    if not rbac.user_has_role(user["id"], "invoice_intake_submitter", org["id"]):
+        return JSONResponse({"error": "Not authorized"}, status_code=403)
+
+    rows = db.query(
+        """
+        SELECT pr.request_number, pr.intake_status,
+               COALESCE(v.display_name, vr.company_name, vr.first_name || ' ' || vr.last_name,
+                        pr.invoice_extracted_vendor, '—') AS vendor_name,
+               COALESCE(pr.invoice_extracted_amount, pr.amount) AS amount
+        FROM checkreq.payment_requests pr
+        LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+        LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+        WHERE pr.org_id = %s AND pr.request_type = 'invoice_payment' AND pr.status = 'Draft'
+        ORDER BY pr.created_at
+        """,
+        (org["id"],),
+    )
+    return {
+        "rows": [
+            {
+                "request_number": r["request_number"],
+                "processing": bool((r["intake_status"] or {}).get("processing")),
+                "vendor_name": r["vendor_name"],
+                "amount": float(r["amount"] or 0),
+            }
+            for r in rows
+        ],
+    }
 
 
 def _prefill_msmd_gl_lines(org: dict, payment_request_id: int, vendor_id: int,

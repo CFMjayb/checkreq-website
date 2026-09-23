@@ -68,28 +68,57 @@
 }
 .split-preview .voucher { width: 100%; }
 
-/* Toggle between the check-request preview and the uploaded document
-   itself (Jay, 2026-07-29: "you never get the opportunity to look at the
-   document... it might be nice to be able to toggle"). Hidden until a
-   file is actually chosen -- see showDocumentPreview() in new_request.js. */
-.preview-toggle { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); }
-.preview-toggle-btn {
-  flex: 1;
-  padding: var(--space-2) var(--space-3);
+/* 2026-09-22 (Jay): the right pane no longer mirrors the form live at
+   all -- see new_request.html's own comment on the right pane. It's
+   either this empty placeholder, or the real document (existing or
+   freshly uploaded), never both, so no toggle control is needed anymore. */
+.preview-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  color: var(--color-text-muted);
+  gap: var(--space-2);
+}
+.preview-empty-icon { font-size: 2.5rem; opacity: 0.5; }
+.preview-empty-state .sub { font-size: 0.82rem; }
+
+/* 2026-09-22 (Jay): "Vendor Confirmed and Active used to show to the
+   right of the Vendor header... needs to return there" -- restored as an
+   inline confirmation next to the field's own <label>, not just folded
+   into the Status & Messages panel. */
+.vendor-confirmed-inline {
+  color: var(--color-success);
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-left: var(--space-2);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* 2026-09-22 (Jay): Approval Chain Preview relocated from the (now-retired)
+   live CR-form mirror on the right into the left form pane, above Status &
+   Messages -- self-contained styling since check_voucher.css is no longer
+   loaded on this page at all. */
+.approval-chain-preview {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: #fff;
+  padding: 8px 12px;
+  background: #f4f0e4;
+  font-size: 0.8rem;
+  margin-top: var(--space-3);
+}
+.approval-chain-preview .label {
+  display: block;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.68rem;
   color: var(--color-text-muted);
-  font-family: var(--font-body);
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
+  margin-bottom: 1px;
 }
-.preview-toggle-btn.active {
-  background: var(--color-franciscan-green);
-  color: #fff;
-  border-color: var(--color-franciscan-green);
-}
+
 .document-preview-frame {
   width: 100%;
   height: 600px;

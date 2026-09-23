@@ -11,29 +11,45 @@
 let vendorDisplayText = '—';
 let chainDebounceTimer = null;
 let vendorTomSelect = null;
+// 2026-09-22 (Jay): "checking property location on a property-related
+// invoice" -- Research Coding needs whatever specific property/service
+// address the document itself named, set either by a live extraction on
+// this page (applyExtractedFields) or, for a bulk-ingested Invoice Intake
+// Draft, by whatever was found and persisted at intake time
+// (seedIntakeStatus). Null when the vendor/document doesn't have one.
+let lastExtractedServiceAddress = null;
+
+// Program Area default (2026-09-22, Jay's feedback batch, restated a 4th
+// time same day: "you are supposed to select the Program Area that has
+// Master in it if they have access to it or the first item in their
+// program list"). ALWAYS applies now -- both a brand-new submission
+// (loadProgramAreas, below) AND an existing Draft with no program_area_id
+// yet (applyEditPrefill -- Invoice Intake's old "leave blank, defaults to
+// All" design is retired; every request gets a real, always-editable
+// Program Area from the start now, never a blank one). Found via live
+// testing against real EDOM data: the real "master" area is titled
+// "EDOM Master", not literally "Master" -- an exact-string match missed it
+// entirely. Matches the whole word "master" anywhere in the title (word-
+// boundaried, so it won't false-positive on something like "Grantmaster")
+// to handle each org's own per-diocese naming.
+function defaultProgramAreaId(areas) {
+  if (!areas || !areas.length) return null;
+  const master = areas.find(a => /\bmaster\b/i.test(a.title || ''));
+  return String((master || areas[0]).id);
+}
+
+let _lastLoadedProgramAreas = [];
 
 async function loadProgramAreas() {
   const sel = document.getElementById('programAreaSelect');
   const r = await fetch(`/api/program-areas/${CURRENT_ORG_ID}`);
   const areas = await r.json();
+  _lastLoadedProgramAreas = areas;
   sel.innerHTML = '<option value="">Select...</option>' +
     areas.map(a => `<option value="${a.id}">${a.title}</option>`).join('');
-  // Program Area default (2026-09-22, Jay's feedback batch): "if the user
-  // has access to the master program area, then that should default.
-  // Otherwise, the program area should default to the first in the list."
-  // Only for a brand-new submission -- edit mode (including Invoice
-  // Intake's deliberate "leave blank for All Program Areas" case) sets
-  // this itself in applyEditPrefill(), which runs after this resolves and
-  // must be allowed to win over this default.
-  if (!window.EDIT_DATA && areas.length) {
-    // Found via live testing against real EDOM data (2026-09-22): the real
-    // "master" area is titled "EDOM Master", not literally "Master" -- an
-    // exact-string match missed it entirely. Matches the whole word
-    // "master" anywhere in the title (word-boundaried, so it won't
-    // false-positive on something like "Grantmaster") to handle each
-    // org's own per-diocese naming.
-    const master = areas.find(a => /\bmaster\b/i.test(a.title || ''));
-    sel.value = String((master || areas[0]).id);
+  if (!window.EDIT_DATA) {
+    const d = defaultProgramAreaId(areas);
+    if (d) sel.value = d;
   }
 }
 
@@ -172,7 +188,12 @@ function computeNewVendorDisplayName() {
 }
 
 function setVendorConfirmedMessage(show) {
-  setStatus('vendorConfirmed', show);
+  // 2026-09-22 (Jay): "used to show to the right of the Vendor header...
+  // needs to return there" -- restored as its original inline confirmation
+  // next to the field's own label (was folded into the Status & Messages
+  // panel during the same-day unification -- see the panel's own comment).
+  const inline = document.getElementById('vendorConfirmedInline');
+  if (inline) inline.style.display = show ? 'inline' : 'none';
   document.getElementById('addNewVendorLink').style.display = show ? 'none' : '';
 }
 
@@ -404,14 +425,23 @@ function scheduleChainPreview(programAreaId, total) {
   chainDebounceTimer = setTimeout(() => updateChainPreview(programAreaId, total), 300);
 }
 
+function setChainSummary(text) {
+  // 2026-09-22 (Jay): Approval Chain Preview moved to the left pane -- was
+  // setField('chain_summary', ...), targeting a [data-field] node under
+  // the now-retired #voucherPreview mirror. Direct id lookup now that it's
+  // its own standalone element (see new_request.html).
+  const el = document.getElementById('chainSummaryDisplay');
+  if (el) el.textContent = text;
+}
+
 async function updateChainPreview(programAreaId, total) {
-  if (!programAreaId || total <= 0) { setField('chain_summary', '—'); return; }
+  if (!programAreaId || total <= 0) { setChainSummary('—'); return; }
   try {
     const r = await fetch(`/api/approval-chain-preview?program_area_id=${programAreaId}&amount=${total}`);
     const data = await r.json();
-    setField('chain_summary', data.summary || '—');
+    setChainSummary(data.summary || '—');
   } catch {
-    setField('chain_summary', '—');
+    setChainSummary('—');
   }
 }
 
@@ -521,7 +551,6 @@ function markAutoFilled(el) {
 const statusState = {
   upload: null,             // { text, kind, caveats } | null
   vendorValidation: null,   // string | null
-  vendorConfirmed: false,
   vendorMatches: null,      // { candidates, vendorName } | null -- near-miss suggestions from extraction
   art: null,                // pre-built safe HTML string | null -- ART/MSMD vendor note
   preApprovedWarning: false,
@@ -548,9 +577,6 @@ function renderStatusPanel() {
     (statusState.upload.caveats || []).forEach(c => { html += `<span class="caveat">${escapeHtml(c)}</span>`; });
     html += '</div>';
     parts.push(html);
-  }
-  if (statusState.vendorConfirmed) {
-    parts.push('<div class="status-msg success"><strong>Vendor</strong>&#10003; Vendor confirmed and active</div>');
   }
   if (statusState.vendorValidation) {
     parts.push(`<div class="status-msg error"><strong>Vendor</strong>${escapeHtml(statusState.vendorValidation)}</div>`);
@@ -637,7 +663,9 @@ async function researchCoding() {
   }
   setStatus('research', { text: 'Looking up prior coding...' });
   try {
-    const r = await fetch(`/api/vendor-coding-history?vendor_id=${encodeURIComponent(vendorId)}`);
+    let url = `/api/vendor-coding-history?vendor_id=${encodeURIComponent(vendorId)}`;
+    if (lastExtractedServiceAddress) url += `&service_address=${encodeURIComponent(lastExtractedServiceAddress)}`;
+    const r = await fetch(url);
     const data = await r.json();
     if (!data.suggestions || !data.suggestions.length) {
       setStatus('research', { text: `No prior coding found for ${data.vendor_display_name || 'this vendor'}.`, kind: 'warning' });
@@ -664,15 +692,44 @@ async function researchCoding() {
 
 const SPLIT_MIN_PX = 420;
 const SPLIT_MAX_PX = 900;
+const SPLIT_RIGHT_PANE_COLLAPSED_PX = 160; // how much the right side keeps visible with no document yet
 const SPLIT_WIDTH_KEY = 'beacon_new_request_split_width';
+
+// 2026-09-22 (Jay): "at the start of the screen, I would have the vertical
+// scroll bar to the far right, until a file is uploaded. Then I would show
+// the uploaded document moving the scroll bar over to the mid screen."
+// The right pane has nothing to show until a document exists (its own
+// empty-state, see new_request.html) -- called from showDocumentFrame()
+// the instant one appears (a fresh upload, or an existing Draft's
+// already-archived attachment rendered on load).
+function widenPreviewPaneForDocument() {
+  const formPane = document.querySelector('.split-form');
+  if (!formPane) return;
+  const saved = parseInt(localStorage.getItem(SPLIT_WIDTH_KEY) || '', 10);
+  // A real saved drag preference wins; otherwise clear the inline override
+  // entirely so the CSS default (flex: 0 0 44%, a genuine mid-screen split)
+  // takes over, rather than picking another hardcoded number here.
+  formPane.style.flexBasis = (saved && saved >= SPLIT_MIN_PX) ? saved + 'px' : '';
+}
 
 function initSplitDivider() {
   const divider = document.getElementById('splitDivider');
   const formPane = document.querySelector('.split-form');
   if (!divider || !formPane) return;
 
-  let saved = parseInt(localStorage.getItem(SPLIT_WIDTH_KEY) || '', 10);
-  if (saved && saved >= SPLIT_MIN_PX) formPane.style.flexBasis = saved + 'px';
+  if (window.EXISTING_DOCUMENT_ATTACHMENT) {
+    // A document already exists (an existing Draft's own attachment) --
+    // renderExistingAttachment() calls widenPreviewPaneForDocument() itself
+    // once it actually renders, but seed the same saved-or-default width
+    // here too so there's no visible "wide, then snap back" flash before
+    // that async render completes.
+    widenPreviewPaneForDocument();
+  } else {
+    // No document yet -- push the divider toward the far right, leaving
+    // just enough of the right pane's empty-state visible to be legible.
+    const shellWidth = formPane.parentElement.getBoundingClientRect().width;
+    formPane.style.flexBasis = Math.max(SPLIT_MIN_PX, shellWidth - SPLIT_RIGHT_PANE_COLLAPSED_PX) + 'px';
+  }
 
   let dragging = false;
   divider.addEventListener('mousedown', (e) => {
@@ -704,6 +761,7 @@ function applyExtractedFields(data, filename) {
     setUploadStatus(data.error, 'error');
     return;
   }
+  lastExtractedServiceAddress = data.service_address || null;
 
   // data.date is the INVOICE's own printed date, not the requested pay date
   // of this check request -- those are different things and must not be
@@ -864,12 +922,16 @@ async function applyEditPrefill() {
   if (!d) return;
 
   const paSel = document.getElementById('programAreaSelect');
-  // Invoice Intake's Draft rows may have no Program Area at all
-  // (program_area_id = None, "All") -- leaving the select at its default
-  // blank/"All Program Areas" option, rather than setting the literal
-  // string "None" (which happened to match no option by accident before
-  // this guard existed, but wasn't a real guarantee).
-  if (d.program_area_id) paSel.value = String(d.program_area_id);
+  // 2026-09-22 (Jay, restated a 4th time): a Draft with no Program Area yet
+  // (e.g. a bulk-ingested Invoice Intake row nothing on the document itself
+  // resolved one for) gets the SAME Master-or-first default a brand-new
+  // submission already gets, via defaultProgramAreaId() -- never left blank.
+  if (d.program_area_id) {
+    paSel.value = String(d.program_area_id);
+  } else {
+    const def = defaultProgramAreaId(_lastLoadedProgramAreas);
+    if (def) paSel.value = def;
+  }
 
   const container = document.getElementById('glLines');
   container.querySelectorAll('.glAccount').forEach(sel => { if (sel.tomselect) sel.tomselect.destroy(); });
@@ -939,7 +1001,28 @@ async function applyEditPrefill() {
     document.getElementById('nvContactEmail').value = nv.contact_email || '';
   }
 
+  seedIntakeStatus();
   refreshPreview();
+}
+
+// Bulk Invoice Intake (2026-09-22): renders whatever _ingest_invoice_file()
+// found and persisted on this Draft at intake time -- the extraction
+// outcome and, if no vendor was confidently matched, the same "did you
+// mean" candidate list Classic's live upload already knows how to render.
+// A confidently-matched vendor needs no separate seeding here -- the
+// d.vendor branch above already calls vendorTomSelect.addItem(), which
+// triggers onItemAdd -> setVendorConfirmedMessage(true)/refreshArtBanner(),
+// the exact same path a live confirm takes. This only fills the gap that
+// path doesn't cover: an extraction note, or an unresolved near-miss list,
+// for a Draft nobody has looked at since it was ingested.
+function seedIntakeStatus() {
+  const s = EDIT_DATA && EDIT_DATA.intake_status;
+  if (!s) return;
+  if (s.upload) setStatus('upload', s.upload);
+  if (s.vendor_matches) {
+    setStatus('vendorMatches', { candidates: s.vendor_matches.candidates, vendorName: s.vendor_matches.vendor_name });
+  }
+  if (s.service_address) lastExtractedServiceAddress = s.service_address;
 }
 
 async function handleAttachmentUpload(fileInput) {
@@ -960,59 +1043,94 @@ async function handleAttachmentUpload(fileInput) {
 }
 
 // Jay, 2026-07-29: "you never get the opportunity to look at the [uploaded]
-// document... it might be nice to be able to toggle between an uploaded
-// document versus the check request itself." Renders client-side via
-// URL.createObjectURL -- the file is already sitting in the <input>, no
-// server round-trip needed just to look at it.
-function showDocumentPreview(file) {
-  const toggleBar = document.getElementById('previewToggle');
-  const voucherWrap = document.getElementById('voucherPreviewWrap');
+// document." 2026-09-22 correction: the right pane no longer mirrors the
+// CR form at all (see new_request.html's own comment), so there's nothing
+// to toggle between anymore -- the document IS the right pane, full stop,
+// the moment one exists. Renders client-side via URL.createObjectURL --
+// the file is already sitting in the <input>, no server round-trip needed
+// just to look at it.
+function showDocumentFrame(iframeOrImgEl) {
+  const emptyState = document.getElementById('documentPreviewEmpty');
   const docWrap = document.getElementById('documentPreviewWrap');
-  const url = URL.createObjectURL(file);
   docWrap.innerHTML = '';
-  if (file.type === 'application/pdf') {
-    const iframe = document.createElement('iframe');
-    iframe.src = url;
-    iframe.title = 'Uploaded document';
-    iframe.className = 'document-preview-frame';
-    docWrap.appendChild(iframe);
-  } else if (file.type.startsWith('image/')) {
-    const img = document.createElement('img');
-    img.src = url;
-    img.alt = 'Uploaded document';
-    img.className = 'document-preview-image';
-    docWrap.appendChild(img);
-  } else {
-    docWrap.textContent = "This file type can't be previewed inline.";
-  }
-  toggleBar.style.display = 'flex';
-  // Default to showing the document itself right after a fresh upload --
-  // that's the whole point of the toggle existing at all.
-  toggleBar.querySelectorAll('.preview-toggle-btn').forEach(b => b.classList.remove('active'));
-  toggleBar.querySelector('[data-view="document"]').classList.add('active');
-  voucherWrap.style.display = 'none';
+  docWrap.appendChild(iframeOrImgEl);
+  if (emptyState) emptyState.style.display = 'none';
   docWrap.style.display = 'block';
+  widenPreviewPaneForDocument();
 }
 
-function initPreviewToggle() {
-  const toggleBar = document.getElementById('previewToggle');
-  const voucherWrap = document.getElementById('voucherPreviewWrap');
-  const docWrap = document.getElementById('documentPreviewWrap');
-  toggleBar.querySelectorAll('.preview-toggle-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      toggleBar.querySelectorAll('.preview-toggle-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const showDoc = btn.dataset.view === 'document';
-      voucherWrap.style.display = showDoc ? 'none' : '';
-      docWrap.style.display = showDoc ? 'block' : 'none';
-    });
-  });
+function showDocumentPreview(file) {
+  const url = URL.createObjectURL(file);
+  let el;
+  if (file.type === 'application/pdf') {
+    el = document.createElement('iframe');
+    el.src = url;
+    el.title = 'Uploaded document';
+    el.className = 'document-preview-frame';
+  } else if (file.type.startsWith('image/')) {
+    el = document.createElement('img');
+    el.src = url;
+    el.alt = 'Uploaded document';
+    el.className = 'document-preview-image';
+  } else {
+    el = document.createElement('p');
+    el.textContent = "This file type can't be previewed inline.";
+  }
+  showDocumentFrame(el);
+}
+
+// 2026-09-22 (Jay): "I can't see the invoice... you must have a image
+// viewer on the right." Reviewing an EXISTING Draft (bulk Invoice Intake's
+// real case -- uploaded by someone else, possibly days ago) has no live
+// file input holding the bytes anymore; the only copy is whatever's
+// already archived. Fetches it through the same authenticated view route
+// the Attachments list already links to (same-origin, so the browser's
+// existing session cookie covers it -- no separate token needed).
+function renderExistingAttachment() {
+  const att = window.EXISTING_DOCUMENT_ATTACHMENT;
+  if (!att || !window.EDIT_DATA) return;
+  const url = `/requests/${window.EDIT_DATA.editing_request_number}/attachments/${att.id}/view`;
+  let el;
+  if ((att.content_type || '').startsWith('image/')) {
+    el = document.createElement('img');
+    el.src = url;
+    el.alt = att.original_filename || 'Uploaded document';
+    el.className = 'document-preview-image';
+  } else {
+    // PDF, or anything else the browser's own plugin/viewer can attempt --
+    // matches showDocumentPreview()'s own PDF branch.
+    el = document.createElement('iframe');
+    el.src = url;
+    el.title = att.original_filename || 'Uploaded document';
+    el.className = 'document-preview-frame';
+  }
+  showDocumentFrame(el);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  initPreviewToggle();
   initVendorSelect();
   initSplitDivider();
+  renderExistingAttachment();
+
+  // 2026-09-22 (Jay): "just have Upload File, then go to the picker, select
+  // the file and begin the upload process" -- one custom-styled button
+  // triggers the real (hidden) file input; the input's own change event
+  // (wired below/already wired for attachmentsInput) does the rest with no
+  // second click. Applies to both upload surfaces on this page.
+  const attachmentsUploadBtn = document.getElementById('attachmentsUploadBtn');
+  if (attachmentsUploadBtn) {
+    attachmentsUploadBtn.addEventListener('click', () => document.getElementById('attachmentsInput').click());
+  }
+  const attachmentAddBtn = document.getElementById('attachmentAddBtn');
+  if (attachmentAddBtn) {
+    attachmentAddBtn.addEventListener('click', () => document.getElementById('attachmentAddInput').click());
+  }
+  const attachmentAddInput = document.getElementById('attachmentAddInput');
+  if (attachmentAddInput) {
+    attachmentAddInput.addEventListener('change', () => {
+      if (attachmentAddInput.files.length) document.getElementById('attachmentAddForm').submit();
+    });
+  }
 
   // Event delegation for buttons the Status & Messages panel injects
   // dynamically (possible-vendor-match confirms, Research Coding
