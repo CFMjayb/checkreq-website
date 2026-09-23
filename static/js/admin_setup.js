@@ -167,7 +167,7 @@
       });
       if (!rows.length) return;
 
-      btn.disabled = true;
+      if (window.showButtonLoading) { window.showButtonLoading(btn); } else { btn.disabled = true; }
       state.className = 'save-state';
       state.textContent = 'Saving ' + rows.length + '...';
 
@@ -210,6 +210,7 @@
           state.textContent = failed
             ? data.saved + ' saved, ' + failed + ' failed'
             : 'Saved ' + data.saved;
+          btn.classList.remove('btn-loading');
           refreshState();
 
           // 2026-08-02 feedback batch, Item 10: once every dirty row saved
@@ -229,6 +230,7 @@
           state.className = 'save-state err';
           state.textContent = 'Save failed: ' + err.message;
           btn.disabled = false;
+          btn.classList.remove('btn-loading');
         });
     });
 
@@ -285,6 +287,7 @@
       var cell = tr.querySelector('.budget-cell');
       cell.className = 'budget-cell';
       cell.textContent = 'Checking...';
+      if (window.showButtonLoading) { window.showButtonLoading(btn); } else { btn.disabled = true; }
       var url = '/api/budget-status?program_area_id=' + tr.dataset.areaId +
                 '&gl_account_id=' + tr.dataset.accountId + '&amount=0';
       fetch(url)
@@ -295,7 +298,8 @@
                              fmtMoney(d.actual_spend) + ' spent';
           if (d.actual_spend > d.annual_budget) cell.classList.add('over');
         })
-        .catch(function () { cell.textContent = 'Lookup failed'; });
+        .catch(function () { cell.textContent = 'Lookup failed'; })
+        .then(function () { btn.disabled = false; btn.classList.remove('btn-loading'); });
     });
 
     // --- add-a-mapping panel ---
@@ -357,7 +361,7 @@
         addMsg.textContent = 'Pick a program area and a GL account.';
         return;
       }
-      addBtn.disabled = true;
+      if (window.showButtonLoading) { window.showButtonLoading(addBtn); } else { addBtn.disabled = true; }
       addMsg.textContent = 'Adding...';
       fetch('/admin/setup/gl-mapping/add', {
         method: 'POST',
@@ -367,6 +371,7 @@
         .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
         .then(function (res) {
           addBtn.disabled = false;
+          addBtn.classList.remove('btn-loading');
           if (!res.ok || res.d.error) {
             addMsg.className = 'row-msg err';
             addMsg.textContent = res.d.error || 'Could not add that mapping.';
@@ -380,6 +385,7 @@
         })
         .catch(function (err) {
           addBtn.disabled = false;
+          addBtn.classList.remove('btn-loading');
           addMsg.className = 'row-msg err';
           addMsg.textContent = 'Could not add that mapping: ' + err.message;
         });
@@ -451,7 +457,7 @@
         addMsg.textContent = 'Title is required.';
         return;
       }
-      addBtn.disabled = true;
+      if (window.showButtonLoading) { window.showButtonLoading(addBtn); } else { addBtn.disabled = true; }
       addMsg.textContent = 'Adding...';
       fetch('/admin/setup/program-areas/add', {
         method: 'POST',
@@ -461,6 +467,7 @@
         .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
         .then(function (res) {
           addBtn.disabled = false;
+          addBtn.classList.remove('btn-loading');
           if (!res.ok || res.d.error) {
             addMsg.className = 'row-msg err';
             addMsg.textContent = res.d.error || 'Could not add that program area.';
@@ -473,6 +480,7 @@
         })
         .catch(function (err) {
           addBtn.disabled = false;
+          addBtn.classList.remove('btn-loading');
           addMsg.className = 'row-msg err';
           addMsg.textContent = 'Could not add that program area: ' + err.message;
         });
@@ -544,11 +552,11 @@
     // Group collapse/expand -- identical attribute-matching mechanism to
     // the GL Mapping page's own area-header handler (data-group /
     // data-group-of), reused verbatim since this is the same UI idea.
-    table.addEventListener('click', function (e) {
-      var header = e.target.closest('tr.area-header');
-      if (!header) return;
+    // All groups render server-side already collapsed (Jay's 2026-09-23
+    // request) -- this handler just toggles from there.
+    function setGroupCollapsed(header, collapsed) {
       var groupId = header.dataset.group;
-      var collapsed = header.classList.toggle('is-collapsed');
+      header.classList.toggle('is-collapsed', collapsed);
       table.querySelectorAll('tr[data-group-of="' + groupId + '"]').forEach(function (tr) {
         if (tr.classList.contains('msg-row')) {
           if (collapsed) tr.hidden = true;
@@ -558,7 +566,23 @@
           tr.style.display = collapsed ? 'none' : '';
         }
       });
+    }
+    table.addEventListener('click', function (e) {
+      var header = e.target.closest('tr.area-header');
+      if (!header) return;
+      setGroupCollapsed(header, !header.classList.contains('is-collapsed'));
     });
+
+    // --- Collapse All / Expand All ---
+    var collapseAllBtn = document.getElementById('collapseAllBtn');
+    var expandAllBtn = document.getElementById('expandAllBtn');
+    function setAllGroups(collapsed) {
+      table.querySelectorAll('tr.area-header').forEach(function (header) {
+        setGroupCollapsed(header, collapsed);
+      });
+    }
+    if (collapseAllBtn) collapseAllBtn.addEventListener('click', function () { setAllGroups(true); });
+    if (expandAllBtn) expandAllBtn.addEventListener('click', function () { setAllGroups(false); });
 
     // --- Add-an-ART-entry panel: vendor Tom Select ---
     var vendorSel = document.getElementById('artAddVendor');
@@ -582,6 +606,7 @@
       addMsg.className = 'row-msg';
       var body = {
         vendor_id: vendorTs.getValue(),
+        item_description: document.getElementById('artAddDescription').value,
         group_label: document.getElementById('artAddGroup').value,
         art_type: document.getElementById('artAddType').value,
         is_active: document.getElementById('artAddActive').checked,
@@ -591,7 +616,7 @@
         addMsg.textContent = 'Pick a vendor.';
         return;
       }
-      addBtn.disabled = true;
+      if (window.showButtonLoading) { window.showButtonLoading(addBtn); } else { addBtn.disabled = true; }
       addMsg.textContent = 'Adding...';
       fetch('/admin/setup/art/add', {
         method: 'POST',
@@ -601,6 +626,7 @@
         .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
         .then(function (res) {
           addBtn.disabled = false;
+          addBtn.classList.remove('btn-loading');
           if (!res.ok || res.d.error) {
             addMsg.className = 'row-msg err';
             addMsg.textContent = res.d.error || 'Could not add that ART entry.';
@@ -612,6 +638,7 @@
         })
         .catch(function (err) {
           addBtn.disabled = false;
+          addBtn.classList.remove('btn-loading');
           addMsg.className = 'row-msg err';
           addMsg.textContent = 'Could not add that ART entry: ' + err.message;
         });
@@ -622,12 +649,13 @@
     var checkAllMsg = document.getElementById('checkAllMsg');
     if (checkAllBtn) {
       checkAllBtn.addEventListener('click', function () {
-        checkAllBtn.disabled = true;
+        if (window.showButtonLoading) { window.showButtonLoading(checkAllBtn); } else { checkAllBtn.disabled = true; }
         checkAllMsg.textContent = 'Checking every active entry against live QuickBooks -- this can take a moment...';
         fetch('/admin/setup/art/check-all', { method: 'POST', headers: window.csrfHeader() })
           .then(function (r) { return r.json(); })
           .then(function (d) {
             checkAllBtn.disabled = false;
+            checkAllBtn.classList.remove('btn-loading');
             if (d.error) { checkAllMsg.textContent = 'Failed: ' + d.error; return; }
             checkAllMsg.textContent = d.checked + ' checked, ' + d.skipped + ' skipped, ' +
               d.failed + ' failed -- ' + d.posted + ' posted, ' + d.overdue + ' overdue.';
@@ -635,6 +663,7 @@
           })
           .catch(function (err) {
             checkAllBtn.disabled = false;
+            checkAllBtn.classList.remove('btn-loading');
             checkAllMsg.textContent = 'Failed: ' + err.message;
           });
       });
@@ -705,18 +734,19 @@
     var checkMsg = document.getElementById('artCheckMsg');
     if (checkBtn) {
       checkBtn.addEventListener('click', function () {
-        checkBtn.disabled = true;
+        if (window.showButtonLoading) { window.showButtonLoading(checkBtn); } else { checkBtn.disabled = true; }
         checkMsg.textContent = 'Checking against live QuickBooks...';
         fetch(checkBtn.dataset.checkUrl, { method: 'POST', headers: window.csrfHeader() })
           .then(function (r) { return r.json(); })
           .then(function (d) {
-            if (d.error) { checkMsg.textContent = 'Failed: ' + d.error; checkBtn.disabled = false; return; }
-            if (d.skipped) { checkMsg.textContent = 'Not checked: ' + d.reason; checkBtn.disabled = false; return; }
+            if (d.error) { checkMsg.textContent = 'Failed: ' + d.error; checkBtn.disabled = false; checkBtn.classList.remove('btn-loading'); return; }
+            if (d.skipped) { checkMsg.textContent = 'Not checked: ' + d.reason; checkBtn.disabled = false; checkBtn.classList.remove('btn-loading'); return; }
             window.location.reload();
           })
           .catch(function (err) {
             checkMsg.textContent = 'Failed: ' + err.message;
             checkBtn.disabled = false;
+            checkBtn.classList.remove('btn-loading');
           });
       });
     }

@@ -78,23 +78,62 @@
     if (banner && /processing now/i.test(banner.textContent)) banner.remove();
   }
 
-  let pollTimer = null;
-  function poll() {
-    fetch('/invoice-intake/status', { credentials: 'same-origin' })
+  // 2026-09-23 (Jay): "too traffic intensive" -- no more 4-second timer.
+  // The page checks ONCE, a few seconds after it opens (an upload lands
+  // here via a full page load, so this also covers "when something is
+  // added"), and otherwise only when the user clicks Refresh. Each check
+  // asks about just the rows still showing Processing..., never every Draft.
+  const FIRST_CHECK_DELAY_MS = 8000;
+  const statusEl = document.getElementById('invoiceRefreshStatus');
+  const refreshBtn = document.getElementById('invoiceRefreshBtn');
+
+  function setStatus(text) {
+    if (!statusEl) return;
+    statusEl.textContent = text || '';
+    statusEl.hidden = !text;
+  }
+
+  function processingRequestNumbers() {
+    return Array.from(document.querySelectorAll('#invoiceDraftsTable tr[data-processing="true"]'))
+      .map((tr) => tr.dataset.requestNumber)
+      .filter(Boolean);
+  }
+
+  function checkProcessingRows() {
+    const numbers = processingRequestNumbers();
+    if (!numbers.length) return Promise.resolve(false);
+    const qs = numbers.map((n) => 'rn=' + encodeURIComponent(n)).join('&');
+    return fetch('/invoice-intake/status?' + qs, { credentials: 'same-origin' })
       .then((resp) => (resp.ok ? resp.json() : null))
       .then((data) => {
-        if (!data || !data.rows) return;
+        if (!data || !data.rows) return true;
         const stillProcessing = applyStatus(data.rows);
-        if (!stillProcessing) {
-          clearProcessingBanner();
-          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-        }
+        if (!stillProcessing) clearProcessingBanner();
+        return stillProcessing;
       })
-      .catch(() => {});
+      .catch(() => true);
+  }
+
+  function reportResult(stillProcessing) {
+    setStatus(stillProcessing
+      ? 'Some invoices are still being read -- click Refresh again in a moment.'
+      : '');
   }
 
   if (anyProcessingRows()) {
-    poll();
-    pollTimer = setInterval(poll, 4000);
+    setTimeout(() => { checkProcessingRows().then(reportResult); }, FIRST_CHECK_DELAY_MS);
+  }
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => {
+      // Nothing waiting on extraction -> a plain page reload is the honest
+      // "refresh" (it also picks up Drafts someone else just uploaded).
+      if (!anyProcessingRows()) { window.location.reload(); return; }
+      refreshBtn.disabled = true;
+      checkProcessingRows().then((stillProcessing) => {
+        refreshBtn.disabled = false;
+        reportResult(stillProcessing);
+      });
+    });
   }
 })();

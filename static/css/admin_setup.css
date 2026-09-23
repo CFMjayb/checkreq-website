@@ -277,6 +277,23 @@ table.pa-table th, table.pa-table td { padding-left: var(--space-2); padding-rig
 table.pa-table .col-sort, table.pa-table .col-allow { width: 70px; text-align: center; }
 table.pa-table th:not(:first-child):not(:nth-child(2)) { white-space: nowrap; }
 
+/* ---- ART List (2026-09-23 feedback: compress row height, use more width,
+   group by vendor not group_label) ---- */
+/* This screen's own page-shell -- wider than the shared 1500px
+   page-shell-wide, since a real utility company can have a dozen
+   properties' worth of columns worth showing without wrapping. Scoped to
+   this page only, not a change to page-shell-wide itself (every other
+   Setup Tables screen keeps its current width). */
+.page-shell-art { max-width: 1800px; }
+/* Scoped to .art-table specifically, same reasoning as .pa-table above --
+   denser vertical padding here is safe because this table's own rows are
+   now one property/vendor-entry per row, not a wide multi-field record,
+   so a shorter row still reads cleanly. */
+table.art-table td { padding-top: 3px; padding-bottom: 3px; }
+table.art-table input[type="text"],
+table.art-table input[type="number"] { padding-top: 2px; padding-bottom: 2px; }
+table.art-table tr.area-header td { padding-top: 5px; padding-bottom: 5px; }
+
 /* ---- Users & Roles: entity-first assignment flow (Phase F, 2026-08-16,
    items 17.2/18) -- the diocese-level/parish-level badge shown under the
    "Choose an Entity" picker once a specific entity is selected. ---- */

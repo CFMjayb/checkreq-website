@@ -1312,21 +1312,33 @@ async def program_area_approval_rules_save(program_area_id: int, request: Reques
 # ports CFM AP Recurring Bills 2026.xlsx (the Services Team's real, hand-kept
 # spreadsheet) into a real table. Two screens, matching the plan's own
 # Tier 1 scope:
-#   GET  /admin/setup/art                    -- list, grouped by group_label
-#                                                (same collapsible-header
-#                                                pattern as GL Mapping), a
-#                                                dense grid of the fields
-#                                                worth bulk-editing, with the
+#   GET  /admin/setup/art                    -- list, grouped by VENDOR
+#                                                (since 2026-09-23 -- see
+#                                                migration 066's own comment
+#                                                for why group_label itself
+#                                                can't be the grouping key),
+#                                                same collapsible-header
+#                                                pattern as GL Mapping, all
+#                                                groups collapsed by default
+#                                                + a Collapse/Expand All
+#                                                toggle, a dense grid of the
+#                                                fields worth bulk-editing,
 #                                                same batched dirty-save +
 #                                                delete-as-dirty pattern
 #   POST /admin/setup/art/save               -- batched save for the grid
-#                                                above (group_label, art_type,
-#                                                frequency, is_active,
-#                                                grace_days; `_delete: true`
-#                                                deletes the row, cascading
-#                                                to its art_period_status
-#                                                rows per the migration's own
-#                                                ON DELETE CASCADE)
+#                                                above (item_description,
+#                                                art_type, frequency,
+#                                                is_active, grace_days;
+#                                                `_delete: true` deletes the
+#                                                row, cascading to its
+#                                                art_period_status rows per
+#                                                the migration's own ON
+#                                                DELETE CASCADE). group_label
+#                                                itself is NOT in this grid
+#                                                any more -- it's a rarely-
+#                                                touched uniqueness key, not
+#                                                a per-row description; see
+#                                                the detail page for it.
 #   POST /admin/setup/art/add                -- create one entry (vendor +
 #                                                a minimal starting field
 #                                                set, matching every other
@@ -1391,7 +1403,8 @@ async def program_area_approval_rules_save(program_area_id: int, request: Reques
 #                                                per the plan's own design)
 
 _ART_LIST_SQL = """
-    SELECT al.id, al.group_label, al.art_type, al.frequency, al.is_active, al.grace_days,
+    SELECT al.id, al.group_label, al.item_description, al.art_type, al.frequency,
+           al.is_active, al.grace_days,
            al.amount_check_mode, al.amount_exact, al.amount_min, al.amount_max, al.amount_notes,
            al.vendor_id, v.display_name AS vendor_display_name,
            al.gl_account_id, ga.account_number, ga.account_name, al.gl_account_name_override,
@@ -1408,7 +1421,7 @@ _ART_LIST_SQL = """
         LIMIT 1
     ) lp ON TRUE
     WHERE al.org_id = %s
-    ORDER BY COALESCE(al.group_label, '~'), v.display_name
+    ORDER BY v.display_name, COALESCE(al.item_description, al.group_label, '')
 """
 
 
@@ -1428,15 +1441,25 @@ def _art_gl_display(row: dict) -> str:
 
 
 def _art_list_groups(org_id: int) -> list[dict]:
+    """Groups the grid by VENDOR, not by group_label. group_label can't
+    double as a shared "family" heading -- migration 063's own
+    UNIQUE(vendor_id, org_id, group_label) constraint requires it to be
+    DIFFERENT for every row belonging to the same vendor (that's the whole
+    reason it exists: to keep e.g. BGE's 12 real properties from colliding
+    on one art_list row). Vendor is the one thing every row already has
+    that's genuinely shared across a multi-property vendor's rows, so it's
+    the natural, constraint-safe grouping key. See migration 066's own
+    comment for the full reasoning (a same-value group_label per vendor was
+    tried first and correctly rejected by the constraint)."""
     rows = db.query(_ART_LIST_SQL, (org_id,))
     groups: list[dict] = []
-    by_label: dict[str, dict] = {}
+    by_vendor: dict[int, dict] = {}
     for r in rows:
-        label = r["group_label"] or "(Ungrouped)"
-        g = by_label.get(label)
+        vid = r["vendor_id"]
+        g = by_vendor.get(vid)
         if g is None:
-            g = {"label": label, "rows": []}
-            by_label[label] = g
+            g = {"label": r["vendor_display_name"], "rows": []}
+            by_vendor[vid] = g
             groups.append(g)
         g["rows"].append({
             **r,
@@ -1531,6 +1554,7 @@ async def art_add(request: Request):
         return JSONResponse({"error": "Pick a vendor."}, status_code=400)
 
     group_label = (body.get("group_label") or "").strip() or None
+    item_description = (body.get("item_description") or "").strip() or None
     art_type = (body.get("art_type") or "").strip() or None
     is_active = bool(body.get("is_active", True))
 
@@ -1542,11 +1566,12 @@ async def art_add(request: Request):
                 return JSONResponse({"error": "That vendor isn't part of the selected entity."},
                                     status_code=400)
             cur.execute(
-                "INSERT INTO checkreq.art_list (vendor_id, org_id, group_label, art_type, "
-                "is_active, created_by_user_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s) "
+                "INSERT INTO checkreq.art_list (vendor_id, org_id, group_label, "
+                "item_description, art_type, is_active, created_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (vendor_id, org_id, group_label) DO NOTHING RETURNING id",
-                (vendor_id, org["id"], group_label, art_type, is_active, user["id"]),
+                (vendor_id, org["id"], group_label, item_description, art_type, is_active,
+                 user["id"]),
             )
             created = cur.fetchone()
 
@@ -1562,11 +1587,14 @@ async def art_add(request: Request):
 async def art_save(request: Request):
     """Batched save for the list-page grid -- same _RowSavepoint +
     `_delete: true` pattern as gl_mapping_save()/organizations_save_
-    approvers(). Only the grid's own editable subset (group_label,
+    approvers(). Only the grid's own editable subset (item_description,
     art_type, frequency, is_active, grace_days) is written here; every
-    other real ART field is edited on the detail page's own single-POST
-    form, not this grid -- there are simply too many fields (~20) to
-    reasonably show inline per row."""
+    other real ART field -- INCLUDING group_label, deliberately, since
+    2026-09-23 -- is edited on the detail page's own single-POST form, not
+    this grid. group_label only needs to be touched when adding a second+
+    entry for the same vendor (rare); item_description is the field
+    everyone actually wants to see/edit per row, and there are simply too
+    many fields (~20) total to reasonably show inline per row anyway."""
     user, err = _require_setup_admin(request)
     if err:
         return err
@@ -1596,7 +1624,7 @@ async def art_save(request: Request):
                             results.append({"id": row_id, "ok": True, "deleted": True})
                             continue
 
-                        group_label = (r.get("group_label") or "").strip() or None
+                        item_description = (r.get("item_description") or "").strip() or None
                         art_type = (r.get("art_type") or "").strip() or None
                         frequency = (r.get("frequency") or "").strip() or None
                         try:
@@ -1607,10 +1635,10 @@ async def art_save(request: Request):
                             raise ValueError("Grace days can't be negative.")
 
                         cur.execute(
-                            "UPDATE checkreq.art_list SET group_label = %s, art_type = %s, "
+                            "UPDATE checkreq.art_list SET item_description = %s, art_type = %s, "
                             "frequency = %s, is_active = %s, grace_days = %s, "
                             "updated_by_user_id = %s, updated_at = NOW() WHERE id = %s",
-                            (group_label, art_type, frequency, bool(r.get("is_active")),
+                            (item_description, art_type, frequency, bool(r.get("is_active")),
                              grace_days, user["id"], row_id),
                         )
                     results.append({"id": row_id, "ok": True})
@@ -1760,7 +1788,7 @@ async def art_update(art_id: int, request: Request):
             cur.execute(
                 """
                 UPDATE checkreq.art_list SET
-                    group_label = %s, art_type = %s, is_active = %s,
+                    group_label = %s, item_description = %s, art_type = %s, is_active = %s,
                     approved_by_user_id = %s, approved_at = %s,
                     authorized_from = %s, authorized_through = %s,
                     frequency = %s, expected_day_of_month = %s,
@@ -1777,6 +1805,7 @@ async def art_update(art_id: int, request: Request):
                 """,
                 (
                     (form.get("group_label") or "").strip() or None,
+                    (form.get("item_description") or "").strip() or None,
                     (form.get("art_type") or "").strip() or None,
                     form.get("is_active") == "on",
                     approved_by_user_id, approved_at,
