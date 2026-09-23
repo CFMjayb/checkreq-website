@@ -27,13 +27,19 @@
       <div class="fld"><label>Entity</label><input type="text" value="{{ current_org.code }}" disabled></div>
 
       <div class="fld">
-        <label for="group_label">Group Label <span class="sub">(optional)</span></label>
-        <input type="text" id="group_label" name="group_label" value="{{ art.group_label or '' }}">
+        <label for="item_description">Item Description <span class="sub">(shown on the list page)</span></label>
+        <input type="text" id="item_description" name="item_description" value="{{ art.item_description or '' }}"
+               placeholder="e.g. 1504 Perryman Rd - St. George's Perryman">
       </div>
       <div class="fld">
         <label for="art_type">Type</label>
         <input type="text" id="art_type" name="art_type" value="{{ art.art_type or '' }}"
                placeholder="AP / HR / Monthly Allocation / Stipend">
+      </div>
+
+      <div class="fld">
+        <label for="group_label">Group Label <span class="sub">(internal -- only needs to differ from this vendor's other entries)</span></label>
+        <input type="text" id="group_label" name="group_label" value="{{ art.group_label or '' }}">
       </div>
 
       <div class="fld fld-check">
