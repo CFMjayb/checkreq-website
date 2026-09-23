@@ -407,14 +407,33 @@ function updateVoucherGlTable() {
 // Ask My Accountant (2026-08-16): swaps GL Coding entry for a single Amount
 // field. Toggling `required` explicitly, not just `hidden` -- a required
 // field inside a hidden section still blocks native form submission.
+// Real bug, 2026-09-23 (Jay): "why doesn't the amount stay if we click on I
+// don't know GL coding?" -- checking the box swaps GL Coding's own amount
+// field for a completely separate #askMyAccountantAmount input, which
+// starts blank; nothing ever copied the value across. Now carries the
+// amount in whichever direction the checkbox is toggled, each side only
+// filling in if it's currently empty -- never overwrites something the
+// user already typed into the side they're switching TO.
 function toggleAskMyAccountant() {
   const checked = document.getElementById('askMyAccountantCheckbox').checked;
+  const accountantAmountInput = document.getElementById('askMyAccountantAmount');
+  if (checked) {
+    const glTotal = updateVoucherGlTable();
+    if (!accountantAmountInput.value && glTotal > 0) {
+      accountantAmountInput.value = glTotal.toFixed(2);
+    }
+  } else {
+    const firstGlAmount = document.querySelector('#glLines .gl-line .glAmount');
+    if (firstGlAmount && !firstGlAmount.value && accountantAmountInput.value) {
+      firstGlAmount.value = accountantAmountInput.value;
+    }
+  }
   document.getElementById('glCodingSection').hidden = checked;
   document.getElementById('askMyAccountantAmountSection').hidden = !checked;
   document.querySelectorAll('#glLines .glAccount, #glLines .glAmount').forEach(el => {
     el.required = !checked;
   });
-  document.getElementById('askMyAccountantAmount').required = checked;
+  accountantAmountInput.required = checked;
   refreshPreview();
 }
 
@@ -553,6 +572,7 @@ const statusState = {
   art: null,                // pre-built safe HTML string | null -- ART/MSMD vendor note
   preApprovedWarning: false,
   research: null,           // { text, kind } | { source, suggestions, ... } | null -- Research Coding result
+  submitError: null,        // string | null -- a rejected submission's server-side error (2026-09-23)
 };
 
 function setStatus(key, value) {
@@ -578,6 +598,15 @@ function renderStatusPanel() {
   }
   if (statusState.vendorValidation) {
     parts.push(`<div class="status-msg error"><strong>Vendor</strong>${escapeHtml(statusState.vendorValidation)}</div>`);
+  }
+  // Real bug, 2026-09-23 (Jay's screenshot): a rejected submission (e.g.
+  // "One or more GL accounts are not available...") used to come back as
+  // main.py's raw JSONResponse body, landing the browser on a bare JSON
+  // page since the form used to be a real native submit -- see
+  // submitFormViaFetch() below. Shown here instead, same as every other
+  // status message on this page.
+  if (statusState.submitError) {
+    parts.push(`<div class="status-msg error"><strong>Couldn't submit</strong>${escapeHtml(statusState.submitError)}</div>`);
   }
   if (statusState.vendorMatches) {
     // 2026-09-22 (Jay): a real invoice failed to match an existing vendor
@@ -621,6 +650,56 @@ function renderStatusPanel() {
   body.innerHTML = parts.length
     ? parts.join('')
     : '<p class="status-panel-empty">Nothing to report yet — upload a document or fill in the form.</p>';
+}
+
+// Jay, 2026-09-23: "If you click back to invoice intake, you should be
+// prompted with a 'discard changes?'" -- one flag, flipped by any real
+// input/change inside #reqForm once initDirtyTracking() is armed (see its
+// own call site for why that's deliberately AFTER pre-fill, not from page
+// load) -- the backLink click handler (DOMContentLoaded) reads it.
+let formDirty = false;
+function initDirtyTracking() {
+  const form = document.getElementById('reqForm');
+  form.addEventListener('input', () => { formDirty = true; });
+  form.addEventListener('change', () => { formDirty = true; });
+}
+
+// Real bug, 2026-09-23: #reqForm used to be submitted as a real native
+// browser form POST once every client-side pre-flight check passed --
+// fine when the server agrees, but a rejection main.py's own validation
+// catches (a GL account no longer available for the program area, a
+// vendor deactivated mid-edit, etc.) came back as a bare JSONResponse
+// body, landing the whole browser on a raw JSON page with the form state
+// gone. Submits via fetch() instead: a successful submission still ends
+// on the exact same page the server would have redirected a native
+// submit to (fetch follows the 303 itself; resp.url is that final page),
+// but a rejection renders inline in the Status & Messages panel and
+// leaves the form exactly as the user left it, ready to fix and retry.
+async function submitFormViaFetch(form, submitterBtn) {
+  showButtonLoading(submitterBtn);
+  let resp;
+  try {
+    resp = await fetch(form.action, { method: 'POST', body: new FormData(form) });
+  } catch {
+    setStatus('submitError', "Couldn't reach the server -- please check your connection and try again.");
+    if (submitterBtn) { submitterBtn.disabled = false; submitterBtn.classList.remove('btn-loading'); }
+    return;
+  }
+  if (resp.ok) {
+    location.href = resp.url;
+    return;
+  }
+  let message = 'Something went wrong -- please try again.';
+  try {
+    const data = await resp.json();
+    if (data.error) message = data.error;
+  } catch {
+    // A non-JSON error body (an unexpected 500 page, say) -- keep the
+    // generic message rather than show raw HTML.
+  }
+  setStatus('submitError', message);
+  document.getElementById('statusPanelBody').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (submitterBtn) { submitterBtn.disabled = false; submitterBtn.classList.remove('btn-loading'); }
 }
 
 function applyVendorMatch(id, name) {
@@ -1167,18 +1246,33 @@ document.addEventListener('DOMContentLoaded', () => {
   const researchBtn = document.getElementById('researchCodingBtn');
   if (researchBtn) researchBtn.addEventListener('click', researchCoding);
 
-  loadProgramAreas().then(() => {
+  loadProgramAreas().then(async () => {
     if (window.EDIT_DATA) {
-      applyEditPrefill();
+      await applyEditPrefill();
     } else {
       refreshPreview();
     }
+    // Dirty-tracking starts only AFTER pre-fill finishes -- pre-filling an
+    // edit page's own fields is not a user edit, and starting earlier would
+    // falsely arm the "discard changes?" prompt (below) the instant the
+    // page finished loading, before anyone touched anything.
+    initDirtyTracking();
   });
   document.querySelectorAll('.glAccount').forEach(sel => initGlAccountSelect(sel));
 
   document.getElementById('reqForm').addEventListener('submit', async (e) => {
+    // Real bug, 2026-09-23 (Jay's screenshot): this form used to be a real
+    // native submission whenever every pre-flight JS check passed --
+    // meaning any validation error the SERVER caught that JS didn't
+    // already know to check for (e.g. "one or more GL accounts are not
+    // available for this program area") came back as main.py's raw
+    // JSONResponse body, landing the whole browser on a bare JSON page
+    // instead of an inline message. Now unconditionally prevented here;
+    // every path below submits via submitFormViaFetch() instead, which
+    // shows a server rejection inline (statusState.submitError) and never
+    // navigates away except on a genuine success.
+    e.preventDefault();
     if (!vendorSelectionIsValid()) {
-      e.preventDefault();
       setVendorValidationMessage('Please select a vendor from the list, or click "Add a new one" below.');
       document.getElementById('vendorSelect').closest('.field').scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
@@ -1195,7 +1289,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const newlyAttached = attachmentsInputEl ? attachmentsInputEl.files.length : 0;
       const alreadyAttached = window.EXISTING_ATTACHMENT_COUNT || 0;
       if (newlyAttached === 0 && alreadyAttached === 0) {
-        e.preventDefault();
         setStatus('preApprovedWarning', true);
         document.getElementById('preApprovedRow').scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
@@ -1214,11 +1307,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const form = e.target;
     const already = form.querySelector('input[name="confirmed_overbudget"]');
     if (already && already.value === '1') {
-      showButtonLoading(e.submitter); // 2026-09-10: about to really submit
-      return; // already confirmed -- let this one through
+      await submitFormViaFetch(form, e.submitter); // already confirmed
+      return;
     }
 
-    e.preventDefault();
     let cfoRequired = [];
     try {
       const resp = await fetch('/api/budget-check-submission', { method: 'POST', body: new FormData(form) });
@@ -1249,8 +1341,7 @@ document.addEventListener('DOMContentLoaded', () => {
       form.appendChild(hidden);
     }
     hidden.value = '1';
-    showButtonLoading(e.submitter); // 2026-09-10: about to really submit
-    form.submit();
+    await submitFormViaFetch(form, e.submitter);
   });
 
   document.getElementById('payDateInput').addEventListener('input', refreshPreview);
@@ -1280,6 +1371,19 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshPreview();
   }));
   document.getElementById('newVendorPanel').addEventListener('input', refreshPreview);
+
+  // Jay, 2026-09-23: "If you click back to invoice intake, you should be
+  // prompted with a 'discard changes?'" -- formDirty (set by
+  // initDirtyTracking(), armed only after pre-fill finishes) distinguishes
+  // "nothing typed yet" from "there's real unsaved work here."
+  const backLink = document.getElementById('backLink');
+  if (backLink) {
+    backLink.addEventListener('click', (e) => {
+      if (formDirty && !confirm('Discard your changes and leave this page?')) {
+        e.preventDefault();
+      }
+    });
+  }
 
   refreshPreview();
 });

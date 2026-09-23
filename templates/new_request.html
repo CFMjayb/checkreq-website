@@ -28,7 +28,7 @@
       <button type="submit" form="reqForm" class="btn btn-primary btn-sm">{% if edit_data and edit_data.request_type == 'invoice_payment' %}Submit for Approval{% elif edit_data %}Save Changes{% else %}Submit Request{% endif %}</button>
     </div>
   </div>
-  <p class="back-link"><a href="{% if edit_data and edit_data.request_type == 'invoice_payment' %}/invoice-intake{% else %}/my-requests{% endif %}">&larr; Back to {% if edit_data and edit_data.request_type == 'invoice_payment' %}Invoice Intake{% else %}My Requests{% endif %}</a></p>
+  <p class="back-link"><a id="backLink" href="{% if edit_data and edit_data.request_type == 'invoice_payment' %}/invoice-intake{% else %}/my-requests{% endif %}">&larr; Back to {% if edit_data and edit_data.request_type == 'invoice_payment' %}Invoice Intake{% else %}My Requests{% endif %}</a></p>
   <form method="post" action="/new-request" id="reqForm" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <input type="hidden" name="org_id" value="{{ current_org.id }}">

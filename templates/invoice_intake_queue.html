@@ -9,6 +9,12 @@
 <div class="banner banner-error" id="uploadBanner">{{ add_error }}</div>
 {% endif %}
 
+<div class="view-toggle" role="tablist" aria-label="Invoice Intake view">
+  <a href="/invoice-intake" class="view-toggle-tab {% if view == 'draft' %}active{% endif %}">Draft Queue</a>
+  <a href="/invoice-intake?view=submitted" class="view-toggle-tab {% if view == 'submitted' %}active{% endif %}">Submitted</a>
+</div>
+
+{% if view == 'draft' %}
 <div class="card">
   <h2>Upload Invoices</h2>
   <p class="sub">Select one or many at once -- a whole batch drops in as its own Draft each, ready to
@@ -62,6 +68,42 @@
   </table>
 </div>
 </div>
+
+{% else %}
+{# 2026-09-23 (Jay): "We also need a place to review submitted invoices." Every
+   invoice_payment request for this org that's no longer a Draft -- the same
+   shared-inbox visibility as the Draft Queue, not scoped to whoever submitted
+   it. Status badge classes (badge-underreview/-approved/-posted-to-qbo/
+   -rejected/-cancelled/-returned-by-ap) match My Requests' own convention. #}
+<div class="card">
+<h2>Submitted</h2>
+<p class="sub">Every invoice request from this queue that's been coded and submitted -- most recent first.</p>
+<div class="table-scroll">
+  <table class="simple-table approvals-table" id="invoiceSubmittedTable">
+    <tr>
+      <th class="col-reqnum">Request #</th>
+      <th class="col-vendor">Vendor</th>
+      <th class="col-amount">Amount</th>
+      <th class="col-status">Status</th>
+      <th class="col-date">Last Updated</th>
+      <th class="col-actions">Actions</th>
+    </tr>
+    {% for r in submitted_rows %}
+    <tr>
+      <td class="col-reqnum">{{ r.request_number }}</td>
+      <td class="col-vendor">{{ r.vendor_name }}</td>
+      <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
+      <td class="col-status"><span class="badge badge-{{ r.status|lower|replace(' ', '-') }}">{{ r.status }}</span></td>
+      <td class="col-date">{{ r.updated_at.strftime("%Y-%m-%d %H:%M") if r.updated_at else "—" }}</td>
+      <td class="col-actions"><a href="/requests/{{ r.request_number }}/view">View</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">No submitted invoice requests yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+</div>
+{% endif %}
 </div>
 <script src="/static/js/invoice_intake_queue.js?v={{ asset_version('js/invoice_intake_queue.js') }}"></script>
 {% endblock %}

@@ -1641,6 +1641,26 @@ def _default_program_area_id(org_id: int, user_id: int) -> int | None:
     return (master or areas[0])["id"]
 
 
+def _is_master_program_area(program_area_id: int | None) -> bool:
+    """Jay, 2026-09-23: "Master should show all GL accounts and allow for us
+    to proceed without an approval chain unless it is over the global
+    approvers threshold." Found live: Master had zero rows in
+    program_area_gl_accounts (both dev and prod) -- every real submission
+    that kept the new default-to-Master behavior and picked any real GL
+    account was rejected at the last step ("One or more GL accounts are
+    not available..."). Rather than hand-enumerate every active GL account
+    as a program_area_gl_accounts row (a real, ongoing maintenance burden
+    every time an account is added/retired), Master is instead special-
+    cased at read time, in every place that would otherwise consult that
+    mapping table -- see its 3 call sites (api_gl_accounts, the submission-
+    time GL-account authorization re-check, and initial_status below).
+    Same \\bmaster\\b title match _default_program_area_id() already uses."""
+    if program_area_id is None:
+        return False
+    row = db.query_one("SELECT title FROM checkreq.program_areas WHERE id = %s", (program_area_id,))
+    return bool(row and re.search(r"\bmaster\b", row["title"] or "", re.IGNORECASE))
+
+
 @app.get("/api/program-areas/{org_id}")
 def api_program_areas(org_id: int, request: Request):
     user = _current_user(request)
@@ -2618,7 +2638,7 @@ def api_gl_accounts(org_id: int, request: Request, program_area_id: int | None =
     if not _user_has_org_access(user["id"], org_id):
         return JSONResponse({"error": "Not authorized for this entity."}, status_code=403)
 
-    if program_area_id is None:
+    if program_area_id is None or _is_master_program_area(program_area_id):
         base_sql = "SELECT id, account_number, account_name, NULL AS sort_order " \
                     "FROM checkreq.gl_accounts WHERE org_id = %s AND is_active"
         order_sql = " ORDER BY account_number LIMIT 50"
@@ -4295,7 +4315,7 @@ async def new_request_submit(request: Request):
         # lines. Rejects rather than skips.
         if gl_lines:
             posted_ids = [acct_id for acct_id, _, _ in gl_lines]
-            if program_area_id is not None:
+            if program_area_id is not None and not _is_master_program_area(program_area_id):
                 allowed_rows = db.query(
                     "SELECT pga.gl_account_id FROM checkreq.program_area_gl_accounts pga "
                     "JOIN checkreq.program_areas pa ON pa.id = pga.program_area_id "
@@ -4505,9 +4525,21 @@ async def new_request_submit(request: Request):
     # pre_approved specifically, not on "chain is empty" in general, so this
     # doesn't change behavior for the (separate, pre-existing) case of a
     # program area with no approval_rules configured at all.
+    # Jay, 2026-09-23: Master should "proceed without an approval chain
+    # unless it is over the global approvers threshold" -- an empty chain
+    # under Master means exactly that (build_approval_chain() already only
+    # appends Global Approvers once amount >= the org's own threshold; a
+    # deactivated program-area-specific approval_rules row for Master, see
+    # this session's own data note, is what makes its OWN contribution to
+    # the chain empty in the first place). Deliberately scoped to Master
+    # specifically, not "any program area with an empty chain" -- a real,
+    # ordinary program area with no approval_rules configured at all is a
+    # genuine staff setup gap that should stay visible (UnderReview, stuck
+    # with no approver), not silently auto-approved.
     initial_status = (
         "AwaitingCoding" if ask_my_accountant else
         "Approved" if ((pre_approved or vendor_art) and not chain) else
+        "Approved" if (_is_master_program_area(program_area_id) and not chain) else
         "UnderReview"
     )
 
@@ -5376,11 +5408,21 @@ async def add_attachment(request_number: str, request: Request):
 
 
 @app.get("/invoice-intake", response_class=HTMLResponse)
-def invoice_intake_queue(request: Request, add_error: str = ""):
+def invoice_intake_queue(request: Request, add_error: str = "", view: str = "draft"):
     """Invoice Processing Intake Plan.md (Tier 3, 2026-08-02) -- the shared
     team queue for invoices uploaded outside the manual Check Request form.
     Gated on the invoice_intake_submitter role (a plain RBAC grant, same
-    mechanism as pre_approved_submitter -- no new admin UI needed)."""
+    mechanism as pre_approved_submitter -- no new admin UI needed).
+
+    2026-09-23 (Jay): "We also need a place to review submitted invoices.
+    A different 'Submitted' tab?" -- added a second view (?view=submitted,
+    same view-toggle-tab convention My Requests/AP Review already use)
+    alongside the original Draft Queue: every invoice_payment request for
+    this org that is no longer a Draft, most-recent-first. Same shared-inbox
+    visibility as the Draft Queue itself -- any invoice_intake_submitter at
+    this org sees every submitted invoice request here, not just their own
+    (a Draft is routinely coded and submitted by a different person than
+    whoever originally uploaded it)."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
@@ -5390,23 +5432,44 @@ def invoice_intake_queue(request: Request, add_error: str = ""):
     if not rbac.user_has_role(user["id"], "invoice_intake_submitter", org["id"]):
         return HTMLResponse("Not authorized -- ask an admin to grant you the Invoice Intake role.", status_code=403)
 
-    drafts = db.query(
-        """
-        SELECT pr.request_number, pr.created_at, pr.intake_status,
-               COALESCE(v.display_name, vr.company_name, vr.first_name || ' ' || vr.last_name,
-                        pr.invoice_extracted_vendor, '—') AS vendor_name,
-               COALESCE(pr.invoice_extracted_amount, pr.amount) AS amount
-        FROM checkreq.payment_requests pr
-        LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
-        LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
-        WHERE pr.org_id = %s AND pr.request_type = 'invoice_payment' AND pr.status = 'Draft'
-        ORDER BY pr.created_at DESC
-        """,
-        (org["id"],),
-    )
-    for d in drafts:
-        d["processing"] = bool((d.get("intake_status") or {}).get("processing"))
-    return _render(request, "invoice_intake_queue.html", user, {"drafts": drafts, "add_error": add_error})
+    if view == "submitted":
+        drafts = []
+        submitted_rows = db.query(
+            """
+            SELECT pr.request_number, pr.status, pr.updated_at, pr.amount,
+                   COALESCE(v.display_name, vr.company_name, vr.first_name || ' ' || vr.last_name,
+                            pr.invoice_extracted_vendor, '—') AS vendor_name
+            FROM checkreq.payment_requests pr
+            LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+            LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+            WHERE pr.org_id = %s AND pr.request_type = 'invoice_payment' AND pr.status != 'Draft'
+            ORDER BY pr.updated_at DESC
+            """,
+            (org["id"],),
+        )
+    else:
+        view = "draft"
+        submitted_rows = []
+        drafts = db.query(
+            """
+            SELECT pr.request_number, pr.created_at, pr.intake_status,
+                   COALESCE(v.display_name, vr.company_name, vr.first_name || ' ' || vr.last_name,
+                            pr.invoice_extracted_vendor, '—') AS vendor_name,
+                   COALESCE(pr.invoice_extracted_amount, pr.amount) AS amount
+            FROM checkreq.payment_requests pr
+            LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
+            LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
+            WHERE pr.org_id = %s AND pr.request_type = 'invoice_payment' AND pr.status = 'Draft'
+            ORDER BY pr.created_at DESC
+            """,
+            (org["id"],),
+        )
+        for d in drafts:
+            d["processing"] = bool((d.get("intake_status") or {}).get("processing"))
+
+    return _render(request, "invoice_intake_queue.html", user, {
+        "drafts": drafts, "submitted_rows": submitted_rows, "view": view, "add_error": add_error,
+    })
 
 
 def _build_intake_status(result: dict, skipped_reason: str | None) -> dict:
@@ -8029,14 +8092,19 @@ def request_view(request_number: str, request: Request):
     approval-routing assignment are two different tables), PLUS any
     is_ap_reviewer/is_vendor_approver (2026-07-29 -- Request # is now a
     link from AP Review and Vendor Approvals too, and neither role implies
-    program-area membership on the specific request being reviewed)."""
+    program-area membership on the specific request being reviewed), PLUS
+    (2026-09-23) any invoice_intake_submitter for an invoice_payment request
+    specifically -- the new Invoice Intake "Submitted" tab links Request #
+    here too, and the Draft Queue's own shared-inbox design means a Draft is
+    routinely coded/submitted by someone other than whoever uploaded it, so
+    neither ownership nor a program-area assignment can be assumed."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
 
     pr = db.query_one(
-        "SELECT id, submitter_user_id, program_area_id, status, org_id FROM checkreq.payment_requests "
-        "WHERE request_number = %s",
+        "SELECT id, submitter_user_id, program_area_id, status, org_id, request_type "
+        "FROM checkreq.payment_requests WHERE request_number = %s",
         (request_number,),
     )
     if not pr:
@@ -8060,6 +8128,8 @@ def request_view(request_number: str, request: Request):
         or bool(is_approver)
         or rbac.user_has_role(user["id"], "ap_reviewer", pr["org_id"])
         or rbac.user_has_role(user["id"], "vendor_approver", pr["org_id"])
+        or (pr["request_type"] == "invoice_payment"
+            and rbac.user_has_role(user["id"], "invoice_intake_submitter", pr["org_id"]))
     )
     if not allowed:
         return JSONResponse({"error": "Not authorized to view this request"}, status_code=403)
