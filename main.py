@@ -109,6 +109,7 @@ import db
 import rbac
 import parish_roles
 import parish_mode
+import beacon_address
 import parish_documents
 import cornerstone_documents
 import parish_info
@@ -470,7 +471,9 @@ def how_it_works_parish_mode_page(request: Request):
     parish, _is_preview = parish_mode.effective_parish_mode(request, user)
     if not parish:
         return RedirectResponse("/how-it-works")
-    return _render(request, "how_it_works_parish_mode.html", user, {})
+    return _render(request, "how_it_works_parish_mode.html", user, {
+        "beacon_address": beacon_address.beacon_address(parish.get("org_id")),
+    })
 
 
 # Portal module tiles. A plain list is enough for this scope (6 tiles) --

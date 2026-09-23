@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}How Beacon Works — Parish Mode{% endblock %}
+{% block title %}How Beacon Works — for Parishes{% endblock %}
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
 {% endblock %}
 {% block content %}
 <div class="howitworks-hero">
-  <h1>How Beacon Works — Parish Mode</h1>
+  <h1>How Beacon Works — for Parishes</h1>
 </div>
 
 <div class="howitworks">
@@ -25,31 +25,33 @@
 
   <div class="status-callout">
     <div class="label">A Note on Where Things Stand</div>
-    <p>This page is a new, first-draft description of Parish Mode — written from what's built today, not yet reviewed. Some detail may be missing, wrong, or out of date; if you find something off, use the Feedback link below.</p>
+    <p>This tool is new and this text is written from what's built today. Some detail may be missing or in need of enhancement; if you find something off, please use the Feedback link below.</p>
   </div>
 
   <nav class="howitworks-toc" aria-label="Sections on this page">
     <div class="toc-title">On This Page</div>
     <ol>
-      <li><a href="#what-is-parish-mode">1. What Is Parish Mode?</a></li>
-      <li><a href="#getting-there">2. Getting to Your Parish's Portal View</a></li>
-      <li><a href="#what-you-can-do">3. What You Can Do There</a></li>
-      <li><a href="#access-and-roles">4. Access and Roles</a></li>
-      <li><a href="#questions">5. Questions or Feedback</a></li>
+      <li><a href="#what-is-parish-mode">What Is Beacon for Parishes?</a></li>
+      <li><a href="#getting-there">Getting to Your Parish's Portal View</a></li>
+      <li><a href="#what-you-can-do">What You Can Do There</a></li>
+      <li><a href="#access-and-roles">Access and Roles</a></li>
+      <li><a href="#questions">Questions or Feedback</a></li>
     </ol>
   </nav>
 
   <section class="hiw-section" id="what-is-parish-mode">
-    <h2>1. What Is Parish Mode?</h2>
-    <p>Parish Mode is a parish's own view of Beacon — separate from the diocese-wide Administrative side (Diocesan Mode) that staff who work across the whole diocese use. It's built for the people who work at a single parish: seeing the parish's own documents, announcements sent to it, its contact and leadership information, and (where it applies) its financial standing with the diocese — without needing access to anything belonging to any other parish.</p>
+    <h2>1. What Is Beacon for Parishes?</h2>
+    <p>Beacon for Parishes is part of a larger Diocesan tool called Beacon. In this section, Parish administrators, clergy and leadership have the opportunity to work with the Diocesan staff to share documents, announcements, the parish's contact and leadership information, and (where it applies) some limited financial standing with the diocese, in a safe and secure place. </p>
   </section>
 
   <section class="hiw-section" id="getting-there">
     <h2>2. Getting to Your Parish's Portal View</h2>
-    <p>There are two ways someone ends up looking at a parish's Parish Mode view:</p>
+    {# 2026-09-23 (Jay): the address shown is the Beacon domain of the
+       entity (diocese) this parish belongs to, not a fixed one -- see
+       beacon_address.py. #}
+    <p>Accessing Beacon is easy - just go to <a href="https://{{ beacon_address }}">{{ beacon_address }}</a></p>
     <ul>
-      <li><strong>A parish's own staff or volunteers sign in directly</strong> with a login set up for that parish specifically. Their sign-in is already scoped to their own parish — there's no separate "switch into Parish Mode" step for them.</li>
-      <li><strong>A diocesan staff member previews a parish</strong> from the Administrative Tasks screen's "Parish Mode" option, if they hold the right access — either a dedicated Parish Mode role, or one of the diocese's own administrative roles. This is the same idea as Beacon's separate "Impersonate a User" tool, but scoped to a parish instead of a person, and it's meant for support and troubleshooting, not day-to-day parish work.</li>
+      <li><strong>You have to be granted access to the portal from the Business Office at the Diocese.</strong> All parish administrators and clergy should be able to log in with their email address on file with the Diocese. </li>
     </ul>
   </section>
 
@@ -59,11 +61,11 @@
     <div class="hiw-subcards">
       <div class="hiw-subcard">
         <h3>Parish Documents</h3>
-        <p>Files the diocese has shared with the parish (read-only), the parish's own working files, and a place to send documents to the diocese — organized by folder, browsable as a tree.</p>
+        <p>Files the diocese has shared with the parish and a place to send documents to the diocese.</p>
       </div>
       <div class="hiw-subcard">
         <h3>Announcements</h3>
-        <p>A feed of dated notices the diocese has posted — either to every parish, or specifically targeted to this one.</p>
+        <p>A feed of dated notices the Business Office has posted.</p>
       </div>
       <div class="hiw-subcard">
         <h3>Resource Library</h3>
@@ -86,13 +88,13 @@
 
   <section class="hiw-section" id="access-and-roles">
     <h2>4. Access and Roles</h2>
-    <p>A parish's own logins are managed separately from the diocese's — someone doesn't automatically get parish access just because they have a Beacon account elsewhere. A parish can have more than one person with access, each with their own role (for example, a parish administrator, a treasurer, or someone limited to documents only), and each role determines what that person can see and do for that one parish.</p>
+    <p>A parish's own logins are co-managed by the Business Office and each Parish's Administrator. A parish can have more than one person with access, each with their own role (for example, a parish administrator, a treasurer, or someone limited to documents only), and each role determines what that person can see and do for that one parish.</p>
     <p>If you need access to your parish, or need to grant or remove someone else's, there's a "User Access" (or "Request Access") option available from inside your parish's own Parish Mode view.</p>
   </section>
 
   <section class="hiw-section" id="questions">
     <h2>5. Questions or Feedback</h2>
-    <p>Beacon includes a built-in <a href="/feedback">Feedback</a> link in the navigation menu of every page &mdash; the fastest way to flag something confusing, report a problem, or suggest an improvement. For anything more urgent, or for questions this page doesn't answer, contact the CFM Business Office.</p>
+    <p>Beacon includes a built-in <a href="/feedback">Feedback</a> link in the navigation menu of every page &mdash; the fastest way to flag something confusing, report a problem, or suggest an improvement. For anything more urgent, or for questions this page doesn't answer, contact the Diocesan Business Office.</p>
   </section>
 
 </div>
