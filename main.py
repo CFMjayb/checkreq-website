@@ -335,6 +335,12 @@ async def canonicalize_localhost(request: Request, call_next):
     return await call_next(request)
 
 
+# 2026-09-23: one DB connection per request for db.query()/query_one() --
+# see db.py. Registered LAST so it is the outermost layer and every other
+# middleware's own queries share the same connection too.
+app.add_middleware(db.RequestConnectionMiddleware)
+
+
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 
