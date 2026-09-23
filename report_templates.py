@@ -11,8 +11,8 @@ the browser.
 On-demand only: nothing is emailed, no review is started, and no
 reports.template_runs row is written -- those belong to the scheduled run +
 review queue (26-149 Phases 4/5), not built yet. Template create/edit screens
-(Phase 3) are also not here yet; templates are managed directly in Postgres
-until then.
+(Phase 3) live in report_template_editor.py (2026-09-23), registered from
+register() below so main.py stays wiring-only.
 
 Reads reports.templates straight from this app's own database (db.py, which
 already points at cfmqbo or cfmqbo_prod per BEACON_ENV), and passes the same
@@ -37,6 +37,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 import db
 import qbo_mcp_client
 import rbac
+import report_template_editor
 
 router = APIRouter()
 
@@ -52,6 +53,8 @@ def register(app, *, current_user, current_org, render) -> None:
     global _current_user, _current_org, _render
     _current_user, _current_org, _render = current_user, current_org, render
     app.include_router(router)
+    report_template_editor.register(app, current_user=current_user, render=render,
+                                    require_access=_require_access)
 
 
 def _env() -> str:
@@ -103,7 +106,13 @@ def _templates_for_org(org_id: int) -> list[dict]:
                     WHERE s.template_id = t.id AND s.is_active) AS schedule,
                   (SELECT string_agg(r.email, ', ' ORDER BY r.id)
                      FROM reports.template_recipients r
-                    WHERE r.template_id = t.id AND r.is_active) AS recipients
+                    WHERE r.template_id = t.id AND r.is_active) AS recipients,
+                  (SELECT count(*) FROM reports.template_lines l
+                    WHERE l.template_id = t.id AND l.is_active) AS line_count,
+                  (SELECT r.status || ' (' || to_char(r.period_end, 'Mon YYYY') || ')'
+                     FROM reports.template_runs r
+                    WHERE r.template_id = t.id
+                 ORDER BY r.created_at DESC LIMIT 1) AS last_run
              FROM reports.templates t
         LEFT JOIN checkreq.app_users u ON u.id = t.reviewer_user_id
             WHERE t.org_id = %s

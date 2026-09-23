@@ -65,3 +65,16 @@
     });
   });
 })();
+
+// 26-149 Phase 3: Clone / Deactivate / Activate are plain form posts. Pulse the
+// button (Standing UI-UX Rule 6) only once confirm_submit.js's own
+// document-level data-confirm check has passed -- this listener is registered
+// after it (base.html loads that script first), so a cancelled confirm() is
+// already visible here as defaultPrevented and the button is left alone.
+document.addEventListener('submit', function (e) {
+  var form = e.target;
+  if (!form.classList || !form.classList.contains('rt-plain-form') || e.defaultPrevented) return;
+  if (window.showButtonLoading) {
+    window.showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+  }
+});

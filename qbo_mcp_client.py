@@ -416,3 +416,22 @@ def run_report_template(template_id: int, env: str, period_end: str,
         "holds": int(resp.headers.get("X-Report-Holds", "0") or 0),
         "tie_out": resp.headers.get("X-Report-Tie-Out", ""),
     }, None
+
+
+def get_report_accounts(org_code: str, timeout: int = 60) -> tuple[dict | None, str | None]:
+    """GET /api/reports/accounts?org=CODE (26-149 Phase 3). The entity's FULL
+    chart of accounts -- active and inactive, paged past QBO's 1,000-row cap,
+    with classification and parent -- plus its Profit & Loss budget names.
+    Returns ({"accounts": [...], "budgets": [...]}, None) or (None, "error").
+    Used only by the Report Template editor's preview / starter-lines / budget
+    picker; the org code is Beacon's own (qbo-mcp-server maps DME -> dmecdf)."""
+    url = f"{QBO_MCP_URL}/api/reports/accounts"
+    try:
+        resp = requests.get(url, headers={"X-API-Key": _get_api_key()},
+                            params={"org": org_code}, timeout=timeout)
+        data = resp.json() if resp.content else {}
+    except Exception as exc:
+        return None, str(exc)
+    if not resp.ok or "error" in data:
+        return None, data.get("error") or f"HTTP {resp.status_code}: {resp.text[:300]}"
+    return data, None

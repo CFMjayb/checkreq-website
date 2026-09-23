@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+{% block title %}{{ tpl.name if tpl else 'New Report Template' }} — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+<link rel="stylesheet" href="/static/css/report_templates.css?v={{ asset_version('css/report_templates.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+
+<div class="rt-header">
+  <h1>{% if tpl %}{{ tpl.name }}{% else %}New Report Template{% endif %}
+    {% if tpl and not tpl.is_active %}<span class="badge badge-cancelled">Inactive</span>{% endif %}
+  </h1>
+  {% if tpl %}
+  <div class="rt-header-actions">
+    <form class="rt-plain-form" method="post" action="/admin/report-templates/{{ tpl.id }}/clone"
+          data-confirm="Make an inactive copy of this template to edit?">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <button type="submit" class="btn btn-secondary btn-sm">Clone</button>
+    </form>
+    <form class="rt-plain-form" method="post" action="/admin/report-templates/{{ tpl.id }}/toggle-active"
+          {% if tpl.is_active %}data-confirm="Deactivate this template? It stops being run or sent until you activate it again. Nothing is deleted."{% endif %}>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <button type="submit" class="btn {{ 'btn-secondary' if tpl.is_active else 'btn-primary' }} btn-sm">
+        {{ 'Deactivate' if tpl.is_active else 'Activate' }}</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+<p class="back-link"><a href="/admin/report-templates">&larr; Back to Report Templates</a></p>
+<p class="sub">{{ current_org.code }} &mdash; {{ current_org.name }}.
+  Changes here are saved to Beacon only. Nothing is emailed from this screen.</p>
+
+{% set qp = request.query_params %}
+{% if qp.get('created') %}<div class="banner banner-success">Template created. Now add its lines, recipients and schedule below.</div>{% endif %}
+{% if qp.get('cloned') %}<div class="banner banner-success">Copy created. It starts <strong>inactive</strong> &mdash; rename it, adjust it, then Activate it.</div>{% endif %}
+{% if qp.get('saved') %}<div class="banner banner-success">
+  {% if qp.get('saved') == 'options' %}Options saved.{% elif qp.get('saved') == 'schedule' %}Schedule saved.{% else %}Template {{ qp.get('saved') }}.{% endif %}
+</div>{% endif %}
+{% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+<div id="rtBanner" class="banner" hidden></div>
+
+<!-- ── Options ─────────────────────────────────────────────────────────── -->
+<details class="card setup-section" {% if not tpl or qp.get('saved') == 'options' or error %}open{% endif %}>
+  <summary><h2>Options</h2></summary>
+  <form class="rt-plain-form rt-options" method="post"
+        action="{{ '/admin/report-templates/%d/options'|format(tpl.id) if tpl else '/admin/report-templates/new' }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    {% if tpl %}<input type="hidden" name="updated_at" value="{{ tpl.updated_at }}">{% endif %}
+    <div class="rt-form-grid">
+      <div class="field rt-span-2">
+        <label for="name">Template name</label>
+        <input type="text" id="name" name="name" value="{{ form.name or '' }}" maxlength="120" required>
+      </div>
+      <div class="field rt-span-2">
+        <label for="description">Description <span class="hint">(optional)</span></label>
+        <input type="text" id="description" name="description" value="{{ form.description or '' }}">
+      </div>
+      <div class="field">
+        <label for="reviewer_user_id">Reviewer / owner</label>
+        <select id="reviewer_user_id" name="reviewer_user_id">
+          <option value="">— none —</option>
+          {% for r in reviewers %}
+          <option value="{{ r.id }}" {% if (form.reviewer_user_id|string) == (r.id|string) %}selected{% endif %}>
+            {{ r.display_name or r.email }}{% if r.display_name %} ({{ r.email }}){% endif %}</option>
+          {% endfor %}
+        </select>
+        <div class="hint">Approves each report before it goes out (review on), or is told about holds (review off).</div>
+      </div>
+      <div class="field">
+        <label for="sender_email">Send from</label>
+        <select id="sender_email" name="sender_email">
+          {% for s in senders %}
+          <option value="{{ s }}" {% if form.sender_email == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+        <div class="hint">The only two addresses the email server is authorized to send as.</div>
+      </div>
+      <div class="field">
+        <label for="budget_name">QuickBooks budget</label>
+        <select id="budget_name" name="budget_name" data-current="{{ form.budget_name or '' }}">
+          <option value="">Auto-pick (the one active budget for the year)</option>
+          {% if form.budget_name %}<option value="{{ form.budget_name }}" selected>{{ form.budget_name }}</option>{% endif %}
+        </select>
+        <div class="hint" id="budgetHint">Loading budget names from QuickBooks&hellip;</div>
+      </div>
+    </div>
+
+    <div class="rt-checks">
+      <fieldset>
+        <legend>Review &amp; sending</legend>
+        <label><input type="checkbox" name="requires_review" {% if form.requires_review %}checked{% endif %}>
+          Review required before sending</label>
+        <label><input type="checkbox" name="cc_owner_on_auto_send" {% if form.cc_owner_on_auto_send %}checked{% endif %}>
+          Cc the owner on automatic sends (review off only)</label>
+      </fieldset>
+      <fieldset>
+        <legend>What the report shows</legend>
+        <label><input type="checkbox" name="full_entity" {% if form.full_entity %}checked{% endif %}>
+          Whole entity (adds an Unmapped Accounts line and ties to QuickBooks' Net Income)</label>
+        <label><input type="checkbox" name="show_accounts_under_lines" {% if form.show_accounts_under_lines %}checked{% endif %}>
+          Show each account under its line</label>
+        <label><input type="checkbox" name="show_annual_budget" {% if form.show_annual_budget %}checked{% endif %}>
+          Annual Budget column</label>
+      </fieldset>
+      <fieldset>
+        <legend>Extra tabs</legend>
+        <label><input type="checkbox" name="include_monthly_tab" {% if form.include_monthly_tab %}checked{% endif %}>
+          By Month (actuals)</label>
+        <label><input type="checkbox" name="include_txn_detail" {% if form.include_txn_detail %}checked{% endif %}>
+          Transaction Detail</label>
+        <label><input type="checkbox" name="include_fund_tabs" {% if form.include_fund_tabs %}checked{% endif %}>
+          Fund Summary tabs</label>
+      </fieldset>
+    </div>
+    <button type="submit" class="btn btn-primary">{{ 'Save Options' if tpl else 'Create Template' }}</button>
+  </form>
+</details>
+
+{% if tpl %}
+<!-- ── Lines ───────────────────────────────────────────────────────────── -->
+<details class="card setup-section" open id="linesSection">
+  <summary><h2>Lines</h2></summary>
+  <p class="setup-hint">
+    Each line is one row on Page 1. The <strong>account mask</strong> picks which QuickBooks accounts roll up into it &mdash;
+    <code>667*</code> (starts with 667), <code>4###</code> (4 plus any three characters), <code>4000-4099</code> (a range), and
+    several separated by commas. If two lines match the same account, the one that sorts first gets it.
+    Lines are never deleted &mdash; untick <strong>Active</strong> to retire one.
+  </p>
+  <div class="setup-toolbar">
+    <button type="button" class="btn btn-secondary btn-sm" id="lineAddBtn">+ Add Line</button>
+    <button type="button" class="btn btn-secondary btn-sm" id="previewAllBtn">Preview Matches</button>
+    <div class="spacer"></div>
+    <span id="lineSaveState" class="save-state">No changes</span>
+    <button type="button" class="btn btn-primary btn-sm" id="lineSaveBtn" disabled>Save Lines</button>
+  </div>
+
+  <details class="add-panel" id="starterPanel">
+    <summary>Start from chart of accounts</summary>
+    <p class="setup-hint">Drafts one line per top-level QuickBooks account (each line takes in all of that account's
+      sub-accounts). Pick the ones you want and they're added to the grid below, unsaved, for you to adjust.
+      Accounts already covered by an active line are skipped.</p>
+    <div class="rt-starter-controls">
+      <label>Section
+        <select id="starterSection">
+          <option value="both">Revenue and Expense</option>
+          <option value="revenue">Revenue only</option>
+          <option value="expense">Expense only</option>
+        </select>
+      </label>
+      <label>Account numbers starting with <input type="text" id="starterPrefix" placeholder="e.g. 66" size="8"></label>
+      <label class="rt-inline-check"><input type="checkbox" id="starterInactive"> Include inactive accounts</label>
+      <button type="button" class="btn btn-secondary btn-sm" id="starterDraftBtn">Draft Lines</button>
+    </div>
+    <div id="starterResults"></div>
+  </details>
+
+  <div class="table-scroll">
+    <table class="setup-table rt-lines" id="linesTable">
+      <thead>
+        <tr>
+          <th class="col-allow">Active</th>
+          <th class="rt-col-section">Section</th>
+          <th class="col-display">Line label</th>
+          <th class="rt-col-mask">Account mask</th>
+          <th class="col-sort">Sort</th>
+          <th class="rt-col-matches">Matches</th>
+        </tr>
+      </thead>
+      <tbody id="linesBody"></tbody>
+    </table>
+  </div>
+  <div id="previewSummary"></div>
+</details>
+
+<!-- ── Recipients ──────────────────────────────────────────────────────── -->
+<details class="card setup-section" {% if not recipients %}open{% endif %} id="recipientsSection">
+  <summary><h2>Recipients</h2></summary>
+  <p class="setup-hint">Who gets the report. They don't need a Beacon login. Untick <strong>Active</strong> to take someone off.</p>
+  <div class="setup-toolbar">
+    <button type="button" class="btn btn-secondary btn-sm" id="recipAddBtn">+ Add Recipient</button>
+    <div class="spacer"></div>
+    <span id="recipSaveState" class="save-state">No changes</span>
+    <button type="button" class="btn btn-primary btn-sm" id="recipSaveBtn" disabled>Save Recipients</button>
+  </div>
+  <div class="table-scroll">
+    <table class="setup-table" id="recipTable">
+      <thead>
+        <tr>
+          <th class="col-allow">Active</th>
+          <th class="rt-col-section">To / Cc</th>
+          <th class="col-email">Email</th>
+          <th class="col-display">Name <span class="hint">(optional)</span></th>
+        </tr>
+      </thead>
+      <tbody id="recipBody"></tbody>
+    </table>
+  </div>
+</details>
+
+<!-- ── Schedule ────────────────────────────────────────────────────────── -->
+<details class="card setup-section" {% if not schedule %}open{% endif %}>
+  <summary><h2>Schedule</h2></summary>
+  <p class="setup-hint">On the send day, the report is built for the most recently completed period. Automatic
+    scheduled runs are the next phase and aren't switched on yet &mdash; saving a schedule here does not send anything today.</p>
+  <form class="rt-plain-form rt-schedule" method="post" action="/admin/report-templates/{{ tpl.id }}/schedule">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <label>Frequency
+      <select name="frequency">
+        {% for f in frequencies %}
+        <option value="{{ f }}" {% if (schedule.frequency if schedule else 'monthly') == f %}selected{% endif %}>{{ f|capitalize }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Send on day
+      <input type="number" name="send_day_of_month" min="1" max="28" required
+             value="{{ schedule.send_day_of_month if schedule else 10 }}">
+      <span class="hint">of the month (1&ndash;28)</span>
+    </label>
+    <label class="rt-inline-check"><input type="checkbox" name="is_active"
+      {% if not schedule or schedule.is_active %}checked{% endif %}> Active</label>
+    <button type="submit" class="btn btn-primary btn-sm">Save Schedule</button>
+    {% if not schedule %}<span class="sub">Not saved yet &mdash; defaults shown.</span>{% endif %}
+  </form>
+</details>
+
+<script type="application/json" id="rtData">{{ {
+  "templateId": tpl.id,
+  "fullEntity": tpl.full_entity,
+  "lines": lines,
+  "recipients": recipients
+}|tojson }}</script>
+{% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/report_template_editor.js?v={{ asset_version('js/report_template_editor.js') }}"></script>
+{% endblock %}
