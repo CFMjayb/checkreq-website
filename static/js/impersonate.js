@@ -37,6 +37,18 @@ document.addEventListener('DOMContentLoaded', () => {
       '</form></td>' +
       '</tr>'
     )).join('');
+    // Standing UI-UX Rule 6: these rows are inserted after page load (lazy
+    // -loaded on first <details> expand), so the page's own generic
+    // form-wiring script (which only ever saw the server-rendered Entity
+    // Users forms) never reaches them -- wire each one directly, here.
+    if (window.showButtonLoading) {
+      body.querySelectorAll('form[method="post" i]').forEach((form) => {
+        form.addEventListener('submit', (e) => {
+          if (e.defaultPrevented) return;
+          showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+        });
+      });
+    }
   }
 
   async function loadParishUsers() {

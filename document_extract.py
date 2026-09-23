@@ -61,14 +61,24 @@ EXTRACTION_SCHEMA = {
         # the invoice (that identifies the customer to the vendor, not a GL
         # account) -- only a genuine internal accounting annotation counts.
         "coded_gl_account": {"type": ["string", "null"], "description": "A GL account number handwritten/stamped/annotated on the document by whoever is coding it for accounting -- not a vendor-printed account or customer number. Null if no such annotation is present."},
+        # 2026-09-22 (Jay's feedback batch): "checking property location on a
+        # property-related invoice" -- a multi-property vendor (a utility,
+        # landscaper, etc. billing several distinct EDOM-owned properties
+        # under one vendor account) prints the SPECIFIC property/service
+        # address on the invoice, distinct from the vendor's own remit-to
+        # address above. Research Coding (api_vendor_coding_history) uses
+        # this to match against checkreq.art_list.group_label and suggest
+        # that PROPERTY's own GL account, not just whatever this vendor was
+        # coded to most recently regardless of which property.
+        "service_address": {"type": ["string", "null"], "description": "The specific property/site/service address this invoice is billing FOR, if the document names one distinct from the vendor's own remit-to address (e.g. a utility bill's service address, a property-management line item's site address). Null if the invoice doesn't name a specific serviced property."},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-        "caveats": {"type": "array", "items": {"type": "string"}, "description": "Anything ambiguous -- multiple totals found, unclear date format, low image quality, etc."},
+        "caveats": {"type": "array", "items": {"type": "string"}, "description": "Anything ambiguous that affects confidence -- multiple totals found, low image quality, an illegible handwritten annotation, etc. Do NOT report an ambiguous date format here (Jay, 2026-09-22: not valuable) -- just pick the most plausible interpretation for the date field itself."},
     },
     "required": [
         "vendor_name", "amount", "date", "description",
         "vendor_address_line1", "vendor_address_line2", "vendor_city",
         "vendor_state", "vendor_zip", "vendor_phone", "vendor_contact_email",
-        "coded_gl_account", "confidence", "caveats",
+        "coded_gl_account", "service_address", "confidence", "caveats",
     ],
     "additionalProperties": False,
 }
@@ -86,16 +96,23 @@ _PROMPT = (
     "'code to 2405.26W' in a margin or on a coding stamp) -- this is "
     "distinct from any account/customer number the vendor itself printed on "
     "the invoice to identify the customer, which is never a GL account and "
-    "must not be returned here. Only extract what is legibly present. "
+    "must not be returned here. Also extract the specific property/site/"
+    "service address this invoice is billing FOR, if the document names one "
+    "distinct from the vendor's own remit-to address above (common for a "
+    "utility, landscaper, or property-management vendor that bills several "
+    "different properties under one account) -- null if none is named. "
+    "Only extract what is legibly present. "
     "Return null for anything genuinely absent or illegible rather than "
     "guessing a plausible-looking value. Never extract a tax ID, SSN, or "
     "EIN even if one is visible -- that is out of scope here regardless. "
     "If something is "
-    "ambiguous (e.g. multiple dollar amounts -- subtotal vs. tax vs. total "
-    "-- or an ambiguous date format), pick your best interpretation for the "
-    "field but set confidence accordingly and explain the ambiguity in "
-    "caveats. This is a financial document -- a confident-looking wrong "
-    "answer is worse than an honest low-confidence one."
+    "ambiguous (e.g. multiple dollar amounts -- subtotal vs. tax vs. total), "
+    "pick your best interpretation for the field but set confidence "
+    "accordingly and explain the ambiguity in caveats. If the date format "
+    "itself is ambiguous, just pick the most plausible interpretation "
+    "silently -- do not report that as a caveat, it isn't useful here. "
+    "This is a financial document -- a confident-looking wrong answer is "
+    "worse than an honest low-confidence one."
 )
 
 

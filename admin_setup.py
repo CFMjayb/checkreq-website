@@ -1334,11 +1334,15 @@ async def program_area_approval_rules_save(program_area_id: int, request: Reques
 #                                                subset now, full detail
 #                                                later" convention)
 #   GET  /admin/setup/art/api/vendors        -- Add-panel vendor picker feed
-#                                                (org-scoped, excludes
-#                                                vendors that already have an
-#                                                ART entry for this org --
-#                                                the real UNIQUE(vendor_id,
-#                                                org_id) constraint)
+#                                                (org-scoped; since migration
+#                                                063 a vendor may carry more
+#                                                than one ART entry -- one
+#                                                per property/group_label --
+#                                                so this no longer excludes
+#                                                a vendor for already having
+#                                                one; ON CONFLICT(vendor_id,
+#                                                org_id, group_label) at save
+#                                                time stops an exact dupe)
 #   GET  /admin/setup/art/{id}               -- detail: every real ART
 #                                                field as an editable form
 #                                                (identity-panel-at-top,
@@ -1458,11 +1462,15 @@ def art_list_page(request: Request):
 
 @router.get("/admin/setup/art/api/vendors")
 def api_art_vendors(request: Request, q: str = ""):
-    """Add-panel vendor picker feed -- org-scoped, excludes any vendor that
-    already has an ART entry for this org (the real UNIQUE(vendor_id,
-    org_id) constraint would just bounce a duplicate back as an error
-    otherwise -- excluding it up front is the same "can't even pick a
-    duplicate" precedent as GL Mapping's own unmapped-gl-accounts feed)."""
+    """Add-panel vendor picker feed -- org-scoped. Used to exclude any
+    vendor that already had an ART entry for this org, back when
+    art_list's uniqueness was UNIQUE(vendor_id, org_id) alone. Migration
+    063 widened that to UNIQUE(vendor_id, org_id, group_label) -- a vendor
+    with several real properties (e.g. BGE, one row per property) is now
+    expected to have more than one ART entry, so a vendor is no longer
+    excluded just for already having one; ON CONFLICT at save time (see
+    art_add below) is what actually stops an exact vendor+group_label
+    duplicate."""
     user, err = _require_setup_admin(request)
     if err:
         return err
@@ -1474,12 +1482,8 @@ def api_art_vendors(request: Request, q: str = ""):
         SELECT v.id, v.display_name
         FROM checkreq.vendors v
         WHERE v.org_id = %s AND v.is_active
-          AND NOT EXISTS (
-              SELECT 1 FROM checkreq.art_list al
-              WHERE al.vendor_id = v.id AND al.org_id = %s
-          )
     """
-    params: tuple = (org["id"], org["id"])
+    params: tuple = (org["id"],)
     if q:
         sql += " AND v.display_name ILIKE %s"
         params += (f"%{q}%",)
@@ -1541,14 +1545,15 @@ async def art_add(request: Request):
                 "INSERT INTO checkreq.art_list (vendor_id, org_id, group_label, art_type, "
                 "is_active, created_by_user_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s) "
-                "ON CONFLICT (vendor_id, org_id) DO NOTHING RETURNING id",
+                "ON CONFLICT (vendor_id, org_id, group_label) DO NOTHING RETURNING id",
                 (vendor_id, org["id"], group_label, art_type, is_active, user["id"]),
             )
             created = cur.fetchone()
 
     if not created:
         return JSONResponse(
-            {"error": "This vendor already has an ART entry for this entity."}, status_code=400
+            {"error": "This vendor already has an ART entry with this same group label "
+                       "for this entity."}, status_code=400
         )
     return {"id": created["id"]}
 

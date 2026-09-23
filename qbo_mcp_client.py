@@ -381,3 +381,38 @@ def create_bill(
         "attachments": attachments or [],
     }
     return _post("/api/check-request/{company}", company, body)
+
+
+def run_report_template(template_id: int, env: str, period_end: str,
+                        timeout: int = 280) -> tuple[bytes | None, dict, str | None]:
+    """GET /api/reports/templates/{id}/run?format=xlsx (26-149 Actual vs Budget
+    report engine). Returns (xlsx_bytes, info, None) on success or
+    (None, {}, "error text") on failure. `info` carries the filename plus the
+    engine's X-Report-Holds / X-Report-Tie-Out headers.
+
+    `env` must match this Beacon deployment's own database (BEACON_ENV), since
+    the template rows live there. Timeout sits just under Cloud Run's 300 s
+    request cap -- a report pulls the GL, P&L and Budget from QBO live."""
+    url = f"{QBO_MCP_URL}/api/reports/templates/{int(template_id)}/run"
+    try:
+        resp = requests.get(
+            url,
+            headers={"X-API-Key": _get_api_key()},
+            params={"env": env, "period_end": period_end, "format": "xlsx"},
+            timeout=timeout,
+        )
+    except Exception as exc:
+        return None, {}, str(exc)
+    if not resp.ok:
+        try:
+            err = resp.json().get("error")
+        except Exception:
+            err = None
+        return None, {}, err or f"HTTP {resp.status_code}: {resp.text[:300]}"
+    disp = resp.headers.get("Content-Disposition", "")
+    fname = disp.split("filename=", 1)[1].strip('"') if "filename=" in disp else f"report-{template_id}.xlsx"
+    return resp.content, {
+        "file_name": fname,
+        "holds": int(resp.headers.get("X-Report-Holds", "0") or 0),
+        "tie_out": resp.headers.get("X-Report-Tie-Out", ""),
+    }, None

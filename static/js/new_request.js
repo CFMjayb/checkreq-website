@@ -11,13 +11,46 @@
 let vendorDisplayText = '—';
 let chainDebounceTimer = null;
 let vendorTomSelect = null;
+// 2026-09-22 (Jay): "checking property location on a property-related
+// invoice" -- Research Coding needs whatever specific property/service
+// address the document itself named, set either by a live extraction on
+// this page (applyExtractedFields) or, for a bulk-ingested Invoice Intake
+// Draft, by whatever was found and persisted at intake time
+// (seedIntakeStatus). Null when the vendor/document doesn't have one.
+let lastExtractedServiceAddress = null;
+
+// Program Area default (2026-09-22, Jay's feedback batch, restated a 4th
+// time same day: "you are supposed to select the Program Area that has
+// Master in it if they have access to it or the first item in their
+// program list"). ALWAYS applies now -- both a brand-new submission
+// (loadProgramAreas, below) AND an existing Draft with no program_area_id
+// yet (applyEditPrefill -- Invoice Intake's old "leave blank, defaults to
+// All" design is retired; every request gets a real, always-editable
+// Program Area from the start now, never a blank one). Found via live
+// testing against real EDOM data: the real "master" area is titled
+// "EDOM Master", not literally "Master" -- an exact-string match missed it
+// entirely. Matches the whole word "master" anywhere in the title (word-
+// boundaried, so it won't false-positive on something like "Grantmaster")
+// to handle each org's own per-diocese naming.
+function defaultProgramAreaId(areas) {
+  if (!areas || !areas.length) return null;
+  const master = areas.find(a => /\bmaster\b/i.test(a.title || ''));
+  return String((master || areas[0]).id);
+}
+
+let _lastLoadedProgramAreas = [];
 
 async function loadProgramAreas() {
   const sel = document.getElementById('programAreaSelect');
   const r = await fetch(`/api/program-areas/${CURRENT_ORG_ID}`);
   const areas = await r.json();
+  _lastLoadedProgramAreas = areas;
   sel.innerHTML = '<option value="">Select...</option>' +
     areas.map(a => `<option value="${a.id}">${a.title}</option>`).join('');
+  if (!window.EDIT_DATA) {
+    const d = defaultProgramAreaId(areas);
+    if (d) sel.value = d;
+  }
 }
 
 // ---- GL Account picker (Task 5/6, 2026-07-26 batch) ----
@@ -155,7 +188,12 @@ function computeNewVendorDisplayName() {
 }
 
 function setVendorConfirmedMessage(show) {
-  document.getElementById('vendorConfirmedMsg').style.display = show ? '' : 'none';
+  // 2026-09-22 (Jay): "used to show to the right of the Vendor header...
+  // needs to return there" -- restored as its original inline confirmation
+  // next to the field's own label (was folded into the Status & Messages
+  // panel during the same-day unification -- see the panel's own comment).
+  const inline = document.getElementById('vendorConfirmedInline');
+  if (inline) inline.style.display = show ? 'inline' : 'none';
   document.getElementById('addNewVendorLink').style.display = show ? 'none' : '';
 }
 
@@ -164,6 +202,7 @@ function showNewVendorPanel(show) {
   document.getElementById('newVendorPanel').style.display = show ? '' : 'none';
   setVendorValidationMessage(''); // whichever mode is now active, the prior error no longer applies
   setVendorConfirmedMessage(false); // no existing vendor is selected once the new-vendor panel is active
+  setStatus('vendorMatches', null); // any pending "possible matches" suggestion no longer applies either
   if (vendorTomSelect) {
     // Real bug (Jay, 2026-07-29): clicking "Use an existing vendor instead"
     // after an unmatched-vendor extraction left the dropdown completely
@@ -225,21 +264,22 @@ function initVendorSelect() {
   });
 }
 
-// Invoice Intake (Tier 3, 2026-08-02): ART/Monkey-See-Monkey-Do status
-// banner -- only rendered on the coding screen for an invoice_payment
-// Draft (see new_request.html's own {% if %} guard), so this is a no-op
-// everywhere else (a plain Check Request page has no #artStatusBanner
-// element at all). Just exposes what new_request_submit already computes
-// at submission time, same "live-preview" pattern as the approval-chain-
-// preview/budget-status calls.
+// ART/Monkey-See-Monkey-Do status (Invoice Intake, Tier 3, 2026-08-02) --
+// used to be its own standalone banner, only rendered on the Invoice
+// Intake coding screen. Folded into the shared Status & Messages panel
+// (2026-09-22 unification) -- the underlying data is keyed on
+// (vendor_id, org_id), not request_type, so there's no real reason a plain
+// Check Request submitter shouldn't also see "this vendor has a
+// pre-approved workflow" if it applies. Just exposes what
+// new_request_submit already computes at submission time, same
+// "live-preview" pattern as the approval-chain-preview/budget-status
+// calls.
 async function refreshArtBanner(vendorId) {
-  const banner = document.getElementById('artStatusBanner');
-  if (!banner) return;
-  if (!vendorId) { banner.style.display = 'none'; return; }
+  if (!vendorId) { setStatus('art', null); return; }
   try {
     const r = await fetch(`/api/vendor-preapproval-status?vendor_id=${encodeURIComponent(vendorId)}`);
     const data = await r.json();
-    if (!data.has_art) { banner.style.display = 'none'; return; }
+    if (!data.has_art) { setStatus('art', null); return; }
     // L5 (Security Assessment 2026-09-19): both values below are
     // admin-controlled (an ART entry's own vendor link + free-text special
     // handling notes, set on the Setup Tables ART screen), not user-typed
@@ -250,10 +290,9 @@ async function refreshArtBanner(vendorId) {
     let html = `<strong>ART Preapproved</strong> (${escapeHtml(data.vendor_display_name)}) -- skips the approval chain, goes straight to AP Review.`;
     if (data.is_monkey_see_monkey_do) html += ' <em>Monkey-See-Monkey-Do: GL coding below was auto-filled from last month’s invoice -- please review.</em>';
     if (data.special_handling_notes) html += `<br>${escapeHtml(data.special_handling_notes)}`;
-    banner.innerHTML = html;
-    banner.style.display = '';
+    setStatus('art', html);
   } catch (e) {
-    banner.style.display = 'none';
+    setStatus('art', null);
   }
 }
 
@@ -342,42 +381,59 @@ function setField(name, value) {
   if (el) el.textContent = value;
 }
 
+// Real bug, live 2026-09-23: this used to also render a GL-lines table into
+// #voucherPreview (the live CR-form mirror) -- that mirror was removed from
+// the right pane earlier the same session (Standing UI-UX Rules #2), but
+// this function's own DOM-write into it was never updated to match, so
+// `tbody` was always null and every write into it threw. setField() already
+// no-ops safely when its own target is missing (see its own guard) -- this
+// function had no equivalent guard. Now it only computes and returns the
+// total; nothing here writes to the DOM at all, since there's no longer a
+// live mirror to write into.
 function updateVoucherGlTable() {
   const askMyAccountantEl = document.getElementById('askMyAccountantCheckbox');
   const askMyAccountant = askMyAccountantEl && askMyAccountantEl.checked;
-  const tbody = document.querySelector('#voucherPreview [data-field="gl_lines"]');
   let total = 0;
   if (askMyAccountant) {
     total = parseFloat(document.getElementById('askMyAccountantAmount').value) || 0;
-    tbody.innerHTML = `<tr><td colspan="3"><em>Ask My Accountant -- GL coding to be assigned by AP</em></td></tr>`;
   } else {
-    const rows = [...document.querySelectorAll('#glLines .gl-line')];
-    tbody.innerHTML = rows.map(row => {
-      const acctSel = row.querySelector('.glAccount');
-      const acctText = acctSel.selectedIndex > 0 ? acctSel.options[acctSel.selectedIndex].text : '—';
-      const amt = parseFloat(row.querySelector('.glAmount').value) || 0;
-      const memo = row.querySelector('.glMemo').value;
-      total += amt;
-      return `<tr><td>${escapeHtml(acctText)}</td><td>${fmtMoney(amt)}</td><td>${escapeHtml(memo)}</td></tr>`;
-    }).join('');
+    document.querySelectorAll('#glLines .gl-line').forEach(row => {
+      total += parseFloat(row.querySelector('.glAmount').value) || 0;
+    });
   }
-  setField('total', fmtMoney(total));
-  setField('amount', fmtMoney(total));
-  setField('amount_words', amountInWords(total));
   return total;
 }
 
 // Ask My Accountant (2026-08-16): swaps GL Coding entry for a single Amount
 // field. Toggling `required` explicitly, not just `hidden` -- a required
 // field inside a hidden section still blocks native form submission.
+// Real bug, 2026-09-23 (Jay): "why doesn't the amount stay if we click on I
+// don't know GL coding?" -- checking the box swaps GL Coding's own amount
+// field for a completely separate #askMyAccountantAmount input, which
+// starts blank; nothing ever copied the value across. Now carries the
+// amount in whichever direction the checkbox is toggled, each side only
+// filling in if it's currently empty -- never overwrites something the
+// user already typed into the side they're switching TO.
 function toggleAskMyAccountant() {
   const checked = document.getElementById('askMyAccountantCheckbox').checked;
+  const accountantAmountInput = document.getElementById('askMyAccountantAmount');
+  if (checked) {
+    const glTotal = updateVoucherGlTable();
+    if (!accountantAmountInput.value && glTotal > 0) {
+      accountantAmountInput.value = glTotal.toFixed(2);
+    }
+  } else {
+    const firstGlAmount = document.querySelector('#glLines .gl-line .glAmount');
+    if (firstGlAmount && !firstGlAmount.value && accountantAmountInput.value) {
+      firstGlAmount.value = accountantAmountInput.value;
+    }
+  }
   document.getElementById('glCodingSection').hidden = checked;
   document.getElementById('askMyAccountantAmountSection').hidden = !checked;
   document.querySelectorAll('#glLines .glAccount, #glLines .glAmount').forEach(el => {
     el.required = !checked;
   });
-  document.getElementById('askMyAccountantAmount').required = checked;
+  accountantAmountInput.required = checked;
   refreshPreview();
 }
 
@@ -386,14 +442,23 @@ function scheduleChainPreview(programAreaId, total) {
   chainDebounceTimer = setTimeout(() => updateChainPreview(programAreaId, total), 300);
 }
 
+function setChainSummary(text) {
+  // 2026-09-22 (Jay): Approval Chain Preview moved to the left pane -- was
+  // setField('chain_summary', ...), targeting a [data-field] node under
+  // the now-retired #voucherPreview mirror. Direct id lookup now that it's
+  // its own standalone element (see new_request.html).
+  const el = document.getElementById('chainSummaryDisplay');
+  if (el) el.textContent = text;
+}
+
 async function updateChainPreview(programAreaId, total) {
-  if (!programAreaId || total <= 0) { setField('chain_summary', '—'); return; }
+  if (!programAreaId || total <= 0) { setChainSummary('—'); return; }
   try {
     const r = await fetch(`/api/approval-chain-preview?program_area_id=${programAreaId}&amount=${total}`);
     const data = await r.json();
-    setField('chain_summary', data.summary || '—');
+    setChainSummary(data.summary || '—');
   } catch {
-    setField('chain_summary', '—');
+    setChainSummary('—');
   }
 }
 
@@ -489,15 +554,293 @@ function markAutoFilled(el) {
   el.addEventListener('change', clear);
 }
 
+// ---- Status & Messages panel (2026-09-22, Jay's feedback batch) ----
+// Consolidates every status message this page shows -- was scattered
+// inline (#uploadStatus under the upload row, #vendorConfirmedMsg/
+// #vendorValidationMsg under Vendor, the pre-approved-attachment warning,
+// the invoice-intake-only ART banner) -- into one panel under GL Coding.
+// Ported from Easy View's own already-built version (new_request_easy.js,
+// retired the same session -- see new_request_easy_pre_easy_view_
+// unification.js) rather than re-derived. setStatus(key, value) upserts
+// one slot and re-renders the whole panel from state; the panel is small
+// enough that a full re-render on every change isn't worth optimizing away.
+
+const statusState = {
+  upload: null,             // { text, kind, caveats } | null
+  vendorValidation: null,   // string | null
+  vendorMatches: null,      // { candidates, vendorName } | null -- near-miss suggestions from extraction
+  art: null,                // pre-built safe HTML string | null -- ART/MSMD vendor note
+  preApprovedWarning: false,
+  research: null,           // { text, kind } | { source, suggestions, ... } | null -- Research Coding result
+  submitError: null,        // string | null -- a rejected submission's server-side error (2026-09-23)
+};
+
+function setStatus(key, value) {
+  statusState[key] = value;
+  renderStatusPanel();
+}
+
 function setUploadStatus(message, kind, caveats) {
-  const el = document.getElementById('uploadStatus');
-  el.className = 'upload-status' + (kind ? ' ' + kind : '');
-  el.innerHTML = escapeHtml(message);
-  (caveats || []).forEach(c => {
-    const span = document.createElement('span');
-    span.className = 'caveat';
-    span.textContent = c;
-    el.appendChild(span);
+  setStatus('upload', { text: message, kind, caveats });
+}
+
+function renderStatusPanel() {
+  const body = document.getElementById('statusPanelBody');
+  if (!body) return;
+  const parts = [];
+
+  if (statusState.upload) {
+    const kindClass = statusState.upload.kind ? ' ' + statusState.upload.kind : '';
+    let html = `<div class="status-msg${kindClass}"><strong>Document upload</strong>${escapeHtml(statusState.upload.text)}`;
+    (statusState.upload.caveats || []).forEach(c => { html += `<span class="caveat">${escapeHtml(c)}</span>`; });
+    html += '</div>';
+    parts.push(html);
+  }
+  if (statusState.vendorValidation) {
+    parts.push(`<div class="status-msg error"><strong>Vendor</strong>${escapeHtml(statusState.vendorValidation)}</div>`);
+  }
+  // Real bug, 2026-09-23 (Jay's screenshot): a rejected submission (e.g.
+  // "One or more GL accounts are not available...") used to come back as
+  // main.py's raw JSONResponse body, landing the browser on a bare JSON
+  // page since the form used to be a real native submit -- see
+  // submitFormViaFetch() below. Shown here instead, same as every other
+  // status message on this page.
+  if (statusState.submitError) {
+    parts.push(`<div class="status-msg error"><strong>Couldn't submit</strong>${escapeHtml(statusState.submitError)}</div>`);
+  }
+  if (statusState.vendorMatches) {
+    // 2026-09-22 (Jay): a real invoice failed to match an existing vendor
+    // it should have -- widened matching (main.py's _vendor_match_candidates,
+    // name-similarity + extracted city/zip corroboration) now surfaces
+    // plausible near-misses here instead of silently opening "Add a new
+    // vendor" underneath a real existing match. Never auto-applies one --
+    // always a one-click human confirm.
+    const { candidates, vendorName } = statusState.vendorMatches;
+    let html = `<div class="status-msg warning"><strong>Possible vendor matches</strong>No confident match for "${escapeHtml(vendorName)}" -- did you mean:<ul class="status-action-list">`;
+    candidates.forEach(c => {
+      html += `<li><button type="button" class="btn btn-secondary btn-sm vendor-match-btn" data-vendor-id="${c.id}" data-vendor-name="${escapeHtml(c.display_name)}">${escapeHtml(c.display_name)}</button></li>`;
+    });
+    html += '</ul>Or use "Add a new vendor" above.</div>';
+    parts.push(html);
+  }
+  if (statusState.art) {
+    parts.push(`<div class="status-msg"><strong>Vendor Note</strong>${statusState.art}</div>`);
+  }
+  if (statusState.preApprovedWarning) {
+    parts.push('<div class="status-msg error"><strong>Pre-Approved Submission</strong>Attach at least one file showing the approval before submitting this way.</div>');
+  }
+  if (statusState.research) {
+    const r = statusState.research;
+    if (r.suggestions && r.suggestions.length) {
+      let html = '<div class="status-msg"><strong>Research Coding</strong>';
+      html += r.source === 'qbo_last_bill'
+        ? `From this vendor's most recent QBO bill${r.bill_date ? ' (' + escapeHtml(r.bill_date) + ')' : ''}:`
+        : `Based on this vendor's prior submissions in Beacon:`;
+      html += '<ul class="status-action-list">';
+      r.suggestions.forEach(s => {
+        html += `<li><button type="button" class="btn btn-secondary btn-sm coding-suggestion-btn" data-gl-account-id="${s.gl_account_id}" data-gl-label="${escapeHtml(s.label)}">${escapeHtml(s.label)}</button>${s.times_used ? ` <span class="sub">(used ${s.times_used}x)</span>` : ''}</li>`;
+      });
+      html += '</ul></div>';
+      parts.push(html);
+    } else if (r.text) {
+      parts.push(`<div class="status-msg${r.kind ? ' ' + r.kind : ''}"><strong>Research Coding</strong>${escapeHtml(r.text)}</div>`);
+    }
+  }
+
+  body.innerHTML = parts.length
+    ? parts.join('')
+    : '<p class="status-panel-empty">Nothing to report yet — upload a document or fill in the form.</p>';
+}
+
+// Jay, 2026-09-23: "If you click back to invoice intake, you should be
+// prompted with a 'discard changes?'" -- one flag, flipped by any real
+// input/change inside #reqForm once initDirtyTracking() is armed (see its
+// own call site for why that's deliberately AFTER pre-fill, not from page
+// load) -- the backLink click handler (DOMContentLoaded) reads it.
+let formDirty = false;
+function initDirtyTracking() {
+  const form = document.getElementById('reqForm');
+  form.addEventListener('input', () => { formDirty = true; });
+  form.addEventListener('change', () => { formDirty = true; });
+}
+
+// Real bug, 2026-09-23: #reqForm used to be submitted as a real native
+// browser form POST once every client-side pre-flight check passed --
+// fine when the server agrees, but a rejection main.py's own validation
+// catches (a GL account no longer available for the program area, a
+// vendor deactivated mid-edit, etc.) came back as a bare JSONResponse
+// body, landing the whole browser on a raw JSON page with the form state
+// gone. Submits via fetch() instead: a successful submission still ends
+// on the exact same page the server would have redirected a native
+// submit to (fetch follows the 303 itself; resp.url is that final page),
+// but a rejection renders inline in the Status & Messages panel and
+// leaves the form exactly as the user left it, ready to fix and retry.
+async function submitFormViaFetch(form, submitterBtn) {
+  showButtonLoading(submitterBtn);
+  let resp;
+  try {
+    resp = await fetch(form.action, { method: 'POST', body: new FormData(form) });
+  } catch {
+    setStatus('submitError', "Couldn't reach the server -- please check your connection and try again.");
+    if (submitterBtn) { submitterBtn.disabled = false; submitterBtn.classList.remove('btn-loading'); }
+    return;
+  }
+  if (resp.ok) {
+    location.href = resp.url;
+    return;
+  }
+  let message = 'Something went wrong -- please try again.';
+  try {
+    const data = await resp.json();
+    if (data.error) message = data.error;
+  } catch {
+    // A non-JSON error body (an unexpected 500 page, say) -- keep the
+    // generic message rather than show raw HTML.
+  }
+  setStatus('submitError', message);
+  document.getElementById('statusPanelBody').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (submitterBtn) { submitterBtn.disabled = false; submitterBtn.classList.remove('btn-loading'); }
+}
+
+function applyVendorMatch(id, name) {
+  vendorTomSelect.addOption({ id: String(id), display_name: name });
+  vendorTomSelect.addItem(String(id)); // triggers onItemAdd -> setVendorConfirmedMessage/refreshPreview
+  setStatus('vendorMatches', null);
+}
+
+function applyCodingSuggestion(glAccountId, label) {
+  // Fills the first empty GL line, or adds a new one if every line already
+  // has an account -- same "please review, fully editable" treatment
+  // Monkey-See-Monkey-Do's own existing prefill already uses, never
+  // silently final.
+  const rows = [...document.querySelectorAll('#glLines .gl-line')];
+  let target = rows.find(row => !row.querySelector('.glAccount').value);
+  if (!target) {
+    addGlLine();
+    const updated = [...document.querySelectorAll('#glLines .gl-line')];
+    target = updated[updated.length - 1];
+  }
+  const sel = target.querySelector('.glAccount');
+  const ts = sel && sel.tomselect;
+  if (ts) {
+    if (!ts.options[String(glAccountId)]) ts.addOption({ id: String(glAccountId), label, depth: 0 });
+    ts.addItem(String(glAccountId));
+  }
+  const memo = target.querySelector('.glMemo');
+  if (memo && !memo.value) memo.value = 'Suggested by Research Coding -- please review';
+  refreshPreview();
+}
+
+async function researchCoding() {
+  const usingNewVendor = document.getElementById('usingNewVendor').value === '1';
+  const vendorId = usingNewVendor ? '' : document.getElementById('vendorSelect').value;
+  if (!vendorId) {
+    setStatus('research', { text: 'Select an existing vendor first -- Research Coding looks up prior coding for a vendor already on file.', kind: 'error' });
+    return;
+  }
+  setStatus('research', { text: 'Looking up prior coding...' });
+  try {
+    let url = `/api/vendor-coding-history?vendor_id=${encodeURIComponent(vendorId)}`;
+    if (lastExtractedServiceAddress) url += `&service_address=${encodeURIComponent(lastExtractedServiceAddress)}`;
+    const r = await fetch(url);
+    const data = await r.json();
+    if (!data.suggestions || !data.suggestions.length) {
+      setStatus('research', { text: `No prior coding found for ${data.vendor_display_name || 'this vendor'}.`, kind: 'warning' });
+      return;
+    }
+    setStatus('research', data);
+  } catch {
+    setStatus('research', { text: "Couldn't look up prior coding.", kind: 'error' });
+  }
+}
+
+// ---- Resizable divider between the two panes (2026-09-22, Jay's feedback
+// batch): "have a vertical scroll bar between the data entry section on
+// the left and the ... check request form on the right... in case the
+// space is needed." No such mechanism existed anywhere in this codebase --
+// built from scratch. Drags .split-form's flex-basis directly (in px);
+// .split-preview keeps flex:1 and absorbs whatever's left automatically.
+// "When the window is resized... the left side should not [shrink]... the
+// right side of the screen should decrease in size" -- the min-width on
+// .split-form (new_request.css) is what actually enforces that; this drag
+// handler just clamps the SAME floor when the user drags, so the two
+// behaviors can never disagree. Persisted in localStorage -- a plain
+// per-browser convenience, not shared state. ----
+
+const SPLIT_MIN_PX = 420;
+// Real bug, live 2026-09-23 (Jay): "have we entirely lost the ability to
+// resize the check request screen?" A fixed 900px ceiling here directly
+// fought the "push nearly full-width until a document exists" behavior
+// just below -- on any screen wider than ~1060px that initial width is
+// already past 900, so the instant the divider was touched at all it
+// snapped backward to 900 instead of tracking the mouse, reading as
+// "resizing is broken" rather than "resizing has a low, arbitrary cap."
+// Replaced with a small floor on the RIGHT pane instead (SPLIT_RIGHT_MIN_PX)
+// -- consistent in both states, and lets the divider reach exactly as far
+// right as the no-document state already pushes it to.
+const SPLIT_RIGHT_MIN_PX = 40;
+const SPLIT_RIGHT_PANE_COLLAPSED_PX = 160; // how much the right side keeps visible with no document yet
+const SPLIT_WIDTH_KEY = 'beacon_new_request_split_width';
+
+// 2026-09-22 (Jay): "at the start of the screen, I would have the vertical
+// scroll bar to the far right, until a file is uploaded. Then I would show
+// the uploaded document moving the scroll bar over to the mid screen."
+// The right pane has nothing to show until a document exists (its own
+// empty-state, see new_request.html) -- called from showDocumentFrame()
+// the instant one appears (a fresh upload, or an existing Draft's
+// already-archived attachment rendered on load).
+function widenPreviewPaneForDocument() {
+  const formPane = document.querySelector('.split-form');
+  if (!formPane) return;
+  const saved = parseInt(localStorage.getItem(SPLIT_WIDTH_KEY) || '', 10);
+  // A real saved drag preference wins; otherwise clear the inline override
+  // entirely so the CSS default (flex: 0 0 44%, a genuine mid-screen split)
+  // takes over, rather than picking another hardcoded number here.
+  formPane.style.flexBasis = (saved && saved >= SPLIT_MIN_PX) ? saved + 'px' : '';
+}
+
+function initSplitDivider() {
+  const divider = document.getElementById('splitDivider');
+  const formPane = document.querySelector('.split-form');
+  if (!divider || !formPane) return;
+
+  if (window.EXISTING_DOCUMENT_ATTACHMENT) {
+    // A document already exists (an existing Draft's own attachment) --
+    // renderExistingAttachment() calls widenPreviewPaneForDocument() itself
+    // once it actually renders, but seed the same saved-or-default width
+    // here too so there's no visible "wide, then snap back" flash before
+    // that async render completes.
+    widenPreviewPaneForDocument();
+  } else {
+    // No document yet -- push the divider toward the far right, leaving
+    // just enough of the right pane's empty-state visible to be legible.
+    const shellWidth = formPane.parentElement.getBoundingClientRect().width;
+    formPane.style.flexBasis = Math.max(SPLIT_MIN_PX, shellWidth - SPLIT_RIGHT_PANE_COLLAPSED_PX) + 'px';
+  }
+
+  let dragging = false;
+  divider.addEventListener('mousedown', (e) => {
+    dragging = true;
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const shellRect = formPane.parentElement.getBoundingClientRect();
+    const maxPx = shellRect.width - SPLIT_RIGHT_MIN_PX;
+    const width = Math.max(SPLIT_MIN_PX, Math.min(maxPx, e.clientX - shellRect.left));
+    formPane.style.flexBasis = width + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.userSelect = '';
+    try {
+      localStorage.setItem(SPLIT_WIDTH_KEY, String(Math.round(formPane.getBoundingClientRect().width)));
+    } catch {
+      // localStorage can throw in a private/locked-down browser context --
+      // the divider still works for this session, it just won't persist.
+    }
   });
 }
 
@@ -506,6 +849,7 @@ function applyExtractedFields(data, filename) {
     setUploadStatus(data.error, 'error');
     return;
   }
+  lastExtractedServiceAddress = data.service_address || null;
 
   // data.date is the INVOICE's own printed date, not the requested pay date
   // of this check request -- those are different things and must not be
@@ -529,6 +873,15 @@ function applyExtractedFields(data, filename) {
     if (data.matched_vendor_id && vendorTomSelect) {
       vendorTomSelect.addOption({ id: String(data.matched_vendor_id), display_name: data.vendor_name });
       vendorTomSelect.addItem(String(data.matched_vendor_id));
+      setStatus('vendorMatches', null);
+    } else if (data.possible_vendor_matches && data.possible_vendor_matches.length && vendorTomSelect) {
+      // 2026-09-22 (Jay): a real invoice failed to match an existing vendor
+      // it should have -- widened matching now surfaces plausible
+      // near-misses instead of silently giving up. Deliberately does NOT
+      // open the "Add a new vendor" panel here (unlike the truly-unmatched
+      // branch below) -- there's a real, existing vendor that's probably
+      // the right one, so defaulting to "add a new vendor" would be worse.
+      setStatus('vendorMatches', { candidates: data.possible_vendor_matches, vendorName: data.vendor_name });
     } else if (vendorTomSelect) {
       // Real bug found live 2026-09-10 (Jay): an unmatched vendor name
       // (e.g. "Jane Ford") sat in the Tom Select search box looking
@@ -599,7 +952,18 @@ function applyExtractedFields(data, filename) {
 
   refreshPreview();
 
-  const vendorNote = data.matched_vendor_id ? '' : (data.vendor_name ? ' (no matching vendor found -- the "Add a new vendor" panel below has been opened and prefilled from this document -- please review)' : '');
+  // Bug found live 2026-09-22, testing the new possible-vendor-matches path:
+  // this note used to only check matched_vendor_id, so it kept claiming
+  // "the Add a new vendor panel below has been opened" even when a
+  // possible-matches suggestion was shown instead (that branch deliberately
+  // does NOT open the new-vendor panel -- see the vendor_name handling
+  // above). Now reflects all three real outcomes.
+  let vendorNote = '';
+  if (!data.matched_vendor_id && data.vendor_name) {
+    vendorNote = (data.possible_vendor_matches && data.possible_vendor_matches.length)
+      ? ' (see "Possible vendor matches" below)'
+      : ' (no matching vendor found -- the "Add a new vendor" panel below has been opened and prefilled from this document -- please review)';
+  }
   const glNote = (data.coded_gl_account && !data.matched_gl_account_id)
     ? ` (this document appears to be coded to GL account "${data.coded_gl_account}", but no matching account was found for this entity -- please code it manually)`
     : '';
@@ -621,9 +985,7 @@ function applyExtractedFields(data, filename) {
 // round-trip and gives a clearer inline message than a generic 400 would.
 
 function setVendorValidationMessage(msg) {
-  const el = document.getElementById('vendorValidationMsg');
-  el.textContent = msg;
-  el.style.display = msg ? '' : 'none';
+  setStatus('vendorValidation', msg || null);
 }
 
 function vendorSelectionIsValid() {
@@ -648,17 +1010,30 @@ async function applyEditPrefill() {
   if (!d) return;
 
   const paSel = document.getElementById('programAreaSelect');
-  // Invoice Intake's Draft rows may have no Program Area at all
-  // (program_area_id = None, "All") -- leaving the select at its default
-  // blank/"All Program Areas" option, rather than setting the literal
-  // string "None" (which happened to match no option by accident before
-  // this guard existed, but wasn't a real guarantee).
-  if (d.program_area_id) paSel.value = String(d.program_area_id);
+  // 2026-09-22 (Jay, restated a 4th time): a Draft with no Program Area yet
+  // (e.g. a bulk-ingested Invoice Intake row nothing on the document itself
+  // resolved one for) gets the SAME Master-or-first default a brand-new
+  // submission already gets, via defaultProgramAreaId() -- never left blank.
+  if (d.program_area_id) {
+    paSel.value = String(d.program_area_id);
+  } else {
+    const def = defaultProgramAreaId(_lastLoadedProgramAreas);
+    if (def) paSel.value = def;
+  }
 
   const container = document.getElementById('glLines');
   container.querySelectorAll('.glAccount').forEach(sel => { if (sel.tomselect) sel.tomselect.destroy(); });
   container.innerHTML = '';
-  const lines = (d.gl_lines && d.gl_lines.length) ? d.gl_lines : [{ gl_account_id: '', amount: 0, memo: '' }];
+  // Real bug, live 2026-09-23 (Jay): "it did not pick up the amount this
+  // time -- it did every other time." A bulk-ingested Invoice Intake Draft
+  // with no coded account/MSMD match has no real GL line to load (that
+  // table's gl_account_id is NOT NULL, so the server can't persist an
+  // amount-only line) -- fall back to the extracted amount here, the same
+  // way applyExtractedFields() always seeds a fresh upload's first blank
+  // line, so the two flows behave consistently.
+  const lines = (d.gl_lines && d.gl_lines.length)
+    ? d.gl_lines
+    : [{ gl_account_id: '', amount: d.invoice_extracted_amount || 0, memo: '' }];
 
   // Fetch the allowed GL accounts for this program area ONCE (not once per
   // line) -- every line under the same program area shares the identical
@@ -723,7 +1098,28 @@ async function applyEditPrefill() {
     document.getElementById('nvContactEmail').value = nv.contact_email || '';
   }
 
+  seedIntakeStatus();
   refreshPreview();
+}
+
+// Bulk Invoice Intake (2026-09-22): renders whatever _ingest_invoice_file()
+// found and persisted on this Draft at intake time -- the extraction
+// outcome and, if no vendor was confidently matched, the same "did you
+// mean" candidate list Classic's live upload already knows how to render.
+// A confidently-matched vendor needs no separate seeding here -- the
+// d.vendor branch above already calls vendorTomSelect.addItem(), which
+// triggers onItemAdd -> setVendorConfirmedMessage(true)/refreshArtBanner(),
+// the exact same path a live confirm takes. This only fills the gap that
+// path doesn't cover: an extraction note, or an unresolved near-miss list,
+// for a Draft nobody has looked at since it was ingested.
+function seedIntakeStatus() {
+  const s = EDIT_DATA && EDIT_DATA.intake_status;
+  if (!s) return;
+  if (s.upload) setStatus('upload', s.upload);
+  if (s.vendor_matches) {
+    setStatus('vendorMatches', { candidates: s.vendor_matches.candidates, vendorName: s.vendor_matches.vendor_name });
+  }
+  if (s.service_address) lastExtractedServiceAddress = s.service_address;
 }
 
 async function handleAttachmentUpload(fileInput) {
@@ -744,70 +1140,139 @@ async function handleAttachmentUpload(fileInput) {
 }
 
 // Jay, 2026-07-29: "you never get the opportunity to look at the [uploaded]
-// document... it might be nice to be able to toggle between an uploaded
-// document versus the check request itself." Renders client-side via
-// URL.createObjectURL -- the file is already sitting in the <input>, no
-// server round-trip needed just to look at it.
-function showDocumentPreview(file) {
-  const toggleBar = document.getElementById('previewToggle');
-  const voucherWrap = document.getElementById('voucherPreviewWrap');
+// document." 2026-09-22 correction: the right pane no longer mirrors the
+// CR form at all (see new_request.html's own comment), so there's nothing
+// to toggle between anymore -- the document IS the right pane, full stop,
+// the moment one exists. Renders client-side via URL.createObjectURL --
+// the file is already sitting in the <input>, no server round-trip needed
+// just to look at it.
+function showDocumentFrame(iframeOrImgEl) {
+  const emptyState = document.getElementById('documentPreviewEmpty');
   const docWrap = document.getElementById('documentPreviewWrap');
-  const url = URL.createObjectURL(file);
   docWrap.innerHTML = '';
-  if (file.type === 'application/pdf') {
-    const iframe = document.createElement('iframe');
-    iframe.src = url;
-    iframe.title = 'Uploaded document';
-    iframe.className = 'document-preview-frame';
-    docWrap.appendChild(iframe);
-  } else if (file.type.startsWith('image/')) {
-    const img = document.createElement('img');
-    img.src = url;
-    img.alt = 'Uploaded document';
-    img.className = 'document-preview-image';
-    docWrap.appendChild(img);
-  } else {
-    docWrap.textContent = "This file type can't be previewed inline.";
-  }
-  toggleBar.style.display = 'flex';
-  // Default to showing the document itself right after a fresh upload --
-  // that's the whole point of the toggle existing at all.
-  toggleBar.querySelectorAll('.preview-toggle-btn').forEach(b => b.classList.remove('active'));
-  toggleBar.querySelector('[data-view="document"]').classList.add('active');
-  voucherWrap.style.display = 'none';
+  docWrap.appendChild(iframeOrImgEl);
+  if (emptyState) emptyState.style.display = 'none';
   docWrap.style.display = 'block';
+  widenPreviewPaneForDocument();
 }
 
-function initPreviewToggle() {
-  const toggleBar = document.getElementById('previewToggle');
-  const voucherWrap = document.getElementById('voucherPreviewWrap');
-  const docWrap = document.getElementById('documentPreviewWrap');
-  toggleBar.querySelectorAll('.preview-toggle-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      toggleBar.querySelectorAll('.preview-toggle-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const showDoc = btn.dataset.view === 'document';
-      voucherWrap.style.display = showDoc ? 'none' : '';
-      docWrap.style.display = showDoc ? 'block' : 'none';
-    });
-  });
+function showDocumentPreview(file) {
+  const url = URL.createObjectURL(file);
+  let el;
+  if (file.type === 'application/pdf') {
+    el = document.createElement('iframe');
+    el.src = url;
+    el.title = 'Uploaded document';
+    el.className = 'document-preview-frame';
+  } else if (file.type.startsWith('image/')) {
+    el = document.createElement('img');
+    el.src = url;
+    el.alt = 'Uploaded document';
+    el.className = 'document-preview-image';
+  } else {
+    el = document.createElement('p');
+    el.textContent = "This file type can't be previewed inline.";
+  }
+  showDocumentFrame(el);
+}
+
+// 2026-09-22 (Jay): "I can't see the invoice... you must have a image
+// viewer on the right." Reviewing an EXISTING Draft (bulk Invoice Intake's
+// real case -- uploaded by someone else, possibly days ago) has no live
+// file input holding the bytes anymore; the only copy is whatever's
+// already archived. Fetches it through the same authenticated view route
+// the Attachments list already links to (same-origin, so the browser's
+// existing session cookie covers it -- no separate token needed).
+function renderExistingAttachment() {
+  const att = window.EXISTING_DOCUMENT_ATTACHMENT;
+  if (!att || !window.EDIT_DATA) return;
+  const url = `/requests/${window.EDIT_DATA.editing_request_number}/attachments/${att.id}/view`;
+  let el;
+  if ((att.content_type || '').startsWith('image/')) {
+    el = document.createElement('img');
+    el.src = url;
+    el.alt = att.original_filename || 'Uploaded document';
+    el.className = 'document-preview-image';
+  } else {
+    // PDF, or anything else the browser's own plugin/viewer can attempt --
+    // matches showDocumentPreview()'s own PDF branch.
+    el = document.createElement('iframe');
+    el.src = url;
+    el.title = att.original_filename || 'Uploaded document';
+    el.className = 'document-preview-frame';
+  }
+  showDocumentFrame(el);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  initPreviewToggle();
   initVendorSelect();
-  loadProgramAreas().then(() => {
+  initSplitDivider();
+  renderExistingAttachment();
+
+  // 2026-09-22 (Jay): "just have Upload File, then go to the picker, select
+  // the file and begin the upload process" -- one custom-styled button
+  // triggers the real (hidden) file input; the input's own change event
+  // (wired below/already wired for attachmentsInput) does the rest with no
+  // second click. Applies to both upload surfaces on this page.
+  const attachmentsUploadBtn = document.getElementById('attachmentsUploadBtn');
+  if (attachmentsUploadBtn) {
+    attachmentsUploadBtn.addEventListener('click', () => document.getElementById('attachmentsInput').click());
+  }
+  const attachmentAddBtn = document.getElementById('attachmentAddBtn');
+  if (attachmentAddBtn) {
+    attachmentAddBtn.addEventListener('click', () => document.getElementById('attachmentAddInput').click());
+  }
+  const attachmentAddInput = document.getElementById('attachmentAddInput');
+  if (attachmentAddInput) {
+    attachmentAddInput.addEventListener('change', () => {
+      if (attachmentAddInput.files.length) document.getElementById('attachmentAddForm').submit();
+    });
+  }
+
+  // Event delegation for buttons the Status & Messages panel injects
+  // dynamically (possible-vendor-match confirms, Research Coding
+  // suggestions) -- the panel is fully re-rendered on every state change,
+  // so a direct listener on any one button would be destroyed the next
+  // render; delegating to the panel's own stable container avoids that.
+  const statusPanelBody = document.getElementById('statusPanelBody');
+  if (statusPanelBody) {
+    statusPanelBody.addEventListener('click', (e) => {
+      const vendorBtn = e.target.closest('.vendor-match-btn');
+      if (vendorBtn) { applyVendorMatch(vendorBtn.dataset.vendorId, vendorBtn.dataset.vendorName); return; }
+      const codingBtn = e.target.closest('.coding-suggestion-btn');
+      if (codingBtn) { applyCodingSuggestion(codingBtn.dataset.glAccountId, codingBtn.dataset.glLabel); return; }
+    });
+  }
+  const researchBtn = document.getElementById('researchCodingBtn');
+  if (researchBtn) researchBtn.addEventListener('click', researchCoding);
+
+  loadProgramAreas().then(async () => {
     if (window.EDIT_DATA) {
-      applyEditPrefill();
+      await applyEditPrefill();
     } else {
       refreshPreview();
     }
+    // Dirty-tracking starts only AFTER pre-fill finishes -- pre-filling an
+    // edit page's own fields is not a user edit, and starting earlier would
+    // falsely arm the "discard changes?" prompt (below) the instant the
+    // page finished loading, before anyone touched anything.
+    initDirtyTracking();
   });
   document.querySelectorAll('.glAccount').forEach(sel => initGlAccountSelect(sel));
 
   document.getElementById('reqForm').addEventListener('submit', async (e) => {
+    // Real bug, 2026-09-23 (Jay's screenshot): this form used to be a real
+    // native submission whenever every pre-flight JS check passed --
+    // meaning any validation error the SERVER caught that JS didn't
+    // already know to check for (e.g. "one or more GL accounts are not
+    // available for this program area") came back as main.py's raw
+    // JSONResponse body, landing the whole browser on a bare JSON page
+    // instead of an inline message. Now unconditionally prevented here;
+    // every path below submits via submitFormViaFetch() instead, which
+    // shows a server rejection inline (statusState.submitError) and never
+    // navigates away except on a genuine success.
+    e.preventDefault();
     if (!vendorSelectionIsValid()) {
-      e.preventDefault();
       setVendorValidationMessage('Please select a vendor from the list, or click "Add a new one" below.');
       document.getElementById('vendorSelect').closest('.field').scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
@@ -820,15 +1285,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // not just a file freshly picked in this exact submit.
     const preApprovedBox = document.getElementById('preApprovedCheckbox');
     if (preApprovedBox && preApprovedBox.checked) {
-      const newlyAttached = document.getElementById('attachmentsInput').files.length;
+      const attachmentsInputEl = document.getElementById('attachmentsInput');
+      const newlyAttached = attachmentsInputEl ? attachmentsInputEl.files.length : 0;
       const alreadyAttached = window.EXISTING_ATTACHMENT_COUNT || 0;
       if (newlyAttached === 0 && alreadyAttached === 0) {
-        e.preventDefault();
-        document.getElementById('preApprovedWarning').style.display = 'block';
+        setStatus('preApprovedWarning', true);
         document.getElementById('preApprovedRow').scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
       }
-      document.getElementById('preApprovedWarning').style.display = 'none';
+      setStatus('preApprovedWarning', false);
     }
 
     // Three-tier budget design (Approval Workflow Corrections, 2026-07-31):
@@ -842,11 +1307,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const form = e.target;
     const already = form.querySelector('input[name="confirmed_overbudget"]');
     if (already && already.value === '1') {
-      showButtonLoading(e.submitter); // 2026-09-10: about to really submit
-      return; // already confirmed -- let this one through
+      await submitFormViaFetch(form, e.submitter); // already confirmed
+      return;
     }
 
-    e.preventDefault();
     let cfoRequired = [];
     try {
       const resp = await fetch('/api/budget-check-submission', { method: 'POST', body: new FormData(form) });
@@ -877,8 +1341,7 @@ document.addEventListener('DOMContentLoaded', () => {
       form.appendChild(hidden);
     }
     hidden.value = '1';
-    showButtonLoading(e.submitter); // 2026-09-10: about to really submit
-    form.submit();
+    await submitFormViaFetch(form, e.submitter);
   });
 
   document.getElementById('payDateInput').addEventListener('input', refreshPreview);
@@ -889,7 +1352,17 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('glLines').addEventListener('input', refreshPreview);
   document.getElementById('glLines').addEventListener('change', refreshPreview);
-  document.getElementById('attachmentsInput').addEventListener('change', (e) => handleAttachmentUpload(e.target));
+  // Real bug, live 2026-09-23: unguarded on an Invoice Intake edit page,
+  // which deliberately never renders the "Upload File to Prefill Form" box
+  // (new_request.html line ~49 -- the file was already uploaded at intake
+  // time) -- the resulting null.addEventListener() threw and silently
+  // aborted every listener registration AFTER this line in the same
+  // DOMContentLoaded callback (addNewVendorLink/cancelNewVendorLink/
+  // newVendorPanel's listeners, and the initial refreshPreview() call).
+  const attachmentsInputForChange = document.getElementById('attachmentsInput');
+  if (attachmentsInputForChange) {
+    attachmentsInputForChange.addEventListener('change', (e) => handleAttachmentUpload(e.target));
+  }
 
   document.getElementById('addNewVendorLink').addEventListener('click', (e) => { e.preventDefault(); showNewVendorPanel(true); });
   document.getElementById('cancelNewVendorLink').addEventListener('click', (e) => { e.preventDefault(); showNewVendorPanel(false); });
@@ -898,6 +1371,19 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshPreview();
   }));
   document.getElementById('newVendorPanel').addEventListener('input', refreshPreview);
+
+  // Jay, 2026-09-23: "If you click back to invoice intake, you should be
+  // prompted with a 'discard changes?'" -- formDirty (set by
+  // initDirtyTracking(), armed only after pre-fill finishes) distinguishes
+  // "nothing typed yet" from "there's real unsaved work here."
+  const backLink = document.getElementById('backLink');
+  if (backLink) {
+    backLink.addEventListener('click', (e) => {
+      if (formDirty && !confirm('Discard your changes and leave this page?')) {
+        e.preventDefault();
+      }
+    });
+  }
 
   refreshPreview();
 });

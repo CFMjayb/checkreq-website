@@ -288,4 +288,15 @@
   window.SETUP_ORG_ID = {{ current_org.id }};
 </script>
 <script src="/static/js/admin_setup.js?v={{ asset_version('js/admin_setup.js') }}"></script>
+<script>
+{# admin_setup.js wires its own "Check Completeness Now" button (fetch()-
+   driven, not a native form submit) directly -- this covers this page's
+   plain POST forms only (Save ART Entry, period Resolve, Delete). #}
+document.querySelectorAll('form[method="post" i]').forEach(function (form) {
+  form.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+  });
+});
+</script>
 {% endblock %}

@@ -6,18 +6,25 @@
 <p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
 
 {% if add_error %}
-<div class="banner banner-error">{{ add_error }}</div>
+<div class="banner banner-error" id="uploadBanner">{{ add_error }}</div>
 {% endif %}
 
+<div class="view-toggle" role="tablist" aria-label="Invoice Intake view">
+  <a href="/invoice-intake" class="view-toggle-tab {% if view == 'draft' %}active{% endif %}">Draft Queue</a>
+  <a href="/invoice-intake?view=submitted" class="view-toggle-tab {% if view == 'submitted' %}active{% endif %}">Submitted</a>
+</div>
+
+{% if view == 'draft' %}
 <div class="card">
-  <h2>Upload an Invoice</h2>
-  <p class="sub">Beacon reads what it can off the document and creates a Draft below for you to finish coding.
-     GL coding is never guessed at this step -- that stays your decision.</p>
-  <form method="post" action="/invoice-intake" enctype="multipart/form-data" class="upload-row">
+  <h2>Upload Invoices</h2>
+  <p class="sub">Select one or many at once -- a whole batch drops in as its own Draft each, ready to
+     review and code whenever you get to them. Beacon reads what it can off each document; GL coding
+     is never guessed at this step -- that stays your decision.</p>
+  <form method="post" action="/invoice-intake" enctype="multipart/form-data" id="invoiceUploadForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <input type="file" name="file" required
+    <input type="file" name="files" id="invoiceUploadInput" multiple required hidden
            accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
-    <button type="submit" class="btn btn-primary btn-sm">Upload</button>
+    <button type="button" id="invoiceUploadBtn" class="btn btn-primary btn-sm">Upload File</button>
   </form>
 </div>
 
@@ -26,7 +33,7 @@
 <p class="sub">Any invoice uploaded here (by anyone with the Invoice Intake role) sits as a Draft until someone
    finishes coding and submits it -- the same shared inbox, not tied to whoever uploaded it.</p>
 <div class="table-scroll">
-  <table class="simple-table approvals-table">
+  <table class="simple-table approvals-table" id="invoiceDraftsTable">
     <tr>
       <th class="col-reqnum">Request #</th>
       <th class="col-vendor">Vendor</th>
@@ -35,12 +42,25 @@
       <th class="col-actions">Actions</th>
     </tr>
     {% for d in drafts %}
-    <tr>
+    <tr id="row-{{ d.request_number }}" data-request-number="{{ d.request_number }}"
+        data-processing="{{ 'true' if d.processing else 'false' }}">
       <td class="col-reqnum">{{ d.request_number }}</td>
+      {% if d.processing %}
+      <td class="col-vendor" colspan="2"><em>Processing&hellip;</em></td>
+      {% else %}
       <td class="col-vendor">{{ d.vendor_name }}</td>
       <td class="col-amount">${{ "%.2f"|format(d.amount) }}</td>
+      {% endif %}
       <td class="col-date">{{ d.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-      <td class="col-actions"><a href="/requests/{{ d.request_number }}/edit">Code &amp; Submit</a></td>
+      <td class="col-actions">
+        {% if not d.processing %}<a href="/requests/{{ d.request_number }}/edit">Code &amp; Submit</a> ·
+        {% endif %}
+        <form method="post" action="/requests/{{ d.request_number }}/cancel" class="cancel-form"
+              data-confirm="Cancel {{ d.request_number }}? This can't be undone from here.">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <button type="submit" class="link-button cancel-btn">Cancel</button>
+        </form>
+      </td>
     </tr>
     {% else %}
     <tr><td colspan="5">No Drafts waiting -- upload an invoice above to get started.</td></tr>
@@ -48,5 +68,42 @@
   </table>
 </div>
 </div>
+
+{% else %}
+{# 2026-09-23 (Jay): "We also need a place to review submitted invoices." Every
+   invoice_payment request for this org that's no longer a Draft -- the same
+   shared-inbox visibility as the Draft Queue, not scoped to whoever submitted
+   it. Status badge classes (badge-underreview/-approved/-posted-to-qbo/
+   -rejected/-cancelled/-returned-by-ap) match My Requests' own convention. #}
+<div class="card">
+<h2>Submitted</h2>
+<p class="sub">Every invoice request from this queue that's been coded and submitted -- most recent first.</p>
+<div class="table-scroll">
+  <table class="simple-table approvals-table" id="invoiceSubmittedTable">
+    <tr>
+      <th class="col-reqnum">Request #</th>
+      <th class="col-vendor">Vendor</th>
+      <th class="col-amount">Amount</th>
+      <th class="col-status">Status</th>
+      <th class="col-date">Last Updated</th>
+      <th class="col-actions">Actions</th>
+    </tr>
+    {% for r in submitted_rows %}
+    <tr>
+      <td class="col-reqnum">{{ r.request_number }}</td>
+      <td class="col-vendor">{{ r.vendor_name }}</td>
+      <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
+      <td class="col-status"><span class="badge badge-{{ r.status|lower|replace(' ', '-') }}">{{ r.status }}</span></td>
+      <td class="col-date">{{ r.updated_at.strftime("%Y-%m-%d %H:%M") if r.updated_at else "—" }}</td>
+      <td class="col-actions"><a href="/requests/{{ r.request_number }}/view">View</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">No submitted invoice requests yet.</td></tr>
+    {% endfor %}
+  </table>
 </div>
+</div>
+{% endif %}
+</div>
+<script src="/static/js/invoice_intake_queue.js?v={{ asset_version('js/invoice_intake_queue.js') }}"></script>
 {% endblock %}

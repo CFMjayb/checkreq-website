@@ -69,7 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setError(null);
     appendMessage('user', text);
     input.value = '';
-    sendBtn.disabled = true;
+    if (window.showButtonLoading) { window.showButtonLoading(sendBtn); } else { sendBtn.disabled = true; }
     input.disabled = true;
 
     try {
@@ -93,6 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setError('Couldn’t reach the server -- check your connection and try again.');
     } finally {
       sendBtn.disabled = false;
+      sendBtn.classList.remove('btn-loading');
       input.disabled = false;
       input.focus();
     }
@@ -101,7 +102,7 @@ document.addEventListener('DOMContentLoaded', () => {
   submitBtn.addEventListener('click', async () => {
     if (!conversationId) return;
     setError(null);
-    submitBtn.disabled = true;
+    if (window.showButtonLoading) { window.showButtonLoading(submitBtn); } else { submitBtn.disabled = true; }
     submitBtn.textContent = 'Submitting…';
 
     try {
@@ -114,6 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!resp.ok) {
         setError(data.error || 'Couldn’t submit just now -- please try again.');
         submitBtn.disabled = false;
+        submitBtn.classList.remove('btn-loading');
         submitBtn.textContent = 'Submit my feedback';
         return;
       }
@@ -121,6 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err) {
       setError('Couldn’t reach the server -- check your connection and try again.');
       submitBtn.disabled = false;
+      submitBtn.classList.remove('btn-loading');
       submitBtn.textContent = 'Submit my feedback';
     }
   });

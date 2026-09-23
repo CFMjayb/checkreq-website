@@ -162,5 +162,16 @@ document.querySelectorAll('.split-btn').forEach(splitBtn => {
 document.addEventListener('click', () => {
   document.querySelectorAll('.split-btn-menu').forEach(m => { m.hidden = true; });
 });
+
+// Standing UI-UX Rule 6: Approve/Reject both pulse (dark green) while their
+// POST is in flight. Both the plain-Approve click and the modal-driven
+// requestSubmit() calls above are ordinary submit events on these same two
+// forms, so one listener here covers every path.
+document.querySelectorAll('.approve-form, .reject-form').forEach(form => {
+  form.addEventListener('submit', (e) => {
+    if (e.defaultPrevented) return;
+    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+  });
+});
 </script>
 {% endblock %}

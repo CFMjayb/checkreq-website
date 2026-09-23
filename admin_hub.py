@@ -82,6 +82,12 @@ _CARDS = [
     {"title": "AP Settings", "desc": "Editable AP policy values, e.g. the new-vendor W-9 threshold.",
      "url": "/admin/ap-settings", "role": "beacon_admin", "group": "ap"},
 
+    # 26-149 (2026-09-22): Actual vs Budget report templates -- Run Now per
+    # template. Entity-scoped (setup_admin or beacon_admin at the CURRENT
+    # entity), matching report_templates.py's own gate.
+    {"title": "Report Templates", "desc": "Actual vs Budget reports from QuickBooks -- run a template for any completed month.",
+     "url": "/admin/report-templates", "role": ["setup_admin", "beacon_admin"], "group": "reports"},
+
     # Parish Mode (S4, 2026-08-08) -- gated on the "real_parish_mode"
     # sentinel (widened 2026-09-14, see below): hidden while already
     # impersonating, same reasoning as Impersonate a User's own real_cfo
@@ -161,6 +167,7 @@ _CARDS = [
 _CARD_GROUPS = [
     ("beacon", "Beacon"),
     ("ap", "AP"),
+    ("reports", "Reports"),
     ("parish", "Parish"),
     ("hr", "HR"),
 ]
@@ -169,7 +176,7 @@ _CARD_GROUPS = [
 # by design/necessity like everything else in this hub) -- see admin_hub()'s
 # own docstring for why this distinction matters.
 _ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes", "Payroll Periods", "Time Categories",
-                          "HR Activation", "Employees"}
+                          "HR Activation", "Employees", "Report Templates"}
 
 
 @router.get("/admin", response_class=HTMLResponse)

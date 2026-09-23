@@ -70,4 +70,12 @@
 {% endblock %}
 {% block extra_js %}
 <script src="/static/js/impersonate.js?v={{ asset_version('js/impersonate.js') }}"></script>
+<script>
+document.querySelectorAll('form[method="post" i]').forEach(function (form) {
+  form.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+  });
+});
+</script>
 {% endblock %}
