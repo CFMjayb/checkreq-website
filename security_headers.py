@@ -11,12 +11,24 @@ known issues with background tasks) that only ever ADDS headers on
 
 What it sets, and why each is shaped the way it is:
 
-  X-Frame-Options: DENY
-  Content-Security-Policy-Report-Only: ... frame-ancestors 'none'
-      Nothing in this app is meant to be embedded. The one iframe the app
-      itself creates (new_request.js's uploaded-document preview) frames a
-      blob: URL, which has no response headers of ours, so DENY does not
-      affect it.
+  X-Frame-Options: SAMEORIGIN
+  Content-Security-Policy-Report-Only: ... frame-ancestors 'self'
+      No THIRD-PARTY site may ever embed this app -- that's the actual
+      anti-clickjacking intent, and 'self'/SAMEORIGIN still fully closes
+      that off. Was DENY/'none' until 2026-09-23: at the time this was
+      written, the one iframe the app itself created (new_request.js's
+      freshly-picked-file preview) framed a blob: URL with no response
+      headers of ours, so DENY didn't affect it. That stopped being true
+      the same day a SECOND, same-origin iframe source was added
+      (renderExistingAttachment(), framing this app's own
+      /requests/{n}/attachments/{id}/view route to show an already-
+      archived document) -- a real live bug, found by Jay testing a real
+      invoice: the browser correctly refused to display Beacon's own page
+      inside Beacon's own iframe, since DENY blocks ALL framing, same-origin
+      included. SAMEORIGIN/'self' is the correct fix, not a workaround --
+      it's the standard header value for an app with a legitimate
+      same-origin iframe need, and closes the exact same cross-site
+      clickjacking hole DENY did.
 
   X-Content-Type-Options: nosniff
       Makes the serve-side half of upload_guard.py hold: a browser must
@@ -73,7 +85,7 @@ CSP_REPORT_ONLY = (
     "object-src 'none'; "
     "base-uri 'self'; "
     "form-action 'self' https://login.microsoftonline.com https://accounts.google.com; "
-    "frame-ancestors 'none'"
+    "frame-ancestors 'self'"
 )
 
 # Path prefixes whose HTML (if any) is public or already cache-managed --
@@ -115,7 +127,7 @@ class SecurityHeadersMiddleware:
                 headers = MutableHeaders(scope=message)
                 # setdefault everywhere: a route that deliberately set one of
                 # these itself (none do today) keeps its own value.
-                headers.setdefault("X-Frame-Options", "DENY")
+                headers.setdefault("X-Frame-Options", "SAMEORIGIN")
                 headers.setdefault("X-Content-Type-Options", "nosniff")
                 headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
                 headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")

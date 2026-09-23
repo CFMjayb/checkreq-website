@@ -1573,6 +1573,20 @@ def edit_request_form(request_number: str, request: Request, add_error: str = ""
         # codebase's established pattern for a not-yet-applied migration
         # (see cornerstone_mode.py's own precedent).
         "intake_status": pr.get("intake_status"),
+        # Real bug, live 2026-09-23 (Jay): "it did not pick up the amount
+        # this time -- it did every other time." The classic upload flow's
+        # own client-side JS (applyExtractedFields) always drops an
+        # extracted amount straight into the first blank GL line, even with
+        # no matched account -- but _finish_invoice_processing() (the bulk
+        # Invoice Intake background task) only ever inserts a REAL
+        # payment_request_gl_lines row when it also has a coded account
+        # number or an MSMD match (gl_account_id is NOT NULL in that table,
+        # so a real row can't carry the amount alone). A Draft with neither
+        # signal was left with a correctly-extracted amount sitting on the
+        # request itself but an empty, $0.00 GL Coding section. Carried here
+        # so applyEditPrefill() (new_request.js) can seed the SAME blank
+        # first line's amount client-side, matching the classic flow.
+        "invoice_extracted_amount": float(pr["invoice_extracted_amount"]) if pr.get("invoice_extracted_amount") else None,
     }
 
     ctx = _voucher_context(pr["id"]) or {}

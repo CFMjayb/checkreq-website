@@ -689,7 +689,17 @@ async function researchCoding() {
 // per-browser convenience, not shared state. ----
 
 const SPLIT_MIN_PX = 420;
-const SPLIT_MAX_PX = 900;
+// Real bug, live 2026-09-23 (Jay): "have we entirely lost the ability to
+// resize the check request screen?" A fixed 900px ceiling here directly
+// fought the "push nearly full-width until a document exists" behavior
+// just below -- on any screen wider than ~1060px that initial width is
+// already past 900, so the instant the divider was touched at all it
+// snapped backward to 900 instead of tracking the mouse, reading as
+// "resizing is broken" rather than "resizing has a low, arbitrary cap."
+// Replaced with a small floor on the RIGHT pane instead (SPLIT_RIGHT_MIN_PX)
+// -- consistent in both states, and lets the divider reach exactly as far
+// right as the no-document state already pushes it to.
+const SPLIT_RIGHT_MIN_PX = 40;
 const SPLIT_RIGHT_PANE_COLLAPSED_PX = 160; // how much the right side keeps visible with no document yet
 const SPLIT_WIDTH_KEY = 'beacon_new_request_split_width';
 
@@ -738,7 +748,8 @@ function initSplitDivider() {
   document.addEventListener('mousemove', (e) => {
     if (!dragging) return;
     const shellRect = formPane.parentElement.getBoundingClientRect();
-    const width = Math.max(SPLIT_MIN_PX, Math.min(SPLIT_MAX_PX, e.clientX - shellRect.left));
+    const maxPx = shellRect.width - SPLIT_RIGHT_MIN_PX;
+    const width = Math.max(SPLIT_MIN_PX, Math.min(maxPx, e.clientX - shellRect.left));
     formPane.style.flexBasis = width + 'px';
   });
   document.addEventListener('mouseup', () => {
@@ -934,7 +945,16 @@ async function applyEditPrefill() {
   const container = document.getElementById('glLines');
   container.querySelectorAll('.glAccount').forEach(sel => { if (sel.tomselect) sel.tomselect.destroy(); });
   container.innerHTML = '';
-  const lines = (d.gl_lines && d.gl_lines.length) ? d.gl_lines : [{ gl_account_id: '', amount: 0, memo: '' }];
+  // Real bug, live 2026-09-23 (Jay): "it did not pick up the amount this
+  // time -- it did every other time." A bulk-ingested Invoice Intake Draft
+  // with no coded account/MSMD match has no real GL line to load (that
+  // table's gl_account_id is NOT NULL, so the server can't persist an
+  // amount-only line) -- fall back to the extracted amount here, the same
+  // way applyExtractedFields() always seeds a fresh upload's first blank
+  // line, so the two flows behave consistently.
+  const lines = (d.gl_lines && d.gl_lines.length)
+    ? d.gl_lines
+    : [{ gl_account_id: '', amount: d.invoice_extracted_amount || 0, memo: '' }];
 
   // Fetch the allowed GL accounts for this program area ONCE (not once per
   // line) -- every line under the same program area shares the identical
