@@ -58,6 +58,19 @@
     return stillProcessing;
   }
 
+  // Jay, 2026-09-23: "the 1 invoice(s) added to the queue -- processing now
+  // did not go away when the processing was completed" -- this banner is a
+  // one-time, server-rendered "your upload succeeded" message from the
+  // redirect that landed you here; nothing was clearing it once its own
+  // "processing now" claim went stale. Cleared here, once, the moment
+  // polling first confirms every row is done -- never touched again after
+  // that (so a real error banner, or one with no "processing" wording at
+  // all, is left alone).
+  function clearProcessingBanner() {
+    const banner = document.getElementById('uploadBanner');
+    if (banner && /processing now/i.test(banner.textContent)) banner.remove();
+  }
+
   let pollTimer = null;
   function poll() {
     fetch('/invoice-intake/status', { credentials: 'same-origin' })
@@ -65,9 +78,9 @@
       .then((data) => {
         if (!data || !data.rows) return;
         const stillProcessing = applyStatus(data.rows);
-        if (!stillProcessing && pollTimer) {
-          clearInterval(pollTimer);
-          pollTimer = null;
+        if (!stillProcessing) {
+          clearProcessingBanner();
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
         }
       })
       .catch(() => {});

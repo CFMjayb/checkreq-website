@@ -381,28 +381,26 @@ function setField(name, value) {
   if (el) el.textContent = value;
 }
 
+// Real bug, live 2026-09-23: this used to also render a GL-lines table into
+// #voucherPreview (the live CR-form mirror) -- that mirror was removed from
+// the right pane earlier the same session (Standing UI-UX Rules #2), but
+// this function's own DOM-write into it was never updated to match, so
+// `tbody` was always null and every write into it threw. setField() already
+// no-ops safely when its own target is missing (see its own guard) -- this
+// function had no equivalent guard. Now it only computes and returns the
+// total; nothing here writes to the DOM at all, since there's no longer a
+// live mirror to write into.
 function updateVoucherGlTable() {
   const askMyAccountantEl = document.getElementById('askMyAccountantCheckbox');
   const askMyAccountant = askMyAccountantEl && askMyAccountantEl.checked;
-  const tbody = document.querySelector('#voucherPreview [data-field="gl_lines"]');
   let total = 0;
   if (askMyAccountant) {
     total = parseFloat(document.getElementById('askMyAccountantAmount').value) || 0;
-    tbody.innerHTML = `<tr><td colspan="3"><em>Ask My Accountant -- GL coding to be assigned by AP</em></td></tr>`;
   } else {
-    const rows = [...document.querySelectorAll('#glLines .gl-line')];
-    tbody.innerHTML = rows.map(row => {
-      const acctSel = row.querySelector('.glAccount');
-      const acctText = acctSel.selectedIndex > 0 ? acctSel.options[acctSel.selectedIndex].text : '—';
-      const amt = parseFloat(row.querySelector('.glAmount').value) || 0;
-      const memo = row.querySelector('.glMemo').value;
-      total += amt;
-      return `<tr><td>${escapeHtml(acctText)}</td><td>${fmtMoney(amt)}</td><td>${escapeHtml(memo)}</td></tr>`;
-    }).join('');
+    document.querySelectorAll('#glLines .gl-line').forEach(row => {
+      total += parseFloat(row.querySelector('.glAmount').value) || 0;
+    });
   }
-  setField('total', fmtMoney(total));
-  setField('amount', fmtMoney(total));
-  setField('amount_words', amountInWords(total));
   return total;
 }
 
@@ -1173,7 +1171,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // not just a file freshly picked in this exact submit.
     const preApprovedBox = document.getElementById('preApprovedCheckbox');
     if (preApprovedBox && preApprovedBox.checked) {
-      const newlyAttached = document.getElementById('attachmentsInput').files.length;
+      const attachmentsInputEl = document.getElementById('attachmentsInput');
+      const newlyAttached = attachmentsInputEl ? attachmentsInputEl.files.length : 0;
       const alreadyAttached = window.EXISTING_ATTACHMENT_COUNT || 0;
       if (newlyAttached === 0 && alreadyAttached === 0) {
         e.preventDefault();
@@ -1242,7 +1241,17 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('glLines').addEventListener('input', refreshPreview);
   document.getElementById('glLines').addEventListener('change', refreshPreview);
-  document.getElementById('attachmentsInput').addEventListener('change', (e) => handleAttachmentUpload(e.target));
+  // Real bug, live 2026-09-23: unguarded on an Invoice Intake edit page,
+  // which deliberately never renders the "Upload File to Prefill Form" box
+  // (new_request.html line ~49 -- the file was already uploaded at intake
+  // time) -- the resulting null.addEventListener() threw and silently
+  // aborted every listener registration AFTER this line in the same
+  // DOMContentLoaded callback (addNewVendorLink/cancelNewVendorLink/
+  // newVendorPanel's listeners, and the initial refreshPreview() call).
+  const attachmentsInputForChange = document.getElementById('attachmentsInput');
+  if (attachmentsInputForChange) {
+    attachmentsInputForChange.addEventListener('change', (e) => handleAttachmentUpload(e.target));
+  }
 
   document.getElementById('addNewVendorLink').addEventListener('click', (e) => { e.preventDefault(); showNewVendorPanel(true); });
   document.getElementById('cancelNewVendorLink').addEventListener('click', (e) => { e.preventDefault(); showNewVendorPanel(false); });

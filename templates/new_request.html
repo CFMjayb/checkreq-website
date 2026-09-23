@@ -312,7 +312,12 @@ window.EXISTING_ATTACHMENT_COUNT = {{ (attachments | length) if attachments else
    showDocumentPreview() uses for a file picked THIS session. First
    non-generated_pdf attachment only -- the generated CR PDF isn't "the
    invoice" and only exists post-submission anyway. #}
-window.EXISTING_DOCUMENT_ATTACHMENT = {{ (attachments | selectattr('source', 'ne', 'generated_pdf') | list | first | tojson) if attachments else 'null' }};
+{# Real bug, live 2026-09-23: the raw attachment row carries uploaded_at
+   (a datetime) -- tojson on the whole dict 500s (json.dumps can't
+   serialize a datetime). Only pass the 3 fields renderExistingAttachment()
+   actually reads. #}
+{% set _existing_doc = attachments | selectattr('source', 'ne', 'generated_pdf') | list | first %}
+window.EXISTING_DOCUMENT_ATTACHMENT = {{ ({'id': _existing_doc.id, 'content_type': _existing_doc.content_type, 'original_filename': _existing_doc.original_filename} | tojson) if _existing_doc else 'null' }};
 </script>
 <script src="/static/vendor/tomselect/tom-select.complete.min.js"></script>
 <script src="/static/js/action_modal.js?v={{ asset_version('js/action_modal.js') }}"></script>
