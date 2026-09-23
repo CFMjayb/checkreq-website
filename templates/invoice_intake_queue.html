@@ -47,8 +47,13 @@
       {% endif %}
       <td class="col-date">{{ d.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
       <td class="col-actions">
-        {% if d.processing %}<span class="sub">&mdash;</span>
-        {% else %}<a href="/requests/{{ d.request_number }}/edit">Code &amp; Submit</a>{% endif %}
+        {% if not d.processing %}<a href="/requests/{{ d.request_number }}/edit">Code &amp; Submit</a> ·
+        {% endif %}
+        <form method="post" action="/requests/{{ d.request_number }}/cancel" class="cancel-form"
+              data-confirm="Cancel {{ d.request_number }}? This can't be undone from here.">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <button type="submit" class="link-button cancel-btn">Cancel</button>
+        </form>
       </td>
     </tr>
     {% else %}

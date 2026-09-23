@@ -50,9 +50,16 @@
         amountTd.textContent = fmtMoney(r.amount);
         vendorTd.after(amountTd);
       }
+      // The Cancel form (with its real server-rendered CSRF token) already
+      // sits in this cell even while processing -- prepend the new "Code &
+      // Submit" link rather than overwriting the cell, so a row that
+      // finishes via polling doesn't lose its only way to be cancelled.
       const actionsTd = tr.querySelector('.col-actions');
-      if (actionsTd) {
-        actionsTd.innerHTML = '<a href="/requests/' + encodeURIComponent(r.request_number) + '/edit">Code &amp; Submit</a>';
+      if (actionsTd && !actionsTd.querySelector('a')) {
+        const link = document.createElement('a');
+        link.href = '/requests/' + encodeURIComponent(r.request_number) + '/edit';
+        link.innerHTML = 'Code &amp; Submit';
+        actionsTd.prepend(link, ' · ');
       }
     });
     return stillProcessing;

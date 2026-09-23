@@ -5087,7 +5087,14 @@ def cancel_request(request_number: str, request: Request):
     Same ownership + locking convention as edit_request_form/
     new_request_submit's edit branch: submitter-only, and only while
     _request_is_editable() is still true (now also excludes 'Cancelled'
-    itself, so a request can't be cancelled twice)."""
+    itself, so a request can't be cancelled twice).
+
+    2026-09-23 (Jay): "we also need the ability to cancel a request # from
+    the Invoice Intake list screen." That queue is the same shared team
+    inbox edit_request_form() already widens ownership for -- any
+    authorized Invoice Intake staff member may cancel a Draft sitting in
+    it, not just whoever happened to upload it. Mirrors that route's exact
+    widened check rather than duplicating a slightly different one."""
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
@@ -5098,7 +5105,11 @@ def cancel_request(request_number: str, request: Request):
     )
     if not pr:
         return JSONResponse({"error": "Request not found"}, status_code=404)
-    if pr["submitter_user_id"] != user["id"]:
+    is_shared_invoice_intake_draft = pr["request_type"] == "invoice_payment" and pr["status"] == "Draft"
+    if is_shared_invoice_intake_draft:
+        if not rbac.user_has_role(user["id"], "invoice_intake_submitter", pr["org_id"]):
+            return JSONResponse({"error": "Not authorized to cancel Invoice Intake requests"}, status_code=403)
+    elif pr["submitter_user_id"] != user["id"]:
         return JSONResponse({"error": "Not authorized to cancel this request"}, status_code=403)
     if not _request_is_editable(pr["status"]):
         return JSONResponse(
@@ -5108,6 +5119,8 @@ def cancel_request(request_number: str, request: Request):
 
     imp_id = request.session.get("impersonating_user_id")
     impersonated_by = _real_user(request)["id"] if imp_id else None
+    comment = ("Cancelled from the Invoice Intake queue." if is_shared_invoice_intake_draft
+               else "Cancelled by submitter.")
 
     with db.connect() as conn:
         with conn.cursor() as cur:
@@ -5120,10 +5133,12 @@ def cancel_request(request_number: str, request: Request):
                 "(payment_request_id, action_by_user_id, action_type, comment, "
                 " previous_status, new_status, impersonated_by_user_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (pr["id"], user["id"], "Cancelled", "Cancelled by submitter.",
+                (pr["id"], user["id"], "Cancelled", comment,
                  pr["status"], "Cancelled", impersonated_by),
             )
 
+    if is_shared_invoice_intake_draft:
+        return RedirectResponse(f"/invoice-intake?add_error={quote(f'Cancelled {request_number}.')}", status_code=303)
     return RedirectResponse(f"/my-requests?cancelled={request_number}", status_code=303)
 
 
