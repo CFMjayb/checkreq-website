@@ -90,7 +90,7 @@ import secrets
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 CSRF_SESSION_KEY = "_csrf_token"
 CSRF_FORM_FIELD = "csrf_token"
@@ -160,12 +160,22 @@ async def _submitted_token(request: Request) -> str | None:
     return str(value) if value is not None else None
 
 
-def _reject(request: Request):
+def _reject(request: Request, session_expired: bool = False):
     if request.url.path.startswith("/api/"):
         return JSONResponse(
             {"error": "Your session needs to be refreshed. Please reload the page and try again."},
             status_code=403,
         )
+    if session_expired:
+        # No CSRF token in the session at all -- this only happens when the
+        # session itself is gone (the 60-min idle SessionMiddleware cookie
+        # lapsed since the page was rendered, or there was never a session).
+        # session_guard.SessionAbsoluteCapMiddleware already redirects
+        # cleanly for the 8-hour absolute-cap case; this is the matching
+        # fix for the idle-timeout case, which it deliberately leaves alone
+        # (see that middleware's own "no _login_at -- leave it alone"
+        # comment) since an empty session looks identical either way.
+        return RedirectResponse("/login", status_code=303)
     return HTMLResponse(
         "<h1>Session expired</h1>"
         "<p>Your form session has expired or could not be verified. "
@@ -193,6 +203,6 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         session_token = request.session.get(CSRF_SESSION_KEY)
         submitted = await _submitted_token(request)
         if not session_token or not submitted or not hmac.compare_digest(str(submitted), str(session_token)):
-            return _reject(request)
+            return _reject(request, session_expired=not session_token)
 
         return await call_next(request)
