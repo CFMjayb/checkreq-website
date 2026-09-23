@@ -2,8 +2,14 @@
 {% block title %}Invoice Intake{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
-<h1>Invoice Intake</h1>
+<div class="page-header-row">
+  <h1>Invoice Intake</h1>
+  {% if view == 'draft' %}
+  <button type="button" id="invoiceRefreshBtn" class="btn btn-secondary btn-sm">Refresh</button>
+  {% endif %}
+</div>
 <p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
+<p class="sub" id="invoiceRefreshStatus" hidden></p>
 
 {% if add_error %}
 <div class="banner banner-error" id="uploadBanner">{{ add_error }}</div>

@@ -5751,7 +5751,13 @@ def invoice_intake_status(request: Request):
     reload. Deliberately returns every Draft's current state (not just
     the still-processing ones) -- simplest to keep the client-side
     patch logic as one uniform "replace this row's cells" pass rather than
-    two different code paths for "new" vs. "updated" rows."""
+    two different code paths for "new" vs. "updated" rows.
+
+    2026-09-23 (Jay): "too traffic intensive" -- the page no longer polls on
+    a timer (it checks once after load, then only on its Refresh button), and
+    it now sends ?rn=<request_number> for just the rows still showing
+    'Processing...'; only those rows are queried and returned. With no rn
+    params it returns nothing rather than every Draft for the entity."""
     user = _current_user(request)
     if not user:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
@@ -5761,6 +5767,9 @@ def invoice_intake_status(request: Request):
     if not rbac.user_has_role(user["id"], "invoice_intake_submitter", org["id"]):
         return JSONResponse({"error": "Not authorized"}, status_code=403)
 
+    wanted = [rn for rn in request.query_params.getlist("rn") if rn][:200]
+    if not wanted:
+        return {"rows": []}
     rows = db.query(
         """
         SELECT pr.request_number, pr.intake_status,
@@ -5771,9 +5780,10 @@ def invoice_intake_status(request: Request):
         LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
         LEFT JOIN checkreq.vendor_requests vr ON vr.id = pr.vendor_request_id
         WHERE pr.org_id = %s AND pr.request_type = 'invoice_payment' AND pr.status = 'Draft'
+          AND pr.request_number = ANY(%s)
         ORDER BY pr.created_at
         """,
-        (org["id"],),
+        (org["id"], wanted),
     )
     return {
         "rows": [
