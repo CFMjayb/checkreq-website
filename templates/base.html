@@ -261,6 +261,26 @@
      load time, so order relative to page-specific extra_js scripts below
      only matters in that this must come first, which it does. #}
   <script src="/static/js/csrf.js?v={{ asset_version('js/csrf.js') }}"></script>
+  {% if user %}
+  {# Standing UI-UX Rule 6 (universal button pulse): this file's own handful
+     of shared action forms (Exit Impersonation, Exit Parish Mode, the
+     Diocese Mode exit in the user menu, Log off) -- each an explicit,
+     named selector, not a blanket "every form on every page" listener
+     (that's exactly what this rule's own writeup says to avoid; see
+     confirm_submit.js's docstring for why). #}
+  <script>
+  document.querySelectorAll(
+    'form[action="/admin/impersonate/stop"], ' +
+    'form[action="/admin/parish-mode/stop"], ' +
+    'form[action="/logout"]'
+  ).forEach(function (form) {
+    form.addEventListener('submit', function (e) {
+      if (e.defaultPrevented) return;
+      showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+    });
+  });
+  </script>
+  {% endif %}
   {% block extra_js %}{% endblock %}
 </body>
 </html>

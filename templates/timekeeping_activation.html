@@ -62,3 +62,13 @@ HR-activated like any other row. Rows with <strong>no payroll dept</strong> came
 report and have no diocesan payroll, so they start deactivated.</p>
 </div>
 {% endblock %}
+{% block extra_js %}
+<script>
+document.querySelectorAll('form[method="post" i]').forEach(function (form) {
+  form.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+  });
+});
+</script>
+{% endblock %}

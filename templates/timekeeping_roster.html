@@ -155,4 +155,12 @@ try again.</p>
   if (statusSel) statusSel.addEventListener('change', apply);
 })();
 </script>
+<script>
+document.querySelectorAll('form[method="post" i]').forEach(function (form) {
+  form.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+  });
+});
+</script>
 {% endblock %}

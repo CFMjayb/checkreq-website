@@ -18,3 +18,14 @@
 </div>
 </div>
 {% endblock %}
+{% block extra_js %}
+<script>
+{# Also covers this page's _doc_tree_macro.html Remove forms. #}
+document.querySelectorAll('form[method="post" i]').forEach(function (form) {
+  form.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+  });
+});
+</script>
+{% endblock %}

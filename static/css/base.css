@@ -379,7 +379,7 @@ body.beacon-env-dev .site-header {
   position: absolute;
   inset: -3px;
   border-radius: inherit;
-  border: 3px solid var(--color-danger, #9c0006);
+  border: 3px solid var(--color-franciscan-green-dark, #142822);
   animation: btn-loading-pulse 1.1s ease-in-out infinite;
 }
 @keyframes btn-loading-pulse {

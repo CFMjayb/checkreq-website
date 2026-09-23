@@ -80,6 +80,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!window.confirm('Cancel this check request? This cannot be undone from here -- ' +
                            'the request will be marked Cancelled and can no longer be edited.')) {
         evt.preventDefault();
+        return;
+      }
+      // Standing UI-UX Rule 6: only once confirmed, not before -- this is
+      // the same listener that just ran the confirm() above, so there's no
+      // ordering question with a separate delegated listener.
+      if (window.showButtonLoading) {
+        showButtonLoading(evt.submitter || form.querySelector('button[type="submit"]'));
       }
     });
   });

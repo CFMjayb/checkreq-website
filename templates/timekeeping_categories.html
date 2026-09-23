@@ -63,3 +63,13 @@ future entry without touching historical data.</p>
 </div>
 </div>
 {% endblock %}
+{% block extra_js %}
+<script>
+document.querySelectorAll('form[method="post" i]').forEach(function (form) {
+  form.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+  });
+});
+</script>
+{% endblock %}

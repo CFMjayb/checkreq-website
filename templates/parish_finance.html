@@ -107,3 +107,13 @@ diocese for the Parish Finance role if you need access.</div>
 {% endif %}
 </div>
 {% endblock %}
+{% block extra_js %}
+<script>
+document.querySelectorAll('form[method="post" i]').forEach(function (form) {
+  form.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+  });
+});
+</script>
+{% endblock %}
