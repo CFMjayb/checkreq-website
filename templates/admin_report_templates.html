@@ -1,15 +1,24 @@
 {% extends "base.html" %}
 {% block title %}Report Templates — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/report_templates.css?v={{ asset_version('css/report_templates.css') }}">
+{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
-<h1>Report Templates</h1>
+<div class="rt-header">
+  <h1>Report Templates</h1>
+  <a class="btn btn-primary" href="/admin/report-templates/new">+ New Template</a>
+</div>
 <p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
 <p class="sub">
-  {{ current_org.code }} &mdash; Actual vs Budget reports built live from QuickBooks. <strong>Run Now</strong>
-  builds the report for the month you pick and downloads it to you. It does not email anyone or start a review;
-  scheduled sending with review is still being built.
+  {{ current_org.code }} &mdash; Actual vs Budget reports built live from QuickBooks. <strong>Edit</strong> sets up a
+  template's lines, recipients and schedule. <strong>Run Now</strong> builds the report for the month you pick and
+  downloads it to you &mdash; it does not email anyone or start a review. Scheduled sending with review is still
+  being built, so nothing is emailed from here yet.
 </p>
 
+{% set done = request.query_params.get('done') %}
+{% if done %}<div class="banner banner-success">Template {{ done }}.</div>{% endif %}
 <div id="reportRunStatus" class="banner" hidden></div>
 
 {% if templates %}
@@ -23,14 +32,16 @@
           <th>Schedule</th>
           <th>Reviewer</th>
           <th>Recipients</th>
+          <th>Last Run</th>
           <th>Run for month</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
         {% for t in templates %}
-        <tr{% if not t.is_active %} style="opacity:.6;"{% endif %}>
+        <tr{% if not t.is_active %} class="rt-inactive"{% endif %}>
           <td>
-            <strong>{{ t.name }}</strong>
+            <a href="/admin/report-templates/{{ t.id }}/edit"><strong>{{ t.name }}</strong></a>
             {% if not t.is_active %}<span class="badge badge-cancelled">Inactive</span>{% endif %}
             {% if t.description %}<div class="sub">{{ t.description }}</div>{% endif %}
             <div class="sub">
@@ -38,12 +49,16 @@
               &middot; Budget: {{ t.budget_name or 'auto (the one active QBO budget for the year)' }}
             </div>
           </td>
-          <td>{{ t.lines or '—' }}</td>
+          <td>
+            {% if t.line_count %}<strong>{{ t.line_count }}</strong> &middot; <span class="sub">{{ t.lines }}</span>
+            {% else %}<span class="sub">None yet</span>{% endif %}
+          </td>
           <td>{{ t.schedule or '—' }}</td>
           <td>{{ t.reviewer_name or t.reviewer_email or '—' }}</td>
           <td>{{ t.recipients or '—' }}</td>
+          <td>{{ t.last_run or 'None yet' }}</td>
           <td style="white-space:nowrap;">
-            {% if t.is_active %}
+            {% if t.is_active and t.line_count %}
             <form class="report-run-form" method="post" action="/admin/report-templates/{{ t.id }}/run"
                   data-template-name="{{ t.name }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
@@ -51,9 +66,25 @@
                      max="{{ max_month }}" required>
               <button type="submit" class="btn btn-primary btn-sm">Run Now</button>
             </form>
+            {% elif t.is_active %}
+            <span class="sub">Add lines first</span>
             {% else %}
             <span class="sub">Inactive</span>
             {% endif %}
+          </td>
+          <td class="rt-actions">
+            <a class="btn btn-secondary btn-sm" href="/admin/report-templates/{{ t.id }}/edit">Edit</a>
+            <form class="rt-plain-form" method="post" action="/admin/report-templates/{{ t.id }}/clone"
+                  data-confirm="Make an inactive copy of '{{ t.name }}' to edit?">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+              <button type="submit" class="btn btn-secondary btn-sm">Clone</button>
+            </form>
+            <form class="rt-plain-form" method="post" action="/admin/report-templates/{{ t.id }}/toggle-active"
+                  {% if t.is_active %}data-confirm="Deactivate '{{ t.name }}'? It stops being run or sent until you activate it again. Nothing is deleted."{% endif %}>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+              <input type="hidden" name="from" value="list">
+              <button type="submit" class="btn btn-secondary btn-sm">{{ 'Deactivate' if t.is_active else 'Activate' }}</button>
+            </form>
           </td>
         </tr>
         {% endfor %}
@@ -67,7 +98,8 @@
 </div>
 {% else %}
 <div class="card">
-  <p>No report templates are set up for {{ current_org.name }} yet.</p>
+  <p>No report templates are set up for {{ current_org.name }} yet.
+     <a href="/admin/report-templates/new">Create the first one</a>.</p>
 </div>
 {% endif %}
 </div>

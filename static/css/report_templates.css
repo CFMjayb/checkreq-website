@@ -1,0 +1,59 @@
+/* report_templates.css -- 26-149 Report Templates list + editor (Phase 3, 2026-09-23).
+   Builds on base.css and admin_setup.css (.setup-table, .row-dirty, .setup-section,
+   .add-panel, .save-state); only what those don't already cover lives here. */
+
+.rt-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.rt-header h1 { margin-bottom: 0; }
+.rt-header-actions { display: flex; gap: var(--space-2); }
+.rt-plain-form { display: inline; margin: 0; }
+.rt-actions { white-space: nowrap; }
+.rt-actions .btn { margin: 2px 0; }
+tr.rt-inactive { opacity: 0.6; }
+
+/* Options form */
+.rt-form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3) var(--space-4); }
+.rt-form-grid .rt-span-2 { grid-column: span 3; }
+.rt-form-grid input[type="text"], .rt-form-grid select { width: 100%; box-sizing: border-box; }
+.rt-checks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); margin: var(--space-3) 0 var(--space-4); }
+.rt-checks fieldset { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); margin: 0; }
+.rt-checks legend { font-size: 0.8rem; font-weight: 700; padding: 0 4px; }
+.rt-checks label { display: block; font-size: 0.86rem; margin: 4px 0; }
+@media (max-width: 900px) {
+  .rt-form-grid, .rt-checks { grid-template-columns: 1fr; }
+  .rt-form-grid .rt-span-2 { grid-column: span 1; }
+}
+
+/* Schedule */
+.rt-schedule { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.rt-schedule label { font-size: 0.88rem; display: inline-flex; align-items: center; gap: 6px; }
+.rt-schedule input[type="number"] { width: 5em; }
+.rt-inline-check { display: inline-flex; align-items: center; gap: 6px; font-size: 0.86rem; }
+
+/* Lines grid */
+.rt-col-section { width: 115px; }
+.rt-col-mask    { min-width: 240px; }
+.rt-col-matches { width: 170px; white-space: nowrap; }
+tr.rt-row-inactive td input, tr.rt-row-inactive td select { color: var(--color-text-muted); }
+.linkish { background: none; border: 0; padding: 0; color: var(--color-franciscan-green); cursor: pointer;
+           font: inherit; font-size: 0.85rem; text-decoration: underline; }
+.rt-bad, .linkish.rt-bad { color: var(--color-danger); }
+tr.rt-detail-row > td { background: #faf8f3; padding: var(--space-2) var(--space-3); }
+.rt-match-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.rt-match-table th { text-align: left; font-weight: 600; color: var(--color-text-muted); padding: 2px 6px; }
+.rt-match-table td { padding: 2px 6px; border-top: 1px solid #ece7da; }
+#previewSummary { margin-top: var(--space-3); }
+
+/* Starter panel */
+.rt-starter-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); font-size: 0.88rem; }
+.rt-starter-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--color-border);
+                   border-radius: var(--radius-sm); padding: var(--space-2); margin-top: var(--space-2); }
+.rt-starter-list label { display: block; font-size: 0.85rem; padding: 2px 0; }
+.rt-starter-list code { background: #f0ece2; padding: 1px 5px; border-radius: 3px; }
+.rt-sec { display: inline-block; min-width: 58px; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
+.rt-sec-revenue { color: var(--color-success); }
+.rt-sec-expense { color: var(--color-franciscan-green); }
+
+/* A grid's Save button is disabled until something changes; base.css has no
+   :disabled look for .btn, so without this it reads as clickable. Scoped to
+   this screen rather than changed app-wide. */
+.setup-section .setup-toolbar .btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
