@@ -35,10 +35,24 @@ Writes go straight to this app's own database (db.py, cfmqbo or cfmqbo_prod per
 BEACON_ENV), which is the same copy qbo-mcp-server's engine reads for that env.
 
 Registered from report_templates.register() -- main.py is untouched.
+
+2026-09-23 (later), Jay: "The new menu screen for setting up and editing the
+Actual vs Budget Report is a model for all reports we will build ... Can you
+merge the Fund Summary into the Report Templates system?" Every template now
+has a Report Type (migration 067). Schedule, recipients and review are shared;
+lines and options depend on the type:
+  * Actual vs Budget ('bva'): lines have a Revenue/Expense section.
+  * Fund Summary ('fund_summary'): lines have a fund group instead; a new
+    Fund Summary template starts with a copy of the entity's current
+    fund_account_masks rows (Jay: lines are per template). Its own options
+    (exclude zero accounts, MTD tab) live in reports.templates.options.
+The type can only be changed while a template has no active lines, so an
+Actual vs Budget line is never silently read as a Fund Summary line or back.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 
@@ -47,6 +61,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import db
 import qbo_mcp_client
+import cornerstone_mode
 import rbac
 import report_masks
 
@@ -63,6 +78,18 @@ _EMAIL_RE = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
 _BOOL_OPTIONS = ["full_entity", "include_monthly_tab", "include_fund_tabs",
                  "include_txn_detail", "show_annual_budget", "show_accounts_under_lines",
                  "requires_review", "cc_owner_on_auto_send"]
+
+# Every report a template can build. Adding a report later = one entry here, one
+# engine in qbo-mcp-server (reports/template_store.run_template), and the CHECK
+# constraint on reports.templates.report_type.
+REPORT_TYPES = {"bva": "Actual vs Budget", "fund_summary": "Fund Summary"}
+# Settings only one report type has, kept in reports.templates.options (JSON).
+# Checkbox name on the Options form -> (options key, default).
+_TYPE_OPTIONS = {
+    "fund_summary": {"fs_exclude_zeros": ("exclude_zeros", True),
+                     "fs_include_mtd_tab": ("include_mtd_tab", True)},
+}
+_ORG_CODE_TO_QBO_COMPANY = {"DME": "dmecdf"}
 
 # Chart-of-accounts cache per org code: (fetched_at, data). Ten minutes is short
 # enough that a new account shows up the same morning, long enough that a
@@ -113,7 +140,8 @@ def _iso(ts) -> str:
 
 def _lines(template_id: int) -> list[dict]:
     rows = db.query(
-        """SELECT id, section, line_label, account_mask, sort_order, is_active, updated_at
+        """SELECT id, section, fund_group, line_label, account_mask, sort_order, is_active,
+                  updated_at
              FROM reports.template_lines WHERE template_id = %s
          ORDER BY is_active DESC, sort_order, id""",
         (template_id,),
@@ -143,7 +171,8 @@ def _schedule(template_id: int) -> dict | None:
     )
 
 
-def _options_from_form(form, org_code: str) -> tuple[dict | None, str | None]:
+def _options_from_form(form, org_code: str, existing_options: dict | None = None
+                       ) -> tuple[dict | None, str | None]:
     """Validated option values from the Options form, or (None, error)."""
     name = str(form.get("name") or "").strip()
     if not name:
@@ -174,7 +203,36 @@ def _options_from_form(form, org_code: str) -> tuple[dict | None, str | None]:
         vals["reviewer_user_id"] = None
     if vals["requires_review"] and not vals["reviewer_user_id"]:
         return None, "A template with review turned on needs a reviewer."
+    rtype = str(form.get("report_type") or "bva").strip()
+    if rtype not in REPORT_TYPES:
+        return None, "Pick a report type from the list."
+    vals["report_type"] = rtype
+    opts = dict(existing_options or {})          # keep keys this form doesn't own
+    for field, (key, _default) in _TYPE_OPTIONS.get(rtype, {}).items():
+        opts[key] = form.get(field) == "on"
+    vals["options"] = json.dumps(opts)
     return vals, None
+
+
+def fund_mask_company(org: dict) -> str:
+    """QBO company code fund_account_masks is keyed by (same rule as the engine)."""
+    code = str(org.get("code") or "")
+    return _ORG_CODE_TO_QBO_COMPANY.get(code.upper(), code.lower())
+
+
+def _seed_fund_lines(cur, template_id: int, org: dict) -> int:
+    """Copy the entity's active fund_account_masks rows into a new Fund Summary
+    template's lines. Returns how many were copied."""
+    rows = cornerstone_mode.get_fund_account_masks(fund_mask_company(org))
+    for m in rows:
+        cur.execute(
+            """INSERT INTO reports.template_lines
+                   (template_id, section, fund_group, line_label, account_mask, sort_order, is_active)
+               VALUES (%s, NULL, %s, %s, %s, %s, TRUE)""",
+            (template_id, m.get("fund_group") or None,
+             m.get("display_label") or m["account_mask"], m["account_mask"],
+             int(m.get("sort_order") or 100)))
+    return len(rows)
 
 
 def _name_taken(org_id: int, name: str, except_id: int | None = None) -> bool:
@@ -216,8 +274,12 @@ def new_template_page(request: Request):
         "form": {"sender_email": default_sender(org["code"]), "requires_review": True,
                  "include_monthly_tab": True, "include_txn_detail": True,
                  "show_annual_budget": True, "show_accounts_under_lines": True,
-                 "reviewer_user_id": user["id"]},
+                 "reviewer_user_id": user["id"],
+                 "report_type": request.query_params.get("type") or "bva",
+                 "options": {"exclude_zeros": True, "include_mtd_tab": True}},
         "reviewers": _reviewer_choices(org["id"], user["id"]),
+        "report_types": REPORT_TYPES, "type_locked": False,
+        "fund_mask_company": fund_mask_company(org),
         "senders": _SENDERS,
         "frequencies": _FREQUENCIES,
         "error": request.query_params.get("error"),
@@ -234,8 +296,13 @@ async def new_template_create(request: Request):
     if not verr and _name_taken(org["id"], vals["name"]):
         verr = f"{org['code']} already has a template named '{vals['name']}'."
     if verr:
+        fdict = dict(form)
+        fdict["options"] = {key: form.get(field) == "on"
+                            for field, (key, _d) in _TYPE_OPTIONS.get(fdict.get("report_type"), {}).items()}
         return _render(request, "admin_report_template_edit.html", user, {
-            "tpl": None, "form": dict(form), "reviewers": _reviewer_choices(org["id"], None),
+            "tpl": None, "form": fdict, "reviewers": _reviewer_choices(org["id"], None),
+            "report_types": REPORT_TYPES, "type_locked": False,
+            "fund_mask_company": fund_mask_company(org),
             "senders": _SENDERS, "frequencies": _FREQUENCIES, "error": verr,
         })
     cols = ["org_id", "created_by_user_id", "updated_by_user_id"] + list(vals.keys())
@@ -248,7 +315,9 @@ async def new_template_create(request: Request):
                 params,
             )
             new_id = cur.fetchone()["id"]
-    return RedirectResponse(f"/admin/report-templates/{new_id}/edit?created=1", status_code=303)
+            seeded = _seed_fund_lines(cur, new_id, org) if vals["report_type"] == "fund_summary" else 0
+    return RedirectResponse(f"/admin/report-templates/{new_id}/edit?created=1&seeded={seeded}",
+                            status_code=303)
 
 
 # ── editor ────────────────────────────────────────────────────────────────────
@@ -264,10 +333,14 @@ def edit_template_page(request: Request, template_id: int):
     tpl_ctx = dict(tpl)
     tpl_ctx["updated_at"] = _iso(tpl["updated_at"])
     sched = _schedule(template_id)
+    lines = _lines(template_id)
     return _render(request, "admin_report_template_edit.html", user, {
         "tpl": tpl_ctx,
         "form": tpl_ctx,
-        "lines": _lines(template_id),
+        "report_types": REPORT_TYPES,
+        "type_locked": any(ln["is_active"] for ln in lines),
+        "fund_mask_company": fund_mask_company(org),
+        "lines": lines,
         "recipients": _recipients(template_id),
         "schedule": sched,
         "reviewers": _reviewer_choices(org["id"], tpl["reviewer_user_id"]),
@@ -290,7 +363,12 @@ async def save_options(request: Request, template_id: int):
     if str(form.get("updated_at") or "") != _iso(tpl["updated_at"]):
         return RedirectResponse(base + "?error=Someone+else+saved+these+options+after+you+"
                                 "opened+the+page.+Reload+and+make+your+change+again.", status_code=303)
-    vals, verr = _options_from_form(form, org["code"])
+    vals, verr = _options_from_form(form, org["code"], tpl.get("options") or {})
+    if not verr and vals["report_type"] != tpl["report_type"] and db.query_one(
+            "SELECT 1 FROM reports.template_lines WHERE template_id = %s AND is_active",
+            (template_id,)):
+        verr = ("The report type can only be changed while the template has no active lines. "
+                "Untick Active on its lines first, or Clone it.")
     if not verr and _name_taken(org["id"], vals["name"], except_id=template_id):
         verr = f"{org['code']} already has a template named '{vals['name']}'."
     if verr:
@@ -378,7 +456,7 @@ async def clone_template(request: Request, template_id: int):
     copy_cols = ["description", "full_entity", "include_monthly_tab", "include_fund_tabs",
                  "include_txn_detail", "show_annual_budget", "show_accounts_under_lines",
                  "budget_name", "requires_review", "reviewer_user_id",
-                 "cc_owner_on_auto_send", "sender_email"]
+                 "cc_owner_on_auto_send", "sender_email", "report_type", "options"]
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -391,8 +469,8 @@ async def clone_template(request: Request, template_id: int):
             new_id = cur.fetchone()["id"]
             cur.execute(
                 """INSERT INTO reports.template_lines
-                       (template_id, section, line_label, account_mask, sort_order, is_active)
-                   SELECT %s, section, line_label, account_mask, sort_order, TRUE
+                       (template_id, section, fund_group, line_label, account_mask, sort_order, is_active)
+                   SELECT %s, section, fund_group, line_label, account_mask, sort_order, TRUE
                      FROM reports.template_lines WHERE template_id = %s AND is_active""",
                 (new_id, template_id))
             cur.execute(
@@ -412,10 +490,17 @@ async def clone_template(request: Request, template_id: int):
 
 # ── lines (batched JSON save) ─────────────────────────────────────────────────
 
-def _clean_line(r: dict) -> tuple[dict | None, str | None]:
-    section = {"revenue": "Revenue", "expense": "Expense"}.get(str(r.get("section") or "").strip().lower())
-    if not section:
-        return None, "Section must be Revenue or Expense."
+def _clean_line(r: dict, report_type: str = "bva") -> tuple[dict | None, str | None]:
+    if report_type == "fund_summary":
+        section = None
+        fund_group = str(r.get("fund_group") or "").strip() or None
+        if fund_group and len(fund_group) > 120:
+            return None, "Fund group is too long (120 characters at most)."
+    else:
+        fund_group = None
+        section = {"revenue": "Revenue", "expense": "Expense"}.get(str(r.get("section") or "").strip().lower())
+        if not section:
+            return None, "Section must be Revenue or Expense."
     label = str(r.get("line_label") or "").strip()
     if not label:
         return None, "Line label is required."
@@ -427,7 +512,7 @@ def _clean_line(r: dict) -> tuple[dict | None, str | None]:
         sort_order = int(str(r.get("sort_order") if r.get("sort_order") not in (None, "") else 100).strip())
     except ValueError:
         return None, "Sort must be a whole number."
-    return {"section": section, "line_label": label,
+    return {"section": section, "fund_group": fund_group, "line_label": label,
             "account_mask": ", ".join(report_masks.split_masks(mask)),
             "sort_order": sort_order, "is_active": bool(r.get("is_active", True))}, None
 
@@ -437,7 +522,8 @@ async def save_lines(request: Request, template_id: int):
     user, org, err = _require_access(request)
     if err:
         return err
-    if not _template(template_id, org["id"]):
+    tpl = _template(template_id, org["id"])
+    if not tpl:
         return _not_yours()
     rows = (await _json_body(request)).get("rows") or []
     if not rows:
@@ -446,7 +532,7 @@ async def save_lines(request: Request, template_id: int):
     cleaned, errors = [], {}
     for r in rows:
         key = str(r.get("key") or "")
-        vals, verr = _clean_line(r)
+        vals, verr = _clean_line(r, tpl["report_type"])
         if verr:
             errors[key] = verr
             continue
@@ -474,18 +560,19 @@ async def save_lines(request: Request, template_id: int):
                 if rid:
                     cur.execute(
                         """UPDATE reports.template_lines
-                              SET section = %s, line_label = %s, account_mask = %s,
+                              SET section = %s, fund_group = %s, line_label = %s, account_mask = %s,
                                   sort_order = %s, is_active = %s, updated_at = NOW()
                             WHERE id = %s AND template_id = %s""",
-                        (v["section"], v["line_label"], v["account_mask"], v["sort_order"],
-                         v["is_active"], rid, template_id))
+                        (v["section"], v["fund_group"], v["line_label"], v["account_mask"],
+                         v["sort_order"], v["is_active"], rid, template_id))
                 else:
                     cur.execute(
                         """INSERT INTO reports.template_lines
-                               (template_id, section, line_label, account_mask, sort_order, is_active)
-                           VALUES (%s, %s, %s, %s, %s, %s)""",
-                        (template_id, v["section"], v["line_label"], v["account_mask"],
-                         v["sort_order"], v["is_active"]))
+                               (template_id, section, fund_group, line_label, account_mask,
+                                sort_order, is_active)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                        (template_id, v["section"], v["fund_group"], v["line_label"],
+                         v["account_mask"], v["sort_order"], v["is_active"]))
     return JSONResponse({"ok": True, "saved": len(cleaned), "lines": _lines(template_id)})
 
 
@@ -577,10 +664,20 @@ async def preview(request: Request, template_id: int):
     if qerr:
         return JSONResponse({"error": f"Couldn't load the chart of accounts from QuickBooks: {qerr}"},
                             status_code=502)
-    result = report_masks.preview_lines(data["accounts"], lines,
-                                        full_entity=bool(body.get("full_entity", tpl["full_entity"])))
+    if tpl["report_type"] == "fund_summary":
+        # The Fund Summary engine only looks at ACTIVE Equity accounts
+        # (reports/fund_summary.build_account_map), so preview exactly those.
+        accounts = [a for a in data["accounts"]
+                    if a.get("classification") == "Equity" and a.get("active", True)]
+        for ln in lines:
+            ln["section"] = "Equity"
+        result = report_masks.preview_lines(accounts, lines, full_entity=False)
+    else:
+        accounts = data["accounts"]
+        result = report_masks.preview_lines(accounts, lines,
+                                            full_entity=bool(body.get("full_entity", tpl["full_entity"])))
     result["invalid"] = bad
-    result["account_count"] = len(data["accounts"])
+    result["account_count"] = len(accounts)
     return JSONResponse(result)
 
 
@@ -604,6 +701,22 @@ async def starter_lines(request: Request, template_id: int):
         existing_masks=[str(m) for m in body.get("existing_masks") or []],
         include_inactive=bool(body.get("include_inactive")))
     return JSONResponse({"lines": rows})
+
+
+@router.post("/admin/report-templates/{template_id}/fund-mask-lines")
+async def fund_mask_lines(request: Request, template_id: int):
+    """The entity's current fund_account_masks rows, shaped as draft lines for
+    the Fund Summary grid ("Load current Fund Account Masks"). Nothing is saved."""
+    user, org, err = _require_access(request)
+    if err:
+        return err
+    if not _template(template_id, org["id"]):
+        return _not_yours()
+    rows = await asyncio.to_thread(cornerstone_mode.get_fund_account_masks, fund_mask_company(org))
+    return JSONResponse({"company": fund_mask_company(org), "lines": [
+        {"fund_group": m.get("fund_group") or "", "line_label": m.get("display_label") or m["account_mask"],
+         "account_mask": m["account_mask"], "sort_order": int(m.get("sort_order") or 100)}
+        for m in rows]})
 
 
 @router.get("/admin/report-templates/api/qbo-reference")
