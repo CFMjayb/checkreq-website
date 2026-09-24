@@ -8,6 +8,12 @@
 //
 // Nothing is saved until a Save button is clicked; leaving the page with
 // unsaved grid changes asks first.
+//
+// 2026-09-23: templates have a Report Type (Actual vs Budget / Fund Summary).
+// Options rows tagged data-rtype show only for their type; a Fund Summary
+// template's Lines grid has a free-text Fund group column instead of the
+// Revenue/Expense Section select, and "Load current Fund Account Masks"
+// instead of the chart-of-accounts drafter.
 (function () {
   'use strict';
 
@@ -49,6 +55,17 @@
     pulse(e.submitter || f.querySelector('button[type="submit"]'));
   });
 
+  // ── Report type: show only the options that belong to it ─────────────────
+  var typeSel = document.getElementById('report_type');
+  function applyType() {
+    if (!typeSel) return;
+    var t = typeSel.value;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-rtype]'), function (el) {
+      el.hidden = el.getAttribute('data-rtype') !== t;
+    });
+  }
+  if (typeSel) { typeSel.addEventListener('change', applyType); applyType(); }
+
   // ── Budget picker (Options) ───────────────────────────────────────────────
   var budgetSel = document.getElementById('budget_name');
   var budgetHint = document.getElementById('budgetHint');
@@ -80,6 +97,7 @@
   if (!dataEl) return;                       // new-template page: Options only
   var DATA = JSON.parse(dataEl.textContent);
   var TID = DATA.templateId;
+  var FUND = DATA.reportType === 'fund_summary';
   var newSeq = 0;
 
   // ── Generic grid ──────────────────────────────────────────────────────────
@@ -179,18 +197,23 @@
       return '<option' + (s === v ? ' selected' : '') + '>' + s + '</option>';
     }).join('') + '</select>';
   }
+  function groupCell(r) {
+    return FUND
+      ? '<input type="text" data-field="fund_group" value="' + esc(r.fund_group) + '" placeholder="e.g. Unrestricted Net Assets">'
+      : sectionSelect(r.section || 'Expense');
+  }
   var lines = new Grid({
     body: document.getElementById('linesBody'),
     saveBtn: document.getElementById('lineSaveBtn'),
     stateEl: document.getElementById('lineSaveState'),
-    fields: ['is_active', 'section', 'line_label', 'account_mask', 'sort_order'],
+    fields: ['is_active', FUND ? 'fund_group' : 'section', 'line_label', 'account_mask', 'sort_order'],
     url: '/admin/report-templates/' + TID + '/lines/save',
     resultKey: 'lines', noun: 'line',
     rowHtml: function (r) {
       return '<td class="col-allow"><input type="checkbox" data-field="is_active"' + (r.is_active === false ? '' : ' checked') + '></td>' +
-        '<td class="rt-col-section">' + sectionSelect(r.section || 'Expense') + '</td>' +
-        '<td class="col-display"><input type="text" data-field="line_label" value="' + esc(r.line_label) + '" placeholder="e.g. Diocesan House"></td>' +
-        '<td class="rt-col-mask"><input type="text" data-field="account_mask" value="' + esc(r.account_mask) + '" placeholder="e.g. 667*, 6680-6689"></td>' +
+        '<td class="rt-col-section">' + groupCell(r) + '</td>' +
+        '<td class="col-display"><input type="text" data-field="line_label" value="' + esc(r.line_label) + '" placeholder="' + (FUND ? 'e.g. Temporarily Restricted Endowments' : 'e.g. Diocesan House') + '"></td>' +
+        '<td class="rt-col-mask"><input type="text" data-field="account_mask" value="' + esc(r.account_mask) + '" placeholder="' + (FUND ? 'e.g. 3050.4*' : 'e.g. 667*, 6680-6689') + '"></td>' +
         '<td class="col-sort"><input type="number" class="num" data-field="sort_order" value="' + esc(r.sort_order == null ? 100 : r.sort_order) + '"></td>' +
         '<td class="rt-col-matches"><button type="button" class="linkish rt-match-btn" title="Show the accounts this line picks up">Preview</button></td>';
     },
@@ -203,7 +226,7 @@
 
   document.getElementById('lineAddBtn').addEventListener('click', function () {
     var max = lines.rows.reduce(function (m, r) { return Math.max(m, parseInt(r.cur.sort_order, 10) || 0); }, 0);
-    var row = lines.add({ section: 'Expense', line_label: '', account_mask: '', sort_order: max + 10, is_active: true }, true);
+    var row = lines.add({ section: 'Expense', fund_group: '', line_label: '', account_mask: '', sort_order: max + 10, is_active: true }, true);
     row.el.querySelector('[data-field="line_label"]').focus();
   });
   document.getElementById('lineSaveBtn').addEventListener('click', function () { lines.save(); });
@@ -212,7 +235,7 @@
   var lastPreview = null;
   function previewRows() {
     return lines.rows.map(function (r) {
-      return { key: r.key, id: r.id, section: r.cur.section, line_label: r.cur.line_label || '(unnamed line)',
+      return { key: r.key, id: r.id, section: FUND ? 'Equity' : r.cur.section, line_label: r.cur.line_label || '(unnamed line)',
                account_mask: r.cur.account_mask, sort_order: r.cur.sort_order, is_active: r.cur.is_active };
     });
   }
@@ -235,7 +258,9 @@
       btn.title = 'Show the accounts this line picks up';
     });
     var parts = [];
-    parts.push('<p class="setup-hint">Checked against ' + esc(j.account_count) + ' QuickBooks accounts (active and inactive, as the report does).</p>');
+    parts.push('<p class="setup-hint">Checked against ' + esc(j.account_count) +
+      (FUND ? ' active QuickBooks equity accounts (the only accounts a Fund Summary reads).</p>'
+            : ' QuickBooks accounts (active and inactive, as the report does).</p>'));
     var empty = lines.rows.filter(function (r) { return j.lines[r.key] && j.lines[r.key].count === 0; });
     if (empty.length) parts.push('<div class="banner banner-error">' + empty.length + ' active line' + (empty.length === 1 ? ' matches' : 's match') + ' no accounts at all.</div>');
     if (j.overlaps && j.overlaps.length) {
@@ -286,7 +311,8 @@
 
   // ── Start from chart of accounts ──────────────────────────────────────────
   var starterOut = document.getElementById('starterResults');
-  document.getElementById('starterDraftBtn').addEventListener('click', function () {
+  var starterBtn = document.getElementById('starterDraftBtn');
+  if (starterBtn) starterBtn.addEventListener('click', function () {
     var btn = this;
     pulse(btn);
     postJson('/admin/report-templates/' + TID + '/starter-lines', {
@@ -323,6 +349,31 @@
       });
     }).catch(function (err) {
       starterOut.innerHTML = '<p class="rt-bad">' + esc(err.message) + '</p>';
+    }).then(function () { unpulse(btn); });
+  });
+
+  // ── Load current Fund Account Masks (Fund Summary templates) ─────────────
+  var fundBtn = document.getElementById('fundMaskLoadBtn');
+  var fundOut = document.getElementById('fundMaskResults');
+  if (fundBtn) fundBtn.addEventListener('click', function () {
+    var btn = this;
+    pulse(btn);
+    postJson('/admin/report-templates/' + TID + '/fund-mask-lines', {}).then(function (j) {
+      var have = {};
+      lines.rows.forEach(function (r) { if (r.cur.is_active && r.cur.account_mask) have[r.cur.account_mask.trim()] = true; });
+      var added = 0, skipped = 0;
+      (j.lines || []).forEach(function (x) {
+        if (have[x.account_mask]) { skipped += 1; return; }
+        lines.add({ fund_group: x.fund_group, line_label: x.line_label, account_mask: x.account_mask,
+                    sort_order: x.sort_order, is_active: true }, true);
+        added += 1;
+      });
+      fundOut.innerHTML = '<p class="sub">' + (j.lines && j.lines.length
+        ? added + ' line' + (added === 1 ? '' : 's') + ' added to the grid below, not saved yet' +
+          (skipped ? ' (' + skipped + ' already on the template)' : '') + '. Review them, then click Save Lines.'
+        : 'No Fund Account Masks are on file for ' + esc(j.company) + '.') + '</p>';
+    }).catch(function (err) {
+      fundOut.innerHTML = '<p class="rt-bad">' + esc(err.message) + '</p>';
     }).then(function () { unpulse(btn); });
   });
 

@@ -32,7 +32,12 @@
   Changes here are saved to Beacon only. Nothing is emailed from this screen.</p>
 
 {% set qp = request.query_params %}
-{% if qp.get('created') %}<div class="banner banner-success">Template created. Now add its lines, recipients and schedule below.</div>{% endif %}
+{% if qp.get('created') %}<div class="banner banner-success">Template created.
+  {% if tpl and tpl.report_type == 'fund_summary' %}
+    {% if qp.get('seeded') and qp.get('seeded') != '0' %}Its lines start as a copy of the {{ qp.get('seeded') }} Fund Account Mask{{ '' if qp.get('seeded') == '1' else 's' }} on file for <code>{{ fund_mask_company }}</code> &mdash; adjust them freely; the originals aren't changed.
+    {% else %}No Fund Account Masks were on file for <code>{{ fund_mask_company }}</code>, so add its lines below.{% endif %}
+  {% else %}Now add its lines, recipients and schedule below.{% endif %}
+</div>{% endif %}
 {% if qp.get('cloned') %}<div class="banner banner-success">Copy created. It starts <strong>inactive</strong> &mdash; rename it, adjust it, then Activate it.</div>{% endif %}
 {% if qp.get('saved') %}<div class="banner banner-success">
   {% if qp.get('saved') == 'options' %}Options saved.{% elif qp.get('saved') == 'schedule' %}Schedule saved.{% else %}Template {{ qp.get('saved') }}.{% endif %}
@@ -47,7 +52,20 @@
         action="{{ '/admin/report-templates/%d/options'|format(tpl.id) if tpl else '/admin/report-templates/new' }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     {% if tpl %}<input type="hidden" name="updated_at" value="{{ tpl.updated_at }}">{% endif %}
+    {% set rtype = form.report_type or 'bva' %}
+    {% set fopts = form.options or {} %}
     <div class="rt-form-grid">
+      <div class="field">
+        <label for="report_type">Report</label>
+        <select id="report_type" name="report_type" {% if type_locked %}disabled{% endif %}>
+          {% for k, label in report_types.items() %}
+          <option value="{{ k }}" {% if rtype == k %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        {% if type_locked %}<input type="hidden" name="report_type" value="{{ rtype }}">
+        <div class="hint">Locked while the template has active lines (they're written for this report).</div>
+        {% else %}<div class="hint">Which report this template builds. Schedule, recipients and review work the same for every report.</div>{% endif %}
+      </div>
       <div class="field rt-span-2">
         <label for="name">Template name</label>
         <input type="text" id="name" name="name" value="{{ form.name or '' }}" maxlength="120" required>
@@ -76,7 +94,7 @@
         </select>
         <div class="hint">The only two addresses the email server is authorized to send as.</div>
       </div>
-      <div class="field">
+      <div class="field" data-rtype="bva">
         <label for="budget_name">QuickBooks budget</label>
         <select id="budget_name" name="budget_name" data-current="{{ form.budget_name or '' }}">
           <option value="">Auto-pick (the one active budget for the year)</option>
@@ -94,7 +112,7 @@
         <label><input type="checkbox" name="cc_owner_on_auto_send" {% if form.cc_owner_on_auto_send %}checked{% endif %}>
           Cc the owner on automatic sends (review off only)</label>
       </fieldset>
-      <fieldset>
+      <fieldset data-rtype="bva">
         <legend>What the report shows</legend>
         <label><input type="checkbox" name="full_entity" {% if form.full_entity %}checked{% endif %}>
           Whole entity (adds an Unmapped Accounts line and ties to QuickBooks' Net Income)</label>
@@ -103,14 +121,21 @@
         <label><input type="checkbox" name="show_annual_budget" {% if form.show_annual_budget %}checked{% endif %}>
           Annual Budget column</label>
       </fieldset>
+      <fieldset data-rtype="fund_summary">
+        <legend>What the report shows</legend>
+        <label><input type="checkbox" name="fs_exclude_zeros" {% if fopts.get('exclude_zeros', True) %}checked{% endif %}>
+          Leave out accounts with no balance or activity</label>
+      </fieldset>
       <fieldset>
         <legend>Extra tabs</legend>
-        <label><input type="checkbox" name="include_monthly_tab" {% if form.include_monthly_tab %}checked{% endif %}>
+        <label data-rtype="bva"><input type="checkbox" name="include_monthly_tab" {% if form.include_monthly_tab %}checked{% endif %}>
           By Month (actuals)</label>
+        <label data-rtype="fund_summary"><input type="checkbox" name="fs_include_mtd_tab" {% if fopts.get('include_mtd_tab', True) %}checked{% endif %}>
+          Month-to-date tab (ahead of the year-to-date one)</label>
         <label><input type="checkbox" name="include_txn_detail" {% if form.include_txn_detail %}checked{% endif %}>
           Transaction Detail</label>
-        <label><input type="checkbox" name="include_fund_tabs" {% if form.include_fund_tabs %}checked{% endif %}>
-          Fund Summary tabs</label>
+        <label data-rtype="bva"><input type="checkbox" name="include_fund_tabs" {% if form.include_fund_tabs %}checked{% endif %}>
+          Fund Summary tabs (uses the entity's Fund Account Masks)</label>
       </fieldset>
     </div>
     <button type="submit" class="btn btn-primary">{{ 'Save Options' if tpl else 'Create Template' }}</button>
@@ -122,7 +147,13 @@
 <details class="card setup-section" open id="linesSection">
   <summary><h2>Lines</h2></summary>
   <p class="setup-hint">
+    {% if tpl.report_type == 'fund_summary' %}
+    Each line is one row of the Fund Summary, grouped under its <strong>fund group</strong> (for example
+    &ldquo;Unrestricted Net Assets&rdquo;). The <strong>account mask</strong> picks which active QuickBooks
+    <em>equity</em> accounts roll up into it &mdash;
+    {% else %}
     Each line is one row on Page 1. The <strong>account mask</strong> picks which QuickBooks accounts roll up into it &mdash;
+    {% endif %}
     <code>667*</code> (starts with 667), <code>4###</code> (4 plus any three characters), <code>4000-4099</code> (a range), and
     several separated by commas. If two lines match the same account, the one that sorts first gets it.
     Lines are never deleted &mdash; untick <strong>Active</strong> to retire one.
@@ -135,6 +166,15 @@
     <button type="button" class="btn btn-primary btn-sm" id="lineSaveBtn" disabled>Save Lines</button>
   </div>
 
+  {% if tpl.report_type == 'fund_summary' %}
+  <details class="add-panel" id="fundMaskPanel">
+    <summary>Load current Fund Account Masks</summary>
+    <p class="setup-hint">Adds the Fund Account Masks on file for <code>{{ fund_mask_company }}</code> (the ones the
+      standalone Fund Summary report uses) to the grid below, unsaved. Masks already on an active line are skipped.</p>
+    <button type="button" class="btn btn-secondary btn-sm" id="fundMaskLoadBtn">Load Masks</button>
+    <div id="fundMaskResults"></div>
+  </details>
+  {% else %}
   <details class="add-panel" id="starterPanel">
     <summary>Start from chart of accounts</summary>
     <p class="setup-hint">Drafts one line per top-level QuickBooks account (each line takes in all of that account's
@@ -154,13 +194,14 @@
     </div>
     <div id="starterResults"></div>
   </details>
+  {% endif %}
 
   <div class="table-scroll">
-    <table class="setup-table rt-lines" id="linesTable">
+    <table class="setup-table rt-lines{% if tpl.report_type == 'fund_summary' %} rt-fund{% endif %}" id="linesTable">
       <thead>
         <tr>
           <th class="col-allow">Active</th>
-          <th class="rt-col-section">Section</th>
+          <th class="rt-col-section">{{ 'Fund group' if tpl.report_type == 'fund_summary' else 'Section' }}</th>
           <th class="col-display">Line label</th>
           <th class="rt-col-mask">Account mask</th>
           <th class="col-sort">Sort</th>
@@ -226,6 +267,7 @@
 
 <script type="application/json" id="rtData">{{ {
   "templateId": tpl.id,
+  "reportType": tpl.report_type,
   "fullEntity": tpl.full_entity,
   "lines": lines,
   "recipients": recipients

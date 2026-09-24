@@ -24,6 +24,12 @@ re-checks that the template belongs to the current entity, never trusting the
 id in the URL alone.
 
 New file per the standing main.py rule; main.py gains wiring only.
+
+2026-09-23 (later): templates now have a Report Type (Actual vs Budget or Fund
+Summary -- report_template_editor.REPORT_TYPES). The screen is also reachable
+from CFM Items for a Cornerstone-served entity, where it is managed by a
+Cornerstone Employee or a Beacon Admin at that entity (Jay, 2026-09-23);
+dioceses keep the setup_admin / beacon_admin gate.
 """
 from __future__ import annotations
 
@@ -34,6 +40,7 @@ from datetime import date
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
+import cornerstone_mode
 import db
 import qbo_mcp_client
 import rbac
@@ -46,6 +53,7 @@ _current_org = None
 _render = None
 
 _ROLES = ["setup_admin", "beacon_admin"]
+_CORNERSTONE_ROLES = ["cornerstone_employee", "beacon_admin"]
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
@@ -70,9 +78,13 @@ def _require_access(request: Request):
         return None, None, RedirectResponse("/login")
     org = _current_org(request)
     org_id = org["id"] if org else None
-    if org_id is None or not rbac.user_has_any_role(user["id"], _ROLES, org_id=org_id):
-        return None, None, JSONResponse({"error": "Setup Admin or Beacon Admin access required"},
-                                        status_code=403)
+    if org_id is None:
+        return None, None, JSONResponse({"error": "Select an entity first"}, status_code=403)
+    served = cornerstone_mode.is_cornerstone_org(org_id)
+    roles = _CORNERSTONE_ROLES if served else _ROLES
+    if not rbac.user_has_any_role(user["id"], roles, org_id=org_id):
+        need = "Cornerstone Employee or Beacon Admin" if served else "Setup Admin or Beacon Admin"
+        return None, None, JSONResponse({"error": f"{need} access required"}, status_code=403)
     return user, org, None
 
 
@@ -94,10 +106,11 @@ def _month_end(ym: str) -> str | None:
 
 def _templates_for_org(org_id: int) -> list[dict]:
     return db.query(
-        """SELECT t.id, t.name, t.description, t.is_active, t.requires_review,
+        """SELECT t.id, t.name, t.description, t.report_type, t.is_active, t.requires_review,
                   t.budget_name, t.full_entity, u.email AS reviewer_email,
                   u.display_name AS reviewer_name,
-                  (SELECT string_agg(l.section || ': ' || l.line_label || ' (' || l.account_mask || ')',
+                  (SELECT string_agg(COALESCE(l.section, l.fund_group, 'Fund') || ': ' ||
+                                     l.line_label || ' (' || l.account_mask || ')',
                                      '; ' ORDER BY l.sort_order, l.id)
                      FROM reports.template_lines l
                     WHERE l.template_id = t.id AND l.is_active) AS lines,
@@ -126,8 +139,12 @@ def report_templates_page(request: Request):
     user, org, err = _require_access(request)
     if err:
         return err
+    served = cornerstone_mode.is_cornerstone_org(org["id"])
     return _render(request, "admin_report_templates.html", user, {
         "templates": _templates_for_org(org["id"]),
+        "report_types": report_template_editor.REPORT_TYPES,
+        "back_url": "/admin/cfm-items" if served else "/admin",
+        "back_label": "CFM Items" if served else "Administrative Tasks",
         "default_month": _last_completed_month(),
         "max_month": _last_completed_month(),
         "report_env": _env(),

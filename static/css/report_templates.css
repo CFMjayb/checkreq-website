@@ -57,3 +57,10 @@ tr.rt-detail-row > td { background: #faf8f3; padding: var(--space-2) var(--space
    :disabled look for .btn, so without this it reads as clickable. Scoped to
    this screen rather than changed app-wide. */
 .setup-section .setup-toolbar .btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+
+/* Report types (2026-09-23): Options rows that belong to one report type are
+   tagged data-rtype and shown only for that type; a Fund Summary line's
+   fund-group column needs more room than a Revenue/Expense select. */
+[data-rtype][hidden] { display: none !important; }
+.rt-lines.rt-fund .rt-col-section { width: 240px; }
+.rt-lines.rt-fund .rt-col-section input { width: 100%; box-sizing: border-box; }

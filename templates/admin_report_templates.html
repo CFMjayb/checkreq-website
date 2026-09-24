@@ -9,9 +9,9 @@
   <h1>Report Templates</h1>
   <a class="btn btn-primary" href="/admin/report-templates/new">+ New Template</a>
 </div>
-<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+<p class="back-link"><a href="{{ back_url }}">&larr; Back to {{ back_label }}</a></p>
 <p class="sub">
-  {{ current_org.code }} &mdash; Actual vs Budget reports built live from QuickBooks. <strong>Edit</strong> sets up a
+  {{ current_org.code }} &mdash; reports built live from QuickBooks: {{ report_types.values()|join(', ') }}. <strong>Edit</strong> sets up a
   template's lines, recipients and schedule. <strong>Run Now</strong> builds the report for the month you pick and
   downloads it to you &mdash; it does not email anyone or start a review. Scheduled sending with review is still
   being built, so nothing is emailed from here yet.
@@ -28,6 +28,7 @@
       <thead>
         <tr>
           <th>Template</th>
+          <th>Report</th>
           <th>Lines</th>
           <th>Schedule</th>
           <th>Reviewer</th>
@@ -46,9 +47,10 @@
             {% if t.description %}<div class="sub">{{ t.description }}</div>{% endif %}
             <div class="sub">
               Review {{ 'on' if t.requires_review else 'off (sends automatically)' }}
-              &middot; Budget: {{ t.budget_name or 'auto (the one active QBO budget for the year)' }}
+              {% if t.report_type == 'bva' %}&middot; Budget: {{ t.budget_name or 'auto (the one active QBO budget for the year)' }}{% endif %}
             </div>
           </td>
+          <td>{{ report_types.get(t.report_type, t.report_type) }}</td>
           <td>
             {% if t.line_count %}<strong>{{ t.line_count }}</strong> &middot; <span class="sub">{{ t.lines }}</span>
             {% else %}<span class="sub">None yet</span>{% endif %}
@@ -92,8 +94,9 @@
     </table>
   </div>
   <p class="sub" style="margin-top:12px;">
-    A report takes up to a minute &mdash; it pulls the ledger, Profit &amp; Loss and budget from QuickBooks
-    and checks every account against QuickBooks' own Profit &amp; Loss before handing it back.
+    A report takes up to a minute &mdash; it pulls the ledger (and, for Actual vs Budget, the Profit &amp; Loss
+    and budget) from QuickBooks. Actual vs Budget reports are checked against QuickBooks' own Profit &amp; Loss
+    before they're handed back.
   </p>
 </div>
 {% else %}
