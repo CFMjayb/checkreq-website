@@ -145,6 +145,7 @@ import art_preapproval
 import security_headers
 import upload_guard
 import csrf_guard
+import error_log
 
 ATTACHMENTS_BUCKET = "cfm-checkreq-attachments"
 
@@ -264,6 +265,11 @@ if ON_CLOUD_RUN and not _SESSION_SECRET_RAW.strip():
 # token-replay gotcha this middleware works around.
 app.add_middleware(csrf_guard.CSRFMiddleware)
 app.add_middleware(session_guard.SessionAbsoluteCapMiddleware)
+# 2026-09-24 (Jay): log every error response (status >= 400) a user sees --
+# see error_log.py. Added AFTER the CSRF/absolute-cap middlewares (so it wraps
+# them and also records their 403s/redirect-worthy failures) but BEFORE
+# SessionMiddleware (so it runs inside it and can read the session's user id).
+app.add_middleware(error_log.ErrorResponseLogMiddleware)
 # L9 (Security Assessment 2026-09-19, Jay: "60/8"): max_age=1h gives the
 # IDLE half of "60/8" for free -- Starlette re-issues this cookie's Max-Age
 # on every response, so it naturally expires 60 minutes after the LAST
@@ -1339,7 +1345,9 @@ def impersonate_stop(request: Request):
 
 @app.post("/admin/impersonate/{user_id}")
 def impersonate_start(user_id: int, request: Request):
-    """M5 (Security Assessment 2026-09-19), both parts Jay approved:
+    """M5 (Security Assessment 2026-09-19), both parts Jay approved
+    (part 2 refined 2026-09-24 -- Beacon Admins exempt at their own entities,
+    see the comment above the escalation loop below):
     (1) gate widened from bare `cfo` to `beacon_admin` -- every live cfo
     holder already holds beacon_admin, so this changes nobody's real access.
     (2) a server-side target rule: the target must belong to (hold ANY live
@@ -1379,15 +1387,35 @@ def impersonate_start(user_id: int, request: Request):
     # feature exists for). The real intent -- never let impersonation grant a
     # capability the real identity doesn't already have -- only concerns
     # roles that actually DO something beyond baseline membership.
+    #
+    # 2026-09-24 (Jay, "option 1"): the escalation check is now PER ENTITY and
+    # skipped at any entity where the impersonator is a Beacon Admin. A
+    # beacon_admin at an entity can already grant themselves any role there
+    # on Users & Roles, so refusing them over a role they could self-grant
+    # protected nothing -- it blocked Jay (beacon_admin at DME) from
+    # impersonating Sherri Quint only because she holds hr_admin there.
+    # Where the impersonator is NOT a Beacon Admin, the old rule still
+    # applies, now compared entity by entity (tighter than the old
+    # all-entities-pooled comparison: holding hr_admin at EDOM no longer
+    # "covers" a target's hr_admin at DME).
     _BASELINE_ROLES = {rbac.ENTITY_BASE_ROLE, parish_roles.PARISH_BASE_ROLE}
-    escalation = (
-        rbac.get_role_keys(user_id, org_id=None) - _BASELINE_ROLES
-    ) - rbac.get_role_keys(real["id"], org_id=None)
-    if escalation:
-        return JSONResponse(
-            {"error": "This user holds a role you don't hold yourself -- impersonation refused."},
-            status_code=403,
-        )
+    for tgt_org_id in sorted(target_orgs - impersonator_admin_orgs):
+        escalation = (
+            rbac.get_role_keys(user_id, org_id=tgt_org_id) - _BASELINE_ROLES
+        ) - rbac.get_role_keys(real["id"], org_id=tgt_org_id)
+        if escalation:
+            org_row = db.query_one(
+                "SELECT code FROM checkreq.organizations WHERE id = %s", (tgt_org_id,)
+            )
+            org_code = org_row["code"] if org_row else str(tgt_org_id)
+            return JSONResponse(
+                {"error": (
+                    f"This user holds {', '.join(sorted(escalation))} at {org_code}, "
+                    "which you don't hold there and you aren't a Beacon Administrator "
+                    "there -- impersonation refused."
+                )},
+                status_code=403,
+            )
 
     _close_open_impersonation(real["id"])
     with db.connect() as conn:
