@@ -154,21 +154,32 @@ def _sso_auto_login_target(request: Request) -> tuple[str, str] | None:
     for a first-time visitor, a visitor remembered on a DIFFERENT domain
     (e.g. a parish-level user on a diocese's own branded hostname), a
     hostname with no active mapping, or a domain with no
-    identity_provider_domains entry at all."""
+    identity_provider_domains entry at all.
+
+    2026-09-24 (Jay, migration 069): a hostname can also accept
+    extra_email_domains -- DME staff use both episcopalmaine.org and
+    episcopalmaine.net on beacon.episcopalmaine.org. The provider is looked
+    up for the remembered email's OWN domain, since the extra domains are
+    not guaranteed to share the hostname's provider."""
     host = _request_host(request)
     if not host:
         return None
     row = db.query_one(
-        "SELECT expected_email_domain FROM checkreq.sso_auto_hostnames "
+        "SELECT expected_email_domain, extra_email_domains "
+        "FROM checkreq.sso_auto_hostnames "
         "WHERE hostname = %s AND is_active",
         (host,),
     )
     if not row:
         return None
+    accepted = {row["expected_email_domain"]} | {
+        d.strip().lower() for d in (row["extra_email_domains"] or []) if d
+    }
     remembered = (request.cookies.get(_REMEMBER_COOKIE) or "").strip().lower()
-    if not remembered or _domain_of(remembered) != row["expected_email_domain"]:
+    remembered_domain = _domain_of(remembered)
+    if not remembered or remembered_domain not in accepted:
         return None
-    provider = _provider_for_domain(row["expected_email_domain"])
+    provider = _provider_for_domain(remembered_domain)
     if not provider:
         return None
     return provider, remembered
