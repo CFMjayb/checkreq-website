@@ -42,7 +42,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import json
 
 import parish_mode
-import databank_mcp_client
 import congregation
 import parish_requests
 
@@ -68,8 +67,11 @@ def _church_office_contact(parish: dict) -> dict | None:
     contacts = parish.get("contacts") or {}
     if isinstance(contacts, str):
         contacts = json.loads(contacts)
-    for entry in contacts.get("contacts") or []:
-        if entry.get("role") == CHURCH_CONTACT_ROLE:
+    # Most EDOM rows were a bare [] (not the {"contacts": [...]} envelope)
+    # until 26-124's church_contact_sync.py first wrote them -- handle both.
+    entries = contacts.get("contacts") if isinstance(contacts, dict) else contacts
+    for entry in entries or []:
+        if isinstance(entry, dict) and entry.get("role") == CHURCH_CONTACT_ROLE:
             return entry
     return None
 
@@ -109,14 +111,16 @@ def parish_information_page(request: Request):
     # Real bug found live 2026-08-28 (Jay: "you need to remove the not
     # connected to databank - that will never apply") -- confirmed via
     # checkreq.organizations that only org_id 1 (EDOM) is Databank-integrated.
-    contact, error = None, None
-    if parish.get("org_code") == "EDOM":
-        if parish.get("databank_contact_id"):
-            contact, error = databank_mcp_client.get_contact(parish["databank_contact_id"])
-        else:
-            error = "This parish isn't linked to a Databank record yet — contact the diocesan office."
-    else:
-        contact = _church_office_contact(parish)
+    #
+    # 2026-09-25: no live Databank call here any more. EDOM's church card now
+    # comes from the same portal.parishes.contacts church_office entry DME
+    # uses, written weekly by 26-124's church_contact_sync.py (inside
+    # databank_contacts_job.py). The live call cost ~4-6s whenever
+    # databank-mcp-server was cold (it scales to zero) -- the cause of the
+    # "sometimes 20+ seconds" clicks Jay reported.
+    contact, error = _church_office_contact(parish), None
+    if parish.get("org_code") == "EDOM" and not parish.get("databank_contact_id"):
+        error = "This parish isn't linked to a Databank record yet — contact the diocesan office."
 
     congregation_info = congregation.get_congregation(parish["id"])
     rows = [dict(r, display_name=_display_name(r)) for r in congregation_info["rows"]]
