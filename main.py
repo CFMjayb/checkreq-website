@@ -8333,3 +8333,9 @@ notifications.register(app, current_user=_current_user)
 import feedback_chat
 
 feedback_chat.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+
+# ── SMA letters: Formstack Documents webhook (signed letter back to Beacon) ──
+# See sma_webhook.py. Shared-secret authenticated, CSRF-exempt via /webhooks/.
+import sma_webhook
+
+sma_webhook.register(app)

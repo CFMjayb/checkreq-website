@@ -105,6 +105,10 @@ EXEMPT_PREFIXES = (
     "/vendor-w9-upload/",
     "/internal/",
     "/auth/",
+    # Machine-to-machine webhooks (e.g. Formstack Documents -> sma_webhook.py):
+    # no browser session exists; each route authenticates with its own shared
+    # secret header instead.
+    "/webhooks/",
 )
 
 
