@@ -76,11 +76,10 @@
     {% for r in rows %}
     <tr>
       <td class="col-reqnum">
-        {% if r.editable %}
-        <a href="/requests/{{ r.request_number }}/edit">{{ r.request_number }}</a>
-        {% else %}
-        <a href="/requests/{{ r.request_number }}/view">{{ r.request_number }}</a>
-        {% endif %}
+        {# 2026-09-30: edit_url is resolved server-side -- the submitter's
+           own Edit page, the AP edit screen (All Requests, AP roles), or
+           the read-only view. #}
+        <a href="{{ r.edit_url }}">{{ r.request_number }}</a>
       </td>
       <td class="col-neededby">{{ r.requested_pay_date.strftime("%Y-%m-%d") if r.requested_pay_date else "—" }}</td>
       <td class="col-entity">{{ r.org_code }}</td>
