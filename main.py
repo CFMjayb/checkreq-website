@@ -3757,6 +3757,21 @@ def cleanup_gcs_attachment(payment_request_id: int) -> None:
 _W9_PDF_PATH = os.path.join(os.path.dirname(__file__), "static", "forms", "fw9.pdf")
 
 
+def _entity_base_url(org_id: int | None, request: Request) -> str:
+    """Base URL for a link emailed to someone OUTSIDE the app (a vendor's W-9
+    upload link). Jay, 2026-09-30: "the url of the secure upload should
+    reference the domain that the diocese is a part of -- EDOM should go to
+    beacon.episcopalmaryland.org". In production that is the entity's own
+    branded Beacon address (beacon_address.beacon_address, the same lookup
+    How Beacon Works uses; beacon.cfmins.org for an entity without one),
+    regardless of which hostname the AP reviewer happened to be signed in on.
+    On dev it stays the host the request came in on, so a dev test email
+    never links into production."""
+    if BEACON_ENV == "prod":
+        return "https://" + beacon_address.beacon_address(org_id)
+    return str(request.base_url).rstrip("/")
+
+
 def _send_w9_request_email(vr: dict, org_name: str, request: Request) -> dict:
     """Sends the W-9 request email for a just-approved vendor_request whose
     requires_w9 is TRUE (Section 4/4a). Attaches the official public IRS
@@ -3772,7 +3787,7 @@ def _send_w9_request_email(vr: dict, org_name: str, request: Request) -> dict:
     {"status": "sent"}, matching this project's existing archive_warning
     graceful-degradation pattern for a recoverable-but-visible failure."""
     vendor_name = _vendor_request_display_name(vr)
-    base_url = str(request.base_url).rstrip("/")
+    base_url = _entity_base_url(vr.get("org_id"), request)
     upload_url = f"{base_url}/vendor-w9-upload/{vr['upload_token']}"
     subject = f"W-9 Request — {vendor_name}"
     body_html = (
@@ -3815,7 +3830,8 @@ def _send_w9_request_email(vr: dict, org_name: str, request: Request) -> dict:
     )
 
 
-def _send_existing_vendor_w9_request_email(vendor: dict, org_name: str, request: Request) -> dict:
+def _send_existing_vendor_w9_request_email(vendor: dict, org_name: str, request: Request,
+                                            for_request: dict | None = None) -> dict:
     """Existing-vendor sibling of _send_w9_request_email above (2026-09-14,
     the YTD-threshold feature -- see _check_existing_vendor_w9). Same
     secure-upload-link mechanism, same attached blank W-9 PDF; addressed to
@@ -3825,13 +3841,28 @@ def _send_existing_vendor_w9_request_email(vendor: dict, org_name: str, request:
     raises -- caller stamps w9_requested_at only on a real {"status":
     "sent"}, same discipline as the new-vendor flow."""
     vendor_name = vendor["display_name"]
-    base_url = str(request.base_url).rstrip("/")
+    base_url = _entity_base_url(vendor.get("org_id"), request)
     upload_url = f"{base_url}/vendor-w9-upload/{vendor['w9_upload_token']}"
     subject = f"W-9 Request — {vendor_name}"
+    # 2026-09-30 (Jay): name the invoice/payment this is about, so the
+    # vendor can tell what it relates to. for_request = the payment
+    # request the AP reviewer sent it from (invoice # or description, amount).
+    about_html = about_text = ""
+    if for_request:
+        what = ((for_request.get("invoice_number") and f"Invoice {for_request['invoice_number']}")
+                or for_request.get("description") or "")
+        amount = for_request.get("amount")
+        amt = f"${float(amount):,.2f}" if amount is not None else ""
+        detail = " — ".join(x for x in (what, amt) if x)
+        if detail:
+            about_html = (f"<p>This is needed before we can release payment for: "
+                          f"<strong>{_esc(detail)}</strong>.</p>")
+            about_text = f"This is needed before we can release payment for: {detail}.\n\n"
     body_html = (
         f"<p>Hello,</p>"
         f"<p>{_esc(org_name)} needs a completed IRS Form W-9 on file for <strong>{_esc(vendor_name)}</strong>, "
         f"based on total payments so far this year.</p>"
+        f"{about_html}"
         f"<p>A blank W-9 is attached for reference. Please complete it and upload it "
         f"using the secure link below:</p>"
         f'<p><a href="{upload_url}">{upload_url}</a></p>'
@@ -3841,6 +3872,7 @@ def _send_existing_vendor_w9_request_email(vendor: dict, org_name: str, request:
         f"Hello,\n\n"
         f"{org_name} needs a completed IRS Form W-9 on file for {vendor_name}, based on total "
         f"payments so far this year.\n\n"
+        f"{about_text}"
         f"A blank W-9 is attached for reference. Please complete it and upload it using "
         f"this secure link:\n{upload_url}\n\n"
         f"Thank you,\n{org_name} Business Office"
@@ -8155,7 +8187,8 @@ def ap_review_request_existing_vendor_w9(request_number: str, request: Request):
         return err
 
     pr = db.query_one(
-        "SELECT pr.vendor_id, pr.org_id, o.name AS org_name FROM checkreq.payment_requests pr "
+        "SELECT pr.id, pr.vendor_id, pr.org_id, pr.description, pr.amount, pr.invoice_number, "
+        "o.name AS org_name FROM checkreq.payment_requests pr "
         "JOIN checkreq.organizations o ON o.id = pr.org_id "
         "WHERE pr.request_number = %s",
         (request_number,),
@@ -8191,8 +8224,27 @@ def ap_review_request_existing_vendor_w9(request_number: str, request: Request):
             )
     vendor["w9_upload_token"] = token
 
-    result = _send_existing_vendor_w9_request_email(vendor, pr["org_name"], request)
-    if result.get("status") == "sent":
+    resend = bool(vendor.get("w9_requested_at"))
+    result = _send_existing_vendor_w9_request_email(vendor, pr["org_name"], request, for_request=pr)
+    # 2026-09-30 (Jay): record every W-9 request in the request's history --
+    # sent or failed, to whom, and by whom.
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+    sent_ok = result.get("status") == "sent"
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, impersonated_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (pr["id"], user["id"],
+                 ("W-9 Request Resent" if resend else "W-9 Request Sent") if sent_ok else "W-9 Request Failed",
+                 (f"W-9 request emailed to {vendor['email']} for {vendor['display_name']} "
+                  f"(secure upload link, valid {_W9_TOKEN_LIFETIME_DAYS} days)." if sent_ok else
+                  f"W-9 request email to {vendor['email']} failed: {result.get('error', 'unknown error')}"),
+                 impersonated_by),
+            )
+    if sent_ok:
         with db.connect() as conn:
             with conn.cursor() as cur:
                 # M11: w9_requested_at = NOW() extends the 7-day expiry
