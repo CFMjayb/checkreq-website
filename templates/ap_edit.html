@@ -1,0 +1,340 @@
+{% extends "base.html" %}
+{#
+ap_edit.html -- AP edit screen (2026-09-30). Beacon Admin / AP Reviewer / CFO
+at the request's entity can see the whole request (voucher, invoice viewer,
+attachments, history) and edit it, whoever submitted it. Saving never
+restarts the approval chain; an AwaitingCoding request gets "Save & Start
+Approval" instead. See main.py's ap_edit_form / ap_edit_submit.
+#}
+{% block title %}{{ request_number }} — AP Edit{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/vendor/tomselect/tom-select.default.min.css">
+<link rel="stylesheet" href="/static/css/check_voucher.css?v={{ asset_version('css/check_voucher.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<div class="view-header-row">
+  <h1>{{ request_number }}</h1>
+  <span class="badge badge-{{ pr_status|lower|replace(' ', '-') }}">{{ pr_status }}</span>
+</div>
+<p class="back-link"><a href="{{ back_url }}">&larr; Back</a>
+  · <a href="/requests/{{ request_number }}/pdf" target="_blank">Open as PDF</a></p>
+
+{% if saved %}<div class="banner banner-success">Changes saved.</div>{% endif %}
+{% if request.query_params.get('w9_waived') %}<div class="banner banner-success">W-9 waiver updated.</div>{% endif %}
+{% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+{% if not editable %}<div class="banner banner-info">This request is {{ pr_status }} and can no longer be edited.</div>{% endif %}
+
+<div class="ap-edit-grid">
+<div class="ap-edit-left">
+
+  <div class="card ap-edit-card">
+    <h2>Request</h2>
+    <dl class="ap-facts">
+      <dt>Entity</dt><dd>{{ pr.org_name }}</dd>
+      <dt>Submitted by</dt><dd>{{ voucher_requested_by or "—" }}{% if pr.created_at %} · {{ pr.created_at.strftime("%Y-%m-%d") }}{% endif %}</dd>
+      <dt>Type</dt><dd>{{ "Invoice" if pr.request_type == "invoice_payment" else "Check Request" }}</dd>
+      <dt>Approval</dt><dd class="pre">{{ pr.approval_chain_summary or "—" }}</dd>
+      {% if pr.existing_vendor_w9_flagged %}<dt>W-9</dt><dd>{{ pr.existing_vendor_w9_detail }}</dd>{% endif %}
+      {% if pr.overspend_flagged %}<dt>Budget</dt><dd class="pre">{{ pr.overspend_detail }}</dd>{% endif %}
+    </dl>
+  </div>
+
+  {% if editable %}
+  <form method="post" action="/requests/{{ request_number }}/ap-edit" class="card ap-edit-card" id="apEditForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <h2>Edit</h2>
+    <p class="sub">Changes are saved to this request and recorded in its history.
+      {% if pr_status == 'AwaitingCoding' %}Add the GL coding, then <b>Save &amp; Start Approval</b> to send it to its approvers.
+      {% else %}Saving does not restart the approval chain.{% endif %}</p>
+
+    <div class="field">
+      <label for="apVendor">Vendor</label>
+      {% if new_vendor_name and not vendor %}
+      <div class="sub">New vendor (not yet in QuickBooks): <b>{{ new_vendor_name }}</b> — pick an existing vendor below to replace it, or leave blank to keep it.</div>
+      {% endif %}
+      <select id="apVendor" name="vendor_id">
+        {% if vendor %}<option value="{{ vendor.id }}" selected>{{ vendor.display_name }}</option>{% endif %}
+      </select>
+    </div>
+
+    <div class="ap-edit-row">
+      <div class="field">
+        <label for="apProgramArea">Program Area</label>
+        <select id="apProgramArea" name="program_area_id">
+          {% if not pr.program_area_id %}<option value="" selected>All Program Areas</option>{% endif %}
+          {% for p in program_areas %}
+          <option value="{{ p.id }}" {% if p.id == pr.program_area_id %}selected{% endif %}>{{ p.title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="apPayDate">Pay Date</label>
+        <input type="date" id="apPayDate" name="requested_pay_date"
+               value="{{ pr.requested_pay_date.isoformat() if pr.requested_pay_date else '' }}">
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="apDescription">Description</label>
+      <textarea id="apDescription" name="description" rows="2">{{ pr.description or "" }}</textarea>
+    </div>
+    <div class="field">
+      <label for="apSpecial">Special Instructions</label>
+      <textarea id="apSpecial" name="special_instructions" rows="2">{{ pr.special_instructions or "" }}</textarea>
+    </div>
+
+    <div class="field">
+      <label>GL Coding</label>
+      <table class="simple-table ap-gl-table">
+        <thead><tr><th>Account</th><th class="num">Amount</th><th>Memo</th><th></th></tr></thead>
+        <tbody id="apGlLines"></tbody>
+      </table>
+      <button type="button" class="btn btn-secondary btn-sm" id="apAddLine">+ Add GL line</button>
+      <div class="ap-total">Total: <b id="apGlTotal">$0.00</b>
+        <span class="sub">(request amount was ${{ "{:,.2f}".format(pr.amount or 0) }}; the total of the GL lines becomes the request amount)</span></div>
+    </div>
+
+    <div class="field" id="apAmountWrap" hidden>
+      <label for="apAmount">Amount (no GL coding yet)</label>
+      <input type="number" step="0.01" id="apAmount" name="amount" value="{{ '%.2f'|format(pr.amount or 0) }}">
+    </div>
+
+    <div class="ap-edit-buttons">
+      <button type="submit" name="action" value="save" class="btn {{ 'btn-secondary' if pr_status == 'AwaitingCoding' else 'btn-primary' }}">Save Changes</button>
+      {% if pr_status == 'AwaitingCoding' %}
+      <button type="submit" name="action" value="save_start" class="btn btn-primary">Save &amp; Start Approval</button>
+      {% endif %}
+      <a href="{{ back_url }}" class="btn btn-secondary">Cancel</a>
+    </div>
+  </form>
+
+  <div class="card ap-edit-card">
+    <h2>W-9</h2>
+    {% if vendor and vendor.w9_on_file %}
+      <p>W-9 is on file for {{ vendor.display_name }}.</p>
+    {% elif vendor and vendor.w9_not_required %}
+      <p><b>{{ vendor.display_name }} never needs a W-9.</b> <span class="sub">Reason: {{ vendor.w9_not_required_reason }}</span></p>
+      <form method="post" action="/requests/{{ request_number }}/w9-waiver" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="scope" value="clear_vendor"><input type="hidden" name="back" value="ap-edit">
+        <button type="submit" class="btn btn-secondary btn-sm">Remove "never needs W-9"</button>
+      </form>
+    {% else %}
+      <p class="sub">{% if w9_hold %}Posting is on hold until a W-9 is received.{% else %}No W-9 hold on this request.{% endif %}</p>
+      {% if vendor %}
+      <form method="post" action="/requests/{{ request_number }}/w9-waiver" class="ap-w9-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="scope" value="vendor"><input type="hidden" name="back" value="ap-edit">
+        <input type="text" name="reason" placeholder="Reason, e.g. corporation" required>
+        <button type="submit" class="btn btn-secondary btn-sm">{{ vendor.display_name }} never needs a W-9</button>
+      </form>
+      {% endif %}
+    {% endif %}
+    {% if pr.w9_override %}
+      <p><b>W-9 waived for this request.</b> <span class="sub">Reason: {{ pr.w9_override_reason }}</span></p>
+      <form method="post" action="/requests/{{ request_number }}/w9-waiver" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="scope" value="clear_request"><input type="hidden" name="back" value="ap-edit">
+        <button type="submit" class="btn btn-secondary btn-sm">Remove waiver</button>
+      </form>
+    {% elif not (vendor and (vendor.w9_on_file or vendor.w9_not_required)) %}
+      <form method="post" action="/requests/{{ request_number }}/w9-waiver" class="ap-w9-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="scope" value="request"><input type="hidden" name="back" value="ap-edit">
+        <input type="text" name="reason" placeholder="Reason" required>
+        <button type="submit" class="btn btn-secondary btn-sm">Post this request without a W-9</button>
+      </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="card ap-edit-card">
+    <h2>Attachments</h2>
+    {% if attachments %}
+    <ul class="attachment-list ap-attachments">
+      {% for a in attachments %}
+      <li>
+        <button type="button" class="link-button ap-view-att" data-att-id="{{ a.id }}"
+                data-content-type="{{ a.content_type }}" data-source="{{ a.source }}">{{ a.original_filename }}</button>
+        <span class="sub">({{ (a.size_bytes / 1024)|round(1) }} KB{% if a.source == 'generated_pdf' %}, check request{% endif %})</span>
+        {% if editable %}
+        <form method="post" action="/requests/{{ request_number }}/attachments/{{ a.id }}/remove?back=ap-edit"
+              class="inline-form" data-confirm="Remove {{ a.original_filename }} from this request? (It stays archived in SharePoint.)">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <button type="submit" class="link-button">Remove</button>
+        </form>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="sub">No attachments.</p>
+    {% endif %}
+    {% if editable %}
+    <form method="post" action="/requests/{{ request_number }}/attachments/add?back=ap-edit"
+          enctype="multipart/form-data" id="apUploadForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <input type="file" name="attachments" id="apUploadInput" hidden accept=".pdf,image/*">
+      <button type="button" class="btn btn-secondary btn-sm" id="apUploadBtn">Upload File</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <details class="card ap-edit-card ap-section">
+    <summary><h2>Check Request (current)</h2></summary>
+    {% include "check_voucher.html" %}
+  </details>
+
+  <details class="card ap-edit-card ap-section" open>
+    <summary><h2>History</h2></summary>
+    {% if history %}
+    <table class="simple-table ap-history">
+      <tr><th>Date</th><th>Action</th><th>By</th><th>Status</th><th>Detail</th></tr>
+      {% for h in history %}
+      <tr>
+        <td class="nowrap">{{ h.action_date.strftime("%Y-%m-%d %H:%M") }}</td>
+        <td>{{ h.action_type }}</td>
+        <td>{{ h.actor_name or "—" }}</td>
+        <td>{% if h.previous_status and h.previous_status != h.new_status %}{{ h.previous_status }} &rarr; {% endif %}{{ h.new_status or "—" }}</td>
+        <td class="pre">{{ h.comment or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}<p class="sub">No history recorded.</p>{% endif %}
+  </details>
+</div>
+
+<div class="ap-edit-right">
+  <div class="card ap-viewer-card">
+    <div class="ap-viewer-head"><b id="apViewerTitle">Document</b>
+      <a id="apViewerOpen" href="#" target="_blank" hidden>Open in new tab</a></div>
+    <div id="apViewer" class="ap-viewer"><p class="sub">No document to show.</p></div>
+  </div>
+</div>
+</div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/vendor/tomselect/tom-select.complete.min.js"></script>
+<script>
+(function () {
+  const ORG_ID = {{ pr.org_id|tojson }};
+  const REQ = {{ request_number|tojson }};
+  const INITIAL_LINES = {{ gl_lines|tojson }};
+
+  // ── Document viewer (Standing UI-UX Rule 8) ──
+  const viewer = document.getElementById('apViewer');
+  const title = document.getElementById('apViewerTitle');
+  const openLink = document.getElementById('apViewerOpen');
+  function showAttachment(btn) {
+    const url = `/requests/${REQ}/attachments/${btn.dataset.attId}/view`;
+    const ct = btn.dataset.contentType || '';
+    title.textContent = btn.textContent.trim();
+    openLink.href = url; openLink.hidden = false;
+    viewer.innerHTML = '';
+    if (ct.startsWith('image/')) {
+      const img = document.createElement('img'); img.src = url; img.alt = title.textContent;
+      viewer.appendChild(img);
+    } else {
+      const f = document.createElement('iframe'); f.src = url; f.title = title.textContent;
+      viewer.appendChild(f);
+    }
+    document.querySelectorAll('.ap-view-att').forEach(b => b.classList.toggle('active', b === btn));
+  }
+  const attBtns = Array.from(document.querySelectorAll('.ap-view-att'));
+  attBtns.forEach(b => b.addEventListener('click', () => showAttachment(b)));
+  // Default to the invoice the submitter uploaded, not the generated voucher.
+  const firstUpload = attBtns.find(b => b.dataset.source !== 'generated_pdf');
+  if (firstUpload || attBtns[0]) showAttachment(firstUpload || attBtns[0]);
+
+  // ── Upload File (Standing UI-UX Rule 7) ──
+  const upBtn = document.getElementById('apUploadBtn');
+  if (upBtn) {
+    const inp = document.getElementById('apUploadInput');
+    upBtn.addEventListener('click', () => inp.click());
+    inp.addEventListener('change', () => {
+      if (!inp.files.length) return;
+      showButtonLoading(upBtn);
+      document.getElementById('apUploadForm').submit();
+    });
+  }
+
+  const form = document.getElementById('apEditForm');
+  if (!form) return;
+
+  // ── Vendor picker ──
+  new TomSelect('#apVendor', {
+    valueField: 'id', labelField: 'display_name', searchField: 'display_name',
+    placeholder: 'Search vendors...', preload: 'focus', maxItems: 1,
+    load: function (q, cb) {
+      fetch(`/api/vendors/${ORG_ID}?q=${encodeURIComponent(q)}`)
+        .then(r => r.json()).then(d => cb(Array.isArray(d) ? d : [])).catch(() => cb());
+    },
+  });
+
+  // ── GL lines ── (any active GL account of this entity -- AP is not
+  // limited to the program area's own curated list)
+  const tbody = document.getElementById('apGlLines');
+  const totalEl = document.getElementById('apGlTotal');
+  const amountWrap = document.getElementById('apAmountWrap');
+  function recalc() {
+    let t = 0, n = 0;
+    tbody.querySelectorAll('tr').forEach(tr => {
+      const v = parseFloat(tr.querySelector('input[name="gl_amount"]').value);
+      if (!isNaN(v)) { t += v; n++; }
+    });
+    totalEl.textContent = '$' + t.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    amountWrap.hidden = n > 0;
+  }
+  function addLine(line) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><select name="gl_account_id"></select></td>
+      <td class="num"><input type="number" step="0.01" name="gl_amount" placeholder="0.00"></td>
+      <td><input type="text" name="gl_memo" placeholder="Optional memo"></td>
+      <td><button type="button" class="link-button ap-remove-line" title="Remove line">Remove</button></td>`;
+    tbody.appendChild(tr);
+    const sel = tr.querySelector('select');
+    const amt = tr.querySelector('input[name="gl_amount"]');
+    const memo = tr.querySelector('input[name="gl_memo"]');
+    const ts = new TomSelect(sel, {
+      valueField: 'id', labelField: 'label', searchField: ['label'],
+      placeholder: 'Search account number or name...', preload: 'focus', maxItems: 1,
+      options: line ? [{id: line.gl_account_id, label: line.label}] : [],
+      items: line ? [String(line.gl_account_id)] : [],
+      load: function (q, cb) {
+        fetch(`/api/gl-accounts/${ORG_ID}?q=${encodeURIComponent(q)}`)
+          .then(r => r.json())
+          .then(d => cb((Array.isArray(d) ? d : []).map(a => ({id: a.id, label: `${a.account_number} - ${a.account_name}`}))))
+          .catch(() => cb());
+      },
+    });
+    if (line) { ts.setValue(String(line.gl_account_id), true); amt.value = line.amount.toFixed(2); memo.value = line.memo || ''; }
+    amt.addEventListener('input', recalc);
+    tr.querySelector('.ap-remove-line').addEventListener('click', () => { ts.destroy(); tr.remove(); recalc(); });
+    recalc();
+  }
+  INITIAL_LINES.forEach(addLine);
+  if (!INITIAL_LINES.length) addLine(null);
+  document.getElementById('apAddLine').addEventListener('click', () => addLine(null));
+
+  form.addEventListener('submit', (e) => {
+    if (e.defaultPrevented) return;
+    // Drop blank GL rows so a half-added line never blocks a save.
+    tbody.querySelectorAll('tr').forEach(tr => {
+      const acct = tr.querySelector('select[name="gl_account_id"]').value;
+      const amt = tr.querySelector('input[name="gl_amount"]').value;
+      if (!acct && !amt) tr.querySelectorAll('select,input').forEach(el => el.disabled = true);
+    });
+    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+    if (e.submitter && e.submitter.name) {
+      // A disabled submitter is not sent -- carry its action explicitly.
+      const h = document.createElement('input');
+      h.type = 'hidden'; h.name = e.submitter.name; h.value = e.submitter.value;
+      form.appendChild(h);
+    }
+  });
+})();
+</script>
+{% endblock %}

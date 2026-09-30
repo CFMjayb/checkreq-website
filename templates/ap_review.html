@@ -32,40 +32,38 @@ that writes to QuickBooks.</p>
 </div>
 {% endif %}
 
+{% if edited %}<div class="banner banner-success">Saved changes to {{ edited }}.</div>{% endif %}
+{% if w9_waived %}<div class="banner banner-success">W-9 waiver recorded for {{ w9_waived }}.</div>{% endif %}
+{% if request.query_params.get('coded') %}<div class="banner banner-success">GL coding assigned -- approval started.</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
+
 {% if coding_rows %}
-{# Ask My Accountant (2026-08-16): requests where the submitter picked a
-   Program Area but skipped GL Coding -- same screen/role as the rest of
-   AP Review, per Jay's explicit answer. Assigning GL line(s) here is what
-   starts the approval chain (approval_engine.build_approval_chain(),
-   reused unchanged). #}
-<div class="card">
-  <h2 style="padding:16px 16px 0">Needs GL Coding</h2>
-  <p class="sub" style="padding:0 16px">These requests skipped GL Coding at submission -- assign the real GL
-  line(s) below to start the approval chain.</p>
-  {% for r in coding_rows %}
-  <form method="post" action="/requests/{{ r.request_number }}/assign-gl-coding" class="coding-row" style="padding:16px;border-top:1px solid var(--border,#e0dccf)">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <div class="coding-row-head">
-      <b>{{ r.request_number }}</b> &middot; {{ r.org_code }} &middot; {{ r.vendor_name }} &middot;
-      ${{ "%.2f"|format(r.amount) }} &middot; {{ r.program_area_title }} &middot;
-      Submitted by {{ r.submitter_name or r.submitter_email }}
-    </div>
-    <div id="codingLines-{{ r.pr_id }}" class="gl-lines-scroll">
-      <div class="gl-line">
-        <div class="field">
-          <select name="gl_account_id" class="codingGlAccount" data-request-number="{{ r.request_number }}" required>
-            <option value="">Account...</option>
-          </select>
-        </div>
-        <div class="field"><input type="number" step="0.01" name="gl_amount" placeholder="0.00" required></div>
-        <div class="field"><input type="text" name="gl_memo" placeholder="Optional memo"></div>
-      </div>
-    </div>
-    <button type="button" class="btn btn-secondary btn-sm" onclick="addCodingLine({{ r.pr_id }}, '{{ r.request_number }}')">+ Add GL line</button>
-    <button type="submit" class="btn btn-sm">Assign &amp; Start Approval</button>
-  </form>
-  {% endfor %}
-</div>
+{# 2026-09-30 (Jay): the old inline Account/Amount/Memo form showed nothing
+   about the request itself. Now a collapsible list; each request opens the
+   AP edit screen (full request + invoice + edit + "Save & Start Approval"). #}
+<details class="card ap-section" open>
+  <summary><h2>Needs GL Coding <span class="count-pill">{{ coding_rows|length }}</span></h2></summary>
+  <p class="sub">These requests skipped GL Coding at submission. Open one to see the full request and invoice,
+  correct anything that needs it, add the GL coding, and start its approval.</p>
+  <table class="simple-table ap-compact-table">
+    <tr>
+      <th>Request #</th><th>Entity</th><th>Vendor</th><th>Program Area</th>
+      <th>Description</th><th>Submitted By</th><th class="num">Amount</th><th></th>
+    </tr>
+    {% for r in coding_rows %}
+    <tr>
+      <td class="nowrap"><a href="/requests/{{ r.request_number }}/ap-edit"><b>{{ r.request_number }}</b></a></td>
+      <td>{{ r.org_code }}</td>
+      <td>{{ r.vendor_name }}</td>
+      <td>{{ r.program_area_title }}</td>
+      <td class="desc-cell">{{ r.description or "—" }}</td>
+      <td>{{ r.submitter_name or r.submitter_email }}</td>
+      <td class="num">${{ "{:,.2f}".format(r.amount) }}</td>
+      <td class="nowrap"><a class="btn btn-primary btn-sm" href="/requests/{{ r.request_number }}/ap-edit">Open &amp; Code</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</details>
 {% endif %}
 
 <div class="view-toggle" role="tablist" aria-label="AP Review view">
@@ -104,14 +102,14 @@ that writes to QuickBooks.</p>
 </form>
 
 <div class="card">
-<div class="table-scroll">
-  <table class="simple-table approvals-table">
+  {# 2026-09-30 (Jay): no horizontal scroll bar, less detail. Chain summary
+     and the W-9 sentence moved off the row (both are on the AP edit screen);
+     actions stack vertically so the table always fits the page. #}
+  <table class="simple-table ap-compact-table">
     <tr>
       <th class="col-select"><input type="checkbox" id="selectAllCheckbox" title="Select all postable rows"></th>
-      <th class="col-reqnum">Request #</th><th class="col-type">Type</th><th class="col-entity">Entity</th>
-      <th class="col-program">Program Area</th><th class="col-vendor">Vendor</th>
-      <th class="col-submitter">Submitted By</th><th class="col-amount">Amount</th>
-      <th class="col-program">Chain Summary</th><th class="col-status">Status</th><th class="col-actions">Actions</th>
+      <th>Request #</th><th>Entity</th><th>Vendor</th><th>Program Area</th>
+      <th>Submitted By</th><th class="num">Amount</th><th>Status</th><th>Actions</th>
     </tr>
     {% for r in rows %}
     <tr>
@@ -120,88 +118,80 @@ that writes to QuickBooks.</p>
         <input type="checkbox" class="batchSelectCheckbox" value="{{ r.request_number }}">
         {% endif %}
       </td>
-      <td class="col-reqnum"><a href="/requests/{{ r.request_number }}/view">{{ r.request_number }}</a></td>
-      <td class="col-type">{{ r.type_abbr }}</td>
-      <td class="col-entity">{{ r.org_code }}</td>
-      <td class="col-program program-area-cell">{{ r.program_area_title }}</td>
-      <td class="col-vendor">{{ r.vendor_name }}</td>
-      <td class="col-submitter">{{ r.submitter_name or r.submitter_email }}</td>
-      <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
-      <td class="col-program">
-        <span class="sub">{{ r.approval_chain_summary or "—" }}</span>
-        {% if r.overspend_flagged %}
-        <br><span class="sub overspend-detail">{{ (r.overspend_detail or "") | e | replace("\n", "<br>") | safe }}</span>
-        {% endif %}
-        {% if r.existing_vendor_w9_flagged and not r.w9_on_file %}
-        <br><span class="sub overspend-detail">{{ r.existing_vendor_w9_detail or "" }}</span>
-        {% endif %}
-      </td>
-      <td class="col-status">
+      <td class="nowrap"><a href="/requests/{{ r.request_number }}/ap-edit"><b>{{ r.request_number }}</b></a>
+        <div class="sub">{{ r.type_abbr }}</div></td>
+      <td>{{ r.org_code }}</td>
+      <td>{{ r.vendor_name }}</td>
+      <td>{{ r.program_area_title }}</td>
+      <td>{{ r.submitter_name or r.submitter_email }}</td>
+      <td class="num">${{ "{:,.2f}".format(r.amount) }}</td>
+      <td>
         {% if r.vendor_gate_wait %}
-        <span class="badge badge-pending">Waiting: {{ r.vendor_gate_wait }}</span>
+        <span class="badge badge-pending" title="{{ r.existing_vendor_w9_detail or r.vendor_gate_wait }}">{{ r.vendor_gate_wait }}</span>
         {% if r.existing_vendor_w9_flagged and r.w9_requested_at %}
-        <br><span class="sub">W-9 requested {{ r.w9_requested_at }}</span>
+        <div class="sub">W-9 requested {{ r.w9_requested_at.strftime("%Y-%m-%d") }}</div>
         {% endif %}
         {% else %}
         <span class="badge badge-approved">Ready to post</span>
         {% endif %}
+        {% if r.w9_waiver_note %}<div class="sub">{{ r.w9_waiver_note }}</div>{% endif %}
         {% if r.overspend_flagged %}
-        <br><span class="badge badge-overspend" title="Allowed over budget (Allow Overspend = Yes) -- review before posting.">Over Budget (Allowed)</span>
+        <div><span class="badge badge-overspend" title="{{ r.overspend_detail or '' }}">Over Budget (Allowed)</span></div>
         {% endif %}
       </td>
-      <td class="col-actions">
-        <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a>
-        {# 2026-09-14: existing-vendor YTD W-9 hold's own collection
-           action -- distinct from the new-vendor gate above (that one is
-           collected via Vendor Approvals, not here). Only shown for the
-           existing-vendor case (existing_vendor_w9_flagged, not
-           vendor_request_id) so it never appears alongside the unrelated
-           new-vendor gate. #}
-        {% if r.existing_vendor_w9_flagged and not r.w9_on_file %}
-        {# M11 (Security Assessment 2026-09-19): a file arriving no longer
-           confirms anything by itself -- once w9_uploaded_at is set, this
-           becomes the real gate (Confirm W-9 Received, sets w9_on_file).
-           Resend still shows alongside it -- staff who open the uploaded
-           file and find it wrong can click Resend to re-open the window
-           for a redo, same as before anything was uploaded at all. #}
+      <td class="ap-actions">
+        <form method="post" action="/requests/{{ r.request_number }}/post-to-qbo"
+              {% if BEACON_ENV == 'dev' %}data-confirm="DEV ENVIRONMENT: this will create a REAL Vendor/Bill in the live, production {{ r.org_code }} QuickBooks company. There is no dev/test QuickBooks -- this is not a drill. Continue?"{% endif %}>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <input type="hidden" name="dev_confirmed" value="1">
+          <button type="submit" class="btn btn-primary btn-sm"
+                  {% if r.vendor_gate_wait %}disabled title="{{ r.vendor_gate_wait }}"{% endif %}>Post to QBO</button>
+        </form>
+        {% if r.can_waive_w9 %}
+        {# 2026-09-30: post without a W-9 -- once for this request, or never
+           again for this vendor. Reason required (prompted), logged. #}
+        <form method="post" action="/requests/{{ r.request_number }}/w9-waiver" data-prompt-reason="reason"
+              data-prompt-text="Reason for posting {{ r.request_number }} without a W-9 (required):">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <input type="hidden" name="scope" value="request"><input type="hidden" name="reason" value="">
+          <button type="submit" class="btn btn-secondary btn-sm">Post without W-9</button>
+        </form>
+        {% if r.existing_vendor_id %}
+        <form method="post" action="/requests/{{ r.request_number }}/w9-waiver" data-prompt-reason="reason"
+              data-prompt-text="Why does {{ r.vendor_name }} never need a W-9 (e.g. it is a corporation)? This applies to all its requests.">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <input type="hidden" name="scope" value="vendor"><input type="hidden" name="reason" value="">
+          <button type="submit" class="btn btn-secondary btn-sm">Vendor never needs W-9</button>
+        </form>
+        {% endif %}
+        {% endif %}
+        {% if r.existing_vendor_w9_flagged and r.vendor_gate_wait %}
         {% if r.existing_vendor_w9_needs_review %}
-        · <form method="post" action="/admin/ap-review/{{ r.request_number }}/confirm-existing-vendor-w9" style="display:inline">
+        <form method="post" action="/admin/ap-review/{{ r.request_number }}/confirm-existing-vendor-w9">
           <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-            <button type="submit" class="btn btn-primary btn-sm">Confirm W-9 Received</button>
-          </form>
+          <button type="submit" class="btn btn-primary btn-sm">Confirm W-9 Received</button>
+        </form>
         {% endif %}
-        · <form method="post" action="/admin/ap-review/{{ r.request_number }}/request-existing-vendor-w9" style="display:inline">
+        <form method="post" action="/admin/ap-review/{{ r.request_number }}/request-existing-vendor-w9">
           <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-            <button type="submit" class="btn btn-secondary btn-sm">
-              {{ "Resend W-9 Request" if r.w9_requested_at else "Send W-9 Request" }}
-            </button>
-          </form>
+          <button type="submit" class="btn btn-secondary btn-sm">{{ "Resend W-9 Request" if r.w9_requested_at else "Send W-9 Request" }}</button>
+        </form>
         {% endif %}
-        {# Dev/Prod Split Plan.md (2026-07-31), Decision 4: dev is allowed to
-           post real Bills to the real, live production QuickBooks -- there
-           is no QBO sandbox -- but only behind an explicit, hard-to-miss
-           confirmation naming the real company, never a bare click. The
-           server-side check in main.py's post_to_qbo() is the real
-           backstop; this dialog is the actual UX Jay asked for. #}
-        · <form method="post" action="/requests/{{ r.request_number }}/post-to-qbo" style="display:inline"
-                {% if BEACON_ENV == 'dev' %}data-confirm="DEV ENVIRONMENT: this will create a REAL Vendor/Bill in the live, production {{ r.org_code }} QuickBooks company. There is no dev/test QuickBooks -- this is not a drill. Continue?"{% endif %}>
-          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-            <input type="hidden" name="dev_confirmed" value="1">
-            <button type="submit" class="btn btn-primary btn-sm"
-                    {% if r.vendor_gate_wait %}disabled title="{{ r.vendor_gate_wait }}"{% endif %}>Post to QBO</button>
-          </form>
-        · <form method="post" action="/requests/{{ r.request_number }}/ap-return" style="display:inline" data-prompt-reason="return_reason">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <div class="ap-links">
+          <a href="/requests/{{ r.request_number }}/ap-edit">Edit</a> ·
+          <a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a> ·
+          <form method="post" action="/requests/{{ r.request_number }}/ap-return" class="inline-form" data-prompt-reason="return_reason">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
             <input type="hidden" name="return_reason" value="">
-            <button type="submit" class="btn btn-secondary btn-sm">Return to Submitter</button>
+            <button type="submit" class="link-button">Return to Submitter</button>
           </form>
+        </div>
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="11">Nothing waiting for AP review.</td></tr>
+    <tr><td colspan="9">Nothing waiting for AP review.</td></tr>
     {% endfor %}
   </table>
-</div>
 </div>
 </div>
 {% endblock %}
@@ -215,45 +205,9 @@ that writes to QuickBooks.</p>
 document.addEventListener('submit', function (e) {
   var form = e.target;
   if (!(form && form.hasAttribute && form.hasAttribute('data-prompt-reason'))) return;
-  var reason = prompt("Reason for returning this request to the submitter (required):", "");
+  var reason = prompt(form.getAttribute('data-prompt-text') || "Reason for returning this request to the submitter (required):", "");
   if (!reason) { alert("A reason is required."); e.preventDefault(); return; }
   form.querySelector('input[name="' + form.getAttribute('data-prompt-reason') + '"]').value = reason;
-});
-
-// Ask My Accountant (2026-08-16): populate each "Needs GL Coding" row's
-// account picker(s) once, from that request's own org (not the session's
-// current one -- an AP reviewer coding a request may not have that entity
-// selected). Plain <select>, not Tom Select, to keep this addition small.
-async function loadCodingGlOptions(requestNumber, selectEl) {
-  try {
-    const r = await fetch(`/requests/${requestNumber}/gl-account-options`);
-    const data = await r.json();
-    (Array.isArray(data) ? data : (data.accounts || [])).forEach(a => {
-      const opt = document.createElement('option');
-      opt.value = a.id;
-      opt.textContent = `${a.account_number} - ${a.account_name}`;
-      selectEl.appendChild(opt);
-    });
-  } catch (e) {
-    console.error('Could not load GL account options', e);
-  }
-}
-
-function addCodingLine(prId, requestNumber) {
-  const container = document.getElementById(`codingLines-${prId}`);
-  const line = document.createElement('div');
-  line.className = 'gl-line';
-  line.innerHTML = `
-    <div class="field"><select name="gl_account_id" class="codingGlAccount" required><option value="">Account...</option></select></div>
-    <div class="field"><input type="number" step="0.01" name="gl_amount" placeholder="0.00" required></div>
-    <div class="field"><input type="text" name="gl_memo" placeholder="Optional memo"></div>
-  `;
-  container.appendChild(line);
-  loadCodingGlOptions(requestNumber, line.querySelector('.codingGlAccount'));
-}
-
-document.querySelectorAll('.codingGlAccount').forEach(sel => {
-  loadCodingGlOptions(sel.dataset.requestNumber, sel);
 });
 
 // 2026-09-10 (Jay): "when you post to QBO, there is no indication that it

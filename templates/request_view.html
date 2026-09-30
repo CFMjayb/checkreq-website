@@ -14,6 +14,7 @@
 <p class="sub">
   <a href="/portal" onclick="history.back(); return false;">&larr; Back</a>
   · <a href="/requests/{{ request_number }}/pdf" target="_blank">Open as PDF</a>
+  {% if can_ap_edit %} · <a href="/requests/{{ request_number }}/ap-edit"><b>Edit (AP)</b></a>{% endif %}
 </p>
 
 {% include "check_voucher.html" %}

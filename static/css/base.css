@@ -942,3 +942,63 @@ a.module-tile:hover { box-shadow: var(--shadow-card-hover); transform: translate
   margin-right: var(--space-2);
   display: block;
 }
+
+/* ── AP Review compact table + AP edit screen (2026-09-30) ──────────────
+   Jay: "this screen should also not have a scroll bar" and "a little bit
+   too much detail." The AP tables wrap text instead of scrolling sideways
+   and stack their actions vertically. .ap-section reuses the proven
+   <details>/<summary> collapse pattern (see .doc-area above), including the
+   author-rule display:none that makes collapse actually work. */
+.ap-section > summary { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; list-style: none; padding: var(--space-1) 0; }
+.ap-section > summary::-webkit-details-marker { display: none; }
+.ap-section > summary::before { content: '\25be'; display: inline-block; transition: transform 0.15s ease; }
+.ap-section:not([open]) > summary::before { transform: rotate(-90deg); }
+.ap-section > summary h2 { margin: 0; }
+.ap-section:not([open]) > *:not(summary) { display: none !important; }
+.count-pill { display: inline-block; min-width: 1.6em; padding: 0 0.5em; margin-left: var(--space-2); border-radius: 999px; background: var(--color-franciscan-green); color: #fff; font-size: 0.8rem; text-align: center; vertical-align: middle; }
+table.ap-compact-table { width: 100%; table-layout: auto; border-collapse: collapse; }
+table.ap-compact-table th, table.ap-compact-table td { white-space: normal; overflow-wrap: break-word; vertical-align: top; }
+table.ap-compact-table th { white-space: nowrap; }
+table.ap-compact-table .num { text-align: right; white-space: nowrap; }
+table.ap-compact-table .nowrap { white-space: nowrap; }
+table.ap-compact-table .desc-cell { max-width: 28em; }
+table.ap-compact-table .col-select { width: 32px; text-align: center; }
+td.ap-actions { width: 1%; min-width: 150px; }
+td.ap-actions form { display: block; margin: 0 0 var(--space-1); }
+td.ap-actions .btn { width: 100%; white-space: nowrap; }
+td.ap-actions .ap-links { font-size: 0.85rem; white-space: nowrap; }
+.inline-form { display: inline; margin: 0; }
+
+.ap-edit-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-5); align-items: start; }
+.ap-edit-right { position: sticky; top: var(--space-4); }
+.ap-edit-card { margin-bottom: var(--space-4); padding: var(--space-4); }
+.ap-edit-card h2 { font-size: 1.1rem; margin: 0 0 var(--space-2); }
+.ap-facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-3); margin: 0; font-size: 0.9rem; }
+.ap-facts dt { color: var(--color-text-muted); }
+.ap-facts dd { margin: 0; }
+.pre { white-space: pre-wrap; }
+.ap-edit-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.ap-edit-card .field { margin-bottom: var(--space-3); }
+.ap-edit-card textarea, .ap-edit-card input[type=text], .ap-edit-card input[type=date],
+.ap-edit-card input[type=number], .ap-edit-card select { width: 100%; box-sizing: border-box; }
+table.ap-gl-table { width: 100%; margin-bottom: var(--space-2); }
+table.ap-gl-table td { vertical-align: middle; padding: 4px; }
+table.ap-gl-table td:first-child { width: 50%; }
+table.ap-gl-table td.num input { text-align: right; max-width: 9em; }
+.ap-total { margin-top: var(--space-2); font-size: 0.9rem; }
+.ap-edit-buttons { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-3); }
+.ap-w9-form { display: flex; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; }
+.ap-w9-form input[type=text] { flex: 1; min-width: 12em; width: auto; }
+.ap-attachments li { margin: 4px 0; }
+.ap-view-att.active { font-weight: 700; }
+table.ap-history { width: 100%; font-size: 0.85rem; }
+table.ap-history td { vertical-align: top; }
+.ap-viewer-card { padding: var(--space-3); }
+.ap-viewer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-2); gap: var(--space-2); }
+.ap-viewer iframe { width: 100%; height: calc(100vh - 160px); min-height: 480px; border: 1px solid var(--color-border); border-radius: 6px; background: #fff; }
+.ap-viewer img { max-width: 100%; border: 1px solid var(--color-border); border-radius: 6px; }
+@media (max-width: 1000px) {
+  .ap-edit-grid { grid-template-columns: 1fr; }
+  .ap-edit-right { position: static; }
+  .ap-viewer iframe { height: 70vh; }
+}

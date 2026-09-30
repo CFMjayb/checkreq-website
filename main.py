@@ -187,7 +187,7 @@ APPROVAL_EMAIL_TOKEN_DAYS = 10
 # call (Cloud Scheduler, not a signed-in user), same X-API-Key-header
 # convention email_client.py already uses for its own outbound call to
 # 26-122, just inverted (this is an inbound check).
-_INTERNAL_KEY_SECRET_NAME = "checkreq-internal-key"
+_INTERNAL_KEY_SECRET_NAME = "checkreq-internal-key"  # pragma: allowlist secret (a Secret Manager NAME, not a value)
 _cached_internal_key: str | None = None
 
 
@@ -1536,6 +1536,12 @@ def edit_request_form(request_number: str, request: Request, add_error: str = ""
         if not rbac.user_has_role(user["id"], "invoice_intake_submitter", pr["org_id"]):
             return JSONResponse({"error": "Not authorized to code Invoice Intake requests"}, status_code=403)
     elif pr["submitter_user_id"] != user["id"]:
+        # 2026-09-30 (Jay hit this on CR26-010 from All Requests): Beacon
+        # Admin / AP Reviewer / CFO get the AP edit screen instead of a
+        # raw 403 -- it edits someone else's request without re-judging it
+        # as if they had submitted it (see ap_edit_form).
+        if _can_ap_edit(user["id"], pr["org_id"]):
+            return RedirectResponse(f"/requests/{request_number}/ap-edit")
         # Matches request_pdf's existing authorization-response convention.
         return JSONResponse({"error": "Not authorized to edit this request"}, status_code=403)
     if not _request_is_editable(pr["status"]):
@@ -2412,11 +2418,16 @@ def _check_existing_vendor_w9(vendor_id: int | None, org_code: str, total_amount
     overspend_detail, never re-evaluated later."""
     if not vendor_id:
         return False, None
+    # 2026-09-30: w9_not_required (migration 070) -- AP has marked this
+    # vendor as never needing a W-9 (e.g. a corporation like Lowe's Pro
+    # Supply), so it is never flagged. .get() so this fails open, not with a
+    # KeyError, if this code deploys before the migration has run.
     vendor = db.query_one(
-        "SELECT qbo_vendor_id, w9_on_file, display_name FROM checkreq.vendors WHERE id = %s",
+        "SELECT * FROM checkreq.vendors WHERE id = %s",
         (vendor_id,),
     )
-    if not vendor or vendor["w9_on_file"] or not vendor["qbo_vendor_id"]:
+    if (not vendor or vendor["w9_on_file"] or vendor.get("w9_not_required")
+            or not vendor["qbo_vendor_id"]):
         return False, None
 
     result, err = qbo_mcp_client.get_vendor_ytd_bills_total(org_code, vendor["qbo_vendor_id"])
@@ -2519,6 +2530,32 @@ def _require_ap_reviewer(request: Request):
     if not rbac.user_has_role(user["id"], "ap_reviewer", org_id=None):
         return None, JSONResponse({"error": "AP-reviewer access required"}, status_code=403)
     return user, None
+
+
+AP_EDIT_ROLE_KEYS = ["beacon_admin", "ap_reviewer", "cfo"]
+
+
+def _can_ap_edit(user_id: int, org_id: int | None) -> bool:
+    """Jay, 2026-09-30: "as admin, AP approver, CFO, I should be able to
+    adjust requests regardless" -- regardless of who submitted it and of
+    where it is in the approval process. Holding any one of those roles AT
+    THE REQUEST'S OWN ENTITY is what counts (every role check here is
+    entity-scoped, per the 2026-08-16 RBAC direction). Posted/Cancelled
+    requests stay locked separately via _request_is_editable()."""
+    if not org_id:
+        return False
+    return rbac.user_has_any_role(user_id, AP_EDIT_ROLE_KEYS, org_id)
+
+
+def _w9_hold_cleared(pr: dict, vendor: dict | None) -> bool:
+    """True when an existing-vendor W-9 hold no longer blocks posting: a W-9
+    is on file, the vendor is marked w9_not_required, or AP overrode the
+    hold for this one request (migration 070). Shared by the AP Review list
+    and _post_one_request_to_qbo so the two can never disagree."""
+    return bool(
+        (vendor and (vendor.get("w9_on_file") or vendor.get("w9_not_required")))
+        or pr.get("w9_override")
+    )
 
 
 def _require_role_for_org(user: dict, role_key: str, org_id: int | None):
@@ -5246,10 +5283,17 @@ def view_attachment(request_number: str, attachment_id: int, request: Request):
     if not pr:
         return JSONResponse({"error": "Request not found"}, status_code=404)
 
+    # 2026-09-30: + AP edit roles and anyone in this request's approval
+    # chain -- request_view already let both see the request, but they got
+    # a 403 on the invoice itself, which is the one thing they most need.
     allowed = (
         rbac.user_has_role(user["id"], "cfo", pr["org_id"])
         or pr["submitter_user_id"] == user["id"]
         or _user_can_submit_for(user, pr["program_area_id"], pr["org_id"])
+        or _can_ap_edit(user["id"], pr["org_id"])
+        or bool(db.query_one(
+            "SELECT 1 FROM checkreq.approval_actions WHERE payment_request_id = %s AND approver_user_id = %s",
+            (pr["id"], user["id"])))
     )
     if not allowed:
         return JSONResponse({"error": "Not authorized to view this attachment"}, status_code=403)
@@ -5304,13 +5348,14 @@ def remove_attachment(request_number: str, attachment_id: int, request: Request)
     )
     if not pr:
         return JSONResponse({"error": "Request not found"}, status_code=404)
-    if pr["submitter_user_id"] != user["id"]:
+    if pr["submitter_user_id"] != user["id"] and not _can_ap_edit(user["id"], pr["org_id"]):
         return JSONResponse({"error": "Not authorized to modify this request"}, status_code=403)
     if not _request_is_editable(pr["status"]):
         return JSONResponse(
             {"error": "This request can no longer be modified (posted to QBO or cancelled)."},
             status_code=403,
         )
+    edit_page = "ap-edit" if request.query_params.get("back") == "ap-edit" else "edit"
 
     att = db.query_one(
         "SELECT * FROM checkreq.payment_request_attachments "
@@ -5338,7 +5383,7 @@ def remove_attachment(request_number: str, attachment_id: int, request: Request)
                  impersonated_by),
             )
 
-    return RedirectResponse(f"/requests/{request_number}/edit", status_code=303)
+    return RedirectResponse(f"/requests/{request_number}/{edit_page}", status_code=303)
 
 
 @app.post("/requests/{request_number}/attachments/add")
@@ -5374,13 +5419,15 @@ async def add_attachment(request_number: str, request: Request):
     )
     if not pr:
         return JSONResponse({"error": "Request not found"}, status_code=404)
-    if pr["submitter_user_id"] != user["id"]:
+    if pr["submitter_user_id"] != user["id"] and not _can_ap_edit(user["id"], pr["org_id"]):
         return JSONResponse({"error": "Not authorized to modify this request"}, status_code=403)
     if not _request_is_editable(pr["status"]):
         return JSONResponse(
             {"error": "This request can no longer be modified (posted to QBO or cancelled)."},
             status_code=403,
         )
+    edit_page = "ap-edit" if request.query_params.get("back") == "ap-edit" else "edit"
+    err_param = "error" if edit_page == "ap-edit" else "add_error"
 
     org = db.query_one(
         "SELECT id, code, name, sp_hostname, sp_site_path, sp_library_folder "
@@ -5389,7 +5436,7 @@ async def add_attachment(request_number: str, request: Request):
     )
     if not org or not (org.get("sp_hostname") and org.get("sp_site_path") and org.get("sp_library_folder")):
         return RedirectResponse(
-            f"/requests/{request_number}/edit?add_error="
+            f"/requests/{request_number}/{edit_page}?{err_param}="
             f"{quote('No SharePoint archive location configured for this entity.')}",
             status_code=303,
         )
@@ -5398,7 +5445,7 @@ async def add_attachment(request_number: str, request: Request):
     files = [f for f in form.getlist("attachments") if getattr(f, "filename", None)]
     if not files:
         return RedirectResponse(
-            f"/requests/{request_number}/edit?add_error={quote('No file selected.')}", status_code=303,
+            f"/requests/{request_number}/{edit_page}?{err_param}={quote('No file selected.')}", status_code=303,
         )
 
     # Archival itself is now shared with Invoice Intake via _archive_one_file()
@@ -5438,9 +5485,9 @@ async def add_attachment(request_number: str, request: Request):
         except Exception as exc:
             errors.append(f"{f.filename}: {exc}")
 
-    redirect_url = f"/requests/{request_number}/edit"
+    redirect_url = f"/requests/{request_number}/{edit_page}"
     if errors:
-        redirect_url += f"?add_error={quote('; '.join(errors))}"
+        redirect_url += f"?{err_param}={quote('; '.join(errors))}"
     return RedirectResponse(redirect_url, status_code=303)
 
 
@@ -5914,7 +5961,7 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
     if show_all:
         rows = db.query(
             """
-            SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
+            SELECT pr.id AS pr_id, pr.submitter_user_id, pr.request_number, pr.request_type, pr.amount, pr.status,
                    pr.approval_chain_summary, pr.created_at, pr.requested_pay_date, o.code AS org_code,
                    COALESCE(pa.title, 'All Program Areas') AS program_area_title, u.display_name AS submitter_name,
                    u.email AS submitter_email,
@@ -5936,7 +5983,7 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
     else:
         rows = db.query(
             """
-            SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
+            SELECT pr.id AS pr_id, pr.submitter_user_id, pr.request_number, pr.request_type, pr.amount, pr.status,
                    pr.approval_chain_summary, pr.created_at, pr.requested_pay_date, o.code AS org_code,
                    COALESCE(pa.title, 'All Program Areas') AS program_area_title,
                    v.display_name AS vendor_display_name,
@@ -5972,11 +6019,22 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
         for h in history_rows:
             history_by_id.setdefault(h["payment_request_id"], []).append(h)
 
+    can_ap_edit_here = _can_ap_edit(user["id"], org["id"])
     for r in rows:
         # Locking rule (Jay, 2026-07-25, extended 2026-07-26 for Cancel):
         # "You can make changes until it is posted to QBO." Drives whether
         # the Edit/Cancel links render below.
         r["editable"] = _request_is_editable(r["status"])
+        # 2026-09-30: All Requests lists other people's requests -- the
+        # submitter's Edit page refuses those, so link AP roles to the AP
+        # edit screen and everyone else to the read-only view.
+        own = r.get("submitter_user_id") in (None, user["id"])
+        if r["editable"] and own:
+            r["edit_url"] = f"/requests/{r['request_number']}/edit"
+        elif r["editable"] and can_ap_edit_here:
+            r["edit_url"] = f"/requests/{r['request_number']}/ap-edit"
+        else:
+            r["edit_url"] = f"/requests/{r['request_number']}/view"
         r["type_abbr"] = _REQUEST_TYPE_ABBR.get(r["request_type"], "??")
         r["history"] = history_by_id.get(r["pr_id"], [])
         # Task 3 (2026-07-26 batch): Vendor column -- either an onboarded
@@ -7108,11 +7166,12 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
                pr.approval_chain_summary, pr.created_at, pr.vendor_request_id,
                pr.overspend_flagged, pr.overspend_detail,
                pr.existing_vendor_w9_flagged, pr.existing_vendor_w9_detail,
+               pr.w9_override, pr.w9_override_reason,
                o.code AS org_code, o.name AS org_name,
                COALESCE(pa.title, 'All Program Areas') AS program_area_title, u.display_name AS submitter_name,
                u.email AS submitter_email,
                v.id AS existing_vendor_id, v.display_name AS vendor_display_name,
-               v.w9_on_file, v.w9_requested_at, v.w9_uploaded_at,
+               v.w9_on_file, v.w9_requested_at, v.w9_uploaded_at, v.w9_not_required,
                vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
                vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
                vr.dba_name AS vr_dba_name, vr.status AS vr_status,
@@ -7151,11 +7210,12 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
         if r["vendor_request_id"]:
             if r["vr_status"] != "approved":
                 r["vendor_gate_wait"] = f"Vendor not yet approved (status: {r['vr_status']})"
-            elif r["vr_requires_w9"] and not r["vr_w9_received"]:
+            elif r["vr_requires_w9"] and not r["vr_w9_received"] and not r["w9_override"]:
                 r["vendor_gate_wait"] = "W-9 not yet received"
             else:
                 r["vendor_gate_wait"] = None
-        elif r["existing_vendor_w9_flagged"] and not r["w9_on_file"]:
+        elif r["existing_vendor_w9_flagged"] and not _w9_hold_cleared(
+                r, {"w9_on_file": r["w9_on_file"], "w9_not_required": r["w9_not_required"]}):
             # 2026-09-14: existing-vendor YTD W-9 hold (see
             # _check_existing_vendor_w9's docstring and post_to_qbo's own
             # gate re-check below) -- same "hold here, visibly, until it
@@ -7178,6 +7238,18 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
         r["existing_vendor_w9_needs_review"] = bool(
             r.get("existing_vendor_w9_flagged") and r.get("w9_uploaded_at") and not r.get("w9_on_file")
         )
+        # 2026-09-30 (Jay: "a little bit too much detail"): one short line for
+        # the row instead of the full existing_vendor_w9_detail sentence
+        # (still shown in full on the AP edit screen). Also records WHY a
+        # hold no longer applies, so a waived row still reads as waived.
+        r["w9_waiver_note"] = None
+        if r.get("existing_vendor_w9_flagged") or r.get("vendor_request_id"):
+            if r.get("w9_override"):
+                r["w9_waiver_note"] = "W-9 waived for this request"
+            elif r.get("w9_not_required"):
+                r["w9_waiver_note"] = "Vendor: W-9 not required"
+        r["can_waive_w9"] = bool(r["vendor_gate_wait"] and "W-9" in r["vendor_gate_wait"])
+        r["chain_short"] = (r.get("approval_chain_summary") or "").split("\n")[0]
 
     # Ask My Accountant (2026-08-16): requests waiting on AP to assign GL
     # coding before the approval chain can even start -- same screen/role
@@ -7192,7 +7264,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
     coding_rows = db.query(
         f"""
         SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount,
-               pr.created_at, o.code AS org_code,
+               pr.created_at, pr.description, pr.requested_pay_date, o.code AS org_code,
                COALESCE(pa.title, 'All Program Areas') AS program_area_title,
                u.display_name AS submitter_name, u.email AS submitter_email,
                v.display_name AS vendor_display_name,
@@ -7222,6 +7294,8 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
             r["vendor_name"] = "—"
 
     return _render(request, "ap_review.html", user, {
+        "edited": request.query_params.get("edited", ""),
+        "w9_waived": request.query_params.get("w9_waived", ""),
         "rows": rows, "coding_rows": coding_rows, "posted": posted, "returned": returned,
         "post_error": post_error, "email_warning": email_warning, "w9_confirmed": w9_confirmed,
         "all_orgs_list": all_orgs_list, "filter_entity": entity,
@@ -7292,6 +7366,19 @@ async def assign_gl_coding(request_number: str, request: Request):
             status_code=400,
         )
 
+    first_group = _start_chain_after_coding(pr, gl_lines, user)
+    # 2026-09-30: the first approver was never emailed here (every other
+    # chain start notifies them) -- the request just sat in My Approvals.
+    _notify_approvers_for_group(pr["id"], first_group, request)
+    return RedirectResponse("/admin/ap-review?coded=1", status_code=303)
+
+
+def _start_chain_after_coding(pr: dict, gl_lines: list, user: dict) -> int | None:
+    """Writes AP's GL line(s) onto an AwaitingCoding request and starts its
+    approval chain -- extracted unchanged from assign_gl_coding (2026-09-30)
+    so the new AP edit screen's "Save & Start Approval" uses the exact same
+    logic. Caller has already validated gl_lines and that they total the
+    request's amount."""
     org = db.query_one("SELECT id, code, name FROM checkreq.organizations WHERE id = %s", (pr["org_id"],))
     budget_result = _evaluate_gl_line_budgets(org, pr["program_area_id"], gl_lines)
     overspend_flagged = bool(budget_result["buffer_notice"] or budget_result["cfo_required"])
@@ -7319,6 +7406,10 @@ async def assign_gl_coding(request_number: str, request: Request):
 
     with db.connect() as conn:
         with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM checkreq.payment_request_gl_lines WHERE payment_request_id = %s",
+                (pr["id"],),
+            )
             for acct_id, amt, memo in gl_lines:
                 cur.execute(
                     "INSERT INTO checkreq.payment_request_gl_lines "
@@ -7352,8 +7443,395 @@ async def assign_gl_coding(request_number: str, request: Request):
                 "VALUES (%s, %s, %s, %s, %s, %s)",
                 (pr["id"], user["id"], "GL Coding Assigned", chain_summary, "AwaitingCoding", "UnderReview"),
             )
+    return first_step["serial_group"] if first_step else None
 
-    return RedirectResponse("/admin/ap-review?coded=1", status_code=303)
+
+# ── AP edit screen (2026-09-30) ──────────────────────────────────────────────
+# Jay, first real use of AP Review in production: the Needs GL Coding rows
+# showed only a one-line summary ("you can't see anything in here related to
+# the CR itself"), and the ordinary Edit page is submitter-only ("Not
+# authorized to edit this request"). Agreed design:
+#   - Beacon Admin / AP Reviewer / CFO at the request's entity can open and
+#     edit ANY request there, whoever submitted it, at any status except
+#     Posted to QBO / Cancelled (_can_ap_edit + _request_is_editable).
+#   - The page shows the full standard request (voucher, invoice viewer,
+#     attachments, history) beside the edit form.
+#   - An AP edit NEVER restarts the approval chain ("adjust requests
+#     regardless") -- the request keeps its status, and every change is
+#     written to audit_log with before/after values. The one exception is an
+#     AwaitingCoding request, where "Save & Start Approval" starts its chain
+#     exactly as the old Assign button did (_start_chain_after_coding).
+#   - A deliberately separate route from new_request_submit: that route
+#     judges self-payment, pre-approval and self-auto-approval against the
+#     LOGGED-IN user, which is correct for a submitter and wrong for AP.
+
+def _audit_history(payment_request_id: int) -> list[dict]:
+    return db.query(
+        "SELECT al.action_type, al.action_date, al.comment, al.previous_status, al.new_status, "
+        "       u.display_name AS actor_name "
+        "FROM checkreq.audit_log al LEFT JOIN checkreq.app_users u ON u.id = al.action_by_user_id "
+        "WHERE al.payment_request_id = %s ORDER BY al.action_date",
+        (payment_request_id,),
+    )
+
+
+def _ap_edit_back_url(user: dict, pr: dict) -> str:
+    if rbac.user_has_role(user["id"], "ap_reviewer", pr["org_id"]):
+        return "/admin/ap-review"
+    return f"/requests/{pr['request_number']}/view"
+
+
+@app.get("/requests/{request_number}/ap-edit", response_class=HTMLResponse)
+def ap_edit_form(request_number: str, request: Request, error: str = "", saved: str = ""):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    pr = db.query_one(
+        "SELECT pr.*, o.code AS org_code, o.name AS org_name FROM checkreq.payment_requests pr "
+        "JOIN checkreq.organizations o ON o.id = pr.org_id WHERE pr.request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if not _can_ap_edit(user["id"], pr["org_id"]):
+        return JSONResponse({"error": "Beacon Admin, AP Reviewer or CFO access at this entity is required."},
+                            status_code=403)
+
+    vendor = None
+    if pr["vendor_id"]:
+        vendor = db.query_one("SELECT * FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],))
+    new_vendor_name = None
+    if pr["vendor_request_id"]:
+        vr = db.query_one("SELECT * FROM checkreq.vendor_requests WHERE id = %s", (pr["vendor_request_id"],))
+        if vr:
+            new_vendor_name = _vendor_request_display_name(vr)
+    gl_lines = db.query(
+        "SELECT gl.gl_account_id, gl.amount, gl.memo, ga.account_number, ga.account_name "
+        "FROM checkreq.payment_request_gl_lines gl JOIN checkreq.gl_accounts ga ON ga.id = gl.gl_account_id "
+        "WHERE gl.payment_request_id = %s ORDER BY gl.id",
+        (pr["id"],),
+    )
+    program_areas = db.query(
+        "SELECT id, title FROM checkreq.program_areas WHERE org_id = %s AND is_active ORDER BY sort_order",
+        (pr["org_id"],),
+    )
+    ctx = _voucher_context(pr["id"]) or {}
+    return _render(request, "ap_edit.html", user, {
+        **ctx,
+        "pr": pr, "request_number": request_number, "pr_status": pr["status"],
+        "editable": _request_is_editable(pr["status"]),
+        "vendor": vendor, "new_vendor_name": new_vendor_name,
+        "gl_lines": [{"gl_account_id": g["gl_account_id"], "amount": float(g["amount"]),
+                      "memo": g["memo"] or "",
+                      "label": f"{g['account_number']} - {g['account_name']}"} for g in gl_lines],
+        "program_areas": program_areas,
+        "attachments": _active_attachments(pr["id"]),
+        "history": _audit_history(pr["id"]),
+        "back_url": _ap_edit_back_url(user, pr),
+        "error": error, "saved": saved,
+        "w9_hold": bool(pr["existing_vendor_w9_flagged"] and not _w9_hold_cleared(pr, vendor)),
+    })
+
+
+@app.post("/requests/{request_number}/ap-edit")
+async def ap_edit_submit(request_number: str, request: Request):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    pr = db.query_one(
+        "SELECT pr.*, o.code AS org_code, o.name AS org_name FROM checkreq.payment_requests pr "
+        "JOIN checkreq.organizations o ON o.id = pr.org_id WHERE pr.request_number = %s",
+        (request_number,),
+    )
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if not _can_ap_edit(user["id"], pr["org_id"]):
+        return JSONResponse({"error": "Beacon Admin, AP Reviewer or CFO access at this entity is required."},
+                            status_code=403)
+    if not _request_is_editable(pr["status"]):
+        return JSONResponse({"error": "This request has been posted to QBO (or cancelled) and can no longer be edited."},
+                            status_code=403)
+
+    def fail(msg: str):
+        return RedirectResponse(f"/requests/{request_number}/ap-edit?error={quote(msg)}", status_code=303)
+
+    form = await request.form()
+    action = form.get("action") or "save"
+
+    # Program area -- any active one at this entity (AP is not limited to
+    # its own program-area assignments).
+    raw_pa = (form.get("program_area_id") or "").strip()
+    program_area_id = int(raw_pa) if raw_pa else pr["program_area_id"]
+    if program_area_id is not None and not db.query_one(
+            "SELECT 1 FROM checkreq.program_areas WHERE id = %s AND org_id = %s",
+            (program_area_id, pr["org_id"])):
+        return fail("That program area is not part of this entity.")
+
+    # Vendor -- an existing vendor of this entity. Blank keeps whatever the
+    # request already has (including a not-yet-onboarded new-vendor request,
+    # which is still managed on Vendor Approvals).
+    raw_vendor = (form.get("vendor_id") or "").strip()
+    vendor_id = pr["vendor_id"]
+    vendor_request_id = pr["vendor_request_id"]
+    if raw_vendor:
+        vendor_id = int(raw_vendor)
+        if not db.query_one("SELECT 1 FROM checkreq.vendors WHERE id = %s AND org_id = %s AND is_active",
+                            (vendor_id, pr["org_id"])):
+            return fail("That vendor is not an active vendor of this entity.")
+        if vendor_id != pr["vendor_id"]:
+            vendor_request_id = None   # unlinked, not deleted (same as a submitter edit)
+
+    raw_date = (form.get("requested_pay_date") or "").strip()
+    try:
+        requested_pay_date = date.fromisoformat(raw_date) if raw_date else pr["requested_pay_date"]
+    except ValueError:
+        return fail("Pay date is not a valid date.")
+    description = form.get("description", pr["description"] or "")
+    special_instructions = form.get("special_instructions", pr["special_instructions"] or "")
+
+    try:
+        gl_lines = [
+            (int(a), round(float(amt), 2), memo)
+            for a, amt, memo in zip(form.getlist("gl_account_id"), form.getlist("gl_amount"),
+                                    form.getlist("gl_memo"))
+            if a and amt
+        ]
+    except (TypeError, ValueError):
+        return fail("Each GL line needs a valid account and amount.")
+    if gl_lines:
+        ids = [a for a, _, _ in gl_lines]
+        ok_ids = {r["id"] for r in db.query(
+            "SELECT id FROM checkreq.gl_accounts WHERE org_id = %s AND is_active AND id = ANY(%s)",
+            (pr["org_id"], ids))}
+        if any(a not in ok_ids for a in ids):
+            return fail("One or more GL accounts are not active accounts of this entity.")
+        total_amount = round(sum(amt for _, amt, _ in gl_lines), 2)
+    else:
+        if pr["status"] != "AwaitingCoding" and pr["status"] != "Draft":
+            return fail("Add at least one GL line -- this request has already been coded.")
+        try:
+            total_amount = round(float(form.get("amount") or pr["amount"] or 0), 2)
+        except ValueError:
+            return fail("Amount is not a valid number.")
+    if total_amount <= 0:
+        return fail("The amount must be greater than zero.")
+    if action == "save_start":
+        if pr["status"] != "AwaitingCoding":
+            return fail("This request is not awaiting GL coding.")
+        if not gl_lines:
+            return fail("Add the GL line(s) before starting approval.")
+
+    old_total = round(float(pr["amount"] or 0), 2)
+    vendor_changed = vendor_id != pr["vendor_id"]
+    amount_changed = total_amount != old_total
+
+    # Before/after for the audit trail.
+    def vname(vid):
+        if not vid:
+            return "—"
+        v = db.query_one("SELECT display_name FROM checkreq.vendors WHERE id = %s", (vid,))
+        return v["display_name"] if v else f"#{vid}"
+
+    def pa_name(pid):
+        if not pid:
+            return "All Program Areas"
+        p = db.query_one("SELECT title FROM checkreq.program_areas WHERE id = %s", (pid,))
+        return p["title"] if p else f"#{pid}"
+
+    old_lines = db.query(
+        "SELECT ga.account_number, gl.amount FROM checkreq.payment_request_gl_lines gl "
+        "JOIN checkreq.gl_accounts ga ON ga.id = gl.gl_account_id WHERE gl.payment_request_id = %s ORDER BY gl.id",
+        (pr["id"],),
+    )
+    new_line_rows = db.query(
+        "SELECT id, account_number FROM checkreq.gl_accounts WHERE id = ANY(%s)",
+        ([a for a, _, _ in gl_lines] or [0],),
+    )
+    acct_num = {r["id"]: r["account_number"] for r in new_line_rows}
+    fmt_old = "; ".join(f"{l['account_number']} ${float(l['amount']):,.2f}" for l in old_lines) or "none"
+    fmt_new = "; ".join(f"{acct_num.get(a, a)} ${amt:,.2f}" for a, amt, _ in gl_lines) or "none"
+
+    changes = []
+    if vendor_changed:
+        changes.append(f"Vendor: {vname(pr['vendor_id'])} -> {vname(vendor_id)}")
+    if amount_changed:
+        changes.append(f"Amount: ${old_total:,.2f} -> ${total_amount:,.2f}")
+    if program_area_id != pr["program_area_id"]:
+        changes.append(f"Program Area: {pa_name(pr['program_area_id'])} -> {pa_name(program_area_id)}")
+    if requested_pay_date != pr["requested_pay_date"]:
+        changes.append(f"Pay Date: {pr['requested_pay_date']} -> {requested_pay_date}")
+    if (description or "") != (pr["description"] or ""):
+        changes.append(f"Description: \"{pr['description'] or ''}\" -> \"{description}\"")
+    if (special_instructions or "") != (pr["special_instructions"] or ""):
+        changes.append("Special Instructions changed")
+    if gl_lines and fmt_old != fmt_new:
+        changes.append(f"GL: {fmt_old} -> {fmt_new}")
+
+    # Vendor or amount changed -> the existing-vendor W-9 check is redone
+    # for the new vendor/amount (a request-level override stays in place).
+    w9_flagged, w9_detail = pr["existing_vendor_w9_flagged"], pr["existing_vendor_w9_detail"]
+    if vendor_changed or amount_changed:
+        w9_flagged, w9_detail = _check_existing_vendor_w9(vendor_id, pr["org_code"], total_amount)
+
+    # Budget flags are recomputed for display; an AP edit is never blocked
+    # by budget (AP/CFO are the ones deciding).
+    overspend_flagged, overspend_detail = pr["overspend_flagged"], pr["overspend_detail"]
+    if gl_lines and pr["status"] != "AwaitingCoding":
+        org = {"id": pr["org_id"], "code": pr["org_code"], "name": pr["org_name"]}
+        br = _evaluate_gl_line_budgets(org, program_area_id, gl_lines)
+        overspend_flagged = bool(br["buffer_notice"] or br["cfo_required"])
+        overspend_detail = "\n".join(e["detail"] for e in br["buffer_notice"] + br["cfo_required"]) or None
+
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE checkreq.payment_requests SET
+                    program_area_id = %s, vendor_id = %s, vendor_request_id = %s, amount = %s,
+                    requested_pay_date = %s, description = %s, special_instructions = %s,
+                    existing_vendor_w9_flagged = %s, existing_vendor_w9_detail = %s,
+                    overspend_flagged = %s, overspend_detail = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (program_area_id, vendor_id, vendor_request_id, total_amount, requested_pay_date,
+                 description, special_instructions, w9_flagged, w9_detail,
+                 overspend_flagged, overspend_detail, pr["id"]),
+            )
+            if gl_lines and action != "save_start":
+                cur.execute("DELETE FROM checkreq.payment_request_gl_lines WHERE payment_request_id = %s",
+                            (pr["id"],))
+                for acct_id, amt, memo in gl_lines:
+                    cur.execute(
+                        "INSERT INTO checkreq.payment_request_gl_lines "
+                        "(payment_request_id, gl_account_id, amount, memo) VALUES (%s, %s, %s, %s)",
+                        (pr["id"], acct_id, amt, memo),
+                    )
+            if changes:
+                cur.execute(
+                    "INSERT INTO checkreq.audit_log "
+                    "(payment_request_id, action_by_user_id, action_type, comment, "
+                    " previous_status, new_status, impersonated_by_user_id) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (pr["id"], user["id"], "Edited by AP",
+                     "\n".join(changes) + ("\n(Approval starting now.)" if action == "save_start"
+                                           else "\n(Approval workflow unchanged.)"),
+                     pr["status"], pr["status"], impersonated_by),
+                )
+
+    if action == "save_start":
+        fresh = db.query_one("SELECT * FROM checkreq.payment_requests WHERE id = %s", (pr["id"],))
+        first_group = _start_chain_after_coding(fresh, gl_lines, user)
+        _notify_approvers_for_group(pr["id"], first_group, request)
+
+    # The archived voucher PDF is a snapshot taken at submission, and it is
+    # what goes to QBO with the Bill -- after a vendor/amount/date/
+    # description change it would show the OLD values (CR26-011 would have
+    # posted with "ENTERPRISE" on its voucher). Replace it with a fresh one.
+    warning = ""
+    if pr["status"] != "Draft" and (vendor_changed or amount_changed or
+                                    program_area_id != pr["program_area_id"] or
+                                    requested_pay_date != pr["requested_pay_date"] or
+                                    (description or "") != (pr["description"] or "") or
+                                    (gl_lines and fmt_old != fmt_new)):
+        try:
+            org_full = db.query_one(
+                "SELECT id, code, name, sp_hostname, sp_site_path, sp_library_folder "
+                "FROM checkreq.organizations WHERE id = %s", (pr["org_id"],))
+            _archive_one_file(org_full, pr["id"], request_number, "generated_pdf",
+                              f"{request_number}.pdf", "application/pdf",
+                              render_check_voucher_pdf(pr["id"]), user["id"])
+            new_row = db.query_one(
+                "SELECT max(id) AS id FROM checkreq.payment_request_attachments "
+                "WHERE payment_request_id = %s AND source = 'generated_pdf'", (pr["id"],))
+            with db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE checkreq.payment_request_attachments SET removed_at = NOW() "
+                        "WHERE payment_request_id = %s AND source = 'generated_pdf' "
+                        "AND removed_at IS NULL AND id <> %s",
+                        (pr["id"], new_row["id"]),
+                    )
+        except Exception as exc:
+            print(f"[ap-edit] voucher re-archive failed for {request_number}: {exc}")
+            warning = ("Saved, but the updated check request PDF could not be archived: "
+                       f"{exc} (any earlier check request PDF is still attached).")
+
+    if warning:
+        return RedirectResponse(f"/requests/{request_number}/ap-edit?error={quote(warning)}", status_code=303)
+    back = _ap_edit_back_url(user, pr)
+    if back == "/admin/ap-review":
+        return RedirectResponse(f"/admin/ap-review?edited={request_number}", status_code=303)
+    return RedirectResponse(f"/requests/{request_number}/ap-edit?saved=1", status_code=303)
+
+
+@app.post("/requests/{request_number}/w9-waiver")
+async def w9_waiver(request_number: str, request: Request):
+    """Jay, 2026-09-30: post without a W-9 when one will never come. scope:
+      request       -- waive the hold for this one request (w9_override)
+      vendor        -- this vendor never needs a W-9 (vendors.w9_not_required)
+      clear_request / clear_vendor -- undo either.
+    A reason is required to set either; everything is written to audit_log."""
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    pr = db.query_one("SELECT * FROM checkreq.payment_requests WHERE request_number = %s", (request_number,))
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if not _can_ap_edit(user["id"], pr["org_id"]):
+        return JSONResponse({"error": "Beacon Admin, AP Reviewer or CFO access at this entity is required."},
+                            status_code=403)
+    form = await request.form()
+    scope = form.get("scope") or ""
+    reason = (form.get("reason") or "").strip()
+    back = form.get("back") or ""
+    back_url = (f"/requests/{request_number}/ap-edit" if back == "ap-edit" else "/admin/ap-review")
+    if scope in ("request", "vendor") and not reason:
+        return RedirectResponse(f"{back_url}?error={quote('A reason is required.')}", status_code=303)
+    if scope in ("vendor", "clear_vendor") and not pr["vendor_id"]:
+        return RedirectResponse(
+            f"{back_url}?error={quote('This request uses a new vendor that is not in QuickBooks yet -- waive it for this request instead.')}",
+            status_code=303)
+
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            if scope == "request":
+                cur.execute(
+                    "UPDATE checkreq.payment_requests SET w9_override = TRUE, w9_override_reason = %s, "
+                    "w9_override_by = %s, w9_override_at = NOW(), updated_at = NOW() WHERE id = %s",
+                    (reason, user["id"], pr["id"]))
+                comment = f"W-9 hold waived for this request. Reason: {reason}"
+            elif scope == "clear_request":
+                cur.execute(
+                    "UPDATE checkreq.payment_requests SET w9_override = FALSE, w9_override_reason = NULL, "
+                    "w9_override_by = NULL, w9_override_at = NULL, updated_at = NOW() WHERE id = %s",
+                    (pr["id"],))
+                comment = "W-9 waiver for this request removed."
+            elif scope == "vendor":
+                cur.execute(
+                    "UPDATE checkreq.vendors SET w9_not_required = TRUE, w9_not_required_reason = %s, "
+                    "w9_not_required_by = %s, w9_not_required_at = NOW() WHERE id = %s",
+                    (reason, user["id"], pr["vendor_id"]))
+                comment = f"Vendor marked 'W-9 not required' (applies to all its requests). Reason: {reason}"
+            elif scope == "clear_vendor":
+                cur.execute(
+                    "UPDATE checkreq.vendors SET w9_not_required = FALSE, w9_not_required_reason = NULL, "
+                    "w9_not_required_by = NULL, w9_not_required_at = NULL WHERE id = %s",
+                    (pr["vendor_id"],))
+                comment = "Vendor 'W-9 not required' flag removed."
+            else:
+                return JSONResponse({"error": "Unknown action."}, status_code=400)
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, impersonated_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (pr["id"], user["id"], "W-9 Waiver", comment, impersonated_by))
+    sep = "&" if "?" in back_url else "?"
+    return RedirectResponse(f"{back_url}{sep}w9_waived={request_number}", status_code=303)
 
 
 def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: int | None) -> tuple[bool, str | None]:
@@ -7397,7 +7875,7 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
         )
         if not vr or vr["status"] != "approved":
             return False, "vendor not yet approved"
-        if vr["requires_w9"] and not vr["w9_received"]:
+        if vr["requires_w9"] and not vr["w9_received"] and not pr.get("w9_override"):
             return False, "W-9 not yet received"
 
         if vr["qbo_vendor_id"]:
@@ -7423,7 +7901,7 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
                     )
     else:
         v = db.query_one(
-            "SELECT qbo_vendor_id, w9_on_file FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],),
+            "SELECT * FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],),
         )
         if not v or not v.get("qbo_vendor_id"):
             return False, "this vendor has no qbo_vendor_id on file -- cannot post"
@@ -7431,7 +7909,9 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
         # server-side (never trust the UI's own disabled-button state
         # alone), matching the identical re-check pattern the new-vendor
         # requires_w9/w9_received gate just above already uses.
-        if pr["existing_vendor_w9_flagged"] and not v["w9_on_file"]:
+        # 2026-09-30: cleared also by the vendor's w9_not_required flag or
+        # this request's own w9_override (migration 070).
+        if pr["existing_vendor_w9_flagged"] and not _w9_hold_cleared(pr, v):
             return False, "W-9 not yet received (year-to-date threshold)"
         qbo_vendor_id = v["qbo_vendor_id"]
 
@@ -8187,6 +8667,7 @@ def request_view(request_number: str, request: Request):
         "request_number": request_number,
         "pr_status": pr["status"],
         "attachments": _active_attachments(pr["id"]),
+        "can_ap_edit": _request_is_editable(pr["status"]) and _can_ap_edit(user["id"], pr["org_id"]),
     })
 
 
@@ -8333,3 +8814,9 @@ notifications.register(app, current_user=_current_user)
 import feedback_chat
 
 feedback_chat.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+
+# ── SMA letters: Formstack Documents webhook (signed letter back to Beacon) ──
+# See sma_webhook.py. Shared-secret authenticated, CSRF-exempt via /webhooks/.
+import sma_webhook
+
+sma_webhook.register(app)
