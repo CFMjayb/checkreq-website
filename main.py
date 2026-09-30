@@ -7367,10 +7367,30 @@ async def assign_gl_coding(request_number: str, request: Request):
         )
 
     first_group = _start_chain_after_coding(pr, gl_lines, user)
-    # 2026-09-30: the first approver was never emailed here (every other
-    # chain start notifies them) -- the request just sat in My Approvals.
-    _notify_approvers_for_group(pr["id"], first_group, request)
+    _after_coding_chain_started(pr, first_group, request)
     return RedirectResponse("/admin/ap-review?coded=1", status_code=303)
+
+
+def _after_coding_chain_started(pr: dict, first_group: int | None, request: Request) -> None:
+    """Right after AP's coding starts a request's approval chain: apply the
+    same "submitter is already an authorized approver for this step" rule a
+    normal submission applies (_maybe_auto_approve_self), judged against the
+    SUBMITTER, never the AP user doing the coding -- then email whoever is
+    actually next. Jay, 2026-09-30, on CR26-010: "Since Mark was the
+    submitter and he is the approver, this was already approved." Skipped
+    for a self-payment, matching new_request_submit (that chain must be an
+    independent CFO sign-off). If the submitter's step was the whole chain,
+    _perform_approval moves the request straight to Approved.
+    2026-09-30 also: the first approver was never emailed here before --
+    the request just sat in My Approvals."""
+    notify_group = first_group
+    if not _is_self_payment(pr.get("vendor_id"), pr["submitter_user_id"]):
+        advanced = _maybe_auto_approve_self(
+            pr["id"], first_group, pr["submitter_user_id"], _client_ip(request), request,
+        )
+        if advanced is not None:
+            notify_group = advanced
+    _notify_approvers_for_group(pr["id"], notify_group, request)
 
 
 def _start_chain_after_coding(pr: dict, gl_lines: list, user: dict) -> int | None:
@@ -7724,7 +7744,7 @@ async def ap_edit_submit(request_number: str, request: Request):
     if action == "save_start":
         fresh = db.query_one("SELECT * FROM checkreq.payment_requests WHERE id = %s", (pr["id"],))
         first_group = _start_chain_after_coding(fresh, gl_lines, user)
-        _notify_approvers_for_group(pr["id"], first_group, request)
+        _after_coding_chain_started(fresh, first_group, request)
 
     # The archived voucher PDF is a snapshot taken at submission, and it is
     # what goes to QBO with the Bill -- after a vendor/amount/date/
