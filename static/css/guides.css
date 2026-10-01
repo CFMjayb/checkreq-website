@@ -1,0 +1,56 @@
+/* Quick-guide pages (guides.py). Loaded on top of how_it_works.css, which supplies
+   the hero, the section/card styling and the palette; this file only adds the
+   few things a short task guide needs that a long documentation page does not.
+   Everything is scoped under .guide so it cannot leak into any other page. */
+
+.howitworks.guide { padding-top: var(--space-6); }
+.howitworks.guide .back-link { margin-top: 0; }
+
+.guide .guide-default {
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fdf6e3;
+  border: 1px solid var(--color-gold);
+  font-family: var(--font-body, inherit);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-franciscan-green);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.guide-table-wrap { overflow-x: auto; margin-top: var(--space-3); }
+.guide-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+.guide-table th,
+.guide-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+.guide-table thead th {
+  background: var(--color-franciscan-green);
+  color: #fff;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.guide-table tbody tr:nth-child(even) td { background: #faf8f3; }
+.guide-table code {
+  background: #f1ecdd;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.88rem;
+}
+
+.guide-foot {
+  margin-top: var(--space-6);
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}

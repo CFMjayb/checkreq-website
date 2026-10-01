@@ -86,7 +86,10 @@ _CARDS = [
     # template. Entity-scoped (setup_admin or beacon_admin at the CURRENT
     # entity), matching report_templates.py's own gate.
     {"title": "Report Templates", "desc": "Actual vs Budget reports from QuickBooks -- run a template for any completed month.",
-     "url": "/admin/report-templates", "role": ["setup_admin", "beacon_admin"], "group": "reports"},
+     # "guide": a slug from guides.py -> the card shows a small "How to use" pill
+     # linking to /guides/<slug> (Jay, 2026-10-01). Optional on any card.
+     "url": "/admin/report-templates", "role": ["setup_admin", "beacon_admin"], "group": "reports",
+     "guide": "report-template-lines"},
 
     # Parish Mode (S4, 2026-08-08) -- gated on the "real_parish_mode"
     # sentinel (widened 2026-09-14, see below): hidden while already

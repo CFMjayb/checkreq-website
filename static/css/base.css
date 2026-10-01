@@ -1002,3 +1002,47 @@ table.ap-history td { vertical-align: top; }
   .ap-edit-right { position: static; }
   .ap-viewer iframe { height: 70vh; }
 }
+
+/* Beacon icon (guides.py, Jay 2026-10-01): a small round button with a beacon on
+   it that links a menu card or a screen to its one-page guide. Lives in base.css
+   because it is used on the Administrative Tasks hub and inside the editors. */
+.guide-beacon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1px solid var(--color-gold);
+  background: #fdf6e3;
+  color: var(--color-franciscan-green);
+  text-decoration: none;
+  vertical-align: middle;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.guide-beacon:hover,
+.guide-beacon:focus-visible {
+  background: var(--color-gold-light);
+  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.28);
+  transform: translateY(-1px);
+  text-decoration: none;
+}
+.guide-beacon:focus-visible { outline: 2px solid var(--color-franciscan-green); outline-offset: 2px; }
+.guide-beacon .beacon-icon .tower { fill: currentColor; }
+.guide-beacon .beacon-icon .roof { fill: currentColor; }
+.guide-beacon .beacon-icon .band { fill: #fdf6e3; }
+.guide-beacon .beacon-icon .lamp { fill: var(--color-gold); }
+.guide-beacon .beacon-icon .rays {
+  fill: none;
+  stroke: var(--color-gold);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+.guide-beacon:hover .beacon-icon .band { fill: var(--color-gold-light); }
+.tile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}

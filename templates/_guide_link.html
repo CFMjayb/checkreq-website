@@ -1,0 +1,19 @@
+{# The beacon icon that links a menu card or a screen to its one-page guide
+   (guides.py). Usage:  {% from "_guide_link.html" import guide_link %}
+                        {{ guide_link("report-template-lines") }}
+   Jay, 2026-10-01: "an icon on the menu option that is a beacon that would be
+   clicked and someone can get the instruction/notes that are available on that."
+   Inline SVG so it needs no image file and inherits the page's colors:
+   the tower follows the link color, the lamp and rays are the brand gold. #}
+{% macro guide_link(slug, label="How to use this screen") -%}
+<a class="guide-beacon" href="/guides/{{ slug }}" title="{{ label }}" aria-label="{{ label }}">
+  <svg class="beacon-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+    <path class="rays" d="M7.2 6.2 3.2 4.6M7.2 8 2.6 8M16.8 6.2l4-1.6M16.8 8l4.6 0"/>
+    <path class="roof" d="M9 5.2 12 2.4l3 2.8z"/>
+    <rect class="lamp" x="9.4" y="5.2" width="5.2" height="3.6" rx="0.6"/>
+    <path class="tower" d="M9.6 8.8h4.8L16 20.6H8z"/>
+    <path class="band" d="M9.1 12.6h5.8l.3 2.2H8.8z"/>
+    <rect class="tower" x="6.6" y="20.6" width="10.8" height="1.8" rx="0.5"/>
+  </svg>
+</a>
+{%- endmacro %}

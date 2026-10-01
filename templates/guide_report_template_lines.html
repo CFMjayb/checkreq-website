@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">% charged, Class and Show &mdash; what each one does and how to combine them.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="where">
+    <h2>Where to find them</h2>
+    <p><strong>Administrative Tasks</strong> &rarr; <strong>Reports</strong> &rarr; <strong>Report Templates</strong> &rarr; open a template &rarr; <strong>Lines</strong>.
+      Every line has an <strong>account mask</strong> (which accounts roll up into it) plus three options. The defaults leave a line exactly as it has always worked:
+      <strong>100%</strong>, <strong>All classes</strong>, <strong>Detail</strong>.</p>
+  </section>
+
+  <section class="hiw-section" id="options">
+    <h2>The three options</h2>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard">
+        <h3>% charged <span class="guide-default">default 100</span></h3>
+        <p>Charge only part of a line to this report. It applies to the actual <em>and</em> the budget. Use a number above 0 and up to 100 (decimals are fine, such as 33.33). Leaving it blank is an error, never 100.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>Class <span class="guide-default">default: all classes</span></h3>
+        <p>Count only transactions in the classes you tick. A class is always applied <em>on top of</em> the account mask, never on its own. Blank means every class, including transactions with no class; tick <em>(No class)</em> for only those. A parent class does not include its sub-classes.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>Show <span class="guide-default">default Detail</span></h3>
+        <p><strong>Detail</strong> lists the line's accounts under it. <strong>Sum</strong> shows the line's total only, and leaves its transactions out of the Transaction Detail tab.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="hiw-section" id="setups">
+    <h2>Common setups</h2>
+    <div class="guide-table-wrap">
+      <table class="guide-table">
+        <thead>
+          <tr><th>I want&hellip;</th><th>Account mask</th><th>Class</th><th>% charged</th><th>Show</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Everything under 52*, every class</td><td><code>52*</code></td><td>(blank)</td><td>100</td><td>Detail</td></tr>
+          <tr><td>Only one class within 52*</td><td><code>52*</code></td><td>Youth</td><td>100</td><td>Detail</td></tr>
+          <tr><td>Youth shown separately, everything else on another line</td>
+              <td colspan="4"><strong>Line 1:</strong> <code>52*</code> + Youth &nbsp;&middot;&nbsp; <strong>Line 2 (below it):</strong> <code>52*</code>, class blank</td></tr>
+          <tr><td>Charge part of a line to this report (here 40%)</td><td><code>667*</code></td><td>(blank)</td><td>40</td><td>Detail</td></tr>
+          <tr><td>One total with no accounts listed</td><td><code>52*</code></td><td>(blank)</td><td>100</td><td>Sum</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="hiw-section" id="good-to-know">
+    <h2>Good to know</h2>
+    <ul>
+      <li><strong>Order matters.</strong> Each transaction goes to the first line (by Sort) whose mask and class accept it. Put the specific line (a class, or a narrower mask) <em>above</em> the broader one, or the broader line takes everything and the specific line gets nothing. <strong>Preview Matches</strong> warns you when that happens.</li>
+      <li><strong>Budgets are not split by class.</strong> A class line shows the whole account's budget and no variance. If an account sits on several lines, its budget shows once, on the first line with no class selected.</li>
+      <li><strong>Percentages never split an account between two lines.</strong> Use classes for that. Each transaction's share is rounded to the cent so the lines still add up to the total.</li>
+      <li>If <strong>Show each account under its line</strong> is turned off in Options, every line shows its total only, whatever its Show setting.</li>
+      <li>Before you send anything: <strong>Preview Matches</strong>, then <strong>Save Lines</strong>, then <strong>Run Now</strong> on the Report Templates page to check the workbook.</li>
+    </ul>
+  </section>
+
+  <p class="guide-foot">Something unclear or missing? Tell us through <strong>Feedback</strong> in the top bar.</p>
+</div>
+{% endblock %}
