@@ -8929,7 +8929,8 @@ def _et(ts) -> str:
     return ts.astimezone(_ET).strftime("%Y-%m-%d %I:%M %p")
 
 
-def render_approval_log_pdf(payment_request_id: int, prepared_by: str | None = None) -> bytes:
+def render_approval_log_pdf(payment_request_id: int, prepared_by: str | None = None,
+                            added_after_posting: bool = False) -> bytes:
     """The "Approval & Audit Log" PDF (Jay, 2026-10-01: "the approval log
     isn't being sent when the invoice is posted to QBO -- there needs to be a
     specific audit/approval log to go with it"). The check request PDF that
@@ -9015,6 +9016,10 @@ def render_approval_log_pdf(payment_request_id: int, prepared_by: str | None = N
     ctx = {
         "org_name": pr["org_name"], "request_number": pr["request_number"],
         "generated_at": _et(datetime.now(timezone.utc)), "prepared_by": prepared_by,
+        # 2026-10-01 backfill: Bills posted before this log existed got it
+        # afterwards; the document says so rather than claiming it was made
+        # at posting time.
+        "added_after_posting": added_after_posting,
         "vendor": vctx.get("voucher_vendor", "—"), "amount": vctx.get("voucher_amount", "—"),
         "program_area": pr["program_area_title"], "description": pr.get("description") or "—",
         "submitted_by": pr["submitter_name"] or pr["submitter_email"], "submitted_at": _et(pr["created_at"]),
