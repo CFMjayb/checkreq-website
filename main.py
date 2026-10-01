@@ -93,7 +93,7 @@ import os
 import re
 import secrets as pysecrets
 import threading
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Request, Form, UploadFile, BackgroundTasks
@@ -8253,6 +8253,23 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
             except Exception as exc:
                 print(f"[post_to_qbo] SharePoint auth failed for {request_number}: {exc}")
 
+    # 2026-10-01 (Jay): the Approval & Audit Log goes to QuickBooks with every
+    # Bill. Built now, from the live records. If it cannot be built, the post
+    # still goes ahead (never block a payment on a document) and the failure
+    # is logged; a missing log is visible on the Bill and fixable.
+    approval_log_pdf = None
+    approval_log_name = f"{request_number} Approval and Audit Log.pdf"
+    try:
+        actor = db.query_one("SELECT display_name, email FROM checkreq.app_users WHERE id = %s", (user["id"],))
+        approval_log_pdf = render_approval_log_pdf(
+            pr["id"], prepared_by=(actor["display_name"] or actor["email"]) if actor else None)
+        qbo_attachments.append({
+            "filename": approval_log_name,
+            "content_base64": base64.b64encode(approval_log_pdf).decode("ascii"),
+        })
+    except Exception as exc:
+        print(f"[post_to_qbo] approval log build failed for {request_number}: {exc}")
+
     result, bill_error = qbo_mcp_client.create_bill(
         company, qbo_vendor_id,
         date.today().isoformat(),
@@ -8280,6 +8297,18 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
                  f"QBO Bill {result.get('bill_number') or result.get('bill_id')} created.",
                  "Approved", "Posted to QBO", impersonated_by),
             )
+
+    # Keep the same Approval & Audit Log with the request's other documents
+    # (SharePoint archive), next to the check request and invoice.
+    if approval_log_pdf:
+        try:
+            org_full = db.query_one(
+                "SELECT id, code, name, sp_hostname, sp_site_path, sp_library_folder "
+                "FROM checkreq.organizations WHERE id = %s", (pr["org_id"],))
+            _archive_one_file(org_full, pr["id"], request_number, "approval_log", approval_log_name,
+                              "application/pdf", approval_log_pdf, user["id"])
+        except Exception as exc:
+            print(f"[post_to_qbo] approval log archive failed for {request_number}: {exc}")
 
     # Step 7: cleanup_gcs_attachment()'s first real call site.
     try:
@@ -8881,6 +8910,129 @@ body {{ padding: 20px 24px; }}
 </style>
 </head><body>{fragment}</body></html>"""
 
+    return _html_to_pdf_bytes(html)
+
+
+_ET = None
+
+
+def _et(ts) -> str:
+    """A timestamp as US Eastern 'YYYY-MM-DD h:mm AM/PM'."""
+    global _ET
+    if not ts:
+        return "—"
+    if _ET is None:
+        from zoneinfo import ZoneInfo
+        _ET = ZoneInfo("America/New_York")
+    if getattr(ts, "tzinfo", None) is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(_ET).strftime("%Y-%m-%d %I:%M %p")
+
+
+def render_approval_log_pdf(payment_request_id: int, prepared_by: str | None = None) -> bytes:
+    """The "Approval & Audit Log" PDF (Jay, 2026-10-01: "the approval log
+    isn't being sent when the invoice is posted to QBO -- there needs to be a
+    specific audit/approval log to go with it"). The check request PDF that
+    goes to QuickBooks is the copy archived at SUBMISSION, before anyone
+    approved anything, so the approvals were never in what QuickBooks got.
+    This document is built at the moment of Post to QBO from the live
+    records: every approval step (approver, decision, time, web/email, IP,
+    note), the controls and exceptions that applied (pre-approval, ART,
+    self-payment, budget, W-9), and the request's full audit history."""
+    pr = db.query_one(
+        """
+        SELECT pr.*, o.name AS org_name, COALESCE(pa.title, 'All Program Areas') AS program_area_title,
+               u.display_name AS submitter_name, u.email AS submitter_email
+          FROM checkreq.payment_requests pr
+          JOIN checkreq.organizations o ON o.id = pr.org_id
+          LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
+          JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
+         WHERE pr.id = %s
+        """, (payment_request_id,))
+    vctx = _voucher_context(payment_request_id) or {}
+    actions = db.query(
+        """
+        SELECT aa.serial_group, aa.status, aa.acted_at, aa.ip_address, aa.action_source, aa.comment,
+               aa.approver_user_id, aa.acted_by_user_id,
+               ua.display_name AS approver_name, ua.email AS approver_email,
+               ub.display_name AS actor_name, ub.email AS actor_email
+          FROM checkreq.approval_actions aa
+          JOIN checkreq.app_users ua ON ua.id = aa.approver_user_id
+          LEFT JOIN checkreq.app_users ub ON ub.id = aa.acted_by_user_id
+         WHERE aa.payment_request_id = %s
+         ORDER BY aa.serial_group, aa.acted_at NULLS LAST, aa.id
+        """, (payment_request_id,))
+    history = db.query(
+        """
+        SELECT al.action_date, al.action_type, al.comment, al.previous_status, al.new_status,
+               u.display_name AS actor_name, u.email AS actor_email,
+               ui.display_name AS imp_name, ui.email AS imp_email
+          FROM checkreq.audit_log al
+          LEFT JOIN checkreq.app_users u ON u.id = al.action_by_user_id
+          LEFT JOIN checkreq.app_users ui ON ui.id = al.impersonated_by_user_id
+         WHERE al.payment_request_id = %s
+         ORDER BY al.action_date
+        """, (payment_request_id,))
+
+    approvals = []
+    for a in actions:
+        acted_by = None
+        if a["acted_by_user_id"] and a["acted_by_user_id"] != a["approver_user_id"]:
+            acted_by = a["actor_name"] or a["actor_email"]
+        approvals.append({
+            "group": f"Group {a['serial_group']}",
+            "approver": a["approver_name"] or a["approver_email"],
+            "acted_by": acted_by,
+            "status": (a["status"] or "").capitalize(),
+            "acted_at": _et(a["acted_at"]) if a["acted_at"] else "—",
+            "source": {"web": "Beacon", "email": "Email link"}.get(a["action_source"] or "", "—")
+                      if a["status"] in ("approved", "rejected") else "—",
+            "ip": a["ip_address"] or "—",
+            "comment": a["comment"] or "",
+        })
+
+    notes = []
+    if pr.get("pre_approved"):
+        notes.append("Submitted as PRE-APPROVED: the submitter attested that approval was obtained outside "
+                     "Beacon; the documentation is attached to the request.")
+    if pr.get("cfo_override"):
+        notes.append(f"CFO override recorded{(' on ' + _et(pr['cfo_override_date'])) if pr.get('cfo_override_date') else ''}.")
+    if pr.get("overspend_flagged") and pr.get("overspend_detail"):
+        notes.append("Budget: " + pr["overspend_detail"])
+    if pr.get("existing_vendor_w9_flagged"):
+        notes.append("W-9 threshold check at submission: " + (pr.get("existing_vendor_w9_detail") or "flagged"))
+    if pr.get("w9_override"):
+        notes.append(f"W-9 requirement WAIVED for this request on {_et(pr.get('w9_override_at'))}. "
+                     f"Reason: {pr.get('w9_override_reason') or '—'}")
+    if pr.get("vendor_id"):
+        v = db.query_one("SELECT display_name, w9_on_file, w9_not_required, w9_not_required_reason "
+                         "FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],))
+        if v and v.get("w9_not_required"):
+            notes.append(f"Vendor marked 'W-9 not required'. Reason: {v.get('w9_not_required_reason') or '—'}")
+        elif v and v.get("w9_on_file") and pr.get("existing_vendor_w9_flagged"):
+            notes.append("W-9 now on file for this vendor (reviewed and confirmed in Beacon; see history).")
+
+    ctx = {
+        "org_name": pr["org_name"], "request_number": pr["request_number"],
+        "generated_at": _et(datetime.now(timezone.utc)), "prepared_by": prepared_by,
+        "vendor": vctx.get("voucher_vendor", "—"), "amount": vctx.get("voucher_amount", "—"),
+        "program_area": pr["program_area_title"], "description": pr.get("description") or "—",
+        "submitted_by": pr["submitter_name"] or pr["submitter_email"], "submitted_at": _et(pr["created_at"]),
+        "pay_date": pr["requested_pay_date"].strftime("%B %d, %Y") if pr.get("requested_pay_date") else "—",
+        "gl_lines": [{"account": g["account"], "amount": f"${g['amount']:,.2f}", "memo": g.get("memo")}
+                     for g in vctx.get("voucher_gl_lines", [])],
+        "chain_summary": pr.get("approval_chain_summary") or "",
+        "approvals": approvals, "notes": notes,
+        "history": [{
+            "at": _et(h["action_date"]), "action": h["action_type"],
+            "by": h["actor_name"] or h["actor_email"] or "—",
+            "impersonated_by": (h["imp_name"] or h["imp_email"]) if h.get("imp_email") else None,
+            "status": (f"{h['previous_status']} → " if h["previous_status"] and h["previous_status"] != h["new_status"] else "")
+                      + (h["new_status"] or ""),
+            "comment": h["comment"] or "",
+        } for h in history],
+    }
+    html = templates.env.get_template("approval_log.html").render(ctx)
     return _html_to_pdf_bytes(html)
 
 
