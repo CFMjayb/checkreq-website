@@ -110,6 +110,7 @@ import rbac
 import parish_roles
 import parish_mode
 import beacon_address
+import digest_extras
 import parish_documents
 import cornerstone_documents
 import parish_info
@@ -2038,14 +2039,15 @@ def _approval_email_context(payment_request_id: int) -> dict | None:
     return row
 
 
-def _approval_action_email_html(request_body: str, sign_in_url: str) -> str:
+def _approval_action_email_html(request_body: str, sign_in_url: str,
+                                 title: str = "Beacon — Check Request Approvals") -> str:
     """Shared HTML chrome (header band + footer sign-in link) both the
     trigger email and the daily digest wrap their own inner content in --
     keeps one visual identity across both without duplicating the wrapper."""
     return f"""
 <div style="font-family: Arial, Helvetica, sans-serif; max-width: 640px; margin: 0 auto;">
   <div style="background:#1F4E79; color:#fff; padding:16px 24px; border-radius:6px 6px 0 0;">
-    <h2 style="margin:0; font-size:18px;">Beacon — Check Request Approvals</h2>
+    <h2 style="margin:0; font-size:18px;">{_esc(title)}</h2>
   </div>
   <div style="border:1px solid #ddd; border-top:none; padding:24px; border-radius:0 0 6px 6px;">
     {request_body}
@@ -6509,6 +6511,9 @@ async def send_daily_digest(request: Request):
     sent = 0
     skipped_empty = 0
     errors = []
+    # 2026-09-30: every email this run sends is recorded here, for the
+    # Beacon Administrator summary at the end (digest_extras).
+    comms: list[dict] = []
     for a in approvers:
         pending = db.query(
             "SELECT DISTINCT aa.payment_request_id AS pr_id, aa.serial_group "
@@ -6529,15 +6534,22 @@ async def send_daily_digest(request: Request):
         if not rows:
             skipped_empty += 1
             continue
+        entry = {"to": a["email"], "name": a.get("display_name"), "kind": "Approval reminder",
+                 "orgs": {r["org_code"] for r in rows}, "ok": False, "error": None,
+                 "items": [f"{r['request_number']} ({r['org_code']})" for r in rows]}
+        comms.append(entry)
         try:
             result = _send_daily_digest_email(a, rows, request)
         except Exception as exc:
             errors.append({"approver": a["email"], "error": str(exc)})
+            entry["error"] = str(exc)
             continue
         if result.get("status") == "sent":
             sent += 1
+            entry["ok"] = True
         else:
             errors.append({"approver": a["email"], "error": result.get("error")})
+            entry["error"] = result.get("error")
 
     # Ask My Accountant (2026-08-16): a new section on this SAME daily
     # digest, per Jay's explicit answer in the thread log ("can be part of
@@ -6549,9 +6561,10 @@ async def send_daily_digest(request: Request):
     coded = db.query(
         """
         SELECT pr.submitter_user_id, u.email AS submitter_email, u.display_name AS submitter_name,
-               pr.request_number, pr.amount, pr.approval_chain_summary
+               pr.request_number, pr.amount, pr.approval_chain_summary, o.code AS org_code
         FROM checkreq.audit_log al
         JOIN checkreq.payment_requests pr ON pr.id = al.payment_request_id
+        JOIN checkreq.organizations o ON o.id = pr.org_id
         JOIN checkreq.app_users u ON u.id = pr.submitter_user_id
         WHERE al.action_type = 'GL Coding Assigned' AND al.action_date > NOW() - INTERVAL '1 day'
         ORDER BY u.email, pr.request_number
@@ -6567,6 +6580,11 @@ async def send_daily_digest(request: Request):
             f"AP has finished assigning GL coding to the following request(s) you submitted with "
             f"\"Ask My Accountant\" -- they're now in the approval chain:\n\n{lines}"
         )
+        entry = {"to": items[0]["submitter_email"], "name": items[0]["submitter_name"],
+                 "kind": "GL coding assigned (to submitter)", "ok": False, "error": None,
+                 "orgs": {i["org_code"] for i in items},
+                 "items": [f"{i['request_number']} ({i['org_code']})" for i in items]}
+        comms.append(entry)
         try:
             result = email_client.send_email(
                 to=items[0]["submitter_email"],
@@ -6575,14 +6593,41 @@ async def send_daily_digest(request: Request):
             )
             if result.get("status") == "sent":
                 coding_notified += 1
+                entry["ok"] = True
             else:
                 errors.append({"submitter": items[0]["submitter_email"], "error": result.get("error")})
+                entry["error"] = result.get("error")
         except Exception as exc:
             errors.append({"submitter": items[0]["submitter_email"], "error": str(exc)})
+            entry["error"] = str(exc)
+
+    # 2026-09-30 (Jay): AP Reviewers finally get told there is work waiting,
+    # then every Beacon Admin gets a summary of who got what this morning.
+    # Each wrapped so a failure here can never undo the emails above.
+    ap_log: list[dict] = []
+    admin_summaries = 0
+    try:
+        ap_log = digest_extras.send_ap_digests(
+            base_for=lambda org_id: _entity_base_url(org_id, request),
+            esc=_esc, wrap_html=_approval_action_email_html,
+            vr_name=_vendor_request_row_display_name, sender=W9_SENDER_EMAIL,
+        )
+        comms.extend(ap_log)
+    except Exception as exc:
+        errors.append({"ap_digest": str(exc)})
+    try:
+        admin_summaries = digest_extras.send_admin_summaries(
+            comms, esc=_esc, wrap_html=_approval_action_email_html,
+            sign_in_url=f"{str(request.base_url).rstrip('/')}/portal", sender=W9_SENDER_EMAIL,
+        )
+    except Exception as exc:
+        errors.append({"admin_summary": str(exc)})
 
     return JSONResponse({
         "approvers_notified": sent, "skipped_empty": skipped_empty,
-        "gl_coding_submitters_notified": coding_notified, "errors": errors,
+        "gl_coding_submitters_notified": coding_notified,
+        "ap_reviewers_notified": sum(1 for e in ap_log if e["ok"]),
+        "admin_summaries_sent": admin_summaries, "errors": errors,
     })
 
 

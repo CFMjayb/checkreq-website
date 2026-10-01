@@ -8,19 +8,6 @@
 
 <h1>Setup Tables</h1>
 <p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
-<p class="sub">
-  The eight tabs of <code>26-129 Check Request Setup Tables.xlsm</code>, in Beacon.
-  Entity-scoped tables follow the <strong>{{ current_org.code if current_org else '—' }}</strong>
-  selector in the header — switch entity up there and these screens follow, no separate
-  Working Entity cell and no manual Refresh.
-</p>
-
-<div class="banner banner-info">
-  <strong>Prototype.</strong> Two screens are built and live against real data. The rest are
-  mapped out in <em>Admin Module Plan.md</em> but still belong to the workbook for now — keep
-  using it for those.
-</div>
-
 <div class="setup-grid">
   {% for t in tabs %}
   <div class="setup-tile {% if t.built %}is-built{% else %}is-planned{% endif %}">
@@ -36,21 +23,13 @@
           —
         {% endif %}
       </span>
-      {% if t.built %}
-        <span class="badge badge-approved">Built</span>
-      {% else %}
-        <span class="badge badge-draft">In the workbook</span>
-      {% endif %}
+      {# 2026-09-30 (Jay): every tab is built now, so no "Built" pill. #}
+      {% if not t.built %}<span class="badge badge-draft">In the workbook</span>{% endif %}
     </div>
   </div>
   {% endfor %}
 </div>
 
-<p class="setup-note">
-  Every screen here reads and writes the same <code>checkreq</code> Postgres tables the workbook
-  does, so the two stay in step while both are in use — refresh the workbook to pick up a change
-  made here, and vice versa.
-</p>
 
 </div>
 {% endblock %}
