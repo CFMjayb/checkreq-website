@@ -13,6 +13,9 @@
      have caused anyway; harmless, and one code path instead of two. #}
   <meta name="csrf-token" content="{{ csrf_token(request) }}">
   <title>{% block title %}Beacon{% endblock %}</title>
+  {# Tab icon follows the HOSTNAME the visitor used (the diocese's own logo on a
+     branded hostname, Beacon's default otherwise) -- see favicon.py. #}
+  <link rel="icon" type="image/png" href="/favicon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version('css/tokens.css') }}">

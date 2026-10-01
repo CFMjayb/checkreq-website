@@ -14,3 +14,4 @@ anthropic
 requests
 argon2-cffi
 openpyxl
+Pillow

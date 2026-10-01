@@ -8937,3 +8937,13 @@ feedback_chat.register(app, current_user=_current_user, current_org=_current_org
 import sma_webhook
 
 sma_webhook.register(app)
+
+# ── Per-hostname favicon (2026-10-01, Jay) ──
+# See favicon.py. Thin wiring only: the host -> diocese lookup is the login
+# page's own resolver, so the tab icon and the login screen always agree.
+import favicon
+
+favicon.register(
+    app,
+    branding_for_request=lambda request: auth_routes._branding_for_host(auth_routes._request_host(request)),
+)
