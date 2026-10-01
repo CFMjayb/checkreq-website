@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">Coding, correcting and posting requests &mdash; and handling vendor W-9s.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="screen">
+    <h2>The AP Review screen</h2>
+    <ul>
+      <li><strong>Needs GL Coding</strong> &mdash; requests submitted with &ldquo;Ask My Accountant.&rdquo; Click <strong>Open &amp; Code</strong>, add the GL line(s), then <strong>Save &amp; Start Approval</strong>. If the submitter is also the approver, it goes straight to Approved.</li>
+      <li><strong>Pending</strong> &mdash; fully approved requests. Tick several and use <strong>Post Selected to QBO</strong>, or post one at a time. Posting creates the Bill in QuickBooks with the documents attached.</li>
+      <li>Click any <strong>request number</strong> to open the edit screen.</li>
+    </ul>
+  </section>
+
+  <section class="hiw-section" id="edit">
+    <h2>Correcting a request</h2>
+    <p>The edit screen shows the whole request with the invoice beside it. AP Reviewers, CFOs and Beacon Admins can change the vendor, amount, GL coding, program area, pay date, description and attachments on <em>any</em> request until it is posted.
+      Saving <strong>never restarts approval</strong>; every change is recorded in the request&rsquo;s history with what it was before and after, and the check request PDF that goes to QuickBooks is regenerated.</p>
+  </section>
+
+  <section class="hiw-section" id="w9">
+    <h2>Vendor W-9s</h2>
+    <p>A request is held when the vendor&rsquo;s payments this year pass the W-9 threshold and no W-9 is on file. The <strong>W-9</strong> section of the edit screen shows where it stands:</p>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard">
+        <h3>On hold / waiting</h3>
+        <p><strong>Send W-9 Request</strong> emails the vendor a secure upload link (good for 7 days; <strong>Resend</strong> renews it). Or release the hold: <strong>never needs a W-9</strong> (e.g. a corporation &mdash; applies to all its requests) or <strong>post this request without a W-9</strong>. Both need a reason.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>Take action on received W-9</h3>
+        <p>The vendor uploaded it; it opens in the viewer. Type the <strong>EIN or SSN</strong> from the form, tick <strong>1099</strong> unless the vendor is a corporation, then <strong>Confirm W-9 and update QuickBooks</strong>. If the form is wrong, use <strong>request a corrected one</strong>.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>On file</h3>
+        <p>Confirming sends the tax ID and 1099 setting to the QuickBooks vendor, attaches the W-9 to it, and releases the hold on every request for that vendor. <strong>Beacon never stores the tax ID.</strong></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="hiw-section" id="email">
+    <h2>The 7 AM email</h2>
+    <p>Each morning, AP Reviewers get one email &mdash; only when something is waiting at their entities &mdash; listing requests to code, W-9s to review, requests ready to post, and requests on hold. Each item links straight to the request.</p>
+  </section>
+
+</div>
+{% endblock %}

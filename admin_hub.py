@@ -72,8 +72,9 @@ _CARDS = [
 
     {"title": "All Requests", "desc": "Every check request for the selected entity, every status.",
      "url": "/admin/all-requests", "role": "cfo", "group": "ap"},
-    {"title": "Vendor Approvals", "desc": "Approve or reject new-vendor requests; confirm W-9 receipt.",
-     "url": "/admin/vendor-requests", "role": "vendor_approver", "group": "ap"},
+    {"title": "Vendor Approvals", "desc": "Approve or reject new-vendor requests; review their W-9s.",
+     "url": "/admin/vendor-requests", "role": "vendor_approver", "group": "ap",
+     "guide": "ap-review-w9"},
     {"title": "Setup Tables", "desc": "Program areas, GL account mapping, entities, global approvers.",
      "url": "/admin/setup", "role": "setup_admin", "group": "ap"},
     # L3 (Security Assessment 2026-09-19, Jay: "beacon_admin only") --

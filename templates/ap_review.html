@@ -2,7 +2,8 @@
 {% block title %}AP Review{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
-<h1>AP Review</h1>
+{% from "_guide_link.html" import guide_link %}
+<h1>AP Review {{ guide_link("ap-review-w9", "How AP Review and W-9s work") }}</h1>
 <p class="back-link"><a href="/portal">&larr; Back to Portal</a></p>
 <p class="sub">Requests that have cleared every approval step and are ready for final review and posting to
 QuickBooks. Posting here creates the real QBO Vendor (if new) and Bill -- this is the one place in the app
