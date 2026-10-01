@@ -22,6 +22,8 @@ Approval" instead. See main.py's ap_edit_form / ap_edit_submit.
 
 {% if saved %}<div class="banner banner-success">Changes saved.</div>{% endif %}
 {% if request.query_params.get('w9_waived') %}<div class="banner banner-success">W-9 waiver updated.</div>{% endif %}
+{% if request.query_params.get('w9_confirmed') == '1' %}<div class="banner banner-success">W-9 confirmed. The tax ID and 1099 setting were sent to QuickBooks and the W-9 is attached to the vendor.</div>{% endif %}
+{% if request.query_params.get('w9_confirmed') == 'noattach' %}<div class="banner banner-error">W-9 confirmed and the tax ID/1099 setting were sent to QuickBooks, but the W-9 file could not be attached -- attach it to the vendor in QuickBooks by hand. Details are in the request history.</div>{% endif %}
 {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
 {% if not editable %}<div class="banner banner-info">This request is {{ pr_status }} and can no longer be edited.</div>{% endif %}
 
@@ -109,45 +111,103 @@ Approval" instead. See main.py's ap_edit_form / ap_edit_submit.
     </div>
   </form>
 
-  <div class="card ap-edit-card">
-    <h2>W-9</h2>
-    {% if vendor and vendor.w9_on_file %}
-      <p>W-9 is on file for {{ vendor.display_name }}.</p>
-    {% elif vendor and vendor.w9_not_required %}
-      <p><b>{{ vendor.display_name }} never needs a W-9.</b> <span class="sub">Reason: {{ vendor.w9_not_required_reason }}</span></p>
+  {% endif %}
+
+  {# 2026-10-01 (Jay): the W-9 section follows the W-9's actual stage. Once a
+     W-9 arrives it becomes "Take action on received W-9": the W-9 shows in
+     the viewer, AP types the EIN/SSN, ticks 1099, and Confirm sends the tax
+     ID + 1099 flag + the W-9 itself to the QuickBooks vendor (main.py
+     w9_confirm). The tax ID is never stored in Beacon. #}
+  <div class="card ap-edit-card ap-w9-card ap-w9-{{ w9_state }}" id="w9">
+    {% if w9_state == 'review' %}
+      <h2>Take action on received W-9</h2>
+      <p>{{ w9.name }} uploaded a W-9 on {{ w9.uploaded_at.strftime("%b %d, %Y") }}.
+        <button type="button" class="link-button" id="apShowW9">Show the W-9</button></p>
+      <form method="post" action="/requests/{{ request_number }}/w9-confirm" id="w9ConfirmForm" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <div class="ap-edit-row">
+          <div class="field">
+            <label for="w9TaxId">EIN or SSN from the W-9</label>
+            <input type="password" id="w9TaxId" name="tax_id" inputmode="numeric" autocomplete="off"
+                   placeholder="9 digits" required pattern="[0-9 -]{9,11}">
+          </div>
+          <div class="field">
+            <label>Type</label>
+            <label class="inline-choice"><input type="radio" name="tin_type" value="EIN" checked> EIN</label>
+            <label class="inline-choice"><input type="radio" name="tin_type" value="SSN"> SSN</label>
+          </div>
+        </div>
+        <label class="inline-choice"><input type="checkbox" name="vendor_1099" value="1"> Track payments for 1099 (vendor is not a corporation)</label>
+        <p class="sub">On confirm, Beacon sends the tax ID and 1099 setting to the QuickBooks vendor and attaches
+          this W-9 to it, then marks the W-9 on file and releases the hold. The tax ID is not stored in Beacon.</p>
+        <div class="ap-edit-buttons">
+          <button type="submit" class="btn btn-primary">Confirm W-9 and update QuickBooks</button>
+        </div>
+      </form>
+      {% if w9.kind == 'vendor' %}
+      <form method="post" action="/admin/ap-review/{{ request_number }}/request-existing-vendor-w9" class="inline-form"
+            data-confirm="Email {{ w9.name }} asking for a corrected W-9? The uploaded one stays on file for reference.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" class="link-button">This W-9 is wrong -- request a corrected one</button>
+      </form>
+      {% endif %}
+    {% elif w9_state == 'on_file' %}
+      <h2>W-9</h2>
+      <p><span class="badge badge-approved">W-9 on file</span> for {{ w9.name }}.
+        {% if w9.sp_path or w9.gcs_path %}<button type="button" class="link-button" id="apShowW9">Show the W-9</button>{% endif %}</p>
+    {% elif w9_state == 'not_required' %}
+      <h2>W-9</h2>
+      <p><b>{{ w9.name }} never needs a W-9.</b> <span class="sub">Reason: {{ w9.row.w9_not_required_reason }}</span></p>
+      {% if editable %}
       <form method="post" action="/requests/{{ request_number }}/w9-waiver" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <input type="hidden" name="scope" value="clear_vendor"><input type="hidden" name="back" value="ap-edit">
         <button type="submit" class="btn btn-secondary btn-sm">Remove "never needs W-9"</button>
       </form>
+      {% endif %}
     {% else %}
-      <p class="sub">{% if w9_hold %}Posting is on hold until a W-9 is received.{% else %}No W-9 hold on this request.{% endif %}</p>
-      {% if vendor %}
-      <form method="post" action="/requests/{{ request_number }}/w9-waiver" class="ap-w9-form">
+      <h2>W-9</h2>
+      {% if w9_state == 'waiting' %}
+        <p>Waiting on {{ w9.name }} to upload a W-9 (requested {{ w9.requested_at.strftime("%b %d, %Y") }}).
+          Posting is on hold until it is received and confirmed here.</p>
+      {% elif w9_state == 'hold' %}
+        <p>Posting is on hold until a W-9 is received from {{ w9.name }}.</p>
+      {% elif w9_state == 'waived' %}
+        <p><b>W-9 waived for this request.</b> <span class="sub">Reason: {{ pr.w9_override_reason }}</span></p>
+      {% else %}
+        <p class="sub">No W-9 needed for this request.</p>
+      {% endif %}
+      {% if editable and w9 and w9.kind == 'vendor' and w9_state in ('waiting', 'hold') %}
+      <form method="post" action="/admin/ap-review/{{ request_number }}/request-existing-vendor-w9" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-        <input type="hidden" name="scope" value="vendor"><input type="hidden" name="back" value="ap-edit">
-        <input type="text" name="reason" placeholder="Reason, e.g. corporation" required>
-        <button type="submit" class="btn btn-secondary btn-sm">{{ vendor.display_name }} never needs a W-9</button>
+        <button type="submit" class="btn btn-secondary btn-sm">{{ "Resend W-9 Request" if w9.requested_at else "Send W-9 Request" }}</button>
       </form>
       {% endif %}
-    {% endif %}
-    {% if pr.w9_override %}
-      <p><b>W-9 waived for this request.</b> <span class="sub">Reason: {{ pr.w9_override_reason }}</span></p>
+      {% if editable and w9_state in ('waiting', 'hold') %}
+        {% if w9.kind == 'vendor' %}
+        <form method="post" action="/requests/{{ request_number }}/w9-waiver" class="ap-w9-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <input type="hidden" name="scope" value="vendor"><input type="hidden" name="back" value="ap-edit">
+          <input type="text" name="reason" placeholder="Reason, e.g. corporation" required>
+          <button type="submit" class="btn btn-secondary btn-sm">{{ w9.name }} never needs a W-9</button>
+        </form>
+        {% endif %}
+        <form method="post" action="/requests/{{ request_number }}/w9-waiver" class="ap-w9-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <input type="hidden" name="scope" value="request"><input type="hidden" name="back" value="ap-edit">
+          <input type="text" name="reason" placeholder="Reason" required>
+          <button type="submit" class="btn btn-secondary btn-sm">Post this request without a W-9</button>
+        </form>
+      {% endif %}
+      {% if editable and w9_state == 'waived' %}
       <form method="post" action="/requests/{{ request_number }}/w9-waiver" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <input type="hidden" name="scope" value="clear_request"><input type="hidden" name="back" value="ap-edit">
         <button type="submit" class="btn btn-secondary btn-sm">Remove waiver</button>
       </form>
-    {% elif not (vendor and (vendor.w9_on_file or vendor.w9_not_required)) %}
-      <form method="post" action="/requests/{{ request_number }}/w9-waiver" class="ap-w9-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-        <input type="hidden" name="scope" value="request"><input type="hidden" name="back" value="ap-edit">
-        <input type="text" name="reason" placeholder="Reason" required>
-        <button type="submit" class="btn btn-secondary btn-sm">Post this request without a W-9</button>
-      </form>
+      {% endif %}
     {% endif %}
   </div>
-  {% endif %}
 
   <div class="card ap-edit-card">
     <h2>Attachments</h2>
@@ -244,9 +304,27 @@ Approval" instead. See main.py's ap_edit_form / ap_edit_submit.
   }
   const attBtns = Array.from(document.querySelectorAll('.ap-view-att'));
   attBtns.forEach(b => b.addEventListener('click', () => showAttachment(b)));
-  // Default to the invoice the submitter uploaded, not the generated voucher.
+  function showW9() {
+    const url = `/requests/${REQ}/w9-file`;
+    title.textContent = 'W-9'; openLink.href = url; openLink.hidden = false;
+    viewer.innerHTML = '';
+    const f = document.createElement('iframe'); f.src = url; f.title = 'W-9';
+    viewer.appendChild(f);
+    attBtns.forEach(b => b.classList.remove('active'));
+  }
+  const w9Btn = document.getElementById('apShowW9');
+  if (w9Btn) w9Btn.addEventListener('click', showW9);
+  // A W-9 waiting for review is what AP needs to see first; otherwise the
+  // invoice the submitter uploaded, not the generated voucher.
   const firstUpload = attBtns.find(b => b.dataset.source !== 'generated_pdf');
-  if (firstUpload || attBtns[0]) showAttachment(firstUpload || attBtns[0]);
+  if ({{ (w9_state == 'review')|tojson }}) showW9();
+  else if (firstUpload || attBtns[0]) showAttachment(firstUpload || attBtns[0]);
+  const w9Form = document.getElementById('w9ConfirmForm');
+  if (w9Form) w9Form.addEventListener('submit', (e) => {
+    const digits = (document.getElementById('w9TaxId').value || '').replace(/[^0-9]/g, '');
+    if (digits.length !== 9) { e.preventDefault(); alert('Enter the 9-digit EIN or SSN from the W-9.'); return; }
+    showButtonLoading(e.submitter || w9Form.querySelector('button[type="submit"]'));
+  });
 
   // ── Upload File (Standing UI-UX Rule 7) ──
   const upBtn = document.getElementById('apUploadBtn');

@@ -147,6 +147,9 @@ that writes to QuickBooks.</p>
           <button type="submit" class="btn btn-primary btn-sm"
                   {% if r.vendor_gate_wait %}disabled title="{{ r.vendor_gate_wait }}"{% endif %}>Post to QBO</button>
         </form>
+        {% if r.w9_needs_review and not r.existing_vendor_w9_flagged %}
+        <a class="btn btn-primary btn-sm" href="/requests/{{ r.request_number }}/ap-edit#w9">Review W-9</a>
+        {% endif %}
         {% if r.can_waive_w9 %}
         {# 2026-09-30: post without a W-9 -- once for this request, or never
            again for this vendor. Reason required (prompted), logged. #}
@@ -167,10 +170,8 @@ that writes to QuickBooks.</p>
         {% endif %}
         {% if r.existing_vendor_w9_flagged and r.vendor_gate_wait %}
         {% if r.existing_vendor_w9_needs_review %}
-        <form method="post" action="/admin/ap-review/{{ r.request_number }}/confirm-existing-vendor-w9">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-          <button type="submit" class="btn btn-primary btn-sm">Confirm W-9 Received</button>
-        </form>
+        {# 2026-10-01: review the W-9 (and send its tax ID/1099/file to QBO) on the AP edit screen. #}
+        <a class="btn btn-primary btn-sm" href="/requests/{{ r.request_number }}/ap-edit#w9">Review W-9</a>
         {% endif %}
         <form method="post" action="/admin/ap-review/{{ r.request_number }}/request-existing-vendor-w9">
           <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
