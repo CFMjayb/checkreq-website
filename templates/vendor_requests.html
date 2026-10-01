@@ -57,8 +57,10 @@ chain) is in.</p>
           n/a
         {% elif r.w9_received %}
           <span class="badge badge-approved">Received &amp; confirmed</span>
+        {% elif r.w9_uploaded_at %}
+          <span class="badge badge-pending">W-9 uploaded {{ r.w9_uploaded_at.strftime("%Y-%m-%d") }} -- review it</span>
         {% elif r.w9_email_sent_at %}
-          Emailed {{ r.w9_email_sent_at.strftime("%Y-%m-%d") }} -- awaiting upload/confirmation
+          Emailed {{ r.w9_email_sent_at.strftime("%Y-%m-%d") }} -- awaiting upload
         {% else %}
           Not yet sent
         {% endif %}
@@ -78,10 +80,10 @@ chain) is in.</p>
             <button type="submit" class="btn btn-secondary btn-sm">Reject</button>
           </form>
         {% elif r.requires_w9 and not r.w9_received %}
-          <form method="post" action="/admin/vendor-requests/{{ r.id }}/w9-received" style="display:inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-            <button type="submit" class="btn btn-secondary btn-sm">Confirm W-9 received</button>
-          </form>
+          {# 2026-10-01: the W-9 is reviewed (and sent to QBO) on the AP edit screen. #}
+          {% if r.w9_uploaded_at %}
+          <a class="btn btn-primary btn-sm" href="/requests/{{ r.request_number }}/ap-edit#w9">Review W-9</a>
+          {% endif %}
           {# M11 (Security Assessment 2026-09-19): the upload link now
              expires 7 days after w9_email_sent_at -- this is the recovery
              path for a vendor who takes longer than that, refreshing the

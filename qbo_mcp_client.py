@@ -352,6 +352,32 @@ def create_vendor(
     return _post("/api/checkreq/vendor/{company}", company, body)
 
 
+def set_vendor_w9(
+    company: str,
+    vendor_id: str,
+    tax_identifier: str,
+    vendor_1099: bool,
+    file_name: str | None = None,
+    file_base64: str | None = None,
+    content_type: str | None = None,
+) -> tuple[dict | None, str | None]:
+    """POST /api/checkreq/vendor-w9/{company} (2026-10-01, W-9 review): set
+    the QBO Vendor's tax ID + 1099 flag and attach the W-9 file. The tax ID
+    passes straight through -- Beacon never stores or logs it, and it is
+    scrubbed from any error text returned here."""
+    body = {"vendor_id": str(vendor_id), "tax_identifier": tax_identifier,
+            "vendor_1099": bool(vendor_1099)}
+    if file_name and file_base64:
+        body.update({"file_name": file_name, "file_base64": file_base64,
+                     "content_type": content_type or "application/pdf"})
+    data, err = _post("/api/checkreq/vendor-w9/{company}", company, body, timeout=90)
+    if err and tax_identifier:
+        digits = "".join(ch for ch in tax_identifier if ch.isdigit())
+        if digits:
+            err = err.replace(digits, "*********").replace(tax_identifier, "*********")
+    return data, err
+
+
 def create_bill(
     company: str,
     vendor_id: str,

@@ -68,7 +68,8 @@ def _ap_work(org_ids: list[int], vr_name) -> dict:
                vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
                vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
                vr.dba_name AS vr_dba_name, vr.status AS vr_status,
-               vr.requires_w9 AS vr_requires_w9, vr.w9_received AS vr_w9_received
+               vr.requires_w9 AS vr_requires_w9, vr.w9_received AS vr_w9_received,
+               vr.w9_uploaded_at AS vr_w9_uploaded_at
           FROM checkreq.payment_requests pr
           JOIN checkreq.organizations o ON o.id = pr.org_id
           LEFT JOIN checkreq.vendors v ON v.id = pr.vendor_id
@@ -90,7 +91,7 @@ def _ap_work(org_ids: list[int], vr_name) -> dict:
             if r["vr_status"] != "approved":
                 r["hold"] = "new vendor not yet approved"
             elif r["vr_requires_w9"] and not r["vr_w9_received"] and not r["w9_override"]:
-                r["hold"] = "waiting on W-9"
+                r["hold"] = "W-9 uploaded -- confirm it" if r.get("vr_w9_uploaded_at") else "waiting on W-9"
             else:
                 r["hold"] = None
         elif r["existing_vendor_w9_flagged"] and not (
@@ -101,6 +102,7 @@ def _ap_work(org_ids: list[int], vr_name) -> dict:
         if r["hold"] is None:
             work["ready"].append(r)
         elif r["hold"].startswith("W-9 uploaded"):
+            r["anchor"] = "#w9"   # straight to the W-9 review panel
             work["confirm_w9"].append(r)
         else:
             work["held"].append(r)
@@ -112,7 +114,7 @@ def _section_html(title: str, rows: list[dict], base_for, esc, extra) -> str:
         return ""
     trs = "".join(
         f'<tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">'
-        f'<a href="{base_for(r["org_id"])}/requests/{esc(r["request_number"])}/ap-edit">'
+        f'<a href="{base_for(r["org_id"])}/requests/{esc(r["request_number"])}/ap-edit{r.get("anchor", "")}">'
         f'<strong>{esc(r["request_number"])}</strong></a>'
         f'<br><span style="color:#888;font-size:0.85em;">{esc(r["org_code"])}</span></td>'
         f'<td style="padding:6px 8px;border-bottom:1px solid #eee;">{esc(r["vendor_name"])}</td>'
@@ -129,7 +131,7 @@ def _section_text(title: str, rows: list[dict], base_for, extra) -> str:
         return ""
     lines = "\n".join(
         f"- {r['request_number']} ({r['org_code']}) {r['vendor_name']} ${float(r['amount'] or 0):,.2f}"
-        f" -- {extra(r)}\n  {base_for(r['org_id'])}/requests/{r['request_number']}/ap-edit"
+        f" -- {extra(r)}\n  {base_for(r['org_id'])}/requests/{r['request_number']}/ap-edit{r.get('anchor', '')}"
         for r in rows
     )
     return f"{title} ({len(rows)}):\n{lines}\n\n"
@@ -148,7 +150,7 @@ def send_ap_digests(*, base_for, esc, wrap_html, vr_name, sender) -> list[dict]:
             continue
         sections = [
             ("Needs GL coding", w["coding"], lambda r: f"waiting {r['days']} day{'s' if r['days'] != 1 else ''}"),
-            ("W-9 uploaded -- confirm it to release", w["confirm_w9"], lambda r: "vendor uploaded its W-9"),
+            ("W-9 received -- review it to release", w["confirm_w9"], lambda r: "vendor uploaded its W-9"),
             ("Ready to post to QuickBooks", w["ready"], lambda r: "approved"),
             ("Held", w["held"], lambda r: r["hold"]),
         ]

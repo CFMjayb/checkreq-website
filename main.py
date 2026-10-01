@@ -2560,6 +2560,78 @@ def _w9_hold_cleared(pr: dict, vendor: dict | None) -> bool:
     )
 
 
+def _w9_target(pr: dict) -> dict | None:
+    """Which W-9 record a request's review acts on (2026-10-01): the
+    existing vendor's (checkreq.vendors) or, for a not-yet-onboarded
+    vendor, the request's vendor_request. Normalised so the review panel,
+    the file route and the confirm route share one view of it."""
+    if pr.get("vendor_id"):
+        v = db.query_one("SELECT * FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],))
+        if not v:
+            return None
+        return {
+            "kind": "vendor", "row": v, "name": v["display_name"],
+            "qbo_vendor_id": v.get("qbo_vendor_id"),
+            "on_file": bool(v.get("w9_on_file")), "not_required": bool(v.get("w9_not_required")),
+            "uploaded_at": v.get("w9_uploaded_at"), "requested_at": v.get("w9_requested_at"),
+            "sp_path": v.get("w9_file_sp_path"), "gcs_path": v.get("w9_file_gcs_path"),
+            "required": bool(pr.get("existing_vendor_w9_flagged")),
+        }
+    if pr.get("vendor_request_id"):
+        vr = db.query_one("SELECT * FROM checkreq.vendor_requests WHERE id = %s", (pr["vendor_request_id"],))
+        if not vr:
+            return None
+        return {
+            "kind": "vendor_request", "row": vr, "name": _vendor_request_display_name(vr),
+            "qbo_vendor_id": vr.get("qbo_vendor_id"),
+            "on_file": bool(vr.get("w9_received")), "not_required": False,
+            "uploaded_at": vr.get("w9_uploaded_at"), "requested_at": vr.get("w9_email_sent_at"),
+            "sp_path": vr.get("w9_file_sp_path"), "gcs_path": vr.get("w9_file_gcs_path"),
+            "required": bool(vr.get("requires_w9")),
+            "vendor_approved": vr.get("status") in ("approved", "posted_to_qbo"),
+        }
+    return None
+
+
+def _w9_panel_state(pr: dict, t: dict | None) -> str:
+    """The W-9 section's stage on the AP edit screen. Jay, 2026-10-01: once a
+    W-9 is received, the section must stop saying "on hold until a W-9 is
+    received" and become "Take action on received W-9"."""
+    if not t:
+        return "none"
+    if t["on_file"]:
+        return "on_file"
+    if t["not_required"]:
+        return "not_required"
+    if t["uploaded_at"]:
+        return "review"
+    if pr.get("w9_override"):
+        return "waived"
+    if t["required"]:
+        return "waiting" if t["requested_at"] else "hold"
+    return "none"
+
+
+def _w9_file_bytes(org_id: int, t: dict) -> tuple[bytes, str] | None:
+    """The uploaded W-9's bytes + archived filename -- SharePoint first (the
+    permanent record), the GCS staging copy as a fallback."""
+    name = (t.get("sp_path") or t.get("gcs_path") or "").rsplit("/", 1)[-1] or "W-9.pdf"
+    if t.get("sp_path"):
+        org = db.query_one("SELECT sp_hostname, sp_site_path FROM checkreq.organizations WHERE id = %s", (org_id,))
+        if org and org.get("sp_hostname") and org.get("sp_site_path"):
+            try:
+                token = sharepoint_client.get_access_token()
+                site_id = sharepoint_client.get_site_id(token, org["sp_hostname"], org["sp_site_path"])
+                return sharepoint_client.download_bytes(token, site_id, t["sp_path"]), name
+            except Exception as exc:
+                print(f"[w9-file] SharePoint read failed ({t['sp_path']}): {exc}")
+    if t.get("gcs_path"):
+        got = gcs_client.download_bytes(ATTACHMENTS_BUCKET, t["gcs_path"])
+        if got:
+            return got[0], name
+    return None
+
+
 def _require_role_for_org(user: dict, role_key: str, org_id: int | None):
     """Record-level entity check for the AP Review / Vendor Approver ACTION
     routes (Security Assessment 2026-09-19, finding H1). _require_ap_reviewer
@@ -6951,7 +7023,7 @@ def vendor_requests_list(request: Request, email_warning: str = "", entity: str 
         f"""
         SELECT vr.id, vr.entity_type, vr.first_name, vr.last_name, vr.company_name,
                vr.dba_name, vr.contact_name, vr.contact_email, vr.requires_w9,
-               vr.w9_email_sent_at, vr.w9_received, vr.status, vr.rejected_reason,
+               vr.w9_email_sent_at, vr.w9_received, vr.w9_uploaded_at, vr.status, vr.rejected_reason,
                vr.created_at, o.name AS org_name, o.code AS org_code, pr.request_number, pr.amount
         FROM checkreq.vendor_requests vr
         JOIN checkreq.organizations o ON o.id = vr.org_id
@@ -7066,20 +7138,17 @@ def vendor_request_w9_received(vr_id: int, request: Request):
         return err
 
     # H1 (Security Assessment 2026-09-19): entity check before any write.
-    vr = db.query_one("SELECT org_id FROM checkreq.vendor_requests WHERE id = %s", (vr_id,))
+    vr = db.query_one(
+        "SELECT vr.org_id, pr.request_number FROM checkreq.vendor_requests vr "
+        "JOIN checkreq.payment_requests pr ON pr.id = vr.payment_request_id WHERE vr.id = %s", (vr_id,))
     if not vr:
         return JSONResponse({"error": "Vendor request not found"}, status_code=404)
     denied = _require_role_for_org(user, "vendor_approver", vr["org_id"])
     if denied:
         return denied
-
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE checkreq.vendor_requests SET w9_received = TRUE WHERE id = %s",
-                (vr_id,),
-            )
-    return RedirectResponse("/admin/vendor-requests", status_code=303)
+    # 2026-10-01: confirming a W-9 now goes through the review panel, which
+    # sends the tax ID/1099 flag and the W-9 itself to QuickBooks.
+    return RedirectResponse(f"/requests/{vr['request_number']}/ap-edit#w9", status_code=303)
 
 
 @app.post("/admin/vendor-requests/{vr_id}/resend-w9")
@@ -7252,7 +7321,8 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
                vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
                vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
                vr.dba_name AS vr_dba_name, vr.status AS vr_status,
-               vr.requires_w9 AS vr_requires_w9, vr.w9_received AS vr_w9_received
+               vr.requires_w9 AS vr_requires_w9, vr.w9_received AS vr_w9_received,
+               vr.w9_uploaded_at AS vr_w9_uploaded_at
         FROM checkreq.payment_requests pr
         JOIN checkreq.organizations o ON o.id = pr.org_id
         LEFT JOIN checkreq.program_areas pa ON pa.id = pr.program_area_id
@@ -7288,7 +7358,8 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
             if r["vr_status"] != "approved":
                 r["vendor_gate_wait"] = f"Vendor not yet approved (status: {r['vr_status']})"
             elif r["vr_requires_w9"] and not r["vr_w9_received"] and not r["w9_override"]:
-                r["vendor_gate_wait"] = "W-9 not yet received"
+                r["vendor_gate_wait"] = ("W-9 uploaded -- awaiting AP review" if r.get("vr_w9_uploaded_at")
+                                         else "W-9 not yet received")
             else:
                 r["vendor_gate_wait"] = None
         elif r["existing_vendor_w9_flagged"] and not _w9_hold_cleared(
@@ -7314,6 +7385,13 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
         # decides an uploaded file was no good and wants a redo).
         r["existing_vendor_w9_needs_review"] = bool(
             r.get("existing_vendor_w9_flagged") and r.get("w9_uploaded_at") and not r.get("w9_on_file")
+        )
+        # 2026-10-01: either kind of vendor with a W-9 waiting for review gets
+        # the "Review W-9" button (the review panel on the AP edit screen).
+        r["w9_needs_review"] = bool(
+            r["existing_vendor_w9_needs_review"]
+            or (r.get("vendor_request_id") and r.get("vr_requires_w9") and r.get("vr_w9_uploaded_at")
+                and not r.get("vr_w9_received") and not r.get("w9_override"))
         )
         # 2026-09-30 (Jay: "a little bit too much detail"): one short line for
         # the row instead of the full existing_vendor_w9_detail sentence
@@ -7613,6 +7691,7 @@ def ap_edit_form(request_number: str, request: Request, error: str = "", saved: 
         (pr["org_id"],),
     )
     ctx = _voucher_context(pr["id"]) or {}
+    w9_target = _w9_target(pr)
     return _render(request, "ap_edit.html", user, {
         **ctx,
         "pr": pr, "request_number": request_number, "pr_status": pr["status"],
@@ -7627,6 +7706,8 @@ def ap_edit_form(request_number: str, request: Request, error: str = "", saved: 
         "back_url": _ap_edit_back_url(user, pr),
         "error": error, "saved": saved,
         "w9_hold": bool(pr["existing_vendor_w9_flagged"] and not _w9_hold_cleared(pr, vendor)),
+        "w9": w9_target,
+        "w9_state": _w9_panel_state(pr, w9_target),
     })
 
 
@@ -7929,6 +8010,129 @@ async def w9_waiver(request_number: str, request: Request):
                 (pr["id"], user["id"], "W-9 Waiver", comment, impersonated_by))
     sep = "&" if "?" in back_url else "?"
     return RedirectResponse(f"{back_url}{sep}w9_waived={request_number}", status_code=303)
+
+
+# ── W-9 review (2026-10-01) ──────────────────────────────────────────────────
+# Jay, after ADISA's W-9 arrived: the AP Review "Confirm W-9 Received" button
+# only flipped a flag -- nobody could see the W-9 in Beacon and nothing reached
+# QuickBooks. Now the AP edit screen's W-9 section shows the received W-9 and a
+# review form: AP types the EIN/SSN from the form, ticks 1099 if it applies,
+# and confirms. Beacon sends the tax ID + 1099 flag straight to the QBO Vendor
+# and attaches the W-9 to it (qbo-mcp-server /api/checkreq/vendor-w9), then
+# marks the W-9 on file. THE TAX ID IS NEVER STORED: not in Postgres, not in
+# the audit log, not in any log line -- it exists only for this one request.
+
+def _can_review_w9(user_id: int, org_id: int) -> bool:
+    return _can_ap_edit(user_id, org_id) or rbac.user_has_role(user_id, "vendor_approver", org_id)
+
+
+@app.get("/requests/{request_number}/w9-file")
+def w9_file_view(request_number: str, request: Request):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    pr = db.query_one("SELECT * FROM checkreq.payment_requests WHERE request_number = %s", (request_number,))
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if not _can_review_w9(user["id"], pr["org_id"]):
+        return JSONResponse({"error": "Not authorized"}, status_code=403)
+    t = _w9_target(pr)
+    got = _w9_file_bytes(pr["org_id"], t) if t else None
+    if not got:
+        return JSONResponse({"error": "No W-9 file found for this request"}, status_code=404)
+    content, name = got
+    media_type, disposition = upload_guard.serve_headers(content, name)
+    return Response(content=content, media_type=media_type,
+                    headers={"Content-Disposition": disposition, "Cache-Control": "no-store"})
+
+
+@app.post("/requests/{request_number}/w9-confirm")
+async def w9_confirm(request_number: str, request: Request):
+    user = _current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    pr = db.query_one(
+        "SELECT pr.*, o.code AS org_code FROM checkreq.payment_requests pr "
+        "JOIN checkreq.organizations o ON o.id = pr.org_id WHERE pr.request_number = %s",
+        (request_number,))
+    if not pr:
+        return JSONResponse({"error": "Request not found"}, status_code=404)
+    if not _can_review_w9(user["id"], pr["org_id"]):
+        return JSONResponse({"error": "Not authorized"}, status_code=403)
+    back = f"/requests/{request_number}/ap-edit"
+
+    def fail(msg):
+        return RedirectResponse(f"{back}?error={quote(msg)}#w9", status_code=303)
+
+    form = await request.form()
+    tin = "".join(ch for ch in (form.get("tax_id") or "") if ch.isdigit())
+    tin_type = "SSN" if form.get("tin_type") == "SSN" else "EIN"
+    vendor_1099 = form.get("vendor_1099") == "1"
+    if len(tin) != 9:
+        return fail("Enter the 9-digit EIN or SSN from the W-9.")
+
+    t = _w9_target(pr)
+    if not t:
+        return fail("This request has no vendor to attach a W-9 to.")
+    qbo_vendor_id = t["qbo_vendor_id"]
+    if t["kind"] == "vendor_request":
+        if not t["vendor_approved"]:
+            return fail("Approve the new vendor on Vendor Approvals first, then review its W-9.")
+        if not qbo_vendor_id:
+            # Not in QuickBooks yet (it is normally created at Post to QBO).
+            # Create it now so the tax ID has somewhere to go; Post to QBO
+            # already reuses vendor_requests.qbo_vendor_id when it is set.
+            vr = t["row"]
+            result, verr = qbo_mcp_client.create_vendor(
+                pr["org_code"], t["name"], company_name=vr.get("company_name") or "",
+                address_line1=vr.get("address_line1") or "", address_line2=vr.get("address_line2") or "",
+                city=vr.get("city") or "", state=vr.get("state") or "", zip_code=vr.get("zip") or "",
+                phone=vr.get("phone") or "", email=vr.get("contact_email") or "")
+            if verr:
+                return fail(f"Could not create the vendor in QuickBooks: {verr}")
+            qbo_vendor_id = result["vendor_id"]
+            with db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE checkreq.vendor_requests SET qbo_vendor_id = %s WHERE id = %s",
+                                (qbo_vendor_id, vr["id"]))
+    if not qbo_vendor_id:
+        return fail("This vendor has no QuickBooks vendor id -- cannot update it.")
+
+    file_name = file_b64 = ctype = None
+    got = _w9_file_bytes(pr["org_id"], t)
+    if got:
+        content, file_name = got
+        ctype, _ = upload_guard.serve_headers(content, file_name)
+        file_b64 = base64.b64encode(content).decode("ascii")
+
+    res, err = qbo_mcp_client.set_vendor_w9(
+        pr["org_code"], qbo_vendor_id, tin, vendor_1099, file_name, file_b64, ctype)
+    tin = None  # drop it -- nothing below may ever see it
+    if err:
+        return fail(f"QuickBooks was not updated, and the W-9 is still waiting for review: {err}")
+
+    attach_note = ("W-9 attached to the QuickBooks vendor." if res.get("attachable_id") else
+                   f"W-9 NOT attached to QuickBooks ({res.get('attach_error') or 'no file on record'}).")
+    imp_id = request.session.get("impersonating_user_id")
+    impersonated_by = _real_user(request)["id"] if imp_id else None
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            if t["kind"] == "vendor":
+                cur.execute("UPDATE checkreq.vendors SET w9_on_file = TRUE WHERE id = %s", (t["row"]["id"],))
+            else:
+                cur.execute("UPDATE checkreq.vendor_requests SET w9_received = TRUE WHERE id = %s",
+                            (t["row"]["id"],))
+            cur.execute(
+                "INSERT INTO checkreq.audit_log "
+                "(payment_request_id, action_by_user_id, action_type, comment, impersonated_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (pr["id"], user["id"], "W-9 Confirmed",
+                 f"W-9 for {t['name']} reviewed and confirmed. {tin_type} and 1099 = "
+                 f"{'Yes' if vendor_1099 else 'No'} sent to the QuickBooks vendor (the tax ID is not "
+                 f"stored in Beacon). {attach_note}",
+                 impersonated_by))
+    flag = "w9_confirmed=1" if res.get("attachable_id") else "w9_confirmed=noattach"
+    return RedirectResponse(f"{back}?{flag}#w9", status_code=303)
 
 
 def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: int | None) -> tuple[bool, str | None]:
@@ -8343,19 +8547,9 @@ def ap_review_confirm_existing_vendor_w9(request_number: str, request: Request):
     denied = _require_role_for_org(user, "ap_reviewer", pr["org_id"])
     if denied:
         return denied
-    if not pr["vendor_id"]:
-        return RedirectResponse(
-            "/admin/ap-review?post_error=" + quote("No existing vendor found on this request."),
-            status_code=303,
-        )
-
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE checkreq.vendors SET w9_on_file = TRUE WHERE id = %s",
-                (pr["vendor_id"],),
-            )
-    return RedirectResponse("/admin/ap-review?w9_confirmed=1", status_code=303)
+    # 2026-10-01: no more one-click confirm -- confirming now means reviewing
+    # the W-9 and sending its tax ID/1099 flag to QuickBooks (w9_confirm).
+    return RedirectResponse(f"/requests/{request_number}/ap-edit#w9", status_code=303)
 
 
 @app.post("/requests/{request_number}/ap-return")
