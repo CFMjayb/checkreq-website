@@ -435,3 +435,23 @@ def get_report_accounts(org_code: str, timeout: int = 60) -> tuple[dict | None, 
     if not resp.ok or "error" in data:
         return None, data.get("error") or f"HTTP {resp.status_code}: {resp.text[:300]}"
     return data, None
+
+
+# Beacon org code -> qbo-mcp-server company code where they differ (same override the
+# Report Template editor and parish_finance.py use: DME's QBO company is "dmecdf").
+_REPORT_CLASS_COMPANY = {"dme": "dmecdf"}
+
+
+def get_report_classes(org_code: str, timeout: int = 30,
+                       active_only: bool = True) -> tuple[list | None, str | None]:
+    """GET /api/classes/{company} (qbo-mcp-server, built 2026-07-24 for 26-108c; used here
+    by the Report Template editor's Class picker, 2026-10-01). The entity's ACTIVE QuickBooks
+    classes as [{id, name, parent_name, fully_qualified_name}], or (None, "error text").
+    The editor matches a line's class filter on the class id, never the name."""
+    code = str(org_code or "").strip().lower()
+    company = _REPORT_CLASS_COMPANY.get(code, code)
+    data, err = _get("/api/classes/{company}", company,
+                     {"format": "json", "active_only": "true" if active_only else "false"}, timeout=timeout)
+    if err:
+        return None, err
+    return list(data.get("classes") or []), None

@@ -98,7 +98,18 @@
   var DATA = JSON.parse(dataEl.textContent);
   var TID = DATA.templateId;
   var FUND = DATA.reportType === 'fund_summary';
+  var OPTS = !!DATA.lineOptions;               // % charged / Class / Show columns (Actual vs Budget, migration 071)
   var newSeq = 0;
+
+  // A line's class selection is always compared and sent as the sorted list of class ids
+  // (names are display-only and re-read from QuickBooks by the server).
+  function classIds(v) {
+    if (typeof v === 'string') { try { v = v.trim() ? JSON.parse(v) : []; } catch (e) { v = []; } }
+    return (Array.isArray(v) ? v : []).map(function (e) {
+      return String(e && typeof e === 'object' ? e.id : e == null ? '' : e);
+    }).filter(function (id, i, a) { return a.indexOf(id) === i; }).sort();
+  }
+  function classKey(v) { return JSON.stringify(classIds(v)); }
 
   // ── Generic grid ──────────────────────────────────────────────────────────
   // cfg: {body, saveBtn, stateEl, fields: [{name, type, options}], rowHtml, url, key}
@@ -115,7 +126,7 @@
   };
   Grid.prototype.add = function (rec, isNew) {
     var key = rec.id ? String(rec.id) : 'new-' + (++newSeq);
-    var row = { key: key, id: rec.id || 0, updated_at: rec.updated_at || '',
+    var row = { key: key, id: rec.id || 0, updated_at: rec.updated_at || '', rec: rec,
                 orig: isNew ? null : JSON.stringify(this.values(rec)), cur: this.values(rec) };
     var tr = document.createElement('tr');
     tr.setAttribute('data-key', key);
@@ -133,7 +144,9 @@
   Grid.prototype.values = function (rec) {
     var v = {};
     this.cfg.fields.forEach(function (f) {
-      v[f] = f === 'is_active' ? rec[f] !== false : (rec[f] == null ? '' : String(rec[f]));
+      v[f] = f === 'is_active' ? rec[f] !== false
+           : f === 'class_filter' ? classKey(rec[f])
+           : (rec[f] == null ? '' : String(rec[f]));
     });
     return v;
   };
@@ -175,10 +188,18 @@
     var rows = this.dirtyRows().map(function (r) {
       var o = { key: r.key, id: r.id, updated_at: r.updated_at };
       Object.keys(r.cur).forEach(function (k) { o[k] = r.cur[k]; });
-      return o;
+      return self.cfg.payload ? self.cfg.payload(o) : o;
     });
     if (!rows.length) return;
     this.clearMsgs();
+    if (this.cfg.validateRow) {              // refuse locally what the server would refuse
+      var bad = false;
+      this.dirtyRows().forEach(function (r) {
+        var m = self.cfg.validateRow(r);
+        if (m) { self.setRowMsg(r.key, m, 'err'); bad = true; }
+      });
+      if (bad) { showBanner('error', 'Fix the highlighted lines, then save again.'); return; }
+    }
     pulse(btn);
     postJson(this.cfg.url, { rows: rows }).then(function (j) {
       self.load(j[self.cfg.resultKey]);
@@ -202,31 +223,179 @@
       ? '<input type="text" data-field="fund_group" value="' + esc(r.fund_group) + '" placeholder="e.g. Unrestricted Net Assets">'
       : sectionSelect(r.section || 'Expense');
   }
+  // ── Class picker (Actual vs Budget lines) ─────────────────────────────────
+  // One popover, appended to <body> with position:fixed so the table's scroll box can't
+  // clip it, re-pointed at whichever row's button was clicked.
+  var classData = null;          // [{id, name, active}] once loaded from QuickBooks
+  var classErr = '';
+  var classLoading = false;
+  var pop = null, popRow = null;
+
+  function classNameOf(row, id) {
+    if (id === '') return '(No class)';
+    var hit = (classData || []).filter(function (c) { return c.id === id; })[0];
+    if (hit) return hit.name;
+    return (row.classNames && row.classNames[id]) || ('class ' + id);
+  }
+  function rowClassIds(row) { return classIds(row.el.querySelector('[data-field="class_filter"]').value); }
+  function refreshClassBtn(row) {
+    var btn = row.el.querySelector('.rt-class-btn');
+    if (!btn) return;
+    var ids = rowClassIds(row);
+    btn.textContent = !ids.length ? 'All classes' : ids.length === 1 ? classNameOf(row, ids[0]) : ids.length + ' classes';
+    btn.title = ids.length ? ids.map(function (i) { return classNameOf(row, i); }).join('\n') : 'Any class';
+    btn.classList.toggle('rt-class-set', ids.length > 0);
+  }
+  function closePicker() { if (pop) { pop.remove(); pop = null; } popRow = null; }
+  function loadClasses(refresh) {
+    classLoading = true; classErr = '';
+    return fetch('/admin/report-templates/api/classes' + (refresh ? '?refresh=1' : ''), { credentials: 'same-origin' })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
+      .then(function (j) { classData = j.classes || []; })
+      .catch(function (e) { classErr = e.message; })
+      .then(function () { classLoading = false; if (pop) renderPicker(); lines.rows.forEach(refreshClassBtn); });
+  }
+  function setSelected(ids) {
+    var inp = popRow.el.querySelector('[data-field="class_filter"]');
+    inp.value = classKey(ids);
+    inp.dispatchEvent(new Event('change', { bubbles: true }));     // the grid's dirty tracking listens on the row
+    refreshClassBtn(popRow);
+  }
+  function renderPicker() {
+    if (!pop || !popRow) return;
+    var list = pop.querySelector('.rt-class-list');
+    var q = (pop.querySelector('.rt-class-search').value || '').toLowerCase();
+    if (classLoading) { list.innerHTML = '<p class="sub">Loading classes from QuickBooks&hellip;</p>'; return; }
+    if (classErr) {
+      list.innerHTML = '<p class="rt-bad">' + esc(classErr) + '</p><button type="button" class="btn btn-secondary btn-sm" data-act="retry">Retry</button>';
+      return;
+    }
+    var sel = rowClassIds(popRow), known = {};
+    (classData || []).forEach(function (c) { known[c.id] = true; });
+    var items = [{ id: '', name: '(No class)', active: true }].concat(classData || []);
+    sel.forEach(function (id) { if (id !== '' && !known[id]) items.push({ id: id, name: classNameOf(popRow, id), missing: true }); });
+    var out = [];
+    items.forEach(function (c) {
+      if (q && c.name.toLowerCase().indexOf(q) < 0) return;
+      out.push('<label class="rt-class-opt"><input type="checkbox" data-id="' + esc(c.id) + '"' + (sel.indexOf(c.id) >= 0 ? ' checked' : '') + '> ' + esc(c.name) +
+        (c.missing ? ' <em>(not in QuickBooks)</em>' : (c.active === false ? ' <em>(inactive)</em>' : '')) + '</label>');
+    });
+    list.innerHTML = out.length ? out.join('') : '<p class="sub">No classes match.</p>';
+  }
+  function openPicker(row, btn) {
+    if (popRow === row) { closePicker(); return; }
+    closePicker();
+    popRow = row;
+    pop = document.createElement('div');
+    pop.className = 'rt-class-pop';
+    pop.innerHTML = '<input type="search" class="rt-class-search" placeholder="Search classes" autocomplete="off">' +
+      '<div class="rt-class-list"></div>' +
+      '<div class="rt-class-foot"><button type="button" class="linkish" data-act="clear">Clear (all classes)</button>' +
+      '<span class="sub">A parent class does not include its sub-classes.</span></div>';
+    document.body.appendChild(pop);
+    var r = btn.getBoundingClientRect(), h = Math.min(pop.offsetHeight || 300, 360);
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';
+    pop.style.top = ((r.bottom + 4 + h > window.innerHeight && r.top - h - 4 > 0) ? r.top - h - 4 : r.bottom + 4) + 'px';
+    pop.querySelector('.rt-class-search').addEventListener('input', renderPicker);
+    pop.addEventListener('change', function (e) {
+      var cb = e.target;
+      if (!cb.matches || !cb.matches('input[type="checkbox"]')) return;
+      var id = cb.getAttribute('data-id');
+      var ids = rowClassIds(popRow).filter(function (x) { return x !== id; });
+      if (cb.checked) ids.push(id);
+      setSelected(ids);
+    });
+    pop.addEventListener('click', function (e) {
+      var act = e.target.getAttribute && e.target.getAttribute('data-act');
+      if (act === 'clear') { setSelected([]); renderPicker(); }
+      if (act === 'retry') { loadClasses(true); renderPicker(); }
+    });
+    if (classData === null && !classLoading) loadClasses(false);   // sets classLoading at once
+    renderPicker();
+    pop.querySelector('.rt-class-search').focus();
+  }
+  document.addEventListener('mousedown', function (e) {
+    if (pop && !(pop.contains(e.target) || (e.target.closest && e.target.closest('.rt-class-btn')))) closePicker();
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePicker(); });
+  window.addEventListener('resize', closePicker);
+  window.addEventListener('scroll', function (e) { if (pop && !pop.contains(e.target)) closePicker(); }, true);
+
+  function lowPct(inp) {
+    var n = Number(inp.value), low = n > 0 && n < 1;
+    inp.classList.toggle('rt-pct-low', low);
+    inp.title = low ? n + '% is under 1%. Did you mean ' + (n * 100) + '%?'
+                    : 'The share of this line actual and budget charged to the report (100 = all of it)';
+  }
+
+  var LINE_FIELDS = ['is_active', FUND ? 'fund_group' : 'section', 'line_label', 'account_mask']
+    .concat(OPTS ? ['class_filter', 'charge_pct', 'display_mode'] : []).concat(['sort_order']);   // = column order
+  var LINE_COLS = document.querySelectorAll('#linesTable thead th').length;
   var lines = new Grid({
     body: document.getElementById('linesBody'),
     saveBtn: document.getElementById('lineSaveBtn'),
     stateEl: document.getElementById('lineSaveState'),
-    fields: ['is_active', FUND ? 'fund_group' : 'section', 'line_label', 'account_mask', 'sort_order'],
+    fields: LINE_FIELDS,
     url: '/admin/report-templates/' + TID + '/lines/save',
     resultKey: 'lines', noun: 'line',
+    payload: function (o) {                  // send class ids only; the server reads the names from QuickBooks
+      if (OPTS) o.class_filter = classIds(o.class_filter);
+      return o;
+    },
+    validateRow: function (row) {
+      if (!OPTS) return null;
+      var inp = row.el.querySelector('[data-field="charge_pct"]');
+      if (inp.validity && inp.validity.badInput) return 'Enter % charged as a plain number (for example 40), not 40%.';
+      var t = inp.value.trim();
+      if (!t) return '% charged is required (enter 100 for the whole line).';
+      var n = Number(t);
+      if (!isFinite(n) || n <= 0 || n > 100) return '% charged must be above 0 and at most 100.';
+      return null;
+    },
     rowHtml: function (r) {
+      var opts = '';
+      if (OPTS) {
+        var pct = (r.charge_pct == null || r.charge_pct === '') ? '100' : r.charge_pct;
+        var mode = r.display_mode === 'sum' ? 'sum' : 'detail';
+        opts =
+          '<td class="rt-col-class"><input type="hidden" data-field="class_filter" value="' + esc(classKey(r.class_filter)) + '">' +
+            '<button type="button" class="rt-class-btn" title="Any class">All classes</button></td>' +
+          '<td class="rt-col-pct"><input type="number" class="num" data-field="charge_pct" min="0" max="100" step="any" value="' + esc(pct) + '"></td>' +
+          '<td class="rt-col-show' + (DATA.showAccounts === false ? ' rt-muted' : '') + '"' +
+            (DATA.showAccounts === false ? ' title="Every line shows its total only, because Show each account under its line is off in Options."' : '') + '>' +
+            '<select data-field="display_mode"><option value="detail"' + (mode === 'detail' ? ' selected' : '') + '>Detail</option>' +
+            '<option value="sum"' + (mode === 'sum' ? ' selected' : '') + '>Sum</option></select></td>';
+      }
       return '<td class="col-allow"><input type="checkbox" data-field="is_active"' + (r.is_active === false ? '' : ' checked') + '></td>' +
         '<td class="rt-col-section">' + groupCell(r) + '</td>' +
         '<td class="col-display"><input type="text" data-field="line_label" value="' + esc(r.line_label) + '" placeholder="' + (FUND ? 'e.g. Temporarily Restricted Endowments' : 'e.g. Diocesan House') + '"></td>' +
         '<td class="rt-col-mask"><input type="text" data-field="account_mask" value="' + esc(r.account_mask) + '" placeholder="' + (FUND ? 'e.g. 3050.4*' : 'e.g. 667*, 6680-6689') + '"></td>' +
+        opts +
         '<td class="col-sort"><input type="number" class="num" data-field="sort_order" value="' + esc(r.sort_order == null ? 100 : r.sort_order) + '"></td>' +
         '<td class="rt-col-matches"><button type="button" class="linkish rt-match-btn" title="Show the accounts this line picks up">Preview</button></td>';
     },
     afterAdd: function (row) {
       row.el.querySelector('.rt-match-btn').addEventListener('click', function () { toggleDetail(row); });
+      if (OPTS) {
+        row.classNames = {};
+        (Array.isArray(row.rec.class_filter) ? row.rec.class_filter : []).forEach(function (e) {
+          if (e && typeof e === 'object') row.classNames[String(e.id)] = e.name;
+        });
+        refreshClassBtn(row);
+        row.el.querySelector('.rt-class-btn').addEventListener('click', function () { openPicker(row, this); });
+        var p = row.el.querySelector('[data-field="charge_pct"]');
+        p.addEventListener('input', function () { lowPct(p); });
+        lowPct(p);
+      }
     },
-    afterSave: function () { lastPreview = null; document.getElementById('previewSummary').innerHTML = ''; }
+    afterSave: function () { closePicker(); lastPreview = null; document.getElementById('previewSummary').innerHTML = ''; }
   });
   lines.load(DATA.lines || []);
 
   document.getElementById('lineAddBtn').addEventListener('click', function () {
     var max = lines.rows.reduce(function (m, r) { return Math.max(m, parseInt(r.cur.sort_order, 10) || 0); }, 0);
-    var row = lines.add({ section: 'Expense', fund_group: '', line_label: '', account_mask: '', sort_order: max + 10, is_active: true }, true);
+    var row = lines.add({ section: 'Expense', fund_group: '', line_label: '', account_mask: '', sort_order: max + 10, is_active: true,
+                          charge_pct: '100', class_filter: [], display_mode: 'detail' }, true);
     row.el.querySelector('[data-field="line_label"]').focus();
   });
   document.getElementById('lineSaveBtn').addEventListener('click', function () { lines.save(); });
@@ -236,7 +405,8 @@
   function previewRows() {
     return lines.rows.map(function (r) {
       return { key: r.key, id: r.id, section: FUND ? 'Equity' : r.cur.section, line_label: r.cur.line_label || '(unnamed line)',
-               account_mask: r.cur.account_mask, sort_order: r.cur.sort_order, is_active: r.cur.is_active };
+               account_mask: r.cur.account_mask, sort_order: r.cur.sort_order, is_active: r.cur.is_active,
+               class_filter: OPTS ? r.cur.class_filter : '[]' };
     });
   }
   function runPreview(btn, refresh) {
@@ -253,16 +423,36 @@
       var res = j.lines[r.key];
       if (j.invalid && j.invalid[r.key]) { btn.textContent = 'Invalid mask'; btn.className = 'linkish rt-match-btn rt-bad'; btn.title = j.invalid[r.key]; return; }
       if (!res) { btn.textContent = r.cur.is_active ? 'Preview' : 'Inactive'; btn.className = 'linkish rt-match-btn'; return; }
-      btn.textContent = res.count + ' account' + (res.count === 1 ? '' : 's') + (res.section_mismatch ? ' (' + res.section_mismatch + ' off-section)' : '');
+      var byClass = OPTS && classIds(r.cur.class_filter).length;
+      btn.textContent = res.count + ' account' + (res.count === 1 ? '' : 's') + (byClass ? ', by class' : '') +
+        (res.section_mismatch ? ' (' + res.section_mismatch + ' off-section)' : '');
       btn.className = 'linkish rt-match-btn' + (res.count === 0 || res.section_mismatch ? ' rt-bad' : '');
-      btn.title = 'Show the accounts this line picks up';
+      btn.title = byClass ? 'The accounts this line picks up. Only transactions in the selected classes count, so an account here may still show nothing.'
+                          : 'Show the accounts this line picks up';
     });
     var parts = [];
     parts.push('<p class="setup-hint">Checked against ' + esc(j.account_count) +
       (FUND ? ' active QuickBooks equity accounts (the only accounts a Fund Summary reads).</p>'
             : ' QuickBooks accounts (active and inactive, as the report does).</p>'));
-    var empty = lines.rows.filter(function (r) { return j.lines[r.key] && j.lines[r.key].count === 0; });
+    var shadowed = j.shadowed_lines || [];
+    var empty = lines.rows.filter(function (r) {
+      return j.lines[r.key] && j.lines[r.key].count === 0 && shadowed.indexOf(r.cur.line_label || '(unnamed line)') < 0;
+    });
     if (empty.length) parts.push('<div class="banner banner-error">' + empty.length + ' active line' + (empty.length === 1 ? ' matches' : 's match') + ' no accounts at all.</div>');
+    if (shadowed.length) {
+      parts.push('<div class="banner banner-error"><strong>' + shadowed.length + ' line' + (shadowed.length === 1 ? ' can' : 's can') +
+        ' never receive anything:</strong> an earlier line (by Sort) already takes every transaction on ' + (shadowed.length === 1 ? 'its' : 'their') +
+        ' accounts &mdash; ' + shadowed.map(esc).join(', ') + '. Move the line with a class selection above the one without.</div>');
+    }
+    if (j.partial_overlaps && j.partial_overlaps.length) {
+      parts.push('<div class="banner banner-info"><strong>' + j.partial_overlaps.length + ' account' + (j.partial_overlaps.length === 1 ? ' has' : 's have') +
+        ' class selections that partly overlap</strong> &mdash; a transaction in both goes to the first line (by Sort):<ul class="popup-list">' +
+        j.partial_overlaps.slice(0, 15).map(function (o) { return '<li>' + esc(o.acct_num) + ' ' + esc(o.name) + ' &rarr; ' + o.lines.map(esc).join(', ') + '</li>'; }).join('') + '</ul></div>');
+    }
+    if (OPTS && DATA.fullEntity && lines.rows.some(function (r) {
+          return r.cur.is_active && (Number(r.cur.charge_pct) < 100 || classIds(r.cur.class_filter).length); })) {
+      parts.push('<div class="banner banner-info">This is a whole-entity template: with a % under 100 or a class selection, the net is shown <em>as charged</em> and will not equal QuickBooks\' net income. The report still checks the unscaled ledger against it.</div>');
+    }
     if (j.overlaps && j.overlaps.length) {
       parts.push('<div class="banner banner-info"><strong>' + j.overlaps.length + ' account' + (j.overlaps.length === 1 ? ' is' : 's are') +
         ' matched by more than one line</strong> &mdash; each is reported only under the first line (by Sort):<ul class="popup-list">' +
@@ -299,7 +489,7 @@
     if (row.detailEl) { row.detailEl.remove(); row.detailEl = null; return; }
     var tr = document.createElement('tr');
     tr.className = 'rt-detail-row';
-    tr.innerHTML = '<td colspan="6"><span class="sub">Loading accounts from QuickBooks&hellip;</span></td>';
+    tr.innerHTML = '<td colspan="' + LINE_COLS + '"><span class="sub">Loading accounts from QuickBooks&hellip;</span></td>';
     row.el.parentNode.insertBefore(tr, row.el.nextSibling);
     row.detailEl = tr;
     var btn = row.el.querySelector('.rt-match-btn');
@@ -342,7 +532,8 @@
           var x = s[parseInt(c.getAttribute('data-i'), 10)];
           added += 1;
           lines.add({ section: x.section, line_label: x.line_label, account_mask: x.account_mask,
-                      sort_order: base + added * 10, is_active: true }, true);
+                      sort_order: base + added * 10, is_active: true,
+                      charge_pct: '100', class_filter: [], display_mode: 'detail' }, true);
         });
         starterOut.innerHTML = '<p class="sub">' + added + ' line' + (added === 1 ? '' : 's') +
           ' added to the grid below, not saved yet. Review them, then click Save Lines.</p>';

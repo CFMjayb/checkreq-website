@@ -158,6 +158,23 @@
     several separated by commas. If two lines match the same account, the one that sorts first gets it.
     Lines are never deleted &mdash; untick <strong>Active</strong> to retire one.
   </p>
+  {% if line_options %}
+  <ul class="setup-hint rt-options-hint">
+    <li><strong>% charged</strong> &mdash; the share of the line's actual <em>and</em> budget that is charged to this report
+      (100 = all of it). The workbook shows it next to the line's name.</li>
+    <li><strong>Class</strong> &mdash; count only transactions in the classes you tick (<em>(No class)</em> = transactions with none).
+      A parent class does <em>not</em> include its sub-classes. Put the same mask on several lines with different classes to split
+      an account; each transaction goes to the first line, by Sort, that accepts it. QuickBooks budgets are not split by class,
+      so a class line shows the whole account's budget and no variance.</li>
+    <li><strong>Show</strong> &mdash; <em>Sum</em> shows only the line's total (and leaves its transactions out of the Transaction Detail tab);
+      <em>Detail</em> also lists its accounts. If &ldquo;Show each account under its line&rdquo; is off in Options, every line shows its total only.</li>
+    <li>An account can't be split between two lines by percentage &mdash; use classes for that. On a whole-entity template the net is
+      &ldquo;as charged&rdquo; once any line is under 100%.</li>
+  </ul>
+  {% elif tpl.report_type != 'fund_summary' %}
+  <p class="setup-hint">The <strong>% charged</strong>, <strong>Class</strong> and <strong>Show</strong> options appear once the database update
+    for line options (migration 071) has been applied to this environment.</p>
+  {% endif %}
   <div class="setup-toolbar">
     <button type="button" class="btn btn-secondary btn-sm" id="lineAddBtn">+ Add Line</button>
     <button type="button" class="btn btn-secondary btn-sm" id="previewAllBtn">Preview Matches</button>
@@ -204,6 +221,11 @@
           <th class="rt-col-section">{{ 'Fund group' if tpl.report_type == 'fund_summary' else 'Section' }}</th>
           <th class="col-display">Line label</th>
           <th class="rt-col-mask">Account mask</th>
+          {% if line_options %}
+          <th class="rt-col-class" title="Count only transactions in these classes. A parent class does not include its sub-classes.">Class</th>
+          <th class="rt-col-pct" title="The share of this line's actual and budget charged to the report (100 = all of it).">% charged</th>
+          <th class="rt-col-show" title="Sum = this line's total only. Detail = the total with its accounts under it.">Show</th>
+          {% endif %}
           <th class="col-sort">Sort</th>
           <th class="rt-col-matches">Matches</th>
         </tr>
@@ -269,6 +291,8 @@
   "templateId": tpl.id,
   "reportType": tpl.report_type,
   "fullEntity": tpl.full_entity,
+  "lineOptions": line_options,
+  "showAccounts": tpl.show_accounts_under_lines,
   "lines": lines,
   "recipients": recipients
 }|tojson }}</script>

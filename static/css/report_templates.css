@@ -31,8 +31,8 @@ tr.rt-inactive { opacity: 0.6; }
 
 /* Lines grid */
 .rt-col-section { width: 115px; }
-.rt-col-mask    { min-width: 240px; }
-.rt-col-matches { width: 170px; white-space: nowrap; }
+.rt-col-mask    { min-width: 200px; }
+.rt-col-matches { width: 130px; white-space: nowrap; }
 tr.rt-row-inactive td input, tr.rt-row-inactive td select { color: var(--color-text-muted); }
 .linkish { background: none; border: 0; padding: 0; color: var(--color-franciscan-green); cursor: pointer;
            font: inherit; font-size: 0.85rem; text-decoration: underline; }
@@ -62,5 +62,33 @@ tr.rt-detail-row > td { background: #faf8f3; padding: var(--space-2) var(--space
    tagged data-rtype and shown only for that type; a Fund Summary line's
    fund-group column needs more room than a Revenue/Expense select. */
 [data-rtype][hidden] { display: none !important; }
+
+/* Line options (2026-10-01): % charged, Class, Show. Widths are chosen so the grid still
+   fits a 1366px screen; the Class picker is one popover on <body> (position: fixed) so the
+   table's scroll box can't clip it. */
+.rt-lines .col-sort { width: 70px; }
+.rt-lines .rt-col-class { width: 150px; }
+.rt-lines .rt-col-pct   { width: 76px; }
+.rt-lines .rt-col-show  { width: 98px; }
+.rt-lines .rt-col-pct input { width: 100%; box-sizing: border-box; text-align: right; }
+.rt-lines .rt-col-show select { width: 100%; }
+.rt-lines td.rt-muted select { opacity: 0.55; }
+.rt-pct-low { background: #fff4d6 !important; border-color: #d9a400 !important; }
+.rt-class-btn { width: 100%; box-sizing: border-box; text-align: left; font: inherit; font-size: 0.85rem;
+                padding: 4px 6px; background: #fff; border: 1px solid #e4ddd0; border-radius: var(--radius-sm);
+                cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rt-class-btn:hover { border-color: var(--color-franciscan-green); }
+.rt-class-btn.rt-class-set { font-weight: 600; color: var(--color-franciscan-green); }
+tr.rt-row-inactive .rt-class-btn { color: var(--color-text-muted); }
+.rt-class-pop { position: fixed; z-index: 1000; width: 330px; max-height: 380px; display: flex; flex-direction: column;
+                background: #fff; border: 1px solid var(--color-border); border-radius: var(--radius-md);
+                box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); padding: var(--space-2); }
+.rt-class-search { width: 100%; box-sizing: border-box; margin-bottom: var(--space-2); }
+.rt-class-list { overflow-y: auto; flex: 1 1 auto; max-height: 280px; }
+.rt-class-opt { display: block; font-size: 0.85rem; padding: 3px 2px; cursor: pointer; }
+.rt-class-foot { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2);
+                 border-top: 1px solid #ece7da; padding-top: var(--space-2); margin-top: var(--space-2); font-size: 0.78rem; }
+ul.rt-options-hint { margin: 0 0 var(--space-3); padding-left: 1.2rem; }
+ul.rt-options-hint li { margin: 3px 0; }
 .rt-lines.rt-fund .rt-col-section { width: 240px; }
 .rt-lines.rt-fund .rt-col-section input { width: 100%; box-sizing: border-box; }

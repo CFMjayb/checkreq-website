@@ -99,19 +99,49 @@ def validate_mask(account_mask: str) -> str | None:
 
 # ── preview ───────────────────────────────────────────────────────────────────
 
+def _class_set(ln: dict):
+    """A line's class selection as a frozenset of class ids, or None = any class
+    (the same meaning as soa_bva's _class_ids). "" in the set is "(No class)"."""
+    c = ln.get("class_ids")
+    return frozenset(str(x) for x in c) if c else None
+
+
+def _shadowed(ln: dict, earlier: list) -> bool:
+    """Port of soa_bva._shadowed: an earlier line already takes everything this line
+    could take from an account (an earlier line with no class selection, or one whose
+    class selection contains this line's), so this line never receives that account."""
+    mine = _class_set(ln)
+    for e in earlier:
+        theirs = _class_set(e)
+        if theirs is None:
+            return True
+        if mine is not None and mine <= theirs:
+            return True
+    return False
+
+
 def preview_lines(accounts: list[dict], lines: list[dict], full_entity: bool = False) -> dict:
-    """lines: [{key, section, line_label, account_mask}] in report (sort) order --
-    `key` is whatever the caller uses to tie a result back to its grid row.
+    """lines: [{key, section, line_label, account_mask, class_ids}] in report (sort)
+    order -- `key` is whatever the caller uses to tie a result back to its grid row, and
+    class_ids (optional list of class ids, "" = no class) is the line's class selection.
 
     Returns {lines: {key: {matches: [...], count, section_mismatch}},
-             overlaps: [{acct_num, name, lines: [labels]}],
+             overlaps: [{acct_num, name, lines: [labels]}],      one line fully covers another
+             partial_overlaps: [{acct_num, name, lines: [...]}], class selections that partly overlap
+             shadowed_lines: [labels],  lines whose mask matches accounts but that can never
+                                        receive one (an earlier line takes it all)
              unmapped: [...] (full-entity templates only)}.
-    Mirrors soa_bva.py: only ACTIVE lines should be passed in."""
+    Mirrors soa_bva.py: only ACTIVE lines should be passed in. Class selection does not
+    change WHICH accounts a mask matches -- it changes which transactions the line gets --
+    so it only affects how lines share an account, exactly as in the engine."""
     per_line: dict = {}
+    masked: dict = {}
     for ln in lines:
         per_line[ln["key"]] = {"matches": [], "count": 0, "section_mismatch": 0}
+        masked[ln["key"]] = 0
     assigned: set[str] = set()
     overlaps = []
+    partials = []
     for a in accounts:
         num = (a.get("acct_num") or "").strip()
         if not num:
@@ -120,23 +150,34 @@ def preview_lines(accounts: list[dict], lines: list[dict], full_entity: bool = F
                 if any(mask_matches(num, m) for m in split_masks(ln["account_mask"]))]
         if not hits:
             continue
-        first = hits[0]
-        row = {
-            "acct_num": num, "name": a.get("name", ""),
-            "classification": a.get("classification", ""),
-            "active": bool(a.get("active", True)),
-            "parent_acct_num": a.get("parent_acct_num", ""),
-            "wrong_section": a.get("classification") != first["section"],
-        }
-        bucket = per_line[first["key"]]
-        bucket["matches"].append(row)
-        bucket["count"] += 1
-        if row["wrong_section"]:
-            bucket["section_mismatch"] += 1
+        for h in hits:
+            masked[h["key"]] += 1
+        eff = [ln for i, ln in enumerate(hits) if not _shadowed(ln, hits[:i])]
+        for ln in eff:
+            row = {
+                "acct_num": num, "name": a.get("name", ""),
+                "classification": a.get("classification", ""),
+                "active": bool(a.get("active", True)),
+                "parent_acct_num": a.get("parent_acct_num", ""),
+                "wrong_section": a.get("classification") != ln["section"],
+            }
+            bucket = per_line[ln["key"]]
+            bucket["matches"].append(row)
+            bucket["count"] += 1
+            if row["wrong_section"]:
+                bucket["section_mismatch"] += 1
         assigned.add(num)
-        if len(hits) > 1:
+        if len(eff) < len(hits):
             overlaps.append({"acct_num": num, "name": a.get("name", ""),
                              "lines": [h["line_label"] for h in hits]})
+        for i in range(len(eff)):
+            for j in range(i + 1, len(eff)):
+                fi, fj = _class_set(eff[i]), _class_set(eff[j])
+                if fi is not None and fj is not None and (fi & fj) and not (fi <= fj or fj <= fi):
+                    partials.append({"acct_num": num, "name": a.get("name", ""),
+                                     "lines": [eff[i]["line_label"], eff[j]["line_label"]]})
+    shadowed_lines = [ln["line_label"] for ln in lines
+                      if masked[ln["key"]] and not per_line[ln["key"]]["count"]]
     unmapped = []
     if full_entity:
         unmapped = [{"acct_num": (a.get("acct_num") or "").strip(), "name": a.get("name", ""),
@@ -145,7 +186,8 @@ def preview_lines(accounts: list[dict], lines: list[dict], full_entity: bool = F
                     for a in accounts
                     if a.get("classification") in ("Revenue", "Expense")
                     and (a.get("acct_num") or "").strip() not in assigned]
-    return {"lines": per_line, "overlaps": overlaps, "unmapped": unmapped}
+    return {"lines": per_line, "overlaps": overlaps, "partial_overlaps": partials,
+            "shadowed_lines": shadowed_lines, "unmapped": unmapped}
 
 
 # ── starter lines ─────────────────────────────────────────────────────────────
