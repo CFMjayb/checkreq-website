@@ -679,6 +679,11 @@ async def save_lines(request: Request, template_id: int):
     if not rows:
         return JSONResponse({"error": "Nothing to save."}, status_code=400)
 
+    # A row flagged _delete is being removed: it is never validated (it is going away) and
+    # is deleted together with the other changes, in the same transaction, or not at all.
+    removals = [r for r in rows if r.get("_delete")]
+    rows = [r for r in rows if not r.get("_delete")]
+
     existing = {x["id"]: x for x in _lines(template_id)}
     bva = tpl["report_type"] == "bva"
     ready = _options_ready() if bva else False
@@ -724,6 +729,22 @@ async def save_lines(request: Request, template_id: int):
             stale[key] = "This line no longer exists on this template."
         elif rid and existing[rid]["updated_at"] != loaded_at:
             stale[key] = "Changed elsewhere (the PG Data Review workbook?) since you opened this page."
+
+    # Removals: a line that is already gone is simply skipped (the goal is met); a line that
+    # someone changed after this page loaded is refused, like any other edit, so nobody
+    # deletes a version of the line they never saw.
+    remove_ids = []
+    for r in removals:
+        try:
+            rid = int(r.get("id") or 0)
+        except (TypeError, ValueError):
+            rid = 0
+        if not rid or rid not in existing:
+            continue
+        if existing[rid]["updated_at"] != str(r.get("updated_at") or ""):
+            stale[str(r.get("key") or "")] = "Changed elsewhere since you opened this page, so it was not removed."
+            continue
+        remove_ids.append(rid)
     if stale:
         return JSONResponse({"error": "Some lines were changed by someone else after you opened "
                                       "this page. Nothing was saved -- reload to see their version.",
@@ -731,6 +752,9 @@ async def save_lines(request: Request, template_id: int):
 
     with db.connect() as conn:
         with conn.cursor() as cur:
+            for rid in remove_ids:
+                cur.execute("DELETE FROM reports.template_lines WHERE id = %s AND template_id = %s",
+                            (rid, template_id))
             for _, rid, _, v, o in cleaned:
                 if rid:
                     # An update writes a line option only if the page sent it (a stale tab
@@ -769,7 +793,11 @@ async def save_lines(request: Request, template_id: int):
                            VALUES (%s, %s, %s, %s, %s, %s, %s)""",
                         (template_id, v["section"], v["fund_group"], v["line_label"],
                          v["account_mask"], v["sort_order"], v["is_active"]))
-    return JSONResponse({"ok": True, "saved": len(cleaned), "lines": _lines(template_id)})
+    if remove_ids:       # no audit table covers templates; leave a trace in the service log
+        print(f"[report_template_editor] {user['email']} removed {len(remove_ids)} line(s) "
+              f"{remove_ids} from template {template_id}")
+    return JSONResponse({"ok": True, "saved": len(cleaned), "removed": len(remove_ids),
+                         "lines": _lines(template_id)})
 
 
 # ── recipients (batched JSON save) ────────────────────────────────────────────
@@ -786,7 +814,22 @@ async def save_recipients(request: Request, template_id: int):
         return JSONResponse({"error": "Nothing to save."}, status_code=400)
 
     current = {r["id"]: r for r in _recipients(template_id)}
-    taken = {r["email"].lower(): r["id"] for r in current.values()}
+
+    # Rows flagged _delete are removed (never validated). A removed recipient's address is
+    # free again, so the same save may add it back; one already gone is simply skipped.
+    remove_ids = []
+    for r in rows:
+        if not r.get("_delete"):
+            continue
+        try:
+            rid = int(r.get("id") or 0)
+        except (TypeError, ValueError):
+            rid = 0
+        if rid and rid in current:
+            remove_ids.append(rid)
+    rows = [r for r in rows if not r.get("_delete")]
+
+    taken = {r["email"].lower(): r["id"] for r in current.values() if r["id"] not in remove_ids}
     cleaned, errors = [], {}
     for r in rows:
         key = str(r.get("key") or "")
@@ -810,6 +853,9 @@ async def save_recipients(request: Request, template_id: int):
                              "row_errors": errors}, status_code=400)
     with db.connect() as conn:
         with conn.cursor() as cur:
+            for rid in remove_ids:
+                cur.execute("DELETE FROM reports.template_recipients WHERE id = %s AND template_id = %s",
+                            (rid, template_id))
             for rid, v in cleaned:
                 if rid:
                     cur.execute(
@@ -823,8 +869,12 @@ async def save_recipients(request: Request, template_id: int):
                                (template_id, email, name, recipient_type, is_active)
                            VALUES (%s, %s, %s, %s, %s)""",
                         (template_id, v["email"], v["name"], v["recipient_type"], v["is_active"]))
+    if remove_ids:
+        print(f"[report_template_editor] {user['email']} removed {len(remove_ids)} recipient(s) "
+              f"{remove_ids} from template {template_id}")
     rows_out = _recipients(template_id)
-    return JSONResponse({"ok": True, "saved": len(cleaned), "recipients": rows_out})
+    return JSONResponse({"ok": True, "saved": len(cleaned), "removed": len(remove_ids),
+                         "recipients": rows_out})
 
 
 # ── preview / starter lines / budgets (live QBO chart of accounts) ────────────

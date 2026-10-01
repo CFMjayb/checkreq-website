@@ -124,18 +124,49 @@
     records.forEach(function (r) { self.add(r, false); });
     this.refreshState();
   };
+  // Every row starts with a remove button. A row that was never saved is dropped on the spot
+  // (nothing to lose). A saved row is only MARKED for removal -- struck through, inputs
+  // locked, with an Undo -- and is deleted when the grid's Save button is clicked.
+  var REMOVE_CELL = '<td class="rt-col-remove"><button type="button" class="rt-remove" data-remove ' +
+    'title="Remove this row" aria-label="Remove this row">&#10005;</button></td>';
+  Grid.prototype.toggleRemove = function (row) {
+    if (!row.id) {                           // never saved: drop it now
+      if (row.detailEl) { row.detailEl.remove(); row.detailEl = null; }
+      row.el.remove();
+      this.rows = this.rows.filter(function (r) { return r !== row; });
+      if (this.cfg.onRowGone) this.cfg.onRowGone(row);
+      this.refreshState();
+      return;
+    }
+    row.removed = !row.removed;
+    var tr = row.el, btn = tr.querySelector('[data-remove]');
+    tr.classList.toggle('rt-row-removed', row.removed);
+    Array.prototype.forEach.call(tr.querySelectorAll('input, select, button'), function (el) {
+      if (el === btn) return;
+      if (row.removed) el.setAttribute('disabled', 'disabled'); else el.removeAttribute('disabled');
+    });
+    btn.innerHTML = row.removed ? '&#8634;' : '&#10005;';
+    btn.title = row.removed ? 'Undo -- keep this row' : 'Remove this row';
+    btn.setAttribute('aria-label', btn.title);
+    if (row.removed) {
+      if (row.detailEl) { row.detailEl.remove(); row.detailEl = null; }
+      if (this.cfg.onRowGone) this.cfg.onRowGone(row);
+    }
+    this.read(row);                          // refreshes the dirty highlight and the unsaved count
+  };
   Grid.prototype.add = function (rec, isNew) {
     var key = rec.id ? String(rec.id) : 'new-' + (++newSeq);
-    var row = { key: key, id: rec.id || 0, updated_at: rec.updated_at || '', rec: rec,
+    var row = { key: key, id: rec.id || 0, updated_at: rec.updated_at || '', rec: rec, removed: false,
                 orig: isNew ? null : JSON.stringify(this.values(rec)), cur: this.values(rec) };
     var tr = document.createElement('tr');
     tr.setAttribute('data-key', key);
-    tr.innerHTML = this.cfg.rowHtml(rec);
+    tr.innerHTML = REMOVE_CELL + this.cfg.rowHtml(rec);       // first cell: the Lines table is wider than many screens, so a last-column button would sit off-screen
     this.cfg.body.appendChild(tr);
     row.el = tr;
     var self = this;
     tr.addEventListener('input', function () { self.read(row); });
     tr.addEventListener('change', function () { self.read(row); });
+    tr.querySelector('[data-remove]').addEventListener('click', function () { self.toggleRemove(row); });
     this.rows.push(row);
     if (this.cfg.afterAdd) this.cfg.afterAdd(row);
     this.read(row);
@@ -157,13 +188,13 @@
       v[f] = inp.type === 'checkbox' ? inp.checked : inp.value.trim();
     });
     row.cur = v;
-    var dirty = row.orig === null || JSON.stringify(v) !== row.orig;
+    var dirty = row.orig === null || row.removed || JSON.stringify(v) !== row.orig;
     row.el.classList.toggle('row-dirty', dirty);
     row.el.classList.toggle('rt-row-inactive', v.is_active === false);
     this.refreshState();
   };
   Grid.prototype.dirtyRows = function () {
-    return this.rows.filter(function (r) { return r.orig === null || JSON.stringify(r.cur) !== r.orig; });
+    return this.rows.filter(function (r) { return r.orig === null || r.removed || JSON.stringify(r.cur) !== r.orig; });
   };
   Grid.prototype.refreshState = function () {
     var n = this.dirtyRows().length;
@@ -187,6 +218,7 @@
     var self = this, btn = this.cfg.saveBtn;
     var rows = this.dirtyRows().map(function (r) {
       var o = { key: r.key, id: r.id, updated_at: r.updated_at };
+      if (r.removed) { o._delete = true; return o; }      // a removal carries nothing else
       Object.keys(r.cur).forEach(function (k) { o[k] = r.cur[k]; });
       return self.cfg.payload ? self.cfg.payload(o) : o;
     });
@@ -195,15 +227,22 @@
     if (this.cfg.validateRow) {              // refuse locally what the server would refuse
       var bad = false;
       this.dirtyRows().forEach(function (r) {
+        if (r.removed) return;               // going away, so nothing to validate
         var m = self.cfg.validateRow(r);
         if (m) { self.setRowMsg(r.key, m, 'err'); bad = true; }
       });
       if (bad) { showBanner('error', 'Fix the highlighted lines, then save again.'); return; }
     }
+    var gone = this.dirtyRows().filter(function (r) { return r.removed; }).length;
+    if (gone && !window.confirm('Permanently remove ' + gone + ' ' + this.cfg.noun + (gone === 1 ? '' : 's') +
+                                '? This cannot be undone.')) return;
     pulse(btn);
     postJson(this.cfg.url, { rows: rows }).then(function (j) {
       self.load(j[self.cfg.resultKey]);
-      showBanner('ok', esc(j.saved) + ' ' + self.cfg.noun + (j.saved === 1 ? '' : 's') + ' saved.');
+      var parts = [];
+      if (j.saved) parts.push(esc(j.saved) + ' ' + self.cfg.noun + (j.saved === 1 ? '' : 's') + ' saved');
+      if (j.removed) parts.push(esc(j.removed) + ' removed');
+      showBanner('ok', parts.length ? parts.join(', ') + '.' : 'Nothing needed changing.');
       if (self.cfg.afterSave) self.cfg.afterSave();
     }).catch(function (err) {
       var errs = (err.body && err.body.row_errors) || {};
@@ -338,6 +377,7 @@
     fields: LINE_FIELDS,
     url: '/admin/report-templates/' + TID + '/lines/save',
     resultKey: 'lines', noun: 'line',
+    onRowGone: function (row) { if (popRow === row) closePicker(); },
     payload: function (o) {                  // send class ids only; the server reads the names from QuickBooks
       if (OPTS) o.class_filter = classIds(o.class_filter);
       return o;
@@ -402,8 +442,9 @@
 
   // ── Preview ───────────────────────────────────────────────────────────────
   var lastPreview = null;
+  function liveLines() { return lines.rows.filter(function (r) { return !r.removed; }); }   // not marked for removal
   function previewRows() {
-    return lines.rows.map(function (r) {
+    return liveLines().map(function (r) {
       return { key: r.key, id: r.id, section: FUND ? 'Equity' : r.cur.section, line_label: r.cur.line_label || '(unnamed line)',
                account_mask: r.cur.account_mask, sort_order: r.cur.sort_order, is_active: r.cur.is_active,
                class_filter: OPTS ? r.cur.class_filter : '[]' };
@@ -418,7 +459,7 @@
       .then(function (j) { unpulse(btn); return j; }, function (e) { unpulse(btn); throw e; });
   }
   function renderPreview(j) {
-    lines.rows.forEach(function (r) {
+    liveLines().forEach(function (r) {
       var btn = r.el.querySelector('.rt-match-btn');
       var res = j.lines[r.key];
       if (j.invalid && j.invalid[r.key]) { btn.textContent = 'Invalid mask'; btn.className = 'linkish rt-match-btn rt-bad'; btn.title = j.invalid[r.key]; return; }
@@ -435,7 +476,7 @@
       (FUND ? ' active QuickBooks equity accounts (the only accounts a Fund Summary reads).</p>'
             : ' QuickBooks accounts (active and inactive, as the report does).</p>'));
     var shadowed = j.shadowed_lines || [];
-    var empty = lines.rows.filter(function (r) {
+    var empty = liveLines().filter(function (r) {
       return j.lines[r.key] && j.lines[r.key].count === 0 && shadowed.indexOf(r.cur.line_label || '(unnamed line)') < 0;
     });
     if (empty.length) parts.push('<div class="banner banner-error">' + empty.length + ' active line' + (empty.length === 1 ? ' matches' : 's match') + ' no accounts at all.</div>');
@@ -449,7 +490,7 @@
         ' class selections that partly overlap</strong> &mdash; a transaction in both goes to the first line (by Sort):<ul class="popup-list">' +
         j.partial_overlaps.slice(0, 15).map(function (o) { return '<li>' + esc(o.acct_num) + ' ' + esc(o.name) + ' &rarr; ' + o.lines.map(esc).join(', ') + '</li>'; }).join('') + '</ul></div>');
     }
-    if (OPTS && DATA.fullEntity && lines.rows.some(function (r) {
+    if (OPTS && DATA.fullEntity && liveLines().some(function (r) {
           return r.cur.is_active && (Number(r.cur.charge_pct) < 100 || classIds(r.cur.class_filter).length); })) {
       parts.push('<div class="banner banner-info">This is a whole-entity template: with a % under 100 or a class selection, the net is shown <em>as charged</em> and will not equal QuickBooks\' net income. The report still checks the unscaled ledger against it.</div>');
     }
@@ -509,8 +550,8 @@
       section: document.getElementById('starterSection').value,
       prefix: document.getElementById('starterPrefix').value,
       include_inactive: document.getElementById('starterInactive').checked,
-      existing_masks: lines.rows.filter(function (r) { return r.cur.is_active && r.cur.account_mask; })
-                                .map(function (r) { return r.cur.account_mask; })
+      existing_masks: liveLines().filter(function (r) { return r.cur.is_active && r.cur.account_mask; })
+                                 .map(function (r) { return r.cur.account_mask; })
     }).then(function (j) {
       var s = j.lines || [];
       if (!s.length) { starterOut.innerHTML = '<p class="sub">No uncovered top-level accounts match that filter.</p>'; return; }
@@ -551,7 +592,7 @@
     pulse(btn);
     postJson('/admin/report-templates/' + TID + '/fund-mask-lines', {}).then(function (j) {
       var have = {};
-      lines.rows.forEach(function (r) { if (r.cur.is_active && r.cur.account_mask) have[r.cur.account_mask.trim()] = true; });
+      liveLines().forEach(function (r) { if (r.cur.is_active && r.cur.account_mask) have[r.cur.account_mask.trim()] = true; });
       var added = 0, skipped = 0;
       (j.lines || []).forEach(function (x) {
         if (have[x.account_mask]) { skipped += 1; return; }
