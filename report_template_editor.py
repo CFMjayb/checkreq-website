@@ -55,6 +55,7 @@ import asyncio
 import json
 import re
 import time
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -97,6 +98,17 @@ _ORG_CODE_TO_QBO_COMPANY = {"DME": "dmecdf"}
 _COA_TTL = 600
 _coa_cache: dict[str, tuple[float, dict]] = {}
 
+# Line options (migration 071, 2026-10-01): % charged, class selection, Sum/Detail.
+# The editor works whether or not the columns exist yet in the database it is running
+# against (they reach production later than dev): reads never name them directly, writes
+# touch them only when they exist, and non-default input is refused -- never silently
+# dropped -- on a database that does not have them.
+_LINE_OPTION_COLS = ("charge_pct", "class_filter", "display_mode")
+_CLASS_TTL = 600
+_class_cache: dict[str, tuple[float, dict]] = {}
+_MAX_CLASSES = 60
+_CLASS_ID_RE = re.compile(r"^[0-9]{1,30}$")        # QuickBooks class ids are numeric strings
+
 
 def register(app, *, current_user, render, require_access) -> None:
     global _current_user, _render, _require_access
@@ -138,17 +150,149 @@ def _iso(ts) -> str:
     return ts.isoformat() if ts else ""
 
 
-def _lines(template_id: int) -> list[dict]:
+def _option_columns() -> set[str]:
+    """Which of the three line-option columns exist in the database this app is using."""
     rows = db.query(
-        """SELECT id, section, fund_group, line_label, account_mask, sort_order, is_active,
-                  updated_at
-             FROM reports.template_lines WHERE template_id = %s
-         ORDER BY is_active DESC, sort_order, id""",
+        """SELECT column_name FROM information_schema.columns
+            WHERE table_schema = 'reports' AND table_name = 'template_lines'
+              AND column_name = ANY(%s)""",
+        (list(_LINE_OPTION_COLS),),
+    )
+    return {r["column_name"] for r in rows}
+
+
+def _options_ready() -> bool:
+    return _option_columns() == set(_LINE_OPTION_COLS)
+
+
+def _pct_str(v) -> str:
+    """'100.0000' -> '100', '33.3333' stays: a plain string, so no Decimal ever reaches JSON
+    and an unchanged value never makes a row look edited."""
+    try:
+        return format(Decimal(str(v)).quantize(Decimal("0.0001")).normalize(), "f")
+    except (InvalidOperation, ValueError):
+        return "100"
+
+
+def _lines(template_id: int) -> list[dict]:
+    # to_jsonb(l) ->> 'col' yields NULL for a column that does not exist, so this read
+    # works on a database that has not had migration 071 yet (-> the defaults below).
+    rows = db.query(
+        """SELECT l.id, l.section, l.fund_group, l.line_label, l.account_mask, l.sort_order,
+                  l.is_active, l.updated_at,
+                  to_jsonb(l) ->> 'charge_pct'   AS charge_pct,
+                  to_jsonb(l) -> 'class_filter'  AS class_filter,
+                  to_jsonb(l) ->> 'display_mode' AS display_mode
+             FROM reports.template_lines l WHERE l.template_id = %s
+         ORDER BY l.is_active DESC, l.sort_order, l.id""",
         (template_id,),
     )
     for r in rows:
         r["updated_at"] = _iso(r["updated_at"])
+        r["charge_pct"] = _pct_str(r["charge_pct"]) if r.get("charge_pct") is not None else "100"
+        cf = r.get("class_filter")
+        if isinstance(cf, str):
+            try:
+                cf = json.loads(cf)
+            except ValueError:
+                cf = []
+        r["class_filter"] = ([{"id": str(e.get("id") or ""), "name": str(e.get("name") or "")}
+                              for e in cf if isinstance(e, dict)] if isinstance(cf, list) else [])
+        r["display_mode"] = "sum" if r.get("display_mode") == "sum" else "detail"
     return rows
+
+
+async def _classes(org_code: str, refresh: bool = False) -> tuple[dict | None, str | None]:
+    """The entity's QuickBooks classes, cached ten minutes like the chart of accounts:
+    {"all": {id: fully qualified name}, "active": {id, ...}}. Two calls (active only, then
+    all) because the endpoint does not flag inactive classes -- a class made inactive later
+    stays selectable on a line that already uses it, and is tagged in the picker."""
+    key = org_code.upper()
+    hit = _class_cache.get(key)
+    if hit and not refresh and time.time() - hit[0] < _CLASS_TTL:
+        return hit[1], None
+
+    def fetch():
+        act, err = qbo_mcp_client.get_report_classes(org_code, active_only=True)
+        if err:
+            return None, err
+        allc, err = qbo_mcp_client.get_report_classes(org_code, active_only=False)
+        if err:
+            return None, err
+        return {"all": {c["id"]: (c.get("fully_qualified_name") or c.get("name") or c["id"]) for c in allc},
+                "active": {c["id"] for c in act}}, None
+
+    data, err = await asyncio.to_thread(fetch)
+    if err:
+        return None, err
+    _class_cache[key] = (time.time(), data)
+    return data, None
+
+
+def _clean_options(r: dict, stored: dict | None, classes: dict | None) -> tuple[dict, str | None]:
+    """Validate the three line options a grid row carries. Only keys PRESENT in the row are
+    returned, so an update writes only what the page actually sent (a stale tab, or any
+    other client that does not know these fields, can never reset a stored value).
+    Rejects rather than rounds or guesses: a blank or garbled percentage is an error, never 100."""
+    out: dict = {}
+    if "charge_pct" in r:
+        raw = r["charge_pct"]
+        if isinstance(raw, bool) or raw is None or not str(raw).strip():
+            return {}, "% charged is required (enter 100 for the whole line)."
+        try:
+            d = Decimal(str(raw).strip())
+        except InvalidOperation:
+            return {}, "% charged must be a number between 0 and 100."
+        if not d.is_finite() or d <= 0 or d > 100:
+            return {}, "% charged must be above 0 and at most 100."
+        if d.as_tuple().exponent < -4:
+            return {}, "% charged can have at most 4 decimal places."
+        out["charge_pct"] = d.quantize(Decimal("0.0001"))
+    if "display_mode" in r:
+        m = str(r["display_mode"] or "").strip().lower()
+        if m not in ("detail", "sum"):
+            return {}, "Show must be Detail or Sum."
+        out["display_mode"] = m
+    if "class_filter" in r:
+        raw = r["class_filter"]
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw) if raw.strip() else []
+            except ValueError:
+                return {}, "The class selection isn't valid."
+        if not isinstance(raw, list):
+            return {}, "The class selection isn't valid."
+        ids: list[str] = []
+        for e in raw:
+            i = e.get("id") if isinstance(e, dict) else e
+            i = "" if i is None else str(i).strip()
+            if i and not _CLASS_ID_RE.match(i):
+                return {}, "The class selection isn't valid."
+            if i not in ids:
+                ids.append(i)
+        if len(ids) > _MAX_CLASSES:
+            return {}, f"Select at most {_MAX_CLASSES} classes."
+        stored_names = {e["id"]: e["name"] for e in (stored or {}).get("class_filter", [])}
+        known = (classes or {}).get("all", {})
+        entries = []
+        for i in ids:
+            if i == "":
+                entries.append({"id": "", "name": "(No class)"})
+            elif i in known:
+                entries.append({"id": i, "name": known[i]})            # name always from QuickBooks
+            elif i in stored_names:
+                entries.append({"id": i, "name": stored_names[i]})     # already on the line, unchanged
+            elif classes is None:
+                return {}, "Couldn't check the classes with QuickBooks just now. Try again in a minute."
+            else:
+                return {}, "One of the selected classes isn't in QuickBooks."
+        out["class_filter"] = entries
+    return out, None
+
+
+def _is_default_options(o: dict) -> bool:
+    return (o.get("charge_pct", Decimal(100)) == Decimal(100) and not o.get("class_filter")
+            and o.get("display_mode", "detail") == "detail")
 
 
 def _recipients(template_id: int) -> list[dict]:
@@ -340,6 +484,9 @@ def edit_template_page(request: Request, template_id: int):
         "report_types": REPORT_TYPES,
         "type_locked": any(ln["is_active"] for ln in lines),
         "fund_mask_company": fund_mask_company(org),
+        # The % / Class / Show columns exist only for Actual vs Budget lines, and only
+        # once migration 071 is on this database.
+        "line_options": tpl["report_type"] == "bva" and _options_ready(),
         "lines": lines,
         "recipients": _recipients(template_id),
         "schedule": sched,
@@ -467,10 +614,13 @@ async def clone_template(request: Request, template_id: int):
                     RETURNING id""",
                 (name, user["id"], user["id"], template_id, org["id"]))
             new_id = cur.fetchone()["id"]
+            # A copy keeps each line's % charged, class selection and Sum/Detail (they are
+            # the natural way to split an account, so a clone must not reset them).
+            opt = ", charge_pct, class_filter, display_mode" if _options_ready() else ""
             cur.execute(
-                """INSERT INTO reports.template_lines
-                       (template_id, section, fund_group, line_label, account_mask, sort_order, is_active)
-                   SELECT %s, section, fund_group, line_label, account_mask, sort_order, TRUE
+                f"""INSERT INTO reports.template_lines
+                       (template_id, section, fund_group, line_label, account_mask, sort_order, is_active{opt})
+                   SELECT %s, section, fund_group, line_label, account_mask, sort_order, TRUE{opt}
                      FROM reports.template_lines WHERE template_id = %s AND is_active""",
                 (new_id, template_id))
             cur.execute(
@@ -529,22 +679,47 @@ async def save_lines(request: Request, template_id: int):
     if not rows:
         return JSONResponse({"error": "Nothing to save."}, status_code=400)
 
+    existing = {x["id"]: x for x in _lines(template_id)}
+    bva = tpl["report_type"] == "bva"
+    ready = _options_ready() if bva else False
+
+    # Class names come from QuickBooks, never from the browser. Ask QuickBooks (cached)
+    # only when this save adds a class a line doesn't already have.
+    classes = None
+    if bva and ready:
+        def _new_ids(r):
+            cf = r.get("class_filter")
+            if isinstance(cf, str):
+                try:
+                    cf = json.loads(cf) if cf.strip() else []
+                except ValueError:
+                    return set()
+            stored = {e["id"] for e in (existing.get(int(r.get("id") or 0)) or {}).get("class_filter", [])}
+            return {str((e.get("id") if isinstance(e, dict) else e) or "") for e in (cf or [])} - {""} - stored
+        if any(_new_ids(r) for r in rows):
+            classes, _cerr = await _classes(org["code"])
+
     cleaned, errors = [], {}
     for r in rows:
         key = str(r.get("key") or "")
         vals, verr = _clean_line(r, tpl["report_type"])
+        opts = {}
+        if not verr and bva:
+            opts, verr = _clean_options(r, existing.get(int(r.get("id") or 0)), classes)
+            if not verr and opts and not ready and not _is_default_options(opts):
+                verr = ("Line options (% charged, class, Sum) need database migration 071, which "
+                        "this environment doesn't have yet.")
         if verr:
             errors[key] = verr
             continue
         rid = int(r.get("id") or 0)
-        cleaned.append((key, rid, str(r.get("updated_at") or ""), vals))
+        cleaned.append((key, rid, str(r.get("updated_at") or ""), vals, opts))
     if errors:
         return JSONResponse({"error": "Fix the highlighted lines, then save again.",
                              "row_errors": errors}, status_code=400)
 
     stale = {}
-    existing = {x["id"]: x for x in _lines(template_id)}
-    for key, rid, loaded_at, _ in cleaned:
+    for key, rid, loaded_at, _, _o in cleaned:
         if rid and rid not in existing:
             stale[key] = "This line no longer exists on this template."
         elif rid and existing[rid]["updated_at"] != loaded_at:
@@ -556,15 +731,36 @@ async def save_lines(request: Request, template_id: int):
 
     with db.connect() as conn:
         with conn.cursor() as cur:
-            for _, rid, _, v in cleaned:
+            for _, rid, _, v, o in cleaned:
                 if rid:
+                    # An update writes a line option only if the page sent it (a stale tab
+                    # that doesn't know these fields can never reset a stored value).
+                    sets = ("section = %s, fund_group = %s, line_label = %s, account_mask = %s, "
+                            "sort_order = %s, is_active = %s, updated_at = NOW()")
+                    params = [v["section"], v["fund_group"], v["line_label"], v["account_mask"],
+                              v["sort_order"], v["is_active"]]
+                    if ready:
+                        if "charge_pct" in o:
+                            sets += ", charge_pct = %s"
+                            params.append(o["charge_pct"])
+                        if "class_filter" in o:
+                            sets += ", class_filter = %s::jsonb"
+                            params.append(json.dumps(o["class_filter"]))
+                        if "display_mode" in o:
+                            sets += ", display_mode = %s"
+                            params.append(o["display_mode"])
+                    cur.execute(f"UPDATE reports.template_lines SET {sets} "
+                                "WHERE id = %s AND template_id = %s", params + [rid, template_id])
+                elif ready:
                     cur.execute(
-                        """UPDATE reports.template_lines
-                              SET section = %s, fund_group = %s, line_label = %s, account_mask = %s,
-                                  sort_order = %s, is_active = %s, updated_at = NOW()
-                            WHERE id = %s AND template_id = %s""",
-                        (v["section"], v["fund_group"], v["line_label"], v["account_mask"],
-                         v["sort_order"], v["is_active"], rid, template_id))
+                        """INSERT INTO reports.template_lines
+                               (template_id, section, fund_group, line_label, account_mask,
+                                sort_order, is_active, charge_pct, class_filter, display_mode)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)""",
+                        (template_id, v["section"], v["fund_group"], v["line_label"],
+                         v["account_mask"], v["sort_order"], v["is_active"],
+                         o.get("charge_pct", Decimal(100)), json.dumps(o.get("class_filter", [])),
+                         o.get("display_mode", "detail")))
                 else:
                     cur.execute(
                         """INSERT INTO reports.template_lines
@@ -655,9 +851,18 @@ async def preview(request: Request, template_id: int):
             sort_order = int(str(r.get("sort_order") or 100))
         except ValueError:
             sort_order = 100
+        cf = r.get("class_filter")
+        if isinstance(cf, str):
+            try:
+                cf = json.loads(cf) if cf.strip() else []
+            except ValueError:
+                cf = []
+        class_ids = [str((e.get("id") if isinstance(e, dict) else e) or "") for e in (cf or [])] \
+            if isinstance(cf, list) else []
         lines.append({"key": key, "section": str(r.get("section") or ""),
                       "line_label": str(r.get("line_label") or key),
                       "account_mask": str(r.get("account_mask")), "sort_order": sort_order,
+                      "class_ids": class_ids or None,
                       "id": int(r.get("id") or 0) or 10 ** 9})
     lines.sort(key=lambda x: (x["sort_order"], x["id"]))
     data, qerr = await _coa(org["code"], refresh=bool(body.get("refresh")))
@@ -717,6 +922,22 @@ async def fund_mask_lines(request: Request, template_id: int):
         {"fund_group": m.get("fund_group") or "", "line_label": m.get("display_label") or m["account_mask"],
          "account_mask": m["account_mask"], "sort_order": int(m.get("sort_order") or 100)}
         for m in rows]})
+
+
+@router.get("/admin/report-templates/api/classes")
+async def qbo_classes(request: Request):
+    """The current entity's QuickBooks classes for the Lines grid's Class picker:
+    {"classes": [{id, name, active}]} sorted by name. Inactive classes are included
+    (flagged) so a line that already uses one can still show and drop it."""
+    user, org, err = _require_access(request)
+    if err:
+        return err
+    data, qerr = await _classes(org["code"], refresh=request.query_params.get("refresh") == "1")
+    if qerr:
+        return JSONResponse({"error": f"Couldn't load the classes from QuickBooks: {qerr}"}, status_code=502)
+    rows = [{"id": i, "name": n, "active": i in data["active"]} for i, n in data["all"].items()]
+    rows.sort(key=lambda c: c["name"].lower())
+    return JSONResponse({"classes": rows})
 
 
 @router.get("/admin/report-templates/api/qbo-reference")
