@@ -18,9 +18,13 @@ digest_extras.py -- two additions to the 7 AM daily digest run
    do more later." So: ONE email, to the addresses in app_settings
    'digest_summary_recipients' (comma-separated; default jay@cfmins.org),
    with a section per entity listing every email this run sent (or failed
-   to send) for that entity: who, which kind, which requests. Sent even when
-   nothing went out, so a quiet morning still confirms the run happened.
-   Widening it later is a settings change, not a deploy.
+   to send) for that entity: who, which kind, which requests. NOT sent when
+   the run emailed nobody (Jay: "do not send emails to people who have zero
+   notices to email about"). Widening it later is a settings change, not a
+   deploy.
+
+   Nobody gets an empty email: approver reminders, coding notices and the AP
+   email each go out only when that person has something in them.
 
 Kept out of main.py (already ~9,000 lines). main.py passes in the few
 helpers this needs (no import of main from here -- one-way dependency, the
@@ -197,9 +201,9 @@ def send_admin_summaries(log: list[dict], *, esc, wrap_html, sign_in_url, sender
     ok = sum(1 for e in log if e["ok"])
     failed = len(log) - ok
     if not log:
-        body = "<p>Beacon's 7 AM run checked every entity. Nothing needed an email this morning.</p>"
-        text = "Beacon's 7 AM run: nothing needed an email this morning."
-        subject = "Beacon morning emails: none needed"
+        # Jay, 2026-09-30: "do not send emails to people who have zero
+        # notices to email about" -- a quiet morning sends no summary.
+        return 0
     else:
         failed_html = (' (<strong style="color:#c62828">' + str(failed) + ' failed</strong>)'
                        if failed else '')
