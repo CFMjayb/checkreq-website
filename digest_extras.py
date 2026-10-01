@@ -12,13 +12,15 @@ digest_extras.py -- two additions to the 7 AM daily digest run
        has already uploaded it and AP just needs to confirm it.
    Each item links to the AP edit screen.
 
-2. Administrator summary. Jay: "a summary of all communications email that
-   goes out to Beacon Administrators ... who got what that morning." Every
-   Beacon Admin gets one email after the run listing each email this run
-   sent (or failed to send): who, which kind, which requests. Scoped per
-   admin to the entities they administer -- an admin never sees another
-   diocese's recipients or requests. Sent even when nothing went out, so a
-   quiet morning still confirms the run happened.
+2. Communications summary. Jay: "a summary of all communications email
+   ... who got what that morning", then (same evening) "I only want the
+   summary of communications to go to me right now for each entity. We'll
+   do more later." So: ONE email, to the addresses in app_settings
+   'digest_summary_recipients' (comma-separated; default jay@cfmins.org),
+   with a section per entity listing every email this run sent (or failed
+   to send) for that entity: who, which kind, which requests. Sent even when
+   nothing went out, so a quiet morning still confirms the run happened.
+   Widening it later is a settings change, not a deploy.
 
 Kept out of main.py (already ~9,000 lines). main.py passes in the few
 helpers this needs (no import of main from here -- one-way dependency, the
@@ -32,9 +34,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import app_settings
 import db
 import email_client
 import rbac
+
+SUMMARY_RECIPIENTS_SETTING = "digest_summary_recipients"
+DEFAULT_SUMMARY_RECIPIENTS = "jay@cfmins.org"
 
 
 def _vendor_name(r: dict, vr_name) -> str:
@@ -176,26 +182,32 @@ def send_ap_digests(*, base_for, esc, wrap_html, vr_name, sender) -> list[dict]:
 
 
 def send_admin_summaries(log: list[dict], *, esc, wrap_html, sign_in_url, sender) -> int:
-    """One summary per Beacon Admin of this morning's emails, limited to the
-    entities they administer. Returns the number of summaries sent."""
-    sent = 0
-    for a in rbac.get_users_with_role("beacon_admin"):
-        codes = {r["code"] for r in db.query(
-            "SELECT o.code FROM checkreq.user_roles ur JOIN checkreq.organizations o ON o.id = ur.org_id "
-            "WHERE ur.user_id = %s AND ur.role_key = 'beacon_admin' AND ur.revoked_at IS NULL",
-            (a["id"],))}
-        if not codes:
-            continue
-        mine = []
-        for e in log:
-            if not (e["orgs"] & codes):
-                continue
-            items = [i for i in e["items"] if any(i.endswith(f"({c})") for c in codes)]
-            mine.append({**e, "items": items})
-        entities = ", ".join(sorted(codes))
-        if mine:
-            ok = sum(1 for e in mine if e["ok"])
-            failed = len(mine) - ok
+    """One communications summary, a section per entity, to the configured
+    recipients (see module docstring). Returns the number of emails sent."""
+    raw = app_settings.get_setting(SUMMARY_RECIPIENTS_SETTING, DEFAULT_SUMMARY_RECIPIENTS) \
+        or DEFAULT_SUMMARY_RECIPIENTS
+    recipients = [x.strip() for x in raw.split(",") if x.strip()]
+
+    by_org: dict[str, list[dict]] = {}
+    for e in log:
+        for code in sorted(e["orgs"]):
+            items = [i for i in e["items"] if i.endswith(f"({code})")]
+            by_org.setdefault(code, []).append({**e, "items": items})
+
+    ok = sum(1 for e in log if e["ok"])
+    failed = len(log) - ok
+    if not log:
+        body = "<p>Beacon's 7 AM run checked every entity. Nothing needed an email this morning.</p>"
+        text = "Beacon's 7 AM run: nothing needed an email this morning."
+        subject = "Beacon morning emails: none needed"
+    else:
+        failed_html = (' (<strong style="color:#c62828">' + str(failed) + ' failed</strong>)'
+                       if failed else '')
+        plural = "s" if ok != 1 else ""
+        body = f"<p>Beacon's 7 AM run sent <strong>{ok}</strong> email{plural}{failed_html}.</p>"
+        text = f"Beacon's 7 AM run -- {ok} sent, {failed} failed.\n"
+        for code in sorted(by_org):
+            entries = by_org[code]
             trs = "".join(
                 f'<tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">{esc(e["name"] or "")}<br>'
                 f'<span style="color:#888;font-size:0.85em;">{esc(e["to"])}</span></td>'
@@ -204,33 +216,27 @@ def send_admin_summaries(log: list[dict], *, esc, wrap_html, sign_in_url, sender
                 f'<td style="padding:6px 8px;border-bottom:1px solid #eee;'
                 f'color:{"#2e7d32" if e["ok"] else "#c62828"};">'
                 f'{"Sent" if e["ok"] else "FAILED: " + esc(e["error"] or "unknown")}</td></tr>'
-                for e in mine)
-            failed_html = (' (<strong style="color:#c62828">' + str(failed) + ' failed</strong>)'
-                           if failed else '')
-            plural = "s" if ok != 1 else ""
-            body = (f"<p>Beacon's 7 AM run sent <strong>{ok}</strong> email{plural}{failed_html}"
-                    f" for {esc(entities)}:</p>"
-                    f'<table style="width:100%;border-collapse:collapse;font-size:0.9rem;">'
-                    f'<tr style="background:#f5f5f5;"><th style="padding:6px 8px;text-align:left;">To</th>'
-                    f'<th style="padding:6px 8px;text-align:left;">Email</th>'
-                    f'<th style="padding:6px 8px;text-align:left;">Requests</th>'
-                    f'<th style="padding:6px 8px;text-align:left;">Result</th></tr>{trs}</table>')
-            text = (f"Beacon's 7 AM run -- {ok} sent, {failed} failed, for {entities}:\n\n" + "\n".join(
+                for e in entries)
+            body += (f'<h3 style="font-size:15px;margin:20px 0 6px;color:#1F4E79;">{esc(code)}</h3>'
+                     f'<table style="width:100%;border-collapse:collapse;font-size:0.9rem;">'
+                     f'<tr style="background:#f5f5f5;"><th style="padding:6px 8px;text-align:left;">To</th>'
+                     f'<th style="padding:6px 8px;text-align:left;">Email</th>'
+                     f'<th style="padding:6px 8px;text-align:left;">Requests</th>'
+                     f'<th style="padding:6px 8px;text-align:left;">Result</th></tr>{trs}</table>')
+            text += f"\n{code}:\n" + "\n".join(
                 f"- {e['name'] or ''} <{e['to']}>: {e['kind']} -- {', '.join(e['items'])} -- "
-                f"{'Sent' if e['ok'] else 'FAILED: ' + (e['error'] or 'unknown')}" for e in mine))
-            subject = f"Beacon morning emails: {ok} sent" + (f", {failed} FAILED" if failed else "")
-        else:
-            body = (f"<p>Beacon's 7 AM run checked for approvals, AP work and coding notices for "
-                    f"{esc(entities)}. Nothing needed an email this morning.</p>")
-            text = f"Beacon's 7 AM run: nothing needed an email this morning for {entities}."
-            subject = "Beacon morning emails: none needed"
+                f"{'Sent' if e['ok'] else 'FAILED: ' + (e['error'] or 'unknown')}" for e in entries) + "\n"
+        subject = f"Beacon morning emails: {ok} sent" + (f", {failed} FAILED" if failed else "")
+
+    sent = 0
+    for to in recipients:
         try:
             res = email_client.send_email(
-                to=a["email"], subject=subject,
-                body_html=wrap_html(body, sign_in_url, "Beacon — Morning Email Summary"),
+                to=to, subject=subject,
+                body_html=wrap_html(body, sign_in_url, "Beacon \u2014 Morning Email Summary"),
                 body_text=text, sender=sender)
             if res.get("status") == "sent":
                 sent += 1
         except Exception as exc:
-            print(f"[digest] admin summary to {a['email']} failed: {exc}")
+            print(f"[digest] communications summary to {to} failed: {exc}")
     return sent
