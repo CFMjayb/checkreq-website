@@ -170,6 +170,7 @@
       <em>Detail</em> also lists its accounts. If &ldquo;Show each account under its line&rdquo; is off in Options, every line shows its total only.</li>
     <li>An account can't be split between two lines by percentage &mdash; use classes for that. On a whole-entity template the net is
       &ldquo;as charged&rdquo; once any line is under 100%.</li>
+    <li>{% from "_guide_link.html" import guide_link %}{{ guide_link("report-template-lines", "How to use report template lines") }} &nbsp;Click the beacon for a one-page guide with examples.</li>
   </ul>
   {% elif tpl.report_type != 'fund_summary' %}
   <p class="setup-hint">The <strong>% charged</strong>, <strong>Class</strong> and <strong>Show</strong> options appear once the database update

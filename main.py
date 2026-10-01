@@ -8867,6 +8867,10 @@ admin_hub.register(app, current_user=_current_user, current_org=_current_org, re
 parish_access.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 # account.py (2026-08-08) -- closes the "set_password() has no UI caller" gap.
 account.register(app, current_user=_current_user, render=_render)
+# guides.py (2026-10-01) -- short "how to use this" pages; a "How to use" pill on
+# an Administrative Tasks card links to /guides/<slug>. Thin wiring only.
+import guides
+guides.register(app, current_user=_current_user, render=_render)
 # Parish Portal S4, "Diocese Mode / Parish Mode" (2026-08-08) -- same
 # register() pattern, thin wiring only.
 parish_mode.register(app, current_user=_current_user, current_org=_current_org, render=_render)

@@ -4,6 +4,7 @@
 <link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
 {% endblock %}
 {% block content %}
+{% from "_guide_link.html" import guide_link %}
 <div class="page-shell-wide">
 
 <h1>Administrative Tasks</h1>
@@ -16,7 +17,10 @@
   <div class="setup-grid">
     {% for c in g.cards %}
     <div class="setup-tile is-built">
-      <h2><a href="{{ c.url }}">{{ c.title }}</a></h2>
+      <div class="tile-head">
+        <h2><a href="{{ c.url }}">{{ c.title }}</a></h2>
+        {% if c.guide %}{{ guide_link(c.guide, "How to use: " ~ c.title) }}{% endif %}
+      </div>
       <div class="desc">{{ c.desc }}</div>
     </div>
     {% endfor %}
