@@ -17,7 +17,8 @@ Approval" instead. See main.py's ap_edit_form / ap_edit_submit.
   <h1>{{ request_number }}</h1>
   <span class="badge badge-{{ pr_status|lower|replace(' ', '-') }}">{{ pr_status }}</span>
 </div>
-<p class="back-link"><a href="{{ back_url }}">&larr; Back</a>
+{% from "_guide_link.html" import guide_link as _gl %}
+<p class="back-link"><a href="{{ back_url }}">&larr; Back</a> · {{ _gl("ap-review-w9", "How AP Review and W-9s work") }}
   · <a href="/requests/{{ request_number }}/pdf" target="_blank">Open as PDF</a></p>
 
 {% if saved %}<div class="banner banner-success">Changes saved.</div>{% endif %}
@@ -120,7 +121,8 @@ Approval" instead. See main.py's ap_edit_form / ap_edit_submit.
      w9_confirm). The tax ID is never stored in Beacon. #}
   <div class="card ap-edit-card ap-w9-card ap-w9-{{ w9_state }}" id="w9">
     {% if w9_state == 'review' %}
-      <h2>Take action on received W-9</h2>
+      {% from "_guide_link.html" import guide_link %}
+      <h2>Take action on received W-9 {{ guide_link("ap-review-w9", "How W-9 review works") }}</h2>
       <p>{{ w9.name }} uploaded a W-9 on {{ w9.uploaded_at.strftime("%b %d, %Y") }}.
         <button type="button" class="link-button" id="apShowW9">Show the W-9</button></p>
       <form method="post" action="/requests/{{ request_number }}/w9-confirm" id="w9ConfirmForm" autocomplete="off">

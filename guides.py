@@ -43,6 +43,14 @@ GUIDES = {
         "back_url": "/admin/report-templates",
         "back_label": "Report Templates",
     },
+    # 2026-10-01 (Jay): "make sure there is concise explanation of how this
+    # works" -- AP Review, the AP edit screen, and the W-9 review panel.
+    "ap-review-w9": {
+        "title": "AP Review & W-9s",
+        "template": "guide_ap_review_w9.html",
+        "back_url": "/admin/ap-review",
+        "back_label": "AP Review",
+    },
 }
 
 
