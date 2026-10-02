@@ -137,6 +137,11 @@
         <label data-rtype="bva"><input type="checkbox" name="include_fund_tabs" {% if form.include_fund_tabs %}checked{% endif %}>
           Fund Summary tabs (uses the entity's Fund Account Masks)</label>
       </fieldset>
+      <fieldset>
+        <legend>Numbers</legend>
+        <label><input type="checkbox" name="opt_whole_dollars" {% if fopts.get('whole_dollars', False) %}checked{% endif %}>
+          Show whole dollars (no cents) on the report pages. The cents are kept underneath, and Transaction Detail still shows them.</label>
+      </fieldset>
     </div>
     <button type="submit" class="btn btn-primary">{{ 'Save Options' if tpl else 'Create Template' }}</button>
   </form>

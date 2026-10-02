@@ -944,7 +944,9 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    # K_REVISION is set by Cloud Run itself: it names the revision answering this request, so
+    # "is the new code live" is one unauthenticated request (verify_deploy.py reads it).
+    return {"status": "ok", "revision": os.environ.get("K_REVISION")}
 
 
 

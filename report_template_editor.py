@@ -90,6 +90,10 @@ _TYPE_OPTIONS = {
     "fund_summary": {"fs_exclude_zeros": ("exclude_zeros", True),
                      "fs_include_mtd_tab": ("include_mtd_tab", True)},
 }
+# Settings every report type has, kept in the same options JSON (checkbox name -> (key, default)).
+# "Show whole dollars" (2026-10-01): the engine shows Page 1 / By Month / Fund Summary figures
+# without cents; Transaction Detail keeps them. Needs no migration (options is already JSONB).
+_COMMON_OPTIONS = {"opt_whole_dollars": ("whole_dollars", False)}
 _ORG_CODE_TO_QBO_COMPANY = {"DME": "dmecdf"}
 
 # Chart-of-accounts cache per org code: (fetched_at, data). Ten minutes is short
@@ -354,6 +358,8 @@ def _options_from_form(form, org_code: str, existing_options: dict | None = None
     opts = dict(existing_options or {})          # keep keys this form doesn't own
     for field, (key, _default) in _TYPE_OPTIONS.get(rtype, {}).items():
         opts[key] = form.get(field) == "on"
+    for field, (key, _default) in _COMMON_OPTIONS.items():
+        opts[key] = form.get(field) == "on"
     vals["options"] = json.dumps(opts)
     return vals, None
 
@@ -442,7 +448,8 @@ async def new_template_create(request: Request):
     if verr:
         fdict = dict(form)
         fdict["options"] = {key: form.get(field) == "on"
-                            for field, (key, _d) in _TYPE_OPTIONS.get(fdict.get("report_type"), {}).items()}
+                            for field, (key, _d) in {**_TYPE_OPTIONS.get(fdict.get("report_type"), {}),
+                                                     **_COMMON_OPTIONS}.items()}
         return _render(request, "admin_report_template_edit.html", user, {
             "tpl": None, "form": fdict, "reviewers": _reviewer_choices(org["id"], None),
             "report_types": REPORT_TYPES, "type_locked": False,
