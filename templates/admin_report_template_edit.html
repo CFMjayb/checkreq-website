@@ -156,7 +156,9 @@
     {% endif %}
     <code>667*</code> (starts with 667), <code>4###</code> (4 plus any three characters), <code>4000-4099</code> (a range), and
     several separated by commas. If two lines match the same account, the one that sorts first gets it.
-    Lines are never deleted &mdash; untick <strong>Active</strong> to retire one.
+    Click the <strong>&#10005;</strong> at the left of a line to remove it: a new line disappears at once; a saved line is
+    struck through (click &#8634; to undo) and is permanently deleted when you click <strong>Save Lines</strong>.
+    To keep a line but stop using it, untick <strong>Active</strong> instead.
   </p>
   {% if line_options %}
   <ul class="setup-hint rt-options-hint">
@@ -218,6 +220,7 @@
     <table class="setup-table rt-lines{% if tpl.report_type == 'fund_summary' %} rt-fund{% endif %}" id="linesTable">
       <thead>
         <tr>
+          <th class="rt-col-remove" title="Remove a line"><span class="sr-only">Remove</span></th>
           <th class="col-allow">Active</th>
           <th class="rt-col-section">{{ 'Fund group' if tpl.report_type == 'fund_summary' else 'Section' }}</th>
           <th class="col-display">Line label</th>
@@ -240,7 +243,9 @@
 <!-- ── Recipients ──────────────────────────────────────────────────────── -->
 <details class="card setup-section" {% if not recipients %}open{% endif %} id="recipientsSection">
   <summary><h2>Recipients</h2></summary>
-  <p class="setup-hint">Who gets the report. They don't need a Beacon login. Untick <strong>Active</strong> to take someone off.</p>
+  <p class="setup-hint">Who gets the report. They don't need a Beacon login. Click <strong>&#10005;</strong> to remove someone
+    (a saved recipient is permanently deleted when you click <strong>Save Recipients</strong>; &#8634; undoes it first),
+    or untick <strong>Active</strong> to keep them on the list without sending to them.</p>
   <div class="setup-toolbar">
     <button type="button" class="btn btn-secondary btn-sm" id="recipAddBtn">+ Add Recipient</button>
     <div class="spacer"></div>
@@ -251,6 +256,7 @@
     <table class="setup-table" id="recipTable">
       <thead>
         <tr>
+          <th class="rt-col-remove" title="Remove a recipient"><span class="sr-only">Remove</span></th>
           <th class="col-allow">Active</th>
           <th class="rt-col-section">To / Cc</th>
           <th class="col-email">Email</th>

@@ -92,3 +92,16 @@ ul.rt-options-hint { margin: 0 0 var(--space-3); padding-left: 1.2rem; }
 ul.rt-options-hint li { margin: 3px 0; }
 .rt-lines.rt-fund .rt-col-section { width: 240px; }
 .rt-lines.rt-fund .rt-col-section input { width: 100%; box-sizing: border-box; }
+
+/* Remove button (2026-10-01): the first cell of every Lines and Recipients row (the Lines table is
+   wider than many screens, so a last-column button would sit off-screen). A saved row is
+   only marked (struck through, inputs locked, button becomes Undo) until Save deletes it. */
+.rt-col-remove { width: 38px; text-align: center; }
+.rt-col-remove .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.rt-remove { width: 26px; height: 26px; padding: 0; line-height: 1; font-size: 0.95rem; cursor: pointer;
+             background: #fff; border: 1px solid #e4ddd0; border-radius: var(--radius-sm); color: var(--color-text-muted); }
+.rt-remove:hover, .rt-remove:focus-visible { color: var(--color-danger); border-color: var(--color-danger); }
+tr.rt-row-removed .rt-remove { color: var(--color-franciscan-green); border-color: var(--color-franciscan-green); }
+tr.row-dirty.rt-row-removed { background: #fbeceb !important; box-shadow: inset 3px 0 0 var(--color-danger); }
+tr.rt-row-removed td input, tr.rt-row-removed td select, tr.rt-row-removed .rt-class-btn {
+  text-decoration: line-through; color: var(--color-text-muted); opacity: 0.7; }
