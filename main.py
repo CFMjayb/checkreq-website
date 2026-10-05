@@ -636,7 +636,22 @@ def _real_user(request: Request) -> dict | None:
     uid = request.session.get("user_id")
     if not uid:
         return None
-    return db.query_one("SELECT * FROM checkreq.app_users WHERE id = %s", (uid,))
+    user = db.query_one("SELECT * FROM checkreq.app_users WHERE id = %s", (uid,))
+    # 2026-10-05 (parish-login security test, finding 2): a DEACTIVATED account
+    # used to keep working until its cookie expired (60 min idle / 8 h absolute)
+    # -- only role revocation cut it off, this identity read never looked at
+    # is_active. Sign-in already refuses an inactive account (auth_routes.py);
+    # this is the same rule applied to a session that was already open. The
+    # session's user is dropped here (not just ignored) so /login's "already
+    # signed in -> /portal" shortcut can't bounce an inactive user back and
+    # forth: the next /login sees a clean session and shows the sign-in page.
+    if user is not None and not user["is_active"]:
+        if request.session.get("impersonating_user_id"):
+            _close_open_impersonation(user["id"])
+        request.session.pop("user_id", None)
+        request.session.pop("impersonating_user_id", None)
+        return None
+    return user
 
 
 def _close_open_impersonation(real_user_id: int) -> None:
