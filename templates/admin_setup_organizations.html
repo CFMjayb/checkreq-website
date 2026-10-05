@@ -30,9 +30,10 @@
   <summary><h2>Entities</h2></summary>
   <p class="setup-hint">
     Code and Name are reference data, set when an entity is onboarded.
-    <strong>You can modify the Global Approval Threshold and the two banner colors below</strong>
+    <strong>You can modify the Global Approval Threshold, the two banner colors{% if tz_supported %} and the Time Zone{% endif %} below</strong>
     &mdash; those, plus the logo (its own Upload button, saved immediately), are this table&rsquo;s
-    only editable fields. A color always shows a real value, even before you&rsquo;ve customized
+    only editable fields.{% if tz_supported %} The Time Zone applies to every parish under that
+    diocese: it is the zone all of their dates and times are shown in.{% endif %} A color always shows a real value, even before you&rsquo;ve customized
     it &mdash; that starting value is Beacon&rsquo;s own stock color, not something already saved
     for this entity.
   </p>
@@ -51,6 +52,7 @@
           <th class="col-buffer">Global Approval Threshold ($)</th>
           <th>Diocesan Mode Color</th>
           <th>Parish Mode Color</th>
+          {% if tz_supported %}<th>Time Zone</th>{% endif %}
           <th>Logo</th>
           <th>Effect</th>
         </tr>
@@ -66,6 +68,15 @@
           </td>
           <td><input type="color" data-field="diocesan_mode_color" value="{{ o.diocesan_mode_color_display }}"></td>
           <td><input type="color" data-field="parish_mode_color" value="{{ o.parish_mode_color_display }}"></td>
+          {% if tz_supported %}
+          <td>
+            <select data-field="time_zone" aria-label="Time zone for {{ o.name }}" style="min-width:11em;">
+              {% for zname, zlabel in time_zones %}
+              <option value="{{ zname }}" {% if zname == o.time_zone %}selected{% endif %}>{{ zlabel }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          {% endif %}
           <td>
             {% if o.logo_gcs_path %}
             <img src="/org-logo/{{ o.id }}" alt="{{ o.name }} logo"
@@ -87,7 +98,7 @@
             Requests of this amount or more pick up {{ o.code }}&rsquo;s global approvers below.
           </td>
         </tr>
-        <tr class="msg-row" data-msg-for="{{ o.id }}" hidden><td colspan="7"><div class="row-msg"></div></td></tr>
+        <tr class="msg-row" data-msg-for="{{ o.id }}" hidden><td colspan="{{ 8 if tz_supported else 7 }}"><div class="row-msg"></div></td></tr>
         {% endfor %}
       </tbody>
     </table>

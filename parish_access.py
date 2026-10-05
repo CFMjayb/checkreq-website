@@ -54,6 +54,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import db
+import org_time
 import rbac
 import registry
 import parish_roles
@@ -182,7 +183,19 @@ def parish_access_request_page(request: Request, entity: str = "", error: str = 
     if not user:
         return RedirectResponse("/login")
 
+    # 2026-10-05 (Jay): every date/time on this screen reads
+    # "2026-10-05 4:37 PM ET" in the DIOCESE's own time zone (org_time.py,
+    # set on the diocesan setup screen) -- one lookup per diocese per request.
+    _zones: dict = {}
+
+    def _fmt(dt, org_id):
+        if org_id not in _zones:
+            _zones[org_id] = org_time.zone_name_for_org(org_id)
+        return org_time.format_local(dt, _zones[org_id])
+
     pending = parish_roles.get_pending_parish_access_request(user["id"])
+    if pending:
+        pending["requested_at"] = _fmt(pending["requested_at"], pending.get("org_id"))
     ctx = {"pending": pending, **_request_form_context(request, user, error=(error or None))}
 
     is_admin = _is_beacon_admin(user)
@@ -193,10 +206,13 @@ def parish_access_request_page(request: Request, entity: str = "", error: str = 
         requests_ = parish_roles.list_pending_parish_access_requests(scoped_parish_ids)
         if entity:
             requests_ = [r for r in requests_ if r["org_code"] == entity]
+        for r in requests_:
+            r["requested_at"] = _fmt(r["requested_at"], r["org_id"])
         all_orgs_list = db.query("SELECT code, name FROM checkreq.organizations WHERE is_active ORDER BY name")
         ctx.update({
             "is_reviewer": True,
             "requests": requests_,
+            "requests_count": len(requests_),
             "all_orgs_list": all_orgs_list,
             "filter_entity": entity,
             "is_beacon_admin_reviewer": is_admin,
@@ -213,10 +229,23 @@ def parish_access_request_page(request: Request, entity: str = "", error: str = 
     # parish, still sees the original request-only screen unchanged.
     manage_parish, _is_preview = parish_mode.effective_parish_mode(request, user)
     if manage_parish and parish_roles.is_parish_manager(user["id"], manage_parish["id"]):
+        parish_org_id = manage_parish.get("org_id")
+        # One entry per PERSON (not per grant), the default parish_member role
+        # held back from the listing -- see parish_roles.group_parish_roster.
+        roster = parish_roles.group_parish_roster(
+            parish_roles.get_users_at_parish(manage_parish["id"]),
+            format_dt=lambda dt: _fmt(dt, parish_org_id),
+        )
+        # The grant form lists every role EXCEPT the default, which is shown
+        # separately as always-on (Jay, 2026-10-05).
+        grantable = [r for r in parish_roles.all_parish_roles() if r["key"] != parish_roles.PARISH_BASE_ROLE]
+        base = next((r for r in parish_roles.all_parish_roles() if r["key"] == parish_roles.PARISH_BASE_ROLE), None)
         ctx.update({
             "manage_parish": manage_parish,
-            "parish_roster": parish_roles.get_users_at_parish(manage_parish["id"]),
-            "manage_parish_roles": parish_roles.all_parish_roles(),
+            "parish_roster": roster,
+            "manage_parish_roles": grantable,
+            "base_role": base,
+            "my_user_id": user["id"],
         })
 
     return _render(request, "parish_access_request.html", user, ctx)
@@ -322,17 +351,33 @@ async def parish_user_access_grant(parish_id: int, request: Request):
         return err
     form = await request.form()
     email = (form.get("email") or "").strip().lower()
-    role_key = (form.get("role_key") or "").strip()
-    role = db.query_one("SELECT key FROM portal.parish_roles WHERE key = %s AND is_active", (role_key,))
+    # 2026-10-05 (Jay): the form is now multi-select -- one or more roles per
+    # grant -- and the default parish_member role is always included, never
+    # chosen (it is what lets the person sign in to this parish at all). The
+    # field name stays "role_key" so an old single-role form post still works.
+    requested = []
+    for k in form.getlist("role_key"):
+        k = (k or "").strip()
+        if k and k not in requested:
+            requested.append(k)
+    wanted = [k for k in requested if k != parish_roles.PARISH_BASE_ROLE]
+    valid_keys = {
+        r["key"] for r in db.query("SELECT key FROM portal.parish_roles WHERE is_active")
+    }
     parish = db.query_one("SELECT id FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
-    if not email or "@" not in email or not role or not parish:
+    if (not email or "@" not in email or not parish
+            or parish_roles.PARISH_BASE_ROLE not in valid_keys
+            or any(k not in valid_keys for k in wanted)):
         return RedirectResponse(
-            "/parish-access-request?error=" + quote("Enter a valid email and pick a role."), status_code=303
+            "/parish-access-request?error=" + quote("Enter a valid email and pick valid roles."), status_code=303
         )
     target_user_id, _was_created = parish_roles.get_or_create_user_for_grant(email)
     try:
-        parish_roles.grant_parish_role(target_user_id, parish_id, role_key, user["id"],
-                                        note="Granted via User Access")
+        # The default role first: if this login is an Entity login the very
+        # first grant raises MixedLoginTypeError and nothing partial is left.
+        for key in [parish_roles.PARISH_BASE_ROLE] + wanted:
+            parish_roles.grant_parish_role(target_user_id, parish_id, key, user["id"],
+                                            note="Granted via User Access")
     except rbac.MixedLoginTypeError as exc:
         return RedirectResponse("/parish-access-request?error=" + quote(str(exc)), status_code=303)
     return RedirectResponse("/parish-access-request?granted_user=1", status_code=303)
@@ -351,8 +396,43 @@ async def parish_user_access_revoke(parish_id: int, request: Request):
     role_key = (form.get("role_key") or "").strip()
     if not target_user_id or not role_key:
         return RedirectResponse("/parish-access-request?error=" + quote("Bad request."), status_code=303)
+    # 2026-10-05 (Jay): the default parish_member role is the sign-in role, not
+    # a permission -- revoking it by itself was how people were taking someone
+    # off a parish by accident. The screen no longer offers it; this refuses it
+    # server-side too (a hand-built POST). Taking someone off the parish is the
+    # separate, confirmed "Remove from parish" action below.
+    if role_key == parish_roles.PARISH_BASE_ROLE:
+        return RedirectResponse(
+            "/parish-access-request?error=" + quote(
+                "Sign-in access can't be revoked on its own. To take someone off this parish, "
+                "use Remove from parish."
+            ), status_code=303)
     try:
         parish_roles.revoke_parish_role(target_user_id, parish_id, role_key, user["id"])
     except parish_roles.LastParishAdminError as exc:
         return RedirectResponse("/parish-access-request?error=" + quote(str(exc)), status_code=303)
     return RedirectResponse("/parish-access-request?revoked_user=1", status_code=303)
+
+
+@router.post("/parish-access-request/{parish_id}/remove-user")
+async def parish_user_access_remove(parish_id: int, request: Request):
+    """Take one person off THIS parish entirely -- every live role here,
+    including the default sign-in role (2026-10-05, Jay). Same manager check
+    against the URL's own parish_id as grant/revoke; the revoke only ever
+    touches rows at that parish_id."""
+    user, err = _require_parish_manager(request, parish_id)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        target_user_id = int(form.get("user_id") or 0)
+    except (TypeError, ValueError):
+        target_user_id = 0
+    if not target_user_id:
+        return RedirectResponse("/parish-access-request?error=" + quote("Bad request."), status_code=303)
+    try:
+        parish_roles.remove_user_from_parish(target_user_id, parish_id, user["id"],
+                                             note="Removed via User Access")
+    except parish_roles.LastParishAdminError as exc:
+        return RedirectResponse("/parish-access-request?error=" + quote(str(exc)), status_code=303)
+    return RedirectResponse("/parish-access-request?removed_user=1", status_code=303)

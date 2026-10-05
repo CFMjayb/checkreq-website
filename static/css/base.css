@@ -1053,3 +1053,41 @@ table.ap-history td { vertical-align: top; }
 .ap-w9-card.ap-w9-review h2 { color: var(--color-warning, #b7791f); }
 .inline-choice { display: inline-flex; align-items: center; gap: 6px; margin-right: var(--space-4); font-weight: normal; }
 .inline-choice input { width: auto; }
+
+/* ── User Access screen (2026-10-05, Jay's feedback) ─────────────────────
+   Sections reuse .ap-section (native <details>, collapsed by default). The
+   red dot is .count-pill with the danger color; a person in "Everyone with
+   access" is ONE line (name, email, role chips) that opens to their roles. */
+.access-section { margin-top: var(--space-4); }
+.count-pill-alert { background: var(--color-danger); font-weight: 700; }
+.simple-table .nowrap { white-space: nowrap; }
+
+.access-list { padding: 0; }
+.access-row { border-bottom: 1px solid var(--color-border, #e3dccb); }
+.access-row:last-child { border-bottom: none; }
+.access-row > summary {
+  display: flex; align-items: center; gap: var(--space-3);
+  cursor: pointer; list-style: none; padding: var(--space-2) var(--space-3);
+  white-space: nowrap; overflow: hidden;
+}
+.access-row > summary::-webkit-details-marker { display: none; }
+.access-row > summary::before { content: '\25b8'; flex: 0 0 auto; transition: transform 0.15s ease; }
+.access-row[open] > summary::before { transform: rotate(90deg); }
+.access-row > summary:hover { background: #f7f3e8; }
+.access-name { font-weight: 600; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.access-email { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; font-size: 0.85rem; }
+.access-roles { margin-left: auto; display: flex; gap: var(--space-1); flex: 0 0 auto; }
+.role-chip { display: inline-block; padding: 1px 9px; border-radius: 999px; background: #eaf1ec; color: var(--color-franciscan-green); font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+.access-detail { padding: var(--space-2) var(--space-4) var(--space-3) calc(var(--space-3) + 1.2em); }
+.access-detail .simple-table { margin-bottom: var(--space-2); }
+.access-remove { margin: var(--space-1) 0 0; }
+@media (max-width: 640px) {
+  .access-row > summary { flex-wrap: wrap; white-space: normal; }
+  .access-roles { margin-left: 0; flex-wrap: wrap; }
+}
+
+.role-checks { border: 1px solid var(--color-border, #e3dccb); border-radius: 6px; padding: var(--space-2) var(--space-3); margin: var(--space-3) 0; }
+.role-checks legend { font-weight: 600; padding: 0 var(--space-1); }
+.role-check { display: flex; align-items: flex-start; gap: var(--space-2); padding: 3px 0; cursor: pointer; font-weight: 400; }
+.role-check input[type="checkbox"] { width: auto; margin-top: 4px; flex: 0 0 auto; }
+.role-check-locked { cursor: default; color: var(--color-text-muted); }
