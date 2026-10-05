@@ -91,6 +91,7 @@ import db
 import gcs_client
 import org_branding
 import org_features
+import org_time
 import rbac
 import upload_guard
 
@@ -599,6 +600,20 @@ def organizations_page(request: Request):
         o["diocesan_mode_color_display"] = o["diocesan_mode_color"] or org_branding.DEFAULT_DIOCESAN_COLOR
         o["parish_mode_color_display"] = o["parish_mode_color"] or org_branding.DEFAULT_PARISH_COLOR
 
+    # 2026-10-05 (Jay): one time zone per diocese, used for every date/time
+    # shown to that diocese's parishes (org_time.py). The column comes from
+    # migration 072; until it is applied on an environment the Time Zone column
+    # is simply not shown (same degrade-don't-500 approach as the branding
+    # columns above).
+    tz_supported = org_time.column_exists()
+    tz_by_org = {}
+    if tz_supported:
+        tz_by_org = {r["id"]: r["tz"] for r in db.query(
+            "SELECT id, time_zone AS tz FROM checkreq.organizations")}
+    for o in orgs:
+        tz = tz_by_org.get(o["id"])
+        o["time_zone"] = tz if org_time.is_valid_zone(tz) else org_time.DEFAULT_ZONE
+
     approvers = _global_approver_rows()
     # A row with no entity is never appended to any chain by
     # approval_engine.build_approval_chain() — surface that as a real warning
@@ -631,6 +646,8 @@ def organizations_page(request: Request):
         "known_features": org_features.KNOWN_FEATURES,
         "feature_matrix": feature_matrix,
         "cornerstone_color": org_branding.get_cornerstone_color(),
+        "tz_supported": tz_supported,
+        "time_zones": org_time.ALLOWED_ZONES,
     })
 
 
@@ -677,6 +694,14 @@ async def organizations_save_orgs(request: Request):
     if out_of_scope:
         return _forbidden_entity()
     results = []
+    _tz_ready: list = []
+
+    def tz_col_ready() -> bool:
+        # One information_schema lookup per save, not per row.
+        if not _tz_ready:
+            _tz_ready.append(org_time.column_exists())
+        return _tz_ready[0]
+
     with db.connect() as conn:
         with conn.cursor() as cur:
             for i, r in enumerate(rows):
@@ -707,11 +732,25 @@ async def organizations_save_orgs(request: Request):
                         # are this table's only writable fields (the logo is
                         # its own separate upload route, not part of this
                         # batched JSON save).
+                        # 2026-10-05: the diocese's time zone (org_time.py). Only
+                        # sent by the page when migration 072 is applied; a
+                        # value outside org_time.ALLOWED_ZONES is refused.
+                        tz = r.get("time_zone")
+                        if tz is not None:
+                            if not org_time.is_valid_zone(tz):
+                                raise ValueError("Pick a time zone from the list.")
+                            if not tz_col_ready():
+                                raise ValueError("Time zone can't be saved until migration 072 is applied.")
                         cur.execute(
                             "UPDATE checkreq.organizations SET global_approval_threshold = %s, "
                             "diocesan_mode_color = %s, parish_mode_color = %s WHERE id = %s",
                             (threshold, diocesan_color, parish_color, row_id),
                         )
+                        if tz is not None:
+                            cur.execute(
+                                "UPDATE checkreq.organizations SET time_zone = %s WHERE id = %s",
+                                (tz, row_id),
+                            )
                     results.append({"id": row_id, "ok": True})
                 except Exception as exc:
                     results.append({"id": row_id, "ok": False, "error": str(exc)})

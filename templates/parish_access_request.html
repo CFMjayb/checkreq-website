@@ -1,109 +1,87 @@
 {% extends "base.html" %}
 {% block title %}{{ "User Access" if manage_parish else "Request Access" }} — Beacon{% endblock %}
 {% block content %}
+{# 2026-10-05, Jay's User Access screen feedback:
+   - every section is collapsible and starts collapsed (native <details>, the
+     same .ap-section pattern AP Review uses);
+   - order: Requests for you to review (red count dot) -> Everyone with access
+     -> Grant access -> Your access (the request-a-role form, moved to the
+     bottom and renamed from the confusing "User Access" heading);
+   - Everyone with access is ONE line per person; their roles open from the row;
+   - the default parish_member role is never listed or revoked here (it is the
+     sign-in role) -- "Remove from parish" is the separate, confirmed action;
+   - the grant form is multi-select with parish_member shown ticked and locked;
+   - all dates read "2026-10-05 4:37 PM ET" in the diocese's own time zone.
+   Result banners (granted/revoked/removed/approved/rejected/error) stay OUTSIDE
+   the collapsed sections so the outcome of a click is always visible, and the
+   section the click came from re-opens so the user can carry on. #}
+{% set q = request.query_params %}
+{% set reviews_open = q.get('approved') or q.get('rejected') %}
+{% set roster_open = q.get('granted_user') or q.get('revoked_user') or q.get('removed_user') or (error and manage_parish) %}
+{% set grant_open = error and manage_parish %}
+{% set your_open = (error and not manage_parish) %}
 <div class="page-shell-wide">
 
 <h1>{{ "User Access" if manage_parish else "Request Access" }}</h1>
 <p class="back-link"><a href="{{ '/parish-view' if parish_view else '/portal' }}">&larr; Back</a></p>
 
+{# `error` already carries the ?error= query value (the page route takes it as a
+   parameter), so one banner covers both a redirect-back and a failed POST. #}
 {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
-
-{% if pending %}
-<div class="banner banner-info">
-  <strong>Your request is pending review.</strong> You asked for
-  <strong>{{ pending.role_label }}</strong> access at <strong>{{ pending.parish_name }}</strong>
-  on {{ pending.requested_at }}. A reviewer needs to approve it before you can access
-  that parish's portal — check back later, or reach out to your administrator directly if it's urgent.
-</div>
-{% else %}
-<p class="sub">Tell us which parish you're with and what you need, and a reviewer will look at it.</p>
-
-<div class="card">
-  <form method="post" action="/parish-access-request">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <label for="parish_id">Parish</label>
-    {% if locked_parish %}
-    <input type="text" value="{{ parishes[0].name }}{% if parishes[0].city %}, {{ parishes[0].city }}{% endif %}" disabled>
-    <input type="hidden" name="parish_id" value="{{ parishes[0].id }}">
-    {% elif not current_org %}
-    {# 2026-09-16, Jay: this picker used to show every parish system-wide
-       regardless of the header's entity selection -- now scoped to
-       current_org (parish_access._request_form_context). No entity
-       selected means no parishes to show, same convention as every other
-       entity-scoped screen -- a clear prompt, not a silently-empty
-       dropdown. #}
-    <p class="sub">Select an entity (top of the page) to see its parishes here.</p>
-    {% else %}
-    <select id="parish_id" name="parish_id" required>
-      <option value="">Select a parish...</option>
-      {% for p in parishes %}
-      <option value="{{ p.id }}">{{ p.name }}{% if p.city %}, {{ p.city }}{% endif %}</option>
-      {% endfor %}
-    </select>
-    {% endif %}
-
-    <label for="role_key">Access you're requesting</label>
-    <select id="role_key" name="role_key" required>
-      <option value="">Select a role...</option>
-      {% for r in roles %}
-      <option value="{{ r.key }}">{{ r.label }}{% if r.description %} — {{ r.description }}{% endif %}</option>
-      {% endfor %}
-    </select>
-
-    <label for="note">Note (optional)</label>
-    <textarea id="note" name="note" rows="3" placeholder="Anything that would help a reviewer — e.g. your role at the parish, who to check with."></textarea>
-
-    <button type="submit" class="btn btn-primary">Submit Request</button>
-  </form>
-</div>
-{% endif %}
+{% if q.get('approved') %}<div class="banner banner-success">Access granted.</div>{% endif %}
+{% if q.get('rejected') %}<div class="banner banner-info">Request rejected.</div>{% endif %}
+{% if q.get('granted_user') %}<div class="banner banner-success">Access granted.</div>{% endif %}
+{% if q.get('revoked_user') %}<div class="banner banner-success">Access revoked.</div>{% endif %}
+{% if q.get('removed_user') %}<div class="banner banner-success">Removed from this parish.</div>{% endif %}
 
 {% if is_reviewer %}
-<h2 style="margin-top:var(--space-6);">Requests to Review</h2>
-{% if is_beacon_admin_reviewer %}
-<p class="sub">Pending self-service requests for access to a specific parish's portal — every diocese, since you hold Beacon Admin.</p>
-{% else %}
-<p class="sub">Pending self-service requests for access to a specific parish's portal — only the parish(es) you administer as Parish Admin.</p>
-{% endif %}
+<details class="ap-section access-section" {% if reviews_open %}open{% endif %}>
+  <summary>
+    <h2>Requests for you to review</h2>
+    {% if requests_count %}<span class="count-pill count-pill-alert" title="{{ requests_count }} waiting for you">{{ requests_count }}</span>{% endif %}
+  </summary>
+  {% if is_beacon_admin_reviewer %}
+  <p class="sub">Pending self-service requests for access to a specific parish's portal — every diocese, since you hold Beacon Admin.</p>
+  {% else %}
+  <p class="sub">Pending self-service requests for access to a specific parish's portal — only the parish(es) you administer as Parish Admin.</p>
+  {% endif %}
 
-{% if request.query_params.get('approved') %}<div class="banner banner-success">Access granted.</div>{% endif %}
-{% if request.query_params.get('rejected') %}<div class="banner banner-info">Request rejected.</div>{% endif %}
+  {# 2026-08-16, Jay (Phase I): the Diocese filter dropdown was removed
+     alongside the Diocese column it filtered -- a beacon_admin's queue here
+     is still genuinely cross-diocese (see the sub text above), this just
+     drops the one UI control for narrowing it down, per Jay's own call. #}
 
-{# 2026-08-16, Jay (Phase I): the Diocese filter dropdown was removed
-   alongside the Diocese column it filtered -- a beacon_admin's queue here
-   is still genuinely cross-diocese (see the sub text above), this just
-   drops the one UI control for narrowing it down, per Jay's own call. #}
-
-<div class="card">
-  <table class="simple-table">
-    <thead>
-      <tr><th>Requested</th><th>User</th><th>Parish</th><th>Role requested</th><th>Note</th><th></th></tr>
-    </thead>
-    <tbody>
-      {% for r in requests %}
-      <tr>
-        <td>{{ r.requested_at }}</td>
-        <td>{{ r.display_name or r.email }}<br><span class="muted">{{ r.email }}</span></td>
-        <td>{{ r.parish_name }}</td>
-        <td>{{ r.role_label }}<br><span class="muted">{{ r.role_description }}</span></td>
-        <td>{{ r.note or "—" }}</td>
-        <td class="actions-cell">
-          <form method="post" action="/admin/parish-access-requests/{{ r.id }}/approve" style="display:inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-            <button type="submit" class="btn btn-primary">Approve</button>
-          </form>
-          <form method="post" action="/admin/parish-access-requests/{{ r.id }}/reject" style="display:inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-            <button type="submit" class="btn btn-secondary">Reject</button>
-          </form>
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="6">No pending requests.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+  <div class="card">
+    <table class="simple-table compact">
+      <thead>
+        <tr><th>Requested</th><th>User</th><th>Parish</th><th>Role requested</th><th>Note</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for r in requests %}
+        <tr>
+          <td class="nowrap">{{ r.requested_at }}</td>
+          <td>{{ r.display_name or r.email }}<br><span class="muted">{{ r.email }}</span></td>
+          <td>{{ r.parish_name }}</td>
+          <td>{{ r.role_label }}<br><span class="muted">{{ r.role_description }}</span></td>
+          <td>{{ r.note or "—" }}</td>
+          <td class="actions-cell">
+            <form method="post" action="/admin/parish-access-requests/{{ r.id }}/approve" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+              <button type="submit" class="btn btn-primary">Approve</button>
+            </form>
+            <form method="post" action="/admin/parish-access-requests/{{ r.id }}/reject" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+              <button type="submit" class="btn btn-secondary">Reject</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6">No pending requests.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
 {% endif %}
 
 {% if manage_parish %}
@@ -113,63 +91,153 @@
    parish's actual roster. Only rendered for a manager (Beacon Admin,
    parish_mode_user, or this parish's own Parish Admin) actively viewing
    this one parish -- see parish_access.py's own docstring. #}
-<h2 style="margin-top:var(--space-6);">Everyone with Access — {{ manage_parish.name }}</h2>
-<p class="sub">Grant or revoke this parish's portal access directly. Revoking Parish Admin from
-  the last remaining holder isn't allowed — grant it to someone else here first.</p>
+<details class="ap-section access-section" {% if roster_open %}open{% endif %}>
+  <summary><h2>Everyone with access — {{ manage_parish.name }}</h2></summary>
+  <p class="sub">Open a person to see their roles and revoke one. Everyone here can sign in to this parish —
+    that sign-in access is automatic and isn't listed. Revoking Parish Admin from the last remaining holder
+    isn't allowed — grant it to someone else first.</p>
 
-{% if request.query_params.get('granted_user') %}<div class="banner banner-success">Access granted.</div>{% endif %}
-{% if request.query_params.get('revoked_user') %}<div class="banner banner-success">Access revoked.</div>{% endif %}
+  <div class="card access-list">
+    {% for p in parish_roster %}
+    <details class="access-row">
+      <summary>
+        <span class="access-name">{{ p.display_name or p.email }}{% if p.user_id == my_user_id %} <span class="muted">(you)</span>{% endif %}</span>
+        {% if p.display_name and p.display_name != p.email %}<span class="access-email muted">{{ p.email }}</span>{% endif %}
+        <span class="access-roles">
+          {% for r in p.roles %}<span class="role-chip">{{ r.role_label }}</span>{% else %}<span class="muted">No additional roles</span>{% endfor %}
+        </span>
+      </summary>
+      <div class="access-detail">
+        {% if p.roles %}
+        <table class="simple-table compact">
+          <thead><tr><th>Role</th><th>Granted</th><th>Granted by</th><th></th></tr></thead>
+          <tbody>
+            {% for r in p.roles %}
+            <tr>
+              <td>{{ r.role_label }}</td>
+              <td class="nowrap">{{ r.granted_at_display }}</td>
+              <td>{{ r.granted_by_email or "—" }}</td>
+              <td class="actions-cell">
+                <form method="post" action="/parish-access-request/{{ manage_parish.id }}/revoke" style="display:inline"
+                      data-confirm="Revoke {{ r.role_label }} for {{ p.email }}?">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                  <input type="hidden" name="user_id" value="{{ p.user_id }}">
+                  <input type="hidden" name="role_key" value="{{ r.role_key }}">
+                  <button type="submit" class="btn btn-secondary btn-sm">Revoke</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="muted">This person can sign in to this parish but has no additional roles.</p>
+        {% endif %}
+        {% if p.user_id != my_user_id %}
+        <form method="post" action="/parish-access-request/{{ manage_parish.id }}/remove-user" class="access-remove"
+              data-confirm="Remove {{ p.email }} from {{ manage_parish.name }}? They will lose ALL access to this parish.">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <input type="hidden" name="user_id" value="{{ p.user_id }}">
+          <button type="submit" class="btn btn-secondary btn-sm">Remove from parish</button>
+        </form>
+        {% endif %}
+      </div>
+    </details>
+    {% else %}
+    <p class="muted">No one has been granted access to this parish yet.</p>
+    {% endfor %}
+  </div>
+</details>
 
-<div class="card">
-  <table class="simple-table">
-    <thead>
-      <tr><th>User</th><th>Role</th><th>Granted</th><th>Granted By</th><th></th></tr>
-    </thead>
-    <tbody>
-      {% for r in parish_roster %}
-      <tr>
-        <td>{{ r.display_name or r.email }}<br><span class="muted">{{ r.email }}</span></td>
-        <td>{{ r.role_label }}</td>
-        <td>{{ r.granted_at }}</td>
-        <td>{{ r.granted_by_email or "—" }}</td>
-        <td class="actions-cell">
-          <form method="post" action="/parish-access-request/{{ manage_parish.id }}/revoke" style="display:inline"
-                data-confirm="Revoke {{ r.role_label }} access for {{ r.email }}?">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-            <input type="hidden" name="user_id" value="{{ r.user_id }}">
-            <input type="hidden" name="role_key" value="{{ r.role_key }}">
-            <button type="submit" class="btn btn-secondary">Revoke</button>
-          </form>
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="5">No one has been granted access to this parish yet.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+<details class="ap-section access-section" {% if grant_open %}open{% endif %}>
+  <summary><h2>Grant access</h2></summary>
+  <div class="card">
+    <form method="post" action="/parish-access-request/{{ manage_parish.id }}/grant">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <label for="grant_email">Email</label>
+      <input type="email" id="grant_email" name="email" required placeholder="person@example.org">
 
-<h3 style="margin-top:var(--space-5);">Grant Access</h3>
-<div class="card">
-  <form method="post" action="/parish-access-request/{{ manage_parish.id }}/grant">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <label for="grant_email">Email</label>
-    <input type="email" id="grant_email" name="email" required placeholder="person@example.org">
+      <fieldset class="role-checks">
+        <legend>Roles</legend>
+        {% if base_role %}
+        {# Always granted (parish_access.py adds it server-side), so this box is
+           display-only: ticked, locked, and deliberately has no name. #}
+        <label class="role-check role-check-locked">
+          <input type="checkbox" checked disabled>
+          <span><strong>{{ base_role.label }}</strong> — sign-in access, always included</span>
+        </label>
+        {% endif %}
+        {% for r in manage_parish_roles %}
+        <label class="role-check">
+          <input type="checkbox" name="role_key" value="{{ r.key }}">
+          <span><strong>{{ r.label }}</strong>{% if r.description %} <span class="muted">— {{ r.description }}</span>{% endif %}</span>
+        </label>
+        {% endfor %}
+      </fieldset>
 
-    <label for="grant_role_key">Role</label>
-    <select id="grant_role_key" name="role_key" required>
-      <option value="">Select a role...</option>
-      {% for r in manage_parish_roles %}
-      <option value="{{ r.key }}">{{ r.label }}{% if r.description %} — {{ r.description }}{% endif %}</option>
-      {% endfor %}
-    </select>
-
-    <p class="sub">If this email doesn't have a Beacon login yet, one is created automatically —
-      they can sign in with it right away.</p>
-    <button type="submit" class="btn btn-primary">Grant Access</button>
-  </form>
-</div>
+      <p class="sub">Tick every role this person should have. If this email doesn't have a Beacon login yet,
+        one is created automatically — they can sign in with it right away.</p>
+      <button type="submit" class="btn btn-primary">Grant Access</button>
+    </form>
+  </div>
+</details>
 {% endif %}
+
+<details class="ap-section access-section" {% if your_open %}open{% endif %}>
+  <summary>
+    <h2>Your access</h2>
+    {% if pending %}<span class="badge badge-pending">Request pending</span>{% endif %}
+  </summary>
+  {% if pending %}
+  <div class="banner banner-info">
+    <strong>Your request is pending review.</strong> You asked for
+    <strong>{{ pending.role_label }}</strong> access at <strong>{{ pending.parish_name }}</strong>
+    on {{ pending.requested_at }}. A reviewer needs to approve it before you can access
+    that parish's portal — check back later, or reach out to your administrator directly if it's urgent.
+  </div>
+  {% else %}
+  <p class="sub">Need another role? Tell us which parish you're with and what you need, and a reviewer will look at it.</p>
+
+  <div class="card">
+    <form method="post" action="/parish-access-request">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <label for="parish_id">Parish</label>
+      {% if locked_parish %}
+      <input type="text" value="{{ parishes[0].name }}{% if parishes[0].city %}, {{ parishes[0].city }}{% endif %}" disabled>
+      <input type="hidden" name="parish_id" value="{{ parishes[0].id }}">
+      {% elif not current_org %}
+      {# 2026-09-16, Jay: this picker used to show every parish system-wide
+         regardless of the header's entity selection -- now scoped to
+         current_org (parish_access._request_form_context). No entity
+         selected means no parishes to show, same convention as every other
+         entity-scoped screen -- a clear prompt, not a silently-empty
+         dropdown. #}
+      <p class="sub">Select an entity (top of the page) to see its parishes here.</p>
+      {% else %}
+      <select id="parish_id" name="parish_id" required>
+        <option value="">Select a parish...</option>
+        {% for p in parishes %}
+        <option value="{{ p.id }}">{{ p.name }}{% if p.city %}, {{ p.city }}{% endif %}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+
+      <label for="role_key">Access you're requesting</label>
+      <select id="role_key" name="role_key" required>
+        <option value="">Select a role...</option>
+        {% for r in roles %}
+        <option value="{{ r.key }}">{{ r.label }}{% if r.description %} — {{ r.description }}{% endif %}</option>
+        {% endfor %}
+      </select>
+
+      <label for="note">Note (optional)</label>
+      <textarea id="note" name="note" rows="3" placeholder="Anything that would help a reviewer — e.g. your role at the parish, who to check with."></textarea>
+
+      <button type="submit" class="btn btn-primary">Submit Request</button>
+    </form>
+  </div>
+  {% endif %}
+</details>
 
 </div>
 {% endblock %}

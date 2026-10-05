@@ -156,7 +156,7 @@ def get_users_at_parish(parish_id: int) -> list[dict]:
     return db.query(
         """
         SELECT pur.id AS parish_user_role_id, pur.user_id, u.email, u.display_name,
-               pur.role_key, pr.label AS role_label, pur.granted_at,
+               pur.role_key, pr.label AS role_label, pr.sort_order, pur.granted_at,
                g.email AS granted_by_email, pur.note
           FROM portal.parish_user_roles pur
           JOIN checkreq.app_users u ON u.id = pur.user_id
@@ -167,6 +167,52 @@ def get_users_at_parish(parish_id: int) -> list[dict]:
         """,
         (parish_id,),
     )
+
+
+def group_parish_roster(rows: list[dict], format_dt=None) -> list[dict]:
+    """Collapse get_users_at_parish()'s one-row-per-grant list into ONE entry
+    per person (Jay, 2026-10-05: "a user should only be listed once and all
+    the roles for that user should be able to be viewed").
+
+    The baseline PARISH_BASE_ROLE grant is NOT listed as a role: it is the
+    "you can sign in to this parish" role everyone gets, not a permission
+    anyone should read or revoke one-by-one (Jay: people were revoking it
+    without realizing it was the default). It is reported separately as
+    ``has_base_role``; a person who holds ONLY the baseline simply has an
+    empty ``roles`` list. Each listed role keeps the fields the Revoke form
+    needs. ``format_dt`` (optional) formats granted_at for display.
+
+    Pure function -- no database access -- so it is unit-testable on its own.
+    Entries come back sorted by display name then email."""
+    people: dict[int, dict] = {}
+    for r in rows:
+        person = people.get(r["user_id"])
+        if person is None:
+            person = {
+                "user_id": r["user_id"],
+                "email": r["email"],
+                "display_name": r["display_name"],
+                "roles": [],
+                "has_base_role": False,
+            }
+            people[r["user_id"]] = person
+        if r["role_key"] == PARISH_BASE_ROLE:
+            person["has_base_role"] = True
+            continue
+        person["roles"].append({
+            "role_key": r["role_key"],
+            "role_label": r["role_label"],
+            "granted_at": r["granted_at"],
+            "granted_at_display": format_dt(r["granted_at"]) if format_dt else r["granted_at"],
+            "granted_by_email": r.get("granted_by_email"),
+            "sort_order": r.get("sort_order", 0),
+        })
+    out = list(people.values())
+    for p in out:
+        p["roles"].sort(key=lambda x: (x["sort_order"], x["role_label"]))
+        p["role_summary"] = ", ".join(x["role_label"] for x in p["roles"])
+    out.sort(key=lambda p: ((p["display_name"] or p["email"] or "").lower(), (p["email"] or "").lower()))
+    return out
 
 
 def get_or_create_user_for_grant(email: str, display_name: str | None = None) -> tuple[int, bool]:
@@ -304,6 +350,49 @@ def revoke_parish_role(user_id: int, parish_id: int, role_key: str,
             )
 
 
+def remove_user_from_parish(user_id: int, parish_id: int, removed_by_user_id: int,
+                            note: str | None = None) -> int:
+    """Take a person off this parish entirely: revoke EVERY live role they hold
+    here, including the baseline PARISH_BASE_ROLE (Jay, 2026-10-05). This is the
+    one place the baseline role is ever revoked from the User Access screen --
+    the per-role Revoke buttons refuse it, so "remove this person" is a separate,
+    deliberate, confirmed action rather than something a role-by-role revoke can
+    do by accident.
+
+    Same last-Parish-Admin protection as revoke_parish_role: removing someone who
+    holds Parish Admin here is refused if it is their own grant or would leave
+    the parish with no Parish Admin. Revokes (never DELETEs); returns how many
+    grants were revoked."""
+    holds_admin = db.query_one(
+        "SELECT 1 AS ok FROM portal.parish_user_roles "
+        "WHERE user_id = %s AND parish_id = %s AND role_key = 'parish_admin' AND revoked_at IS NULL",
+        (user_id, parish_id),
+    )
+    if holds_admin:
+        if user_id == removed_by_user_id:
+            raise LastParishAdminError("You can't remove yourself from a parish where you are its Parish Admin.")
+        remaining = db.query_one(
+            "SELECT COUNT(*) AS n FROM portal.parish_user_roles "
+            "WHERE parish_id = %s AND role_key = 'parish_admin' AND revoked_at IS NULL AND user_id != %s",
+            (parish_id, user_id),
+        )
+        if not remaining or remaining["n"] == 0:
+            raise LastParishAdminError(
+                "This person is the last Parish Admin for this parish -- removing them "
+                "would leave nobody able to manage its users. Grant Parish Admin to "
+                "someone else at this parish first."
+            )
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE portal.parish_user_roles SET revoked_at = NOW(), "
+                "revoked_by_user_id = %s, note = COALESCE(%s, note) "
+                "WHERE user_id = %s AND parish_id = %s AND revoked_at IS NULL",
+                (removed_by_user_id, note, user_id, parish_id),
+            )
+            return cur.rowcount
+
+
 # ── Self-service access requests ────────────────────────────────────────────
 
 def create_parish_access_request(user_id: int, parish_id: int, requested_role_key: str,
@@ -322,7 +411,7 @@ def create_parish_access_request(user_id: int, parish_id: int, requested_role_ke
 def get_pending_parish_access_request(user_id: int) -> dict | None:
     return db.query_one(
         """
-        SELECT par.id, par.parish_id, p.name AS parish_name,
+        SELECT par.id, par.parish_id, p.name AS parish_name, p.org_id,
                par.requested_role_key, pr.label AS role_label, par.note, par.requested_at
           FROM portal.parish_access_requests par
           JOIN portal.parishes p ON p.id = par.parish_id
