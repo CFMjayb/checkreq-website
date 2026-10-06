@@ -91,14 +91,20 @@ def get_badges(user_id: int, org_id: int | None) -> dict[str, dict]:
 
     # Request Access -- only for a reviewer (beacon_admin or parish_admin
     # somewhere); scoped the same way parish_access.py's own queue is.
+    # 2026-10-05: the count covers the parishes of the dioceses where this
+    # person holds Beacon Admin plus the parishes they administer
+    # (parish_roles.get_reviewable_parish_ids) -- used to be every parish of
+    # every diocese for any Beacon Admin. Also fixed in passing: the status
+    # literal here was 'pending' but the column's real value is 'Pending'
+    # (portal.parish_access_requests default), so this count was always 0.
     is_beacon_admin = rbac.user_has_role(user_id, "beacon_admin", org_id=None)
     parish_admin_ids = parish_roles.get_parish_ids_with_role(user_id, "parish_admin")
     if is_beacon_admin or parish_admin_ids:
-        scoped_ids = None if is_beacon_admin else parish_admin_ids
+        scoped_ids = parish_roles.get_reviewable_parish_ids(user_id)
         row = db.query_one(
             "SELECT count(*) AS n, max(requested_at) AS newest "
             "FROM portal.parish_access_requests "
-            "WHERE status = 'pending' AND (%s::int[] IS NULL OR parish_id = ANY(%s))",
+            "WHERE status = 'Pending' AND (%s::int[] IS NULL OR parish_id = ANY(%s::int[]))",
             (scoped_ids, scoped_ids),
         )
         b = _badge(row["n"], row["newest"], _last_viewed(user_id, "request_parish_access"))
@@ -112,10 +118,10 @@ def get_badges(user_id: int, org_id: int | None) -> dict[str, dict]:
     # (parish_mode.py's docstring, admin_hub.py's _ADMIN_TASK_ROLE_KEYS) is
     # to accept a small duplication over a cross-module import cycle.
     if is_beacon_admin or parish_admin_ids:
-        scoped_ids = None if is_beacon_admin else parish_admin_ids
+        scoped_ids = parish_roles.get_reviewable_parish_ids(user_id)
         row = db.query_one(
             "SELECT count(*) AS n, max(created_at) AS newest FROM portal.parish_requests "
-            "WHERE status != 'Closed' AND (%s::int[] IS NULL OR parish_id = ANY(%s))",
+            "WHERE status != 'Closed' AND (%s::int[] IS NULL OR parish_id = ANY(%s::int[]))",
             (scoped_ids, scoped_ids),
         )
         b = _badge(row["n"], row["newest"], _last_viewed(user_id, "parish_requests_review"))

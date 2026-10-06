@@ -10,12 +10,15 @@ covers both PRD sections -- proportionate for what a small parish office
 needs, not a full ticketing system.
 
 Review queue mirrors parish_access.py's exact dual-reviewer pattern: a
-beacon_admin (any org) sees and can act on every parish's requests; a
-parish_admin sees and can act on ONLY the parish(es) they administer. This
-module deliberately re-derives that small check locally rather than
-importing parish_access.py (the accepted small-duplication pattern already
-used across parish_mode.py/admin_hub.py/access_requests.py for their own
-local `_require_*` guards).
+beacon_admin sees and can act on the requests of the parishes in the
+dioceses where they hold Beacon Admin (2026-10-05: used to be every parish
+of every diocese -- "beacon_admin at any org"); a parish_admin sees and can
+act on ONLY the parish(es) they administer. The per-parish reach is
+parish_roles.get_reviewable_parish_ids / is_parish_reviewer, shared with
+parish_access.py. This module deliberately re-derives the small page-level
+gate locally rather than importing parish_access.py (the accepted
+small-duplication pattern already used across parish_mode.py/admin_hub.py/
+access_requests.py for their own local `_require_*` guards).
 """
 from __future__ import annotations
 
@@ -40,7 +43,11 @@ def register(app, *, current_user, render) -> None:
     app.include_router(router)
 
 
-def _is_beacon_admin(user: dict) -> bool:
+def _is_any_beacon_admin(user: dict) -> bool:
+    """Holds Beacon Admin at SOME entity -- only decides who may open the
+    review screen. Which parishes' requests they see/answer is always the
+    parish's own diocese (parish_roles.get_reviewable_parish_ids /
+    is_parish_reviewer), 2026-10-05."""
     return rbac.user_has_role(user["id"], "beacon_admin", org_id=None)
 
 
@@ -48,7 +55,7 @@ def _require_reviewer(request: Request):
     user = _current_user(request)
     if not user:
         return None, RedirectResponse("/login")
-    if _is_beacon_admin(user):
+    if _is_any_beacon_admin(user):
         return user, None
     if parish_roles.get_parish_ids_with_role(user["id"], "parish_admin"):
         return user, None
@@ -98,7 +105,7 @@ def list_for_review(parish_ids: list[int] | None, include_closed: bool = False) 
         "JOIN portal.parishes p ON p.id = pr.parish_id "
         "JOIN checkreq.organizations o ON o.id = p.org_id "
         "JOIN checkreq.app_users u ON u.id = pr.user_id "
-        "WHERE (%s::int[] IS NULL OR pr.parish_id = ANY(%s))"
+        "WHERE (%s::int[] IS NULL OR pr.parish_id = ANY(%s::int[]))"
     )
     if not include_closed:
         sql += " AND pr.status != 'Closed'"
@@ -159,8 +166,8 @@ def admin_parish_requests_page(request: Request, view: str = "open"):
     if err:
         return err
     tile_badges.mark_viewed(user["id"], "parish_requests_review")
-    is_admin = _is_beacon_admin(user)
-    scoped_ids = None if is_admin else parish_roles.get_parish_ids_with_role(user["id"], "parish_admin")
+    is_admin = _is_any_beacon_admin(user)
+    scoped_ids = parish_roles.get_reviewable_parish_ids(user["id"])
     rows = list_for_review(scoped_ids, include_closed=(view == "all"))
     return _render(request, "admin_parish_requests.html", user, {
         "rows": rows, "view": view, "is_beacon_admin_reviewer": is_admin,
@@ -175,7 +182,7 @@ async def admin_parish_requests_respond(request_id: int, request: Request):
     req = get_request(request_id)
     if not req:
         return RedirectResponse("/admin/parish-requests")
-    if not _is_beacon_admin(user) and not parish_roles.user_has_parish_role(user["id"], "parish_admin", req["parish_id"]):
+    if not parish_roles.is_parish_reviewer(user["id"], req["parish_id"]):
         return JSONResponse({"error": "You don't administer this request's parish."}, status_code=403)
     form = await request.form()
     status = (form.get("status") or "Reviewed").strip()

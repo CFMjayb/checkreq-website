@@ -154,7 +154,15 @@ def upload_to_parish_readwrite(entity_folder: str, filename: str, data: bytes, c
 # ── Auth ──────────────────────────────────────────────────────────────────
 
 def can_edit(user: dict, org_id: int) -> bool:
-    if rbac.user_has_role(user["id"], "beacon_admin", org_id=None):
+    # 2026-10-05 (cross-diocese fix): beacon_admin counts only at the served
+    # org itself or at the DIOCESE that owns the served parish -- was
+    # org_id=None ("at any entity"), which let a Beacon Admin of an unrelated
+    # diocese edit this client's documents. The cornerstone_employee line below
+    # is unchanged.
+    if rbac.user_has_role(user["id"], "beacon_admin", org_id=org_id):
+        return True
+    diocese_org_id = cornerstone_mode.resolve_diocese_org_id(org_id)
+    if diocese_org_id != org_id and rbac.user_has_role(user["id"], "beacon_admin", org_id=diocese_org_id):
         return True
     return rbac.user_has_role(user["id"], "cornerstone_employee", org_id)
 

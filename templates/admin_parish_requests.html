@@ -4,7 +4,7 @@
 <div class="page-shell">
 <h1>Parish Requests</h1>
 <p class="back-link"><a href="/portal">&larr; Back</a></p>
-<p class="sub">{% if is_beacon_admin_reviewer %}Showing every parish's requests.{% else %}Showing only the parish(es) you administer.{% endif %}</p>
+<p class="sub">{% if is_beacon_admin_reviewer %}Showing requests for the parishes of the diocese(s) where you hold Beacon Admin, plus any parish you administer.{% else %}Showing only the parish(es) you administer.{% endif %}</p>
 
 <p>
   <a href="/admin/parish-requests?view=open" {% if view != 'all' %}style="font-weight:700;"{% endif %}>Open</a>

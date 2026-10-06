@@ -142,8 +142,10 @@ def _parish_context(request: Request):
 
 def can_view_finance(user: dict, parish: dict) -> bool:
     """Same three-way "staff acting as this entity's own back office"
-    pattern timekeeping.py's can_manage_timekeeping() already uses."""
-    if rbac.user_has_role(user["id"], "beacon_admin", org_id=None):
+    pattern timekeeping.py's can_manage_timekeeping() already uses.
+    2026-10-05: beacon_admin counts only AT THIS PARISH'S OWN diocese (was
+    "at any entity")."""
+    if parish_roles.holds_role_at_parish_org(user["id"], "beacon_admin", parish.get("org_id")):
         return True
     if rbac.user_has_role(user["id"], "setup_admin", parish["org_id"]):
         return True
