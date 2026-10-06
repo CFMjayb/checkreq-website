@@ -1,0 +1,246 @@
+{#
+admin_outreach_detail.html -- 26-156: one poll's status, results, and who has / has not answered
+(outreach_admin.py). static/js/outreach_detail.js runs the chunked send, the "remind" button and
+the table filter; everything on this page also works without it except sending and reminding.
+#}
+{% extends "base.html" %}
+{% block title %}{{ c.title }} — Polls — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/outreach_admin.css?v={{ asset_version('css/outreach_admin.css') }}">
+{% endblock %}
+{% block content %}
+{% from "_guide_link.html" import guide_link %}
+{% set ev_labels = {
+  "campaign_created": "Poll created", "campaign_saved": "Draft saved", "campaign_started": "Sending started",
+  "campaign_open": "All emails out", "campaign_closed": "Poll closed", "campaign_cancelled": "Poll cancelled",
+  "queued": "Queued", "sent": "Email sent", "send_failed": "Email failed", "suppressed": "Email not sent",
+  "open_signal": "Opened (signal)", "link_visit": "Visited the link", "responded": "Responded",
+  "response_changed": "Changed the answer", "reminder_sent": "Reminder sent", "reminder_failed": "Reminder failed",
+  "reminder_batch": "Reminders sent by hand", "reminder_settings": "Reminder settings changed",
+  "excluded": "Removed from the poll", "results_exported": "Results exported"} %}
+<div class="page-shell-wide oa-page"
+     id="oa-detail" data-poll="{{ c.id }}" data-status="{{ c.status }}" data-total="{{ counts.total }}"
+     data-failed="{{ counts.failed }}">
+  <h1>{{ c.title }} {{ guide_link("polls", "How to use polls") }}</h1>
+  <p class="back-link"><a href="/admin/polls">&larr; Back to Polls</a></p>
+
+  {% if flash %}<div class="banner banner-success">{{ flash }}</div>{% endif %}
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+  {% if c.test_mode %}<div class="banner banner-info"><strong>Test run.</strong> Every email goes to {{ c.test_address }}, not to the people on the list. This poll can be deleted when you are done.</div>{% endif %}
+
+  <div class="oa-head">
+    <span class="oa-pill oa-pill-{{ c.status }}">{{ c.status|capitalize }}</span>
+    <span>From <strong>{{ c.sender_email }}</strong></span>
+    <span>Deadline: <strong>{{ deadline_text }}</strong></span>
+    <span>Created {{ created_text }}</span>
+    {% if c.sent_at %}<span>Sending began {{ sent_text }}</span>{% endif %}
+    <span>{{ "Answers can be changed until the deadline" if c.allow_change else "Answers are final once given" }}</span>
+  </div>
+
+  {# ── actions ───────────────────────────────────────────────── #}
+  <div class="oa-actions">
+    {% if c.status == "draft" and audience_refused %}
+      <form method="post" action="/admin/polls/{{ c.id }}/delete" class="oa-inline" data-confirm="Delete this draft? This cannot be undone.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" class="btn btn-secondary">Delete draft</button>
+      </form>
+    {% elif c.status == "draft" %}
+      <a class="btn btn-secondary" href="/admin/polls/{{ c.id }}/edit">Edit</a>
+      <form method="post" action="/admin/polls/{{ c.id }}/send" class="oa-inline"
+            data-confirm="Send this poll to {{ preview|length }} {{ 'person' if preview|length == 1 else 'people' }} now{% if c.test_mode %} (test run: every email goes to {{ c.test_address }}){% endif %}? The list is frozen when you send.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" class="btn btn-primary" {{ "disabled" if not preview }}>Send now ({{ preview|length }})</button>
+      </form>
+      <form method="post" action="/admin/polls/{{ c.id }}/delete" class="oa-inline" data-confirm="Delete this draft? This cannot be undone.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" class="btn btn-secondary">Delete draft</button>
+      </form>
+    {% elif c.status == "open" %}
+      <button type="button" class="btn btn-secondary" id="oa-remind">Remind people who have not answered</button>
+      {% if counts.failed %}<button type="button" class="btn btn-secondary" id="oa-retry">Retry {{ counts.failed }} failed email{{ "s" if counts.failed != 1 }}</button>{% endif %}
+      <form method="post" action="/admin/polls/{{ c.id }}/close" class="oa-inline" data-confirm="Close this poll now? Nobody will be able to answer after this.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" class="btn btn-secondary">Close poll</button>
+      </form>
+      <form method="post" action="/admin/polls/{{ c.id }}/cancel" class="oa-inline" data-confirm="Cancel this poll? Anyone who opens their link will be told it is no longer needed.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" class="btn btn-secondary">Cancel poll</button>
+      </form>
+    {% elif c.status == "sending" %}
+      <button type="button" class="btn btn-primary" id="oa-resume">Continue sending</button>
+    {% endif %}
+    {% if c.status in ("closed", "cancelled") and c.test_mode %}
+      <form method="post" action="/admin/polls/{{ c.id }}/delete" class="oa-inline" data-confirm="Delete this test poll and everything recorded for it?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" class="btn btn-secondary">Delete test poll</button>
+      </form>
+    {% endif %}
+    {% if counts.total %}<a class="btn btn-secondary" href="/admin/polls/{{ c.id }}/export.csv">Download results (CSV)</a>{% endif %}
+  </div>
+  <div id="oa-progress" class="oa-progress" hidden aria-live="polite"></div>
+
+  {# ── what people receive (always shown: open by default on a draft, folded once sent) ── #}
+  <section class="form-card">
+    <details {{ "open" if c.status == "draft" }}>
+      <summary><h2 class="oa-inline-h">What people receive</h2></summary>
+      <p><strong>Subject:</strong> {{ c.subject }}</p>
+      {% if c.intro %}<p class="oa-intro">{{ c.intro }}</p>{% endif %}
+      {% for q in questions %}
+      <div class="oa-q">
+        <h3>{{ q.n }}. {{ q.prompt }} <span class="hint">({{ q.type_label }}{{ ", required" if q.required else ", optional" }})</span></h3>
+        {% if q.options %}<ul class="oa-opts">{% for o in q.options %}<li>{{ o }}</li>{% endfor %}</ul>
+        {% if q.max_select and q.max_select < q.options|length %}<p class="hint">Pick up to {{ q.max_select }}.</p>{% endif %}
+        {% elif q.max_length %}<p class="hint">A written answer, up to {{ q.max_length }} characters.</p>{% endif %}
+      </div>
+      {% endfor %}
+      {% if questions|length == 1 and questions[0].options and questions[0].options|length <= 5 %}
+      <p class="hint">With a single question like this, people can answer straight from the email: each choice is a button, and they confirm on the next page.</p>
+      {% else %}
+      <p class="hint">The email has one <strong>Respond now</strong> button that opens the questions.</p>
+      {% endif %}
+    </details>
+  </section>
+
+  {# ── draft: who would be asked ─────────────────────────────── #}
+  {% if c.status == "draft" and audience_refused %}
+  <section class="form-card">
+    <h2>Who would be asked</h2>
+    <p>Not shown. This draft reaches entities you are not a Beacon Admin at, so only an admin of those entities can see who it reaches, edit it or send it.</p>
+  </section>
+  {% elif c.status == "draft" %}
+  <section class="form-card">
+    <h2>Who would be asked ({{ preview|length }})</h2>
+    {% if preview %}
+    <details><summary>Show the list</summary>
+      <table class="oa-table"><thead><tr><th>Name</th><th>Email</th><th>Why</th></tr></thead><tbody>
+      {% for p in preview %}<tr><td>{{ p.name }}</td><td>{{ p.email }}</td><td>{{ p.via|join("; ") }}</td></tr>{% endfor %}
+      </tbody></table>
+    </details>
+    <p class="hint">This is today's list. It is frozen the moment you press Send; roles granted or removed after that do not change who was asked.</p>
+    {% else %}
+    <p>No one holds the chosen roles right now, so there is nothing to send. Edit the poll to choose a different group.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {# ── numbers ───────────────────────────────────────────────── #}
+  {% if counts.total %}
+  <section class="oa-cards">
+    <div class="oa-card"><div class="oa-big">{{ counts.total }}</div><div>Asked</div></div>
+    <div class="oa-card"><div class="oa-big">{{ counts.sent }}</div><div>Emails sent{% if counts.unsent %} ({{ counts.unsent }} to go){% endif %}</div></div>
+    <div class="oa-card oa-card-key"><div class="oa-big">{{ counts.responded }}</div><div>Responded ({{ rate }})</div></div>
+    <div class="oa-card"><div class="oa-big">{{ counts.awaiting }}</div><div>Awaiting an answer</div></div>
+    <div class="oa-card"><div class="oa-big">{{ counts.opened }}</div><div>Opened (signal)</div></div>
+    <div class="oa-card"><div class="oa-big">{{ counts.clicked }}</div><div>Visited the link</div></div>
+    {% if counts.failed or counts.suppressed %}<div class="oa-card oa-card-warn"><div class="oa-big">{{ counts.failed + counts.suppressed }}</div><div>Not delivered</div></div>{% endif %}
+  </section>
+  <details class="oa-note"><summary>How to read these numbers</summary>
+    <ul>
+      <li><strong>Responded</strong> is the only number you can rely on: someone pressed the confirm button.</li>
+      <li><strong>Opened</strong> is a best-effort signal. Outlook and Apple Mail often block or pre-load the tiny image it uses, so some people who read the email will not show, and some who did not may.</li>
+      <li><strong>Visited the link</strong> means someone opened the answer page (or a mail scanner did). It is not an answer.</li>
+      <li><strong>No answer</strong> means nothing was recorded by the deadline. Beacon cannot see whether an email bounced; "Email failed" only means the email service refused it.</li>
+    </ul>
+  </details>
+  {% endif %}
+
+  {# ── results ───────────────────────────────────────────────── #}
+  {% if counts.responded %}
+  <section class="form-card">
+    <h2>Results</h2>
+    {% for s in summary %}
+      <div class="oa-q">
+        <h3>{{ loop.index }}. {{ s.q.prompt }} <span class="hint">({{ s.type_label }}, {{ s.tally.total }} answered)</span></h3>
+        {% if s.tally.kind == "counts" %}
+          {% for r in s.tally.rows %}
+          <div class="oa-bar-row">
+            <div class="oa-bar-label">{{ r.label }}</div>
+            <div class="oa-bar"><span style="width: {{ ((r.count * 100 / s.tally.total) if s.tally.total else 0)|round(1) }}%"></span></div>
+            <div class="oa-bar-n">{{ r.count }}{% if s.tally.total %} ({{ ((r.count * 100 / s.tally.total))|round|int }}%){% endif %}</div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <ul class="oa-texts">{% for t in s.tally.responses %}<li>{{ t }}</li>{% endfor %}</ul>
+          {% if s.tally.total > s.tally.responses|length %}<p class="hint">First {{ s.tally.responses|length }} shown. Download the CSV for all.</p>{% endif %}
+        {% endif %}
+      </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {# ── people ────────────────────────────────────────────────── #}
+  {% if rows %}
+  <section class="form-card">
+    <h2>People</h2>
+    <div class="oa-filters" role="group" aria-label="Filter the list">
+      <button type="button" class="btn btn-sm btn-secondary is-on" data-filter="all">All ({{ rows|length }})</button>
+      <button type="button" class="btn btn-sm btn-secondary" data-filter="awaiting">Awaiting an answer ({{ counts.awaiting }})</button>
+      <button type="button" class="btn btn-sm btn-secondary" data-filter="responded">Responded ({{ counts.responded }})</button>
+      <button type="button" class="btn btn-sm btn-secondary" data-filter="problem">Not delivered / not sent</button>
+    </div>
+    <div class="oa-scroll">
+    <table class="oa-table" id="oa-people">
+      <thead><tr><th>Name</th><th>Why asked</th><th>Status</th><th>Email sent</th><th>Opened</th><th>Visited</th><th>Responded</th><th class="num">Reminders</th><th></th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr data-state="{{ r.state }}">
+          <td><strong>{{ r.name }}</strong><br><span class="hint">{{ r.email }}</span></td>
+          <td>{{ r.via }}</td>
+          <td><span class="oa-pill oa-pill-{{ r.state }}">{{ r.state_label }}</span>{% if r.send_error %}<br><span class="hint">{{ r.send_error }}</span>{% endif %}</td>
+          <td>{{ r.sent_text or "—" }}</td>
+          <td title="A best-effort signal">{{ "Yes" if r.opened else "—" }}{% if r.opened %}<br><span class="hint">{{ r.opened_text }}</span>{% endif %}</td>
+          <td>{{ "Yes" if r.visited else "—" }}</td>
+          <td>{{ r.responded_text or "—" }}</td>
+          <td class="num">{{ r.reminders or "—" }}</td>
+          <td>
+            {% if r.can_exclude and c.status in ("open", "sending") %}
+            <form method="post" action="/admin/polls/{{ c.id }}/exclude/{{ r.id }}" data-confirm="Remove {{ r.name }} from this poll? They will no longer be able to answer or be reminded.">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+              <button type="submit" class="btn btn-sm btn-secondary">Remove</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% if r.answers %}
+        <tr class="oa-answer-row" data-state="{{ r.state }}"><td colspan="9">
+          <details><summary>{{ r.name }}'s answers</summary>
+            <dl class="oa-answers">{% for label, text in r.answers %}<dt>{{ label }}</dt><dd>{{ text }}</dd>{% endfor %}</dl>
+          </details>
+        </td></tr>
+        {% endif %}
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ── reminders ─────────────────────────────────────────────── #}
+  {% if c.status in ("open", "sending") %}
+  <section class="form-card">
+    <h2>Automatic reminders</h2>
+    <form method="post" action="/admin/polls/{{ c.id }}/reminders" class="oa-inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <label>Every <input type="number" name="reminder_every_days" min="1" max="90" value="{{ c.reminder_every_days or '' }}" class="oa-num"> days (blank = none)</label>
+      <label><input type="checkbox" name="reminders_paused" {{ "checked" if c.reminders_paused }}> Pause them</label>
+      <button type="submit" class="btn btn-sm btn-secondary">Save</button>
+    </form>
+    <p class="hint">Automatic reminders only go to people who have not answered, and stop at the deadline or when you close the poll.</p>
+  </section>
+  {% endif %}
+
+  {# ── event log ─────────────────────────────────────────────── #}
+  {% if events %}
+  <section class="form-card">
+    <details><summary><strong>Activity log</strong> (latest {{ events|length }})</summary>
+      <table class="oa-table"><thead><tr><th>When</th><th>What</th><th>Who</th></tr></thead><tbody>
+      {% for e in events %}<tr><td>{{ e.when }}</td><td>{{ ev_labels.get(e.type, e.type) }}</td><td>{{ e.who }}{% if e.email %} <span class="hint">{{ e.email }}</span>{% endif %}</td></tr>{% endfor %}
+      </tbody></table>
+    </details>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/outreach_detail.js?v={{ asset_version('js/outreach_detail.js') }}"></script>
+{% endblock %}

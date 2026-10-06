@@ -51,6 +51,13 @@ GUIDES = {
         "back_url": "/admin/ap-review",
         "back_label": "AP Review",
     },
+    # 2026-10-06 (26-156): polling the holders of a Beacon role by email.
+    "polls": {
+        "title": "Polls & Surveys",
+        "template": "guide_polls.html",
+        "back_url": "/admin/polls",
+        "back_label": "Polls & Surveys",
+    },
 }
 
 

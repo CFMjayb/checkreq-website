@@ -1,0 +1,17 @@
+{#
+respond_poll_form.html -- 26-156: the poll kind's response form, included by respond.html.
+Each question renders through its type's own input partial (poll_input_<type>.html),
+which is how a custom question type brings its own input (outreach_kinds.QuestionType).
+#}
+<form method="post" action="/respond/{{ token }}" class="poll-form">
+  {% for it in items %}
+    <fieldset class="poll-q">
+      <legend>{{ loop.index }}. {{ it.q.prompt }}{% if it.q.required %} <span class="poll-req" title="Required" aria-hidden="true">*</span><span class="poll-sr"> (required)</span>{% endif %}</legend>
+      {% with q=it.q, field=it.field, selected=it.selected %}
+        {% include it.qt.input_template %}
+      {% endwith %}
+    </fieldset>
+  {% endfor %}
+  <button type="submit" class="btn btn-primary btn-block">{{ "Confirm my response" if rec.status != "responded" else "Update my response" }}</button>
+  <p class="respond-note">Nothing is recorded until you press the button above.</p>
+</form>

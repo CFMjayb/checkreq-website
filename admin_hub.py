@@ -60,6 +60,10 @@ _CARDS = [
      "url": "/admin/setup/users", "role": "beacon_admin", "group": "beacon"},
     {"title": "Access Requests", "desc": "Review self-service requests from users with no role yet.",
      "url": "/admin/access-requests", "role": "beacon_admin", "group": "beacon"},
+    # 26-156 (2026-10-06): poll the holders of a Beacon role by email. Entity-scoped (Beacon Admin at
+    # the CURRENT entity, matching outreach_admin._guard), so it is in _ENTITY_SCOPED_TITLES below.
+    {"title": "Polls & Surveys", "desc": "Ask the people who hold a role a question by email, and see who has answered.",
+     "url": "/admin/polls", "role": "beacon_admin", "group": "beacon", "guide": "polls"},
     {"title": "Feedback Log", "desc": "Everything submitted through the Feedback screen.",
      "url": "/admin/feedback", "role": "cfo", "group": "beacon"},
     {"title": "Test Mode", "desc": "Redirect outgoing emails to a test address while testing.",
@@ -180,7 +184,7 @@ _CARD_GROUPS = [
 # by design/necessity like everything else in this hub) -- see admin_hub()'s
 # own docstring for why this distinction matters.
 _ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes", "Payroll Periods", "Time Categories",
-                          "HR Activation", "Employees", "Report Templates"}
+                          "HR Activation", "Employees", "Report Templates", "Polls & Surveys"}
 
 
 @router.get("/admin", response_class=HTMLResponse)

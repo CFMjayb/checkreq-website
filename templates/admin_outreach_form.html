@@ -1,0 +1,102 @@
+{#
+admin_outreach_form.html -- 26-156: create / edit a poll DRAFT (outreach_admin.py).
+The audience rows and the question rows are built by static/js/outreach_admin.js from the JSON
+in #oa-init and submitted as two hidden JSON fields; the server re-validates everything.
+#}
+{% extends "base.html" %}
+{% block title %}{{ "Edit poll" if editing else "New poll" }} — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/outreach_admin.css?v={{ asset_version('css/outreach_admin.css') }}">
+{% endblock %}
+{% block content %}
+{% from "_guide_link.html" import guide_link %}
+<div class="page-shell oa-page">
+  <h1>{{ "Edit poll" if editing else "New poll" }} {{ guide_link("polls", "How to use polls") }}</h1>
+  <p class="back-link"><a href="{{ '/admin/polls/%d'|format(editing.id) if editing else '/admin/polls' }}">&larr; Back</a></p>
+
+  {% if errors %}
+  <div class="banner banner-error"><strong>Please fix:</strong>
+    <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  <form method="post" id="oa-form" action="{% if editing %}/admin/polls/{{ editing.id }}/edit{% else %}/admin/polls/new{% endif %}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <input type="hidden" name="selectors_json" id="oa-selectors-json">
+    <input type="hidden" name="questions_json" id="oa-questions-json">
+
+    <section class="form-card">
+      <h2>1. The message</h2>
+      <div class="field">
+        <label for="title">Title</label>
+        <input type="text" id="title" name="title" maxlength="150" required value="{{ values.title }}">
+        <p class="hint">What people see at the top of the page and in the email.</p>
+      </div>
+      <div class="field">
+        <label for="subject">Email subject <span class="hint">(blank = the title)</span></label>
+        <input type="text" id="subject" name="subject" maxlength="200" value="{{ values.subject }}">
+      </div>
+      <div class="field">
+        <label for="intro">Message <span class="hint">(optional, shown above the questions)</span></label>
+        <textarea id="intro" name="intro" rows="4" maxlength="4000">{{ values.intro }}</textarea>
+      </div>
+      <div class="field">
+        <label for="sender_email">Send from</label>
+        <select id="sender_email" name="sender_email">
+          {% for s in senders %}<option value="{{ s }}" {{ "selected" if values.sender_email == s }}>{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+    </section>
+
+    <section class="form-card">
+      <h2>2. Who is asked</h2>
+      <p class="sub">Add one or more groups. Each group is a <strong>role</strong> at an <strong>entity</strong>; a person who is in several groups is asked once. You can only choose entities where you are a Beacon Admin.</p>
+      <div id="oa-audience"></div>
+      <p><button type="button" class="btn btn-secondary btn-sm" id="oa-add-audience">Add another group</button></p>
+      <div id="oa-preview" class="oa-preview" aria-live="polite"><span class="hint">Choose a role to see who would be asked.</span></div>
+    </section>
+
+    <section class="form-card">
+      <h2>3. The questions</h2>
+      <p class="sub">One question gives a one-tap email: yes/no or a short pick-one list can be answered straight from the email. Several questions make a short survey: the email has one <strong>Respond now</strong> button.</p>
+      <div id="oa-questions"></div>
+      <p><button type="button" class="btn btn-secondary btn-sm" id="oa-add-question">Add a question</button></p>
+    </section>
+
+    <section class="form-card">
+      <h2>4. Deadline and options</h2>
+      <div class="field">
+        <label for="closes_at">Deadline <span class="hint">({{ zone_label }}, blank = no deadline)</span></label>
+        <input type="datetime-local" id="closes_at" name="closes_at" value="{{ values.closes_at }}">
+        <p class="hint">After the deadline the link shows "closed" and no more answers are taken.</p>
+      </div>
+      <div class="field">
+        <label for="reminder_every_days">Remind people who have not answered every <span class="hint">(days, blank = no automatic reminders)</span></label>
+        <input type="number" id="reminder_every_days" name="reminder_every_days" min="1" max="90" value="{{ values.reminder_every_days }}">
+        <p class="hint">You can always send a reminder by hand from the poll's page.</p>
+      </div>
+      <div class="field oa-check">
+        <label><input type="checkbox" name="allow_change" {{ "checked" if values.allow_change }}> People may change their answer until the deadline</label>
+      </div>
+      <div class="field oa-check">
+        <label><input type="checkbox" name="test_mode" id="oa-test-mode" {{ "checked" if values.test_mode }}> This is a test run: send every email to one test address instead</label>
+        <div id="oa-test-box" {% if not values.test_mode %}hidden{% endif %}>
+          <input type="email" name="test_address" id="test_address" placeholder="test address" value="{{ values.test_address }}">
+          <p class="hint">Each email still carries a real person's private link, and its subject says who it would have gone to. A test poll can be deleted afterwards.</p>
+        </div>
+      </div>
+    </section>
+
+    <p class="oa-actions">
+      <button type="submit" class="btn btn-primary" id="oa-save">Save draft</button>
+      <a class="btn btn-secondary" href="{{ '/admin/polls/%d'|format(editing.id) if editing else '/admin/polls' }}">Cancel</a>
+    </p>
+    <p class="hint">Saving does not send anything. You review the list of people on the next page and press <strong>Send</strong> when ready.</p>
+  </form>
+
+  <script type="application/json" id="oa-init">{{ init|tojson }}</script>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/outreach_admin.js?v={{ asset_version('js/outreach_admin.js') }}"></script>
+{% endblock %}

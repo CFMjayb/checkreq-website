@@ -1,0 +1,7 @@
+{# Pick-several input. Context: q, field, selected (a list of option keys). #}
+{% if q.config.max_select and q.config.max_select < q.config.options|length %}
+<p class="poll-hint">Choose up to {{ q.config.max_select }}.</p>
+{% endif %}
+{% for o in q.config.options %}
+<label class="poll-choice"><input type="checkbox" name="{{ field }}" value="{{ o.key }}" {{ "checked" if selected and o.key in selected }}> <span>{{ o.label }}</span></label>
+{% endfor %}

@@ -1,0 +1,4 @@
+{# Pick-one input. Context: q, field, selected. #}
+{% for o in q.config.options %}
+<label class="poll-choice"><input type="radio" name="{{ field }}" value="{{ o.key }}" {{ "checked" if selected == o.key }}> <span>{{ o.label }}</span></label>
+{% endfor %}

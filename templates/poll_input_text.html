@@ -1,0 +1,6 @@
+{# Written-answer input. Context: q, field, selected (the text so far). #}
+{% if q.config.multiline is not sameas false %}
+<textarea name="{{ field }}" rows="4" maxlength="{{ q.config.max_length or 1000 }}" class="poll-text" aria-label="{{ q.prompt }}">{{ selected or "" }}</textarea>
+{% else %}
+<input type="text" name="{{ field }}" maxlength="{{ q.config.max_length or 1000 }}" class="poll-text" aria-label="{{ q.prompt }}" value="{{ selected or '' }}">
+{% endif %}

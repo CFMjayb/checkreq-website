@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">Ask the people who hold a Beacon role a question by email, and see who has answered.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="where">
+    <h2>Where to find it</h2>
+    <p><strong>Administrative Tasks</strong> &rarr; <strong>Beacon</strong> &rarr; <strong>Polls &amp; Surveys</strong>. You need to be a <strong>Beacon Admin</strong> at the entity you are working in. Polls belong to that entity: switch entities (top of the page) to see another entity's polls.</p>
+  </section>
+
+  <section class="hiw-section" id="create">
+    <h2>Make a poll in four steps</h2>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard">
+        <h3>1. The message</h3>
+        <p>A title, an optional subject and message, and which address it is sent from.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>2. Who is asked</h3>
+        <p>Add one or more groups. A group is a <strong>role</strong> (for example CFO, or Parish Clergy) at an <strong>entity</strong>. The page shows how many people that is, and who, as you choose. Someone in two groups is asked once. You can only pick entities where you are a Beacon Admin.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>3. The questions</h3>
+        <p><strong>Yes / No</strong>, <strong>pick one</strong>, <strong>pick several</strong>, or a <strong>short written answer</strong>. One question makes a one-tap email. Two or more make a short survey with a single <strong>Respond now</strong> button.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>4. Deadline and options</h3>
+        <p>An optional deadline, optional automatic reminders (every so many days), whether people may change their answer, and a <strong>test run</strong> that sends every email to one address of yours.</p>
+      </div>
+    </div>
+    <p>Saving only keeps a <strong>draft</strong>. Nothing is sent until you open the poll and press <strong>Send now</strong>, after checking the list of people.</p>
+  </section>
+
+  <section class="hiw-section" id="sending">
+    <h2>Sending</h2>
+    <ul>
+      <li>The list of people is <strong>frozen</strong> when you press Send. Roles granted or removed afterwards do not change who was asked.</li>
+      <li>Emails go out in batches while you watch. If you close the page halfway, open the poll again and it carries on without sending anyone twice.</li>
+      <li>Each person gets a <strong>private link</strong>. They do not need to sign in. Pressing an answer in the email opens the page with that answer selected, and they press <strong>Confirm</strong> to record it. (The extra step stops email security scanners from answering for people.)</li>
+      <li>Do a <strong>test run</strong> first when you are unsure: it is the same poll, but every email goes to one address and says who it would have gone to. Delete the test poll afterwards.</li>
+    </ul>
+  </section>
+
+  <section class="hiw-section" id="results">
+    <h2>Reading the results</h2>
+    <ul>
+      <li><strong>Responded</strong> is the number to rely on: someone pressed Confirm.</li>
+      <li><strong>Opened</strong> is only a hint. Many mail programs block or pre-load the tiny image it depends on.</li>
+      <li><strong>Visited the link</strong> means the answer page was opened (by a person or a mail scanner). It is not an answer.</li>
+      <li>Someone who never answered by the deadline simply shows as <strong>Awaiting an answer</strong>. Beacon cannot see whether an email bounced; <strong>Email failed</strong> only means the email service refused it.</li>
+      <li>Each person's answers are listed under their name, and <strong>Download results</strong> gives you everything as a spreadsheet.</li>
+    </ul>
+  </section>
+
+  <section class="hiw-section" id="reminders">
+    <h2>Reminders, closing and changes</h2>
+    <ul>
+      <li><strong>Remind people who have not answered</strong> sends one more email to everyone still waiting (never to someone reminded in the last hour). Automatic reminders, if you set them, do the same on their own and stop at the deadline.</li>
+      <li><strong>Close poll</strong> stops answers now. <strong>Cancel poll</strong> tells anyone who opens their link that it is no longer needed.</li>
+      <li><strong>Remove</strong> next to a name takes one person off the poll (they cannot answer and are not reminded).</li>
+      <li>A draft can be edited or deleted. A poll that has been sent can be closed or cancelled but never erased, so there is always a record. Test polls can be deleted.</li>
+      <li>Everything that happens is kept in the <strong>Activity log</strong> at the bottom of the poll's page.</li>
+    </ul>
+  </section>
+
+</div>
+{% endblock %}
