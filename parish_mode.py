@@ -84,6 +84,10 @@ def register(app, *, current_user, current_org, render) -> None:
 
 
 def _is_beacon_admin(user_id: int) -> bool:
+    """Holds Beacon Admin at SOME entity. Navigation only now (which picker a
+    parish-less /parish-view bounces to) -- never an authorization decision
+    about a specific parish (2026-10-05: those use
+    parish_roles.is_parish_reviewer / holds_role_at_parish_org)."""
     return rbac.user_has_role(user_id, "beacon_admin", org_id=None)
 
 
@@ -159,12 +163,13 @@ def current_parish_view(request: Request) -> dict | None:
     parish_id = request.session.get("parish_view_id")
     if not real_id or not parish_id:
         return None
-    if not rbac.user_has_any_role(real_id, _PARISH_MODE_ROLES, org_id=None):
-        request.session.pop("parish_view_id", None)
-        _close_open_parish_mode(real_id)
-        return None
+    # 2026-10-05: re-checked at THIS PARISH'S OWN diocese -- the same org
+    # parish_mode_start() required when the preview began. It used to ask for
+    # the role at "any entity", so a preview survived the role being revoked
+    # at the parish's diocese as long as it was held at some other one.
     parish = _parish_row(parish_id)
-    if not parish:
+    if (not parish or parish.get("org_id") is None
+            or not rbac.user_has_any_role(real_id, _PARISH_MODE_ROLES, org_id=parish["org_id"])):
         request.session.pop("parish_view_id", None)
         _close_open_parish_mode(real_id)
         return None
@@ -377,7 +382,10 @@ def parish_view_page(request: Request):
             })
         return RedirectResponse("/admin/parish-mode" if _is_beacon_admin(user["id"]) else "/portal")
 
-    can_review = _is_beacon_admin(user["id"]) or parish_roles.user_has_parish_role(user["id"], "parish_admin", parish["id"])
+    # 2026-10-05: reviewer = Beacon Admin at THIS parish's own diocese, or its
+    # own Parish Admin (parish_roles.is_parish_reviewer) -- was "Beacon Admin
+    # at any entity".
+    can_review = parish_roles.is_parish_reviewer(user["id"], parish["id"])
     has_other_native_parishes = (not is_preview) and (not rbac.user_has_any_role(user["id"])) \
         and len(_native_parish_ids(user["id"])) > 1
     return _render(request, "parish_view.html", user, {
@@ -419,7 +427,7 @@ def parish_view_page(request: Request):
         # there), so the reverse would be circular, same accepted-
         # duplication precedent as _is_beacon_admin's own docstring above.
         "can_view_finance": (
-            _is_beacon_admin(user["id"])
+            parish_roles.holds_role_at_parish_org(user["id"], "beacon_admin", parish["org_id"])
             or rbac.user_has_role(user["id"], "setup_admin", parish["org_id"])
             or parish_roles.user_has_parish_role(user["id"], "parish_finance", parish["id"])
         ),

@@ -36,21 +36,79 @@ import rbac
 PARISH_BASE_ROLE = "parish_member"
 
 
+def get_parish_org_id(parish_id: int) -> int | None:
+    """The diocese (checkreq.organizations id) that owns this parish --
+    portal.parishes.org_id. None if the parish doesn't exist."""
+    row = db.query_one("SELECT org_id FROM portal.parishes WHERE id = %s", (parish_id,))
+    return row["org_id"] if row else None
+
+
+def holds_role_at_parish_org(user_id: int, role_key: str, parish_org_id: int | None) -> bool:
+    """Does this user hold role_key AT the diocese that owns a parish?
+
+    2026-10-05 (cross-diocese fix): every "can this person manage/review/edit
+    that parish" check used to ask rbac.user_has_role(..., org_id=None) --
+    "holds it at ANY entity" -- so a Beacon Admin or Parish-Mode user of one
+    diocese could act on another diocese's parishes. The parish's own
+    portal.parishes.org_id is the entity the role has to be held at. A None
+    org_id returns False here on purpose: rbac.user_has_role reads None as
+    "any entity", and a parish row with no diocese must never fall through
+    to that meaning."""
+    if parish_org_id is None:
+        return False
+    return rbac.user_has_role(user_id, role_key, org_id=parish_org_id)
+
+
 def is_parish_manager(user_id: int, parish_id: int) -> bool:
-    """Beacon Admin (any entity) OR parish_mode_user (any entity, a
-    Diocesan Employee granted Parish Mode) OR THIS SPECIFIC parish's own
+    """Beacon Admin OR parish_mode_user (a Diocesan Employee granted Parish
+    Mode) held AT THIS PARISH'S OWN DIOCESE, OR THIS SPECIFIC parish's own
     Parish Admin -- the "User Access" screen's authorization rule
     (parish_access.py, 2026-09-13, Jay's explicit widen-beyond-just-
-    beacon_admin/parish_admin decision). Lives here (not in parish_access.py
+    beacon_admin/parish_admin decision). 2026-10-05: the two diocesan roles
+    are now checked at the parish's own org, not "any entity" (see
+    holds_role_at_parish_org). Lives here (not in parish_access.py
     or parish_mode.py) so BOTH of those modules can call it with no circular
     import -- parish_mode.py already imports this module, and
     parish_access.py already imports parish_mode.py, so parish_mode.py
     importing parish_access.py back would be circular."""
-    if rbac.user_has_role(user_id, "beacon_admin", org_id=None):
+    org_id = get_parish_org_id(parish_id)
+    if holds_role_at_parish_org(user_id, "beacon_admin", org_id):
         return True
-    if rbac.user_has_role(user_id, "parish_mode_user", org_id=None):
+    if holds_role_at_parish_org(user_id, "parish_mode_user", org_id):
         return True
     return user_has_parish_role(user_id, "parish_admin", parish_id)
+
+
+def is_parish_reviewer(user_id: int, parish_id: int) -> bool:
+    """May this person approve/reject a self-service request for THIS parish
+    (parish_access.py, parish_requests.py)? Beacon Admin at the parish's own
+    diocese, or this specific parish's own Parish Admin. parish_mode_user is
+    a manager (is_parish_manager) but not a reviewer -- unchanged from
+    before the 2026-10-05 org scoping."""
+    if holds_role_at_parish_org(user_id, "beacon_admin", get_parish_org_id(parish_id)):
+        return True
+    return user_has_parish_role(user_id, "parish_admin", parish_id)
+
+
+def get_reviewable_parish_ids(user_id: int) -> list[int]:
+    """Every parish whose requests this person may review: every parish of a
+    diocese where they hold Beacon Admin, plus every parish they are Parish
+    Admin of. Always a real list -- [] means "nothing", never "everything"
+    (list_pending_parish_access_requests reads None as unscoped, so no caller
+    may pass None for a reviewer)."""
+    org_ids = rbac.get_granted_org_ids(user_id, "beacon_admin")
+    rows = db.query(
+        """
+        SELECT p.id AS parish_id FROM portal.parishes p WHERE p.org_id = ANY(%s::int[])
+        UNION
+        SELECT pur.parish_id
+          FROM portal.parish_user_roles pur
+          JOIN portal.parish_roles pr ON pr.key = pur.role_key AND pr.is_active
+         WHERE pur.user_id = %s AND pur.role_key = 'parish_admin' AND pur.revoked_at IS NULL
+        """,
+        (org_ids, user_id),
+    )
+    return [r["parish_id"] for r in rows]
 
 
 def user_has_parish_role(user_id: int, role_key: str, parish_id: int | None = None) -> bool:
@@ -425,11 +483,13 @@ def get_pending_parish_access_request(user_id: int) -> dict | None:
 
 
 def list_pending_parish_access_requests(parish_ids: list[int] | None = None) -> list[dict]:
-    """Reviewed by beacon_admin (diocese-wide, parish_ids=None -- see module
-    docstring) OR, as of 2026-08-08 (Jay: "The Parish Admin will have to
-    grant access to someone who requests it"), a Parish Admin reviewing only
-    the parish(es) they themselves administer (parish_ids given, from
-    get_parish_ids_with_role)."""
+    """Reviewed by beacon_admin OR, as of 2026-08-08 (Jay: "The Parish Admin
+    will have to grant access to someone who requests it"), a Parish Admin.
+    parish_ids is always the reviewer's own reach, from
+    get_reviewable_parish_ids (the parishes of the dioceses where they hold
+    Beacon Admin, plus the parishes they administer). None means no
+    restriction at all -- since 2026-10-05 no caller passes it, because even
+    a Beacon Admin only reaches their own dioceses' parishes."""
     return db.query(
         """
         SELECT par.id, par.user_id, u.email, u.display_name,
@@ -442,7 +502,7 @@ def list_pending_parish_access_requests(parish_ids: list[int] | None = None) -> 
           JOIN checkreq.organizations o ON o.id = p.org_id
           JOIN portal.parish_roles pr ON pr.key = par.requested_role_key
          WHERE par.status = 'Pending'
-           AND (%s::int[] IS NULL OR par.parish_id = ANY(%s))
+           AND (%s::int[] IS NULL OR par.parish_id = ANY(%s::int[]))
          ORDER BY par.requested_at
         """,
         (parish_ids, parish_ids),

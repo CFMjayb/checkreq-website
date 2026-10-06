@@ -12,13 +12,20 @@ specific PARISH (not an entity) via /parish-access-request; the queue at
 (Jay, 2026-08-08: "The Parish Admin will have to grant access to someone
 who requests it. We (a Beacon Admin, Diocesan Admin) can also grant
 permissions, as needed"):
-  - anyone holding checkreq.roles' beacon_admin, in ANY entity -- this
-    already covers both "Beacon Admin" (granted across every org) and
-    "Diocesan Admin" (granted for just one org/diocese) in Jay's own
-    vocabulary, since checkreq.user_roles has no separate "diocesan_admin"
-    role -- an org-scoped beacon_admin grant already IS what he means by
-    that. Sees and can act on EVERY pending request, cross-diocese, same as
-    the entity-level flow.
+  - anyone holding checkreq.roles' beacon_admin AT THE PARISH'S OWN DIOCESE
+    (portal.parishes.org_id) -- this already covers both "Beacon Admin"
+    (granted across every org) and "Diocesan Admin" (granted for just one
+    org/diocese) in Jay's own vocabulary, since checkreq.user_roles has no
+    separate "diocesan_admin" role -- an org-scoped beacon_admin grant
+    already IS what he means by that. Sees and can act on the pending
+    requests of the parishes in the dioceses where they hold it, and ONLY
+    those. 2026-10-05 correction: this used to be "beacon_admin at any
+    entity, sees and acts on every parish of every diocese" -- a Beacon
+    Admin of one diocese could approve, grant, revoke or remove access at
+    another diocese's parishes. The same org scoping applies to the User
+    Access manager check (parish_roles.is_parish_manager: beacon_admin or
+    parish_mode_user at the parish's own diocese, or that parish's own
+    Parish Admin).
   - anyone holding portal.parish_user_roles' parish_admin, for the SPECIFIC
     parish a request names -- sees and can act ONLY on requests for the
     parish(es) they administer, never another parish's queue. A pure Parish
@@ -74,7 +81,11 @@ def register(app, *, current_user, current_org, render) -> None:
     app.include_router(router)
 
 
-def _is_beacon_admin(user: dict) -> bool:
+def _is_any_beacon_admin(user: dict) -> bool:
+    """Holds Beacon Admin at SOME entity. Only decides whether this person
+    may open the reviewer screen at all -- which parishes they may review is
+    parish_roles.get_reviewable_parish_ids / is_parish_reviewer, always
+    scoped to the parish's own diocese (2026-10-05)."""
     return rbac.user_has_role(user["id"], "beacon_admin", org_id=None)
 
 
@@ -95,17 +106,18 @@ def _require_parish_manager(request: Request, parish_id: int):
 
 def _require_parish_reviewer(request: Request):
     """Either kind of reviewer (see module docstring) may reach the queue
-    and list route -- a beacon_admin sees everything, a parish_admin-only
-    user sees (and, in the approve/reject routes below, may only act on)
-    the parish(es) they hold parish_admin for. Returns (user, None) on
-    success; a bare 403 here means "not a reviewer of any kind," not "not a
-    reviewer of THIS request" -- that second, per-request check lives in
-    the approve/reject routes themselves, since it needs the request's own
-    parish_id first."""
+    and list route -- a beacon_admin sees the parishes of the dioceses where
+    they hold it, a parish_admin-only user sees (and, in the approve/reject
+    routes below, may only act on) the parish(es) they hold parish_admin
+    for. Returns (user, None) on success; a bare 403 here means "not a
+    reviewer of any kind," not "not a reviewer of THIS request" -- that
+    second, per-request check lives in the approve/reject routes themselves
+    (_authorize_for_request), since it needs the request's own parish_id
+    first."""
     user = _current_user(request)
     if not user:
         return None, RedirectResponse("/login")
-    if _is_beacon_admin(user):
+    if _is_any_beacon_admin(user):
         return user, None
     if parish_roles.get_parish_ids_with_role(user["id"], "parish_admin"):
         return user, None
@@ -198,11 +210,14 @@ def parish_access_request_page(request: Request, entity: str = "", error: str = 
         pending["requested_at"] = _fmt(pending["requested_at"], pending.get("org_id"))
     ctx = {"pending": pending, **_request_form_context(request, user, error=(error or None))}
 
-    is_admin = _is_beacon_admin(user)
+    is_admin = _is_any_beacon_admin(user)
     parish_admin_ids = parish_roles.get_parish_ids_with_role(user["id"], "parish_admin")
     if is_admin or parish_admin_ids:
         tile_badges.mark_viewed(user["id"], "request_parish_access")
-        scoped_parish_ids = None if is_admin else parish_admin_ids
+        # 2026-10-05: the queue is the reviewer's own reach -- parishes of the
+        # dioceses where they hold Beacon Admin plus the parishes they
+        # administer -- never every parish of every diocese.
+        scoped_parish_ids = parish_roles.get_reviewable_parish_ids(user["id"])
         requests_ = parish_roles.list_pending_parish_access_requests(scoped_parish_ids)
         if entity:
             requests_ = [r for r in requests_ if r["org_code"] == entity]
@@ -292,16 +307,16 @@ def admin_parish_access_requests_redirect():
 
 
 def _authorize_for_request(user: dict, request_id: int):
-    """Shared by approve/reject below: a beacon_admin may act on anything;
-       a parish_admin-only reviewer may act ONLY on a request whose own
-       parish_id matches one they hold parish_admin for -- checked against
-       the request's real parish_id, never just "administers some parish
-       somewhere." Returns None on success, or the error response to
-       return immediately."""
-    if _is_beacon_admin(user):
-        return None
+    """Shared by approve/reject below: a reviewer may act ONLY on a request
+       whose own parish_id they review -- Beacon Admin at that parish's own
+       diocese, or Parish Admin of that parish (parish_roles.
+       is_parish_reviewer) -- checked against the request's real parish_id,
+       never just "administers some parish somewhere" or "holds Beacon Admin
+       at some entity" (2026-10-05: the second used to be enough, across
+       dioceses). Returns None on success, or the error response to return
+       immediately."""
     req = parish_roles.get_parish_access_request(request_id)
-    if not req or not parish_roles.user_has_parish_role(user["id"], "parish_admin", req["parish_id"]):
+    if not req or not parish_roles.is_parish_reviewer(user["id"], req["parish_id"]):
         return JSONResponse({"error": "You don't administer this request's parish."}, status_code=403)
     return None
 

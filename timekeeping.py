@@ -156,13 +156,13 @@ def can_manage_timekeeping(user: dict, parish: dict) -> bool:
     (timekeeping_entries.py) -- the PRD names the same authorized role for
     both, so this is one shared check, not two parallel ones that could
     drift. Parish-side: parish_finance or parish_admin at this specific
-    parish. Diocese-side: beacon_admin (anywhere), setup_admin at the
-    parish's own diocese org, or a genuine cornerstone_employee grant at
-    the parish's linked AP org -- the same three-way "CFM staff acting as
-    this entity's own back office" pattern parish_documents.
-    _can_edit_parish_docs() and cornerstone_documents.can_edit() already
-    use."""
-    if rbac.user_has_role(user["id"], "beacon_admin", org_id=None):
+    parish. Diocese-side: beacon_admin or setup_admin at the parish's own
+    diocese org (2026-10-05: beacon_admin used to count "anywhere"), or a
+    genuine cornerstone_employee grant at the parish's linked AP org -- the
+    same three-way "CFM staff acting as this entity's own back office"
+    pattern parish_documents._can_edit_parish_docs() and
+    cornerstone_documents.can_edit() already use."""
+    if parish_roles.holds_role_at_parish_org(user["id"], "beacon_admin", parish.get("org_id")):
         return True
     if rbac.user_has_role(user["id"], "setup_admin", parish["org_id"]):
         return True

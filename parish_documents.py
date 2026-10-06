@@ -382,7 +382,10 @@ def download_library_file(org: dict, filename: str) -> bytes:
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
 def _can_edit_parish_docs(user: dict, parish: dict) -> bool:
-    if rbac.user_has_role(user["id"], "beacon_admin", org_id=None):
+    # 2026-10-05 (cross-diocese fix): beacon_admin AT THIS PARISH'S OWN
+    # diocese -- was org_id=None ("at any entity"), which let a Beacon Admin
+    # of one diocese edit another diocese's parish documents.
+    if parish_roles.holds_role_at_parish_org(user["id"], "beacon_admin", parish.get("org_id")):
         return True
     # 2026-08-16 (Jay, Cornerstone Mode tiles): a genuine cornerstone_employee
     # at this parish's own linked AP org has real, full working access to it

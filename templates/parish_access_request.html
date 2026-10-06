@@ -41,15 +41,15 @@
     {% if requests_count %}<span class="count-pill count-pill-alert" title="{{ requests_count }} waiting for you">{{ requests_count }}</span>{% endif %}
   </summary>
   {% if is_beacon_admin_reviewer %}
-  <p class="sub">Pending self-service requests for access to a specific parish's portal — every diocese, since you hold Beacon Admin.</p>
+  <p class="sub">Pending self-service requests for access to a specific parish's portal — the parishes of the diocese(s) where you hold Beacon Admin, plus any parish you administer as Parish Admin.</p>
   {% else %}
   <p class="sub">Pending self-service requests for access to a specific parish's portal — only the parish(es) you administer as Parish Admin.</p>
   {% endif %}
 
   {# 2026-08-16, Jay (Phase I): the Diocese filter dropdown was removed
-     alongside the Diocese column it filtered -- a beacon_admin's queue here
-     is still genuinely cross-diocese (see the sub text above), this just
-     drops the one UI control for narrowing it down, per Jay's own call. #}
+     alongside the Diocese column it filtered, per Jay's own call.
+     2026-10-05: a beacon_admin's queue is limited to the dioceses where they
+     hold Beacon Admin (see the sub text above), not every diocese. #}
 
   <div class="card">
     <table class="simple-table compact">
@@ -88,9 +88,10 @@
 {# "User Access" (2026-09-13, Jay): everyone currently granted access to
    THIS parish, plus a direct grant/revoke -- distinct from the pending-
    request queue above, which is about self-service requests, not the
-   parish's actual roster. Only rendered for a manager (Beacon Admin,
-   parish_mode_user, or this parish's own Parish Admin) actively viewing
-   this one parish -- see parish_access.py's own docstring. #}
+   parish's actual roster. Only rendered for a manager (Beacon Admin or
+   parish_mode_user at this parish's own diocese, or this parish's own Parish
+   Admin) actively viewing this one parish -- see parish_access.py's own
+   docstring. #}
 <details class="ap-section access-section" {% if roster_open %}open{% endif %}>
   <summary><h2>Everyone with access — {{ manage_parish.name }}</h2></summary>
   <p class="sub">Open a person to see their roles and revoke one. Everyone here can sign in to this parish —
