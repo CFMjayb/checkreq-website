@@ -9323,6 +9323,11 @@ import outreach_admin
 outreach_admin.register(app, current_user=_current_user, current_org=_current_org, render=_render,
                         get_internal_key=_get_internal_key)
 
+# "My Polls": a signed-in person's own polls and answers (+ the user-menu entry). See outreach_mine.py.
+import outreach_mine
+
+outreach_mine.register(app, templates=templates, current_user=_current_user, render=_render)
+
 # ── Per-hostname favicon (2026-10-01, Jay) ──
 # See favicon.py. Thin wiring only: the host -> diocese lookup is the login
 # page's own resolver, so the tab icon and the login screen always agree.

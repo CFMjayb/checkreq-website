@@ -1,0 +1,91 @@
+{#
+my_polls.html -- 26-156: "My Polls" (outreach_mine.py). The signed-in person's own polls: waiting
+for an answer, answered (with what they said and a way to change it), and closed without one.
+Only rows addressed to the signed-in person are ever passed in. While an admin is impersonating
+(read_only) no answer / change link is shown.
+#}
+{% extends "base.html" %}
+{% block title %}My Polls — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/my_polls.css?v={{ asset_version('css/my_polls.css') }}">
+{% endblock %}
+
+{% macro poll_card(p) %}
+<article class="mp-card mp-{{ p.group }}">
+  <div class="mp-head">
+    <h3>{{ p.title }}</h3>
+    {% if p.group == "waiting" %}<span class="mp-pill mp-pill-waiting">Waiting for you</span>
+    {% elif p.group == "answered" %}<span class="mp-pill mp-pill-answered">Answered</span>
+    {% elif p.group == "answered_by_other" %}<span class="mp-pill mp-pill-answered">Answered for your group</span>
+    {% elif p.expired %}<span class="mp-pill mp-pill-missed">Link expired</span>
+    {% else %}<span class="mp-pill mp-pill-missed">Closed, no answer</span>{% endif %}
+  </div>
+  <p class="mp-meta">{{ p.entity }}{% if p.sent_text %} &middot; Sent {{ p.sent_text }}{% endif %}{% if p.is_open and p.closes_text %} &middot; Please answer by {{ p.closes_text }}{% elif not p.is_open and p.closed_text and not p.expired %} &middot; Closed {{ p.closed_text }}{% endif %}</p>
+
+  {% if p.group == "answered" %}
+    <dl class="mp-answers">{% for label, text in p.answers %}<dt>{{ label }}</dt><dd>{{ text }}</dd>{% endfor %}</dl>
+    <p class="mp-note">{% if p.answered_text %}You answered {{ p.answered_text }}. {% endif %}
+      {% if p.final %}Answers can't be changed once given.
+      {% elif p.expired %}Your link has expired, so your answer can't be changed.
+      {% elif not p.is_open %}This poll is closed, so your answer can't be changed.{% endif %}</p>
+    {% if p.can_change and not read_only %}<a class="btn btn-secondary" href="/respond/{{ p.token }}?edit=1">Change my answer</a>{% endif %}
+
+  {% elif p.group == "answered_by_other" %}
+    <p class="mp-note">This poll has already been answered for your group{% if p.by %} by {{ p.by.name }}{% if p.by.when %} on {{ p.by.when }}{% endif %}{% endif %}. Nothing more is needed from you.</p>
+
+  {% elif p.group == "waiting" %}
+    <p class="mp-note">You haven't answered this one yet.</p>
+    {% if not read_only %}<a class="btn btn-primary" href="/respond/{{ p.token }}">Answer now</a>{% endif %}
+
+  {% elif p.expired %}
+    <p class="mp-note">The link for this poll has expired, and no answer was recorded from you. If you still need to answer, please contact the person who sent it.</p>
+
+  {% else %}
+    <p class="mp-note">No answer was recorded from you before this poll closed.</p>
+  {% endif %}
+</article>
+{% endmacro %}
+
+{% block content %}
+<div class="page-shell mp-page">
+  <h1>My Polls</h1>
+  <p class="back-link"><a href="{{ '/parish-view' if parish_view else '/portal' }}">&larr; Back to Portal</a></p>
+  <p class="sub">The polls you were asked to answer by email, what you answered, and anything still waiting for you. Answers are only ever shown to you here (and to the administrators who sent the poll).</p>
+
+  {% if read_only %}
+  <div class="banner banner-info">You are viewing this as <strong>{{ user.display_name or user.email }}</strong>. Answers can't be given or changed while impersonating.</div>
+  {% endif %}
+
+  {% if not ready %}
+  <div class="form-card"><p>Polls are not available yet.</p></div>
+  {% elif load_failed %}
+  <div class="form-card"><p>Your polls couldn't be loaded just now. Please try again in a moment.</p></div>
+  {% elif not total %}
+  <div class="form-card"><p>You haven't been asked to answer any polls. When someone sends you one, it will appear here.</p></div>
+  {% else %}
+
+    {% if waiting %}
+    <section class="mp-section" id="waiting">
+      <h2>Waiting for your answer <span class="mp-count">{{ waiting|length }}</span></h2>
+      {% for p in waiting %}{{ poll_card(p) }}{% endfor %}
+    </section>
+    {% endif %}
+
+    {% if answered %}
+    <section class="mp-section" id="answered">
+      <h2>Answered <span class="mp-count">{{ answered|length }}</span></h2>
+      {% for p in answered %}{{ poll_card(p) }}{% endfor %}
+    </section>
+    {% endif %}
+
+    {% if missed %}
+    <section class="mp-section" id="missed">
+      <h2>No longer open, not answered <span class="mp-count">{{ missed|length }}</span></h2>
+      {% for p in missed %}{{ poll_card(p) }}{% endfor %}
+    </section>
+    {% endif %}
+
+    {% if truncated %}<p class="mp-note">Showing your {{ limit }} most recent answered or closed polls. A poll still waiting for you is always shown.</p>{% endif %}
+  {% endif %}
+</div>
+{% endblock %}
