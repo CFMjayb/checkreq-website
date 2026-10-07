@@ -9310,6 +9310,19 @@ import sma_webhook
 
 sma_webhook.register(app)
 
+# ── 26-156: shared Email Response Engine, public response side (polls now, SMA letters later) ──
+# See outreach_public.py. Token-authenticated, CSRF-exempt via /respond/. Thin wiring only.
+import outreach_public
+
+outreach_public.register(app, templates=templates)
+
+# Admin screens for polls + the Cloud Scheduler reminder route (/internal/send-outreach-reminders).
+# See outreach_admin.py. get_internal_key is the same shared-secret check the digest and vendor-sync use.
+import outreach_admin
+
+outreach_admin.register(app, current_user=_current_user, current_org=_current_org, render=_render,
+                        get_internal_key=_get_internal_key)
+
 # ── Per-hostname favicon (2026-10-01, Jay) ──
 # See favicon.py. Thin wiring only: the host -> diocese lookup is the login
 # page's own resolver, so the tab icon and the login screen always agree.

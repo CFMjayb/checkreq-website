@@ -1,0 +1,99 @@
+{#
+respond.html -- 26-156: the public, unauthenticated response page of the shared Email
+Response Engine (outreach_public.py). Same extends-base.html pattern as
+email_action.html: base.html's header is guarded on {% if user %}, so it renders
+cleanly with no session. The private token in the URL is the authorization.
+The kind-specific form (the poll's questions) is included as kind_template.
+#}
+{% extends "base.html" %}
+{% block title %}Beacon — {{ campaign.title if campaign else "Response" }}{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/login.css?v={{ asset_version('css/login.css') }}">
+<link rel="stylesheet" href="/static/css/outreach.css?v={{ asset_version('css/outreach.css') }}">
+{% endblock %}
+{% block content %}
+<div class="login-hero">
+  <div class="login-card respond-card">
+    <div class="wordmark">Beacon</div>
+
+    {% if state == "not_found" %}
+      <h1>Link not recognized</h1>
+      <p class="tagline">This link doesn't match anything on file. It may have been copied incorrectly.</p>
+
+    {% elif state == "cancelled" %}
+      <h1>No longer needed</h1>
+      <p class="tagline"><strong>{{ campaign.title }}</strong> was cancelled. You don't need to do anything.</p>
+
+    {% elif state == "not_open" %}
+      <h1>Not open yet</h1>
+      <p class="tagline"><strong>{{ campaign.title }}</strong> is not open for responses yet.</p>
+
+    {% elif state == "closed" %}
+      <h1>This one is closed</h1>
+      <p class="tagline"><strong>{{ campaign.title }}</strong> is no longer taking responses{% if closes_text %} (it closed {{ closes_text }}){% endif %}.</p>
+      {% if rec and rec.status == "responded" %}<p>Your response was recorded {{ responded_text }}. Thank you.</p>{% endif %}
+
+    {% elif state == "expired" %}
+      <h1>Link expired</h1>
+      <p class="tagline">This link for <strong>{{ campaign.title }}</strong> has expired. If you still need to respond, please contact the sender.</p>
+
+    {% elif state == "excluded" %}
+      <h1>No longer asked</h1>
+      <p class="tagline">You've been taken off the list for <strong>{{ campaign.title }}</strong>, so there's nothing to answer.</p>
+
+    {% elif state == "group_done" %}
+      <h1>Already answered</h1>
+      <p class="tagline"><strong>{{ campaign.title }}</strong> has already been answered for your group{% if by %} by {{ by.name }}{% if by.when %} on {{ by.when }}{% endif %}{% endif %}. Nothing more is needed from you.</p>
+
+    {% elif state == "already_responded" %}
+      <h1>Already recorded</h1>
+      <p class="tagline">Your response to <strong>{{ campaign.title }}</strong> is recorded{% if responded_text %} ({{ responded_text }}){% endif %} and can't be changed.</p>
+
+    {% elif state == "received" %}
+      <h1>Thank you</h1>
+      <p class="tagline">Your answer to <strong>{{ campaign.title }}</strong> was {{ "updated" if flash == "updated" else "received" }}.</p>
+      <div class="respond-answers">
+        <h2>What you answered</h2>
+        <dl>{% for label, text in answers %}<dt>{{ label }}</dt><dd>{{ text }}</dd>{% endfor %}</dl>
+      </div>
+      <p class="respond-note">
+        {% if responded_text %}Recorded {{ responded_text }}. {% endif %}
+        {% if can_change %}You can change your answer until the deadline{% if closes_text %} ({{ closes_text }}){% endif %}.
+        {% else %}Answers can't be changed once given.{% endif %}
+      </p>
+      {% if can_change %}<a class="btn btn-secondary btn-block" href="/respond/{{ token }}?edit=1">Change my answer</a>{% endif %}
+
+    {% elif state == "auto" %}
+      {# One-tap answer from an email button. A GET never records anything: this page records the
+         answer from its own script (outreach_respond.js POSTs the hidden form below), so a link
+         scanner that only fetches the page records nothing. With no script, or if the browser
+         looks automated, the visible fallback below is the normal confirm form. #}
+      <script src="/static/js/outreach_respond.js?v={{ asset_version('js/outreach_respond.js') }}"></script>
+      <h1>{{ campaign.title }}</h1>
+      <p id="oa-auto-msg" class="tagline">Recording your answer&hellip;</p>
+      <form id="oa-auto-form" method="post" action="/respond/{{ token }}" hidden>
+        {% for name, vals in quick.items() %}{% for v in vals %}<input type="hidden" name="{{ name }}" value="{{ v }}">{% endfor %}{% endfor %}
+        <input type="hidden" name="_via" value="email_button">
+      </form>
+      <div id="oa-auto-fallback">
+        <p class="respond-who">Responding as <strong>{{ rec.name }}</strong> ({{ rec.email }}).</p>
+        {% include kind_template %}
+      </div>
+
+    {% elif state == "active" %}
+      <h1>{{ campaign.title }}</h1>
+      {% if campaign.intro %}<p class="respond-intro">{{ campaign.intro }}</p>{% endif %}
+      <p class="respond-who">Responding as <strong>{{ rec.name }}</strong> ({{ rec.email }}).{% if closes_text %} Please respond by {{ closes_text }}.{% endif %}</p>
+      {% if rec.status == "responded" %}
+        <div class="banner banner-success">You answered {{ responded_text }}. You can change your answer below{% if closes_text %} until {{ closes_text }}{% endif %}.</div>
+      {% endif %}
+      {% if error_list %}
+        <div class="banner banner-error"><strong>Please check:</strong>
+          <ul>{% for e in error_list %}<li>{{ e }}</li>{% endfor %}</ul>
+        </div>
+      {% endif %}
+      {% include kind_template %}
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

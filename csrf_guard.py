@@ -59,6 +59,9 @@ CSRF token to check in the first place:
   /email-action/{token}     -- the token IN THE PATH is itself the
                                 single-use authorization; no session at all
   /vendor-w9-upload/{token} -- same
+  /respond/{token}          -- 26-156 shared Email Response Engine (polls,
+                                later the SMA letters): the private token in
+                                the path is the authorization, no session
   /internal/*               -- shared-secret X-Internal-Key header,
                                 machine-to-machine, no session
   /auth/*                   -- the pre-login surface itself (POST /auth/
@@ -103,6 +106,7 @@ _FORM_CONTENT_TYPES = ("application/x-www-form-urlencoded", "multipart/form-data
 EXEMPT_PREFIXES = (
     "/email-action/",
     "/vendor-w9-upload/",
+    "/respond/",   # 26-156: token-in-path is the authorization (outreach_public.py)
     "/internal/",
     "/auth/",
     # Machine-to-machine webhooks (e.g. Formstack Documents -> sma_webhook.py):

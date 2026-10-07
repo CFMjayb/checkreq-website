@@ -1,0 +1,45 @@
+{#
+admin_outreach_list.html -- 26-156: this entity's polls (outreach_admin.py). Entity-scoped:
+only polls of the currently selected entity are listed.
+#}
+{% extends "base.html" %}
+{% block title %}Polls — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/outreach_admin.css?v={{ asset_version('css/outreach_admin.css') }}">
+{% endblock %}
+{% block content %}
+{% from "_guide_link.html" import guide_link %}
+<div class="page-shell-wide oa-page">
+  <h1>Polls &amp; Surveys {{ guide_link("polls", "How to use polls") }}</h1>
+  <p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+  <p class="sub">Ask the people who hold a Beacon role at <strong>{{ current_org.code }}</strong> a question by email. Each person gets a private link to answer; you see who has opened it, who has answered, and who has not.</p>
+
+  {% if request.query_params.get('deleted') %}<div class="banner banner-success">Poll deleted.</div>{% endif %}
+
+  <p><a class="btn btn-primary" href="/admin/polls/new">New poll</a></p>
+
+  {% if polls %}
+  <div class="oa-scroll">
+    <table class="oa-table">
+      <thead>
+        <tr><th>Poll</th><th>Status</th><th class="num">Asked</th><th class="num">Responded</th><th>Deadline</th><th>Created</th></tr>
+      </thead>
+      <tbody>
+      {% for p in polls %}
+        <tr>
+          <td><a href="/admin/polls/{{ p.id }}">{{ p.title }}</a>{% if p.test_mode %} <span class="oa-pill oa-pill-test">Test run</span>{% endif %}</td>
+          <td><span class="oa-pill oa-pill-{{ p.status }}">{{ p.status|capitalize }}</span></td>
+          <td class="num">{{ p.n_recipients if p.n_recipients else "—" }}</td>
+          <td class="num">{% if p.n_recipients %}{{ p.n_responded }} ({{ p.rate }}){% else %}—{% endif %}</td>
+          <td>{{ p.deadline_text }}</td>
+          <td>{{ p.created_text }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="form-card"><p>No polls yet for {{ current_org.code }}. Choose <strong>New poll</strong> to ask your first question.</p></div>
+  {% endif %}
+</div>
+{% endblock %}
