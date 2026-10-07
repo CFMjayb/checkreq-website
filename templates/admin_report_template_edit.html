@@ -13,12 +13,14 @@
   </h1>
   {% if tpl %}
   <div class="rt-header-actions">
+    {# data-leaves-page: these two reload or leave the editor, so the page asks first if anything is unsaved. #}
     <form class="rt-plain-form" method="post" action="/admin/report-templates/{{ tpl.id }}/clone"
-          data-confirm="Make an inactive copy of this template to edit?">
+          data-leaves-page data-confirm="Make an inactive copy of this template to edit?">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
       <button type="submit" class="btn btn-secondary btn-sm">Clone</button>
     </form>
     <form class="rt-plain-form" method="post" action="/admin/report-templates/{{ tpl.id }}/toggle-active"
+          data-leaves-page
           {% if tpl.is_active %}data-confirm="Deactivate this template? It stops being run or sent until you activate it again. Nothing is deleted."{% endif %}>
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
       <button type="submit" class="btn {{ 'btn-secondary' if tpl.is_active else 'btn-primary' }} btn-sm">
@@ -48,7 +50,9 @@
 <!-- ── Options ─────────────────────────────────────────────────────────── -->
 <details class="card setup-section" {% if not tpl or qp.get('saved') == 'options' or error %}open{% endif %}>
   <summary><h2>Options</h2></summary>
-  <form class="rt-plain-form rt-options" method="post"
+  {# On an existing template (data-ajax) this saves in place with fetch(): no reload, so the Lines and
+     Recipients grids below keep whatever is unsaved in them. The new-template page is a plain post. #}
+  <form class="rt-plain-form rt-options" method="post" {% if tpl %}data-ajax{% endif %}
         action="{{ '/admin/report-templates/%d/options'|format(tpl.id) if tpl else '/admin/report-templates/new' }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     {% if tpl %}<input type="hidden" name="updated_at" value="{{ tpl.updated_at }}">{% endif %}
@@ -144,6 +148,7 @@
       </fieldset>
     </div>
     <button type="submit" class="btn btn-primary">{{ 'Save Options' if tpl else 'Create Template' }}</button>
+    {% if tpl %}<span class="save-state" data-form-msg role="status" aria-live="polite"></span>{% endif %}
   </form>
 </details>
 
@@ -278,7 +283,7 @@
   <summary><h2>Schedule</h2></summary>
   <p class="setup-hint">On the send day, the report is built for the most recently completed period. Automatic
     scheduled runs are the next phase and aren't switched on yet &mdash; saving a schedule here does not send anything today.</p>
-  <form class="rt-plain-form rt-schedule" method="post" action="/admin/report-templates/{{ tpl.id }}/schedule">
+  <form class="rt-plain-form rt-schedule" method="post" data-ajax action="/admin/report-templates/{{ tpl.id }}/schedule">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <label>Frequency
       <select name="frequency">
@@ -295,7 +300,8 @@
     <label class="rt-inline-check"><input type="checkbox" name="is_active"
       {% if not schedule or schedule.is_active %}checked{% endif %}> Active</label>
     <button type="submit" class="btn btn-primary btn-sm">Save Schedule</button>
-    {% if not schedule %}<span class="sub">Not saved yet &mdash; defaults shown.</span>{% endif %}
+    <span class="save-state" data-form-msg role="status" aria-live="polite"></span>
+    {% if not schedule %}<span class="sub" data-not-saved>Not saved yet &mdash; defaults shown.</span>{% endif %}
   </form>
 </details>
 

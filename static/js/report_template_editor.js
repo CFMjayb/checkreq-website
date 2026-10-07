@@ -3,11 +3,15 @@
 //
 // Two batched-save grids (Lines, Recipients) with dirty tracking, a live
 // "accounts this mask matches" preview, the "Start from chart of accounts"
-// drafter, and the QuickBooks budget picker. Options and Schedule are plain
-// form posts (rt-plain-form) and only get the loading pulse here.
+// drafter, and the QuickBooks budget picker. Options and Schedule save in
+// place with fetch() too (see "In-place saves" at the bottom), so every
+// section saves only itself and nothing on the page ever reloads under
+// another section's unsaved work. (Before 2026-10-07 they were plain form
+// posts that redirected, and one Save Schedule click wiped unsaved lines
+// and recipients.)
 //
 // Nothing is saved until a Save button is clicked; leaving the page with
-// unsaved grid changes asks first.
+// unsaved changes in any section asks first.
 //
 // 2026-09-23: templates have a Report Type (Actual vs Budget / Fund Summary).
 // Options rows tagged data-rtype show only for their type; a Fund Summary
@@ -48,10 +52,12 @@
     banner.innerHTML = html;
   }
 
-  // Plain form posts: pulse after confirm_submit.js's own check has passed.
+  // Plain form posts: pulse after confirm_submit.js's own check has passed. (Options and Schedule on an
+  // existing template carry data-ajax: they save in place below and pulse for themselves.)
   document.addEventListener('submit', function (e) {
     var f = e.target;
     if (!f.classList || !f.classList.contains('rt-plain-form') || e.defaultPrevented) return;
+    if (f.hasAttribute('data-ajax')) return;
     pulse(e.submitter || f.querySelector('button[type="submit"]'));
   });
 
@@ -633,10 +639,128 @@
   });
   document.getElementById('recipSaveBtn').addEventListener('click', function () { recips.save(); });
 
-  // ── Unsaved-changes guard ─────────────────────────────────────────────────
-  window.addEventListener('beforeunload', function (e) {
-    if (lines.dirtyRows().length || recips.dirtyRows().length) { e.preventDefault(); e.returnValue = ''; }
+  // ── In-place saves: Options and Schedule ──────────────────────────────────
+  // Each saves only itself, with fetch(), and the page never reloads -- so unsaved Lines and Recipients
+  // survive it. The result shows right beside the button (the Schedule section sits at the very bottom,
+  // far below the banner at the top, so a banner alone would go unseen).
+  var optForm = document.querySelector('form.rt-options[data-ajax]');
+  var schedForm = document.querySelector('form.rt-schedule[data-ajax]');
+
+  function snap(form) { return form ? new URLSearchParams(new FormData(form)).toString() : ''; }
+  var optBase = snap(optForm), schedBase = snap(schedForm);          // what each form held when last saved
+  function optDirty() { return !!optForm && snap(optForm) !== optBase; }
+  function schedDirty() { return !!schedForm && snap(schedForm) !== schedBase; }
+  function gridChanges() { return lines.dirtyRows().length + recips.dirtyRows().length; }
+  function unsavedCount() { return gridChanges() + (optDirty() ? 1 : 0) + (schedDirty() ? 1 : 0); }
+
+  function formMsg(form, kind, text) {
+    var el = form.querySelector('[data-form-msg]');
+    if (!el) return;
+    el.className = 'save-state' + (kind ? ' ' + kind : '');
+    el.textContent = text || '';
+  }
+  function postForm(form) {
+    var h = window.csrfHeader ? window.csrfHeader() : {};
+    h['Accept'] = 'application/json';
+    h['Content-Type'] = 'application/x-www-form-urlencoded';
+    return fetch(form.getAttribute('action'), { method: 'POST', headers: h, credentials: 'same-origin',
+                                                body: snap(form) })
+      .then(function (r) {
+        return r.json().catch(function () { return null; }).then(function (j) {
+          if (!j) throw new Error("Couldn't save: Beacon sent back something unexpected, usually because your sign-in " +
+                                  'expired. Nothing on this page was changed or lost. Sign in again in another tab, then save again.');
+          if (!r.ok || j.ok !== true) throw new Error(j.error || ('Request failed (HTTP ' + r.status + ').'));
+          return j;
+        });
+      });
+  }
+  function wireInPlaceSave(form, before, onSaved, rebase) {
+    if (!form) return;
+    var btn = form.querySelector('button[type="submit"]');
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();                      // never a page navigation
+      var stop = before ? before() : null;
+      if (stop) { formMsg(form, 'err', stop); return; }
+      formMsg(form, '', 'Saving…');
+      pulse(btn);
+      postForm(form).then(function (j) {
+        onSaved(j);
+        rebase();
+      }).catch(function (err) {
+        formMsg(form, 'err', err.message);
+      }).then(function () { unpulse(btn); });
+    });
+    // Any further edit makes an old "Saved." out of date.
+    ['input', 'change'].forEach(function (t) { form.addEventListener(t, function () { formMsg(form, '', ''); }); });
+  }
+
+  var typeLoaded = DATA.reportType;
+  wireInPlaceSave(optForm,
+    function () {
+      // A different report type rebuilds the Lines columns, which means a reload -- never over unsaved work.
+      if (typeSel && typeSel.value !== typeLoaded && gridChanges()) {
+        return 'Changing the report type rebuilds the Lines columns. Save (or undo) your unsaved Lines and Recipients first, then change it.';
+      }
+      return null;
+    },
+    function (j) {
+      var upd = optForm.querySelector('[name="updated_at"]');          // the stale-edit stamp for the NEXT save
+      if (upd && j.updated_at) upd.value = j.updated_at;
+      if (j.name) {
+        var h1 = document.querySelector('.rt-header h1');
+        if (h1 && h1.firstChild && h1.firstChild.nodeType === 3) h1.firstChild.nodeValue = j.name + ' ';
+        document.title = j.name + ' — Beacon';
+      }
+      if (j.report_type && j.report_type !== typeLoaded) {
+        if (gridChanges()) {                                           // edited while the save was in flight
+          formMsg(optForm, 'ok', 'Saved. The report type changed: save your Lines and Recipients, then reload this page so the Lines columns match.');
+          return;
+        }
+        window.location.replace(window.location.pathname + '?saved=options');
+        return;
+      }
+      var wasFull = !!DATA.fullEntity;
+      DATA.fullEntity = !!j.full_entity;                               // what the Lines section reads
+      DATA.showAccounts = !!j.show_accounts_under_lines;
+      if (wasFull !== DATA.fullEntity) { lastPreview = null; document.getElementById('previewSummary').innerHTML = ''; }
+      if (OPTS) lines.rows.forEach(function (r) {
+        var td = r.el.querySelector('.rt-col-show');
+        if (!td) return;
+        td.classList.toggle('rt-muted', !DATA.showAccounts);
+        if (DATA.showAccounts) td.removeAttribute('title');
+        else td.title = 'Every line shows its total only, because Show each account under its line is off in Options.';
+      });
+      formMsg(optForm, 'ok', 'Options saved.');
+    },
+    function () { optBase = snap(optForm); });
+
+  wireInPlaceSave(schedForm, null,
+    function () {
+      var note = schedForm.querySelector('[data-not-saved]');
+      if (note) note.remove();
+      formMsg(schedForm, 'ok', 'Schedule saved.');
+    },
+    function () { schedBase = snap(schedForm); });
+
+  // ── Unsaved-changes guards ────────────────────────────────────────────────
+  // Clone and Activate/Deactivate (data-leaves-page) really do leave or reload the page. The browser's own
+  // "Leave site?" prompt is not dependable everywhere (some embedded browsers never show it), so ask here too.
+  var leaving = false;
+  document.addEventListener('submit', function (e) {
+    var f = e.target;
+    if (!f || !f.hasAttribute || !f.hasAttribute('data-leaves-page')) return;
+    var n = unsavedCount();
+    if (n && !window.confirm('You have ' + n + ' unsaved change' + (n === 1 ? '' : 's') + ' on this page (Lines, Recipients, Options or Schedule). ' +
+                             'Going on will lose ' + (n === 1 ? 'it' : 'them') + '. Continue anyway?')) {
+      e.preventDefault();
+      e.stopPropagation();                     // and skip that button's own confirmation
+    }
+  }, true);
+  document.addEventListener('submit', function (e) {               // after confirm_submit.js has had its say
+    var f = e.target;
+    if (f && f.hasAttribute && f.hasAttribute('data-leaves-page')) leaving = !e.defaultPrevented;
   });
-  // A plain form post (Options/Schedule/Clone/...) is a deliberate navigation:
-  // warn only if the grids hold unsaved work, via the same beforeunload above.
+  window.addEventListener('beforeunload', function (e) {
+    if (!leaving && unsavedCount()) { e.preventDefault(); e.returnValue = ''; }     // already asked above if we are leaving on purpose
+  });
 })();
