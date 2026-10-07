@@ -29,6 +29,11 @@ tr.rt-inactive { opacity: 0.6; }
 .rt-schedule input[type="number"] { width: 5em; }
 .rt-inline-check { display: inline-flex; align-items: center; gap: 6px; font-size: 0.86rem; }
 
+/* The "Saved." / error line beside the Options and Schedule Save buttons (they save in place, so the
+   page never reloads and a banner at the top would be out of sight for the sections far below it). */
+.rt-options [data-form-msg] { margin-left: var(--space-3); }
+[data-form-msg]:empty { display: none; }
+
 /* Lines grid */
 .rt-col-section { width: 115px; }
 .rt-col-mask    { min-width: 200px; }

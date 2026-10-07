@@ -7,7 +7,10 @@ items 1-3). Screens:
   * GET  /admin/report-templates/new             -- new-template form (Options)
   * GET  /admin/report-templates/{id}/edit       -- the editor: Options, Lines,
                                                     Recipients, Schedule
-  * POST .../{id}/options | schedule             -- plain form posts
+  * POST .../{id}/options | schedule             -- form posts; the editor sends them with
+                                                    fetch() (Accept: application/json) and gets
+                                                    JSON back, so saving one section never
+                                                    reloads the page or touches the others
   * POST .../{id}/lines/save | recipients/save   -- batched JSON grid saves
   * POST .../{id}/preview                        -- which accounts each line
                                                     matches (live QBO chart)
@@ -504,6 +507,24 @@ def edit_template_page(request: Request, template_id: int):
     })
 
 
+def _wants_json(request: Request) -> bool:
+    """True when the editor page saved this section with fetch() (it sends Accept: application/json).
+
+    Options and Schedule used to be plain form posts that always answered with a redirect, which
+    reloaded the whole editor and threw away any unsaved Lines or Recipients (Jay, 2026-10-07: "I just
+    lost all my work in the other sections"). The page now saves each section in place and reads JSON
+    back; a plain form post (the new-template page, or a browser with scripts off) still redirects."""
+    return "application/json" in (request.headers.get("accept") or "").lower()
+
+
+def _save_failed(request: Request, base: str, message: str, status: int = 400):
+    """The same refusal either way: JSON for the in-place save, a redirect banner for a plain post."""
+    if _wants_json(request):
+        return JSONResponse({"error": message}, status_code=status)
+    from urllib.parse import quote_plus
+    return RedirectResponse(base + "?error=" + quote_plus(message), status_code=303)
+
+
 @router.post("/admin/report-templates/{template_id}/options")
 async def save_options(request: Request, template_id: int):
     user, org, err = _require_access(request)
@@ -515,6 +536,12 @@ async def save_options(request: Request, template_id: int):
     form = await request.form()
     base = f"/admin/report-templates/{template_id}/edit"
     if str(form.get("updated_at") or "") != _iso(tpl["updated_at"]):
+        if _wants_json(request):
+            # The page is still open with unsaved work in other sections, so don't tell them to
+            # simply reload -- that is exactly what throws that work away.
+            return _save_failed(request, base,
+                                "Someone else saved these options after you opened the page. Save your Lines "
+                                "and Recipients first, then reload the page and make this change again.", 409)
         return RedirectResponse(base + "?error=Someone+else+saved+these+options+after+you+"
                                 "opened+the+page.+Reload+and+make+your+change+again.", status_code=303)
     vals, verr = _options_from_form(form, org["code"], tpl.get("options") or {})
@@ -526,13 +553,20 @@ async def save_options(request: Request, template_id: int):
     if not verr and _name_taken(org["id"], vals["name"], except_id=template_id):
         verr = f"{org['code']} already has a template named '{vals['name']}'."
     if verr:
-        from urllib.parse import quote_plus
-        return RedirectResponse(base + "?error=" + quote_plus(verr), status_code=303)
+        return _save_failed(request, base, verr)
     sets = ", ".join(f"{k} = %s" for k in vals) + ", updated_by_user_id = %s, updated_at = NOW()"
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(f"UPDATE reports.templates SET {sets} WHERE id = %s AND org_id = %s",
                         list(vals.values()) + [user["id"], template_id, org["id"]])
+    if _wants_json(request):
+        # Hand back what the open page needs to stay in step: the new stale-edit stamp (without it the
+        # very next Options save would be refused), and the few settings other sections read.
+        fresh = _template(template_id, org["id"]) or tpl
+        return JSONResponse({"ok": True, "saved": "options",
+                             "updated_at": _iso(fresh["updated_at"]), "name": fresh["name"],
+                             "report_type": fresh["report_type"], "full_entity": bool(fresh["full_entity"]),
+                             "show_accounts_under_lines": bool(fresh["show_accounts_under_lines"])})
     return RedirectResponse(base + "?saved=options", status_code=303)
 
 
@@ -551,8 +585,7 @@ async def save_schedule(request: Request, template_id: int):
     except ValueError:
         day = 0
     if freq not in _FREQUENCIES or not 1 <= day <= 28:
-        return RedirectResponse(base + "?error=Pick+a+frequency+and+a+send+day+from+1+to+28.",
-                                status_code=303)
+        return _save_failed(request, base, "Pick a frequency and a send day from 1 to 28.")
     active = form.get("is_active") == "on"
     sched = _schedule(template_id)
     with db.connect() as conn:
@@ -569,6 +602,9 @@ async def save_schedule(request: Request, template_id: int):
                            (template_id, frequency, send_day_of_month, is_active)
                        VALUES (%s, %s, %s, %s)""",
                     (template_id, freq, day, active))
+    if _wants_json(request):
+        return JSONResponse({"ok": True, "saved": "schedule", "frequency": freq,
+                             "send_day_of_month": day, "is_active": active})
     return RedirectResponse(base + "?saved=schedule", status_code=303)
 
 
