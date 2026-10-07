@@ -49,13 +49,36 @@ The kind-specific form (the poll's questions) is included as kind_template.
       <h1>Already recorded</h1>
       <p class="tagline">Your response to <strong>{{ campaign.title }}</strong> is recorded{% if responded_text %} ({{ responded_text }}){% endif %} and can't be changed.</p>
 
-    {% elif state == "done" %}
+    {% elif state == "received" %}
       <h1>Thank you</h1>
-      <p class="tagline">Your response to <strong>{{ campaign.title }}</strong> {{ "was updated" if changed else "was recorded" }}.</p>
-      {% if campaign.allow_change %}
-        <p class="respond-note">You can change your answer until the deadline{% if closes_text %} ({{ closes_text }}){% endif %} by opening the link in your email again.</p>
-        <a class="btn btn-secondary btn-block" href="/respond/{{ token }}">Review or change my answer</a>
-      {% endif %}
+      <p class="tagline">Your answer to <strong>{{ campaign.title }}</strong> was {{ "updated" if flash == "updated" else "received" }}.</p>
+      <div class="respond-answers">
+        <h2>What you answered</h2>
+        <dl>{% for label, text in answers %}<dt>{{ label }}</dt><dd>{{ text }}</dd>{% endfor %}</dl>
+      </div>
+      <p class="respond-note">
+        {% if responded_text %}Recorded {{ responded_text }}. {% endif %}
+        {% if can_change %}You can change your answer until the deadline{% if closes_text %} ({{ closes_text }}){% endif %}.
+        {% else %}Answers can't be changed once given.{% endif %}
+      </p>
+      {% if can_change %}<a class="btn btn-secondary btn-block" href="/respond/{{ token }}?edit=1">Change my answer</a>{% endif %}
+
+    {% elif state == "auto" %}
+      {# One-tap answer from an email button. A GET never records anything: this page records the
+         answer from its own script (outreach_respond.js POSTs the hidden form below), so a link
+         scanner that only fetches the page records nothing. With no script, or if the browser
+         looks automated, the visible fallback below is the normal confirm form. #}
+      <script src="/static/js/outreach_respond.js?v={{ asset_version('js/outreach_respond.js') }}"></script>
+      <h1>{{ campaign.title }}</h1>
+      <p id="oa-auto-msg" class="tagline">Recording your answer&hellip;</p>
+      <form id="oa-auto-form" method="post" action="/respond/{{ token }}" hidden>
+        {% for name, vals in quick.items() %}{% for v in vals %}<input type="hidden" name="{{ name }}" value="{{ v }}">{% endfor %}{% endfor %}
+        <input type="hidden" name="_via" value="email_button">
+      </form>
+      <div id="oa-auto-fallback">
+        <p class="respond-who">Responding as <strong>{{ rec.name }}</strong> ({{ rec.email }}).</p>
+        {% include kind_template %}
+      </div>
 
     {% elif state == "active" %}
       <h1>{{ campaign.title }}</h1>

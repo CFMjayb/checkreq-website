@@ -9,6 +9,23 @@
 .respond-who { color: var(--color-text-muted); font-size: 0.9rem; margin: 0 0 var(--space-4) 0; }
 .respond-note { color: var(--color-text-muted); font-size: 0.85rem; margin-top: var(--space-3); }
 
+/* "What you answered" */
+.respond-answers { text-align: left; margin: var(--space-3) 0; padding: var(--space-3);
+  border: 1px solid var(--color-border); border-radius: 8px; background: #faf8f1; }
+.respond-answers h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--color-text-muted); margin: 0 0 var(--space-2) 0; }
+.respond-answers dl { margin: 0; }
+.respond-answers dt { font-weight: 600; margin-top: var(--space-2); }
+.respond-answers dd { margin: 2px 0 0 0; white-space: pre-line; }
+
+/* One-tap email answer (outreach_respond.js adds .oa-js, and .oa-reveal when it must not auto-submit).
+   With no script the confirm form is simply visible and the "Recording..." line is hidden. */
+#oa-auto-msg { display: none; }
+.oa-js #oa-auto-msg { display: block; }
+.oa-js #oa-auto-fallback { display: none; }
+.oa-js.oa-reveal #oa-auto-msg { display: none; }
+.oa-js.oa-reveal #oa-auto-fallback { display: block; }
+
 .poll-form { margin-top: var(--space-3); }
 .poll-q { border: 0; padding: 0; margin: 0 0 var(--space-5) 0; }
 .poll-q legend { font-weight: 600; padding: 0; margin-bottom: var(--space-2); }

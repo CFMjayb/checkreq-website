@@ -106,6 +106,17 @@ class Kind:
     def summary(self, campaign: dict) -> dict:
         return {}
 
+    def quick_answer(self, campaign: dict, recipient: dict, choice: str) -> dict | None:
+        """The form fields ({name: [values]}) that record a ONE-TAP answer for an email-button
+        choice, or None when this campaign has no such thing (e.g. several questions). The public
+        page then records it from its own script, so a link scanner that merely fetches the page
+        records nothing."""
+        return None
+
+    def received_answers(self, campaign: dict, recipient: dict) -> list[tuple[str, str]]:
+        """[(label, text), ...]: what this person answered, shown back to them after they answer."""
+        return []
+
     def answers_by_recipient(self, campaign: dict) -> dict:
         """{recipient_id: [(label, text), ...]} for the admin results table."""
         return {}
@@ -654,6 +665,14 @@ def _state(campaign: dict, rec: dict, flags: dict) -> str:
     return "active"
 
 
+def last_response_at(recipient_id: int):
+    """When this person's CURRENT answer was recorded (their first answer, or their latest change)."""
+    row = db.query_one(
+        "SELECT max(occurred_at) AS at FROM portal.outreach_events "
+        "WHERE recipient_id = %s AND event_type IN ('responded', 'response_changed')", (recipient_id,))
+    return row["at"] if row else None
+
+
 def group_responder(campaign: dict, rec: dict) -> dict | None:
     """any_in_group: another member of this recipient's group who has already responded."""
     if campaign["completion_rule"] != "any_in_group" or not rec.get("group_key"):
@@ -693,8 +712,12 @@ def record_open(token: str, ip: str | None, ua: str | None) -> bool:
     return True
 
 
-def record_response(token: str, form: dict, ip: str | None, ua: str | None) -> dict:
-    """Validate and record a response. Returns {'state': ...}:
+VIAS = ("email_button", "form")   # how a response arrived: a one-tap email button, or the form
+
+
+def record_response(token: str, form: dict, ip: str | None, ua: str | None, via: str | None = None) -> dict:
+    """Validate and record a response (via = how it arrived, kept in the event log so an admin can
+    tell a one-tap email answer from a form submit). Returns {'state': ...}:
        done | error (with errors) | already_responded | group_done | any non-active
        state from _state() | not_found. The recipient row is locked for the whole
        write, so a double POST cannot record twice."""
@@ -729,13 +752,16 @@ def record_response(token: str, form: dict, ip: str | None, ua: str | None) -> d
             if errors:
                 return {"state": "error", "errors": errors, "campaign": campaign, "recipient": rec}
             detail = kind.save_response(cur, campaign, rec, parsed) or {}
+            if via in VIAS:
+                detail = {**detail, "via": via}
             if not (already and detail.get("unchanged")):
                 cur.execute(
                     "UPDATE portal.outreach_recipients SET status = 'responded', "
                     "responded_at = COALESCE(responded_at, NOW()) WHERE id = %s", (rec["id"],))
                 _event(cur, campaign["id"], rec["id"], "response_changed" if already else "responded",
                        ip=ip, ua=ua, detail=detail)
-            return {"state": "done", "changed": already, "campaign": campaign, "recipient": rec}
+            return {"state": "done", "changed": already and not detail.get("unchanged"),
+                    "campaign": campaign, "recipient": rec}
 
 
 # ---------------------------------------------------------------------------

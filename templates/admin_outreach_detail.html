@@ -94,7 +94,7 @@ the table filter; everything on this page also works without it except sending a
       </div>
       {% endfor %}
       {% if questions|length == 1 and questions[0].options and questions[0].options|length <= 5 %}
-      <p class="hint">With a single question like this, people can answer straight from the email: each choice is a button, and they confirm on the next page.</p>
+      <p class="hint">With a single question like this, people can answer straight from the email: each choice is a button that records their answer right away, then shows them what was recorded and lets them change it.</p>
       {% else %}
       <p class="hint">The email has one <strong>Respond now</strong> button that opens the questions.</p>
       {% endif %}
@@ -234,7 +234,7 @@ the table filter; everything on this page also works without it except sending a
   <section class="form-card">
     <details><summary><strong>Activity log</strong> (latest {{ events|length }})</summary>
       <table class="oa-table"><thead><tr><th>When</th><th>What</th><th>Who</th></tr></thead><tbody>
-      {% for e in events %}<tr><td>{{ e.when }}</td><td>{{ ev_labels.get(e.type, e.type) }}</td><td>{{ e.who }}{% if e.email %} <span class="hint">{{ e.email }}</span>{% endif %}</td></tr>{% endfor %}
+      {% for e in events %}<tr><td>{{ e.when }}</td><td>{{ ev_labels.get(e.type, e.type) }}{% if e.detail and e.detail.get("via") %} <span class="hint">({{ "email button" if e.detail.get("via") == "email_button" else "form" }})</span>{% endif %}</td><td>{{ e.who }}{% if e.email %} <span class="hint">{{ e.email }}</span>{% endif %}</td></tr>{% endfor %}
       </tbody></table>
     </details>
   </section>

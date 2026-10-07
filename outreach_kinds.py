@@ -355,8 +355,8 @@ class PollKind(Kind):
             choices = QUESTION_TYPES[q["qtype"]].email_choices(q)
             if 2 <= len(choices) <= MAX_EMAIL_BUTTONS:
                 body = (intro_html + f'<p style="margin:0 0 8px 0;font-weight:bold;">{esc(q["prompt"])}</p>'
-                        '<p style="margin:0 0 8px 0;">Tap your answer. You will be asked to confirm it on the next page.</p>')
-                text = (intro_text + "\n\n" if intro_text else "") + q["prompt"] + "\nChoose an answer (you will confirm on the next page):"
+                        '<p style="margin:0 0 8px 0;">Tap your answer. It is recorded right away, and you can change it afterwards.</p>')
+                text = (intro_text + "\n\n" if intro_text else "") + q["prompt"] + "\nChoose an answer (it is recorded right away, and you can change it afterwards):"
                 return {"headline": campaign["title"], "body_html": body, "body_text": text,
                         "buttons": [{"label": lab, "url": urls["choice"](key), "primary": True}
                                     for key, lab in choices]}
@@ -426,6 +426,23 @@ class PollKind(Kind):
             qt = QUESTION_TYPES[q["qtype"]]
             out.append({"q": q, "type_label": qt.label, "tally": qt.tally(q, by_q.get(q["id"], []))})
         return {"questions": out}
+
+    def quick_answer(self, campaign, recipient, choice):
+        """A one-question poll whose email offers buttons: the button's choice IS the answer."""
+        qs = self.questions(campaign["id"])
+        if len(qs) != 1:
+            return None
+        q = qs[0]
+        choices = QUESTION_TYPES[q["qtype"]].email_choices(q)
+        if not (2 <= len(choices) <= MAX_EMAIL_BUTTONS) or choice not in {k for k, _ in choices}:
+            return None
+        return {f"q{q['id']}": [choice]}
+
+    def received_answers(self, campaign, recipient):
+        qs = self.questions(campaign["id"])
+        got = {r["question_id"]: r["answer"] for r in db.query(
+            "SELECT question_id, answer FROM portal.poll_answers WHERE recipient_id = %s", (recipient["id"],))}
+        return [(q["prompt"], QUESTION_TYPES[q["qtype"]].describe(q, got.get(q["id"])) or "(no answer)") for q in qs]
 
     def answers_by_recipient(self, campaign):
         qs = self.questions(campaign["id"])

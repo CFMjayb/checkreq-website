@@ -12,6 +12,10 @@ which is how a custom question type brings its own input (outreach_kinds.Questio
       {% endwith %}
     </fieldset>
   {% endfor %}
-  <button type="submit" class="btn btn-primary btn-block">{{ "Confirm my response" if rec.status != "responded" else "Update my response" }}</button>
-  <p class="respond-note">Nothing is recorded until you press the button above.</p>
+  <button type="submit" class="btn btn-primary btn-block">{{ "Send my answer" if rec.status != "responded" else "Update my answer" }}</button>
+  {% if rec.status == "responded" and campaign.allow_change %}
+    <p class="respond-note"><a href="/respond/{{ token }}">Keep my current answer</a></p>
+  {% else %}
+    <p class="respond-note">Your answer is sent when you press the button above.</p>
+  {% endif %}
 </form>
