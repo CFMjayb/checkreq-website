@@ -11,6 +11,7 @@
 let vendorDisplayText = '—';
 let chainDebounceTimer = null;
 let vendorTomSelect = null;
+let lastVendorQuery = '';   // what was last typed in the vendor picker -- survives the picker clearing on blur, prefills "Check QuickBooks"
 // 2026-09-22 (Jay): "checking property location on a property-related
 // invoice" -- Research Coding needs whatever specific property/service
 // address the document itself named, set either by a live extraction on
@@ -248,8 +249,20 @@ function initVendorSelect() {
         .then(data => callback(data))
         .catch(() => callback());
     },
+    // 2026-10-08 (Jay): a vendor added in QuickBooks since the last sync is not in this list yet. When a search
+    // finds nothing, point at "Check QuickBooks" (wired by delegation in initQboVendorLookup) instead of leaving
+    // "Add a new vendor", which would duplicate a vendor that already exists, as the only way forward.
+    onType: function (str) { lastVendorQuery = str || ''; },
+    render: {
+      no_results: function (data, escape) {
+        // Jay's wording (2026-10-08): "I don't see that -- did you add it recently?"
+        return '<div class="no-results">I don\'t see &ldquo;' + escape(data.input) +
+          '&rdquo; &mdash; did you add it to QuickBooks recently? <a href="#" class="qbo-check-link">Check QuickBooks</a></div>';
+      },
+    },
     onItemAdd: function (value, item) {
       vendorDisplayText = item.textContent.trim();
+      lastVendorQuery = '';
       setVendorValidationMessage('');
       setVendorConfirmedMessage(true);
       refreshArtBanner(value);
@@ -262,6 +275,135 @@ function initVendorSelect() {
       refreshPreview();
     },
   });
+}
+
+// ---- "Check QuickBooks": find a vendor that exists in QBO but has not synced into Beacon yet ----
+// GET /api/vendors/{org}/qbo-search lists live-QBO matches (name + city only); picking one calls
+// POST /api/vendors/{org}/qbo-import, which saves THAT vendor into Beacon's vendor table server-side (the browser
+// only says which QBO id it picked) and returns its Beacon id, which is then selected like any picker choice.
+// (vendor_sync_admin.py has the server half and the full "why".)
+let qboSearchSeq = 0;
+
+function qboVendorMsg(text, isError) {
+  return `<div class="qbo-vendor-msg${isError ? ' error' : ''}">${escapeHtml(text)}</div>`;
+}
+
+function openQboVendorPanel(prefill, autoSearch) {
+  const input = document.getElementById('qboVendorQuery');
+  document.getElementById('qboVendorPanel').style.display = '';
+  document.getElementById('qboVendorResults').innerHTML = '';
+  if (prefill) input.value = prefill;
+  if (autoSearch && input.value.trim().length >= 2) searchQboVendors();
+  else input.focus();
+}
+
+function closeQboVendorPanel() {
+  document.getElementById('qboVendorPanel').style.display = 'none';
+  document.getElementById('qboVendorResults').innerHTML = '';
+}
+
+async function searchQboVendors() {
+  const q = document.getElementById('qboVendorQuery').value.trim();
+  const out = document.getElementById('qboVendorResults');
+  const btn = document.getElementById('qboVendorSearchBtn');
+  if (q.replace(/[^A-Za-z0-9]/g, '').length < 2) {
+    out.innerHTML = qboVendorMsg("Type at least 2 letters of the vendor's name.", true);
+    return;
+  }
+  const seq = ++qboSearchSeq;           // a slower, older search must never overwrite a newer one's results
+  btn.disabled = true;
+  out.innerHTML = qboVendorMsg('Searching QuickBooks... this can take a few seconds.', false);
+  try {
+    const r = await fetch(`/api/vendors/${CURRENT_ORG_ID}/qbo-search?q=${encodeURIComponent(q)}`);
+    const data = await r.json().catch(() => ({}));
+    if (seq !== qboSearchSeq) return;
+    if (!r.ok) { out.innerHTML = qboVendorMsg(data.error || 'The QuickBooks search failed.', true); return; }
+    renderQboVendorResults(data);
+  } catch (e) {
+    if (seq === qboSearchSeq) out.innerHTML = qboVendorMsg("Couldn't reach QuickBooks. Try again in a minute.", true);
+  } finally {
+    if (seq === qboSearchSeq) btn.disabled = false;
+  }
+}
+
+function renderQboVendorResults(data) {
+  const out = document.getElementById('qboVendorResults');
+  const matches = data.matches || [];
+  if (!matches.length) {
+    out.innerHTML = qboVendorMsg(`No vendor matching "${data.query}" in QuickBooks either. If it is a brand-new vendor, use "Add a new one".`, false);
+    return;
+  }
+  let html = qboVendorMsg(matches.length < data.total
+    ? `Showing the first ${matches.length} of ${data.total} matches -- type more of the name to narrow it.`
+    : 'Pick the vendor:', false);
+  matches.forEach(m => {
+    html += `<div class="qbo-vendor-row"><button type="button" class="btn btn-secondary btn-sm qbo-vendor-pick"` +
+      ` data-qbo-id="${escapeHtml(String(m.qbo_id))}" data-local-id="${m.local_id == null ? '' : escapeHtml(String(m.local_id))}"` +
+      ` data-name="${escapeHtml(m.name)}">${escapeHtml(m.name)}</button>` +
+      (m.detail ? ` <span class="sub">${escapeHtml(m.detail)}</span>` : '') + '</div>';
+  });
+  out.innerHTML = html;
+}
+
+async function pickQboVendor(btn) {
+  const out = document.getElementById('qboVendorResults');
+  let name = btn.dataset.name;
+  let localId = btn.dataset.localId;      // already in Beacon: nothing to save, just select it
+  btn.disabled = true;
+  if (!localId) {
+    try {
+      const r = await fetch(`/api/vendors/${CURRENT_ORG_ID}/qbo-import`, {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, window.csrfHeader()),
+        body: JSON.stringify({ qbo_id: btn.dataset.qboId }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        out.insertAdjacentHTML('afterbegin', qboVendorMsg(d.error || "Couldn't bring that vendor in. Try again.", true));
+        btn.disabled = false;
+        return;
+      }
+      localId = String(d.id);
+      name = d.display_name || name;
+    } catch (e) {
+      out.insertAdjacentHTML('afterbegin', qboVendorMsg("Couldn't reach Beacon. Try again.", true));
+      btn.disabled = false;
+      return;
+    }
+  }
+  if (document.getElementById('usingNewVendor').value === '1') showNewVendorPanel(false);
+  vendorTomSelect.addOption({ id: String(localId), display_name: name });
+  vendorTomSelect.addItem(String(localId));     // onItemAdd shows "Confirmed and active" and refreshes the preview
+  closeQboVendorPanel();
+}
+
+function initQboVendorLookup() {
+  document.getElementById('checkQboVendorLink').addEventListener('click', (e) => {
+    e.preventDefault();
+    openQboVendorPanel(lastVendorQuery, true);
+  });
+  document.getElementById('closeQboVendorLink').addEventListener('click', (e) => { e.preventDefault(); closeQboVendorPanel(); });
+  document.getElementById('qboVendorSearchBtn').addEventListener('click', searchQboVendors);
+  document.getElementById('qboVendorQuery').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); searchQboVendors(); }     // never submit the request form from this box
+  });
+  document.getElementById('qboVendorResults').addEventListener('click', (e) => {
+    const btn = e.target.closest('.qbo-vendor-pick');
+    if (btn) pickQboVendor(btn);
+  });
+  // The "Check QuickBooks" link inside the picker's own "no match" line. Capture phase: the picker closes on
+  // blur and handles mouse events on its dropdown first, so a plain click handler would never see this.
+  document.addEventListener('mousedown', (e) => {
+    const link = e.target.closest && e.target.closest('.qbo-check-link');
+    if (!link) return;
+    e.preventDefault();
+    const typed = lastVendorQuery;
+    vendorTomSelect.close();
+    openQboVendorPanel(typed, true);
+  }, true);
+  document.addEventListener('click', (e) => {
+    if (e.target.closest && e.target.closest('.qbo-check-link')) e.preventDefault();
+  }, true);
 }
 
 // ART/Monkey-See-Monkey-Do status (Invoice Intake, Tier 3, 2026-08-02) --
@@ -1366,6 +1508,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('addNewVendorLink').addEventListener('click', (e) => { e.preventDefault(); showNewVendorPanel(true); });
   document.getElementById('cancelNewVendorLink').addEventListener('click', (e) => { e.preventDefault(); showNewVendorPanel(false); });
+  if (document.getElementById('checkQboVendorLink')) initQboVendorLookup();   // 2026-10-08: "Check QuickBooks" vendor lookup
   document.querySelectorAll('input[name="new_vendor_entity_type"]').forEach(r => r.addEventListener('change', () => {
     updateNewVendorEntityFieldVisibility();
     refreshPreview();

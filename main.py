@@ -9210,6 +9210,7 @@ vendor_sync_admin.register(
     current_user=_current_user,
     current_org=_current_org,
     get_internal_key=_get_internal_key,
+    user_has_org_access=_user_has_org_access,     # 2026-10-08: the form's "Check QuickBooks" vendor lookup
 )
 
 # RBAC (2026-08-01, Role-Based Access Control Plan.md §9/§6). Same
