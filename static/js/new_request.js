@@ -378,10 +378,9 @@ async function pickQboVendor(btn) {
 }
 
 function initQboVendorLookup() {
-  document.getElementById('checkQboVendorLink').addEventListener('click', (e) => {
-    e.preventDefault();
-    openQboVendorPanel(lastVendorQuery, true);
-  });
+  // The ONLY way in is the "Check QuickBooks" link inside the picker's own "I don't see that" line (below).
+  // There is deliberately no standing link on the form (Jay, 2026-10-08: nobody would understand why to check
+  // QuickBooks instead of adding the vendor); the panel opens only after a search found nothing.
   document.getElementById('closeQboVendorLink').addEventListener('click', (e) => { e.preventDefault(); closeQboVendorPanel(); });
   document.getElementById('qboVendorSearchBtn').addEventListener('click', searchQboVendors);
   document.getElementById('qboVendorQuery').addEventListener('keydown', (e) => {
@@ -1508,7 +1507,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('addNewVendorLink').addEventListener('click', (e) => { e.preventDefault(); showNewVendorPanel(true); });
   document.getElementById('cancelNewVendorLink').addEventListener('click', (e) => { e.preventDefault(); showNewVendorPanel(false); });
-  if (document.getElementById('checkQboVendorLink')) initQboVendorLookup();   // 2026-10-08: "Check QuickBooks" vendor lookup
+  if (document.getElementById('qboVendorPanel')) initQboVendorLookup();   // 2026-10-08: "Check QuickBooks" vendor lookup
   document.querySelectorAll('input[name="new_vendor_entity_type"]').forEach(r => r.addEventListener('change', () => {
     updateNewVendorEntityFieldVisibility();
     refreshPreview();
