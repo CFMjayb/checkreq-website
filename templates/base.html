@@ -234,6 +234,12 @@
           <a href="/admin/cornerstone-mode" class="user-menu-item">Cornerstone Mode</a>
           {% endif %}
           {% endif %}
+          {# 26-156 My Polls: only for people who have been sent a poll, with how many still wait for an
+             answer. my_polls_nav (outreach_mine.py) is cached per person and never raises; `is defined`
+             keeps this template safe wherever that module is not registered. #}
+          {% if my_polls_nav is defined %}{% set _mp = my_polls_nav(user) %}{% if _mp.total %}
+          <a href="/my-polls" class="user-menu-item">My Polls{% if _mp.waiting and not impersonating %} <span style="display:inline-block;background:var(--color-danger);color:#fff;border-radius:999px;font-size:0.7rem;font-weight:700;line-height:1;padding:2px 7px;margin-left:4px;">{{ _mp.waiting }}</span>{% endif %}</a>
+          {% endif %}{% endif %}
           <a href="/account/profile" class="user-menu-item">Profile</a>
           <a href="/account/password" class="user-menu-item">Change Password</a>
           {# M8 (Security Assessment 2026-09-19): was <a href="/logout">, a
