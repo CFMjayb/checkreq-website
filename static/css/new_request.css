@@ -363,6 +363,15 @@
 .new-vendor-panel .field { margin-bottom: var(--space-2); }
 .field-hint { font-size: 0.78rem; color: var(--color-text-muted); margin-top: var(--space-2); }
 
+/* "Check QuickBooks" vendor lookup (2026-10-08) -- reuses .new-vendor-panel's box; only the inner bits are new */
+.qbo-vendor-search { display: flex; gap: var(--space-2); align-items: center; }
+.qbo-vendor-search input { flex: 1; min-width: 0; }
+.qbo-vendor-results { margin-top: var(--space-2); max-height: 180px; overflow-y: auto; }
+.qbo-vendor-msg { font-size: 0.8rem; color: var(--color-text-muted); }
+.qbo-vendor-msg.error { color: var(--color-danger); }
+.qbo-vendor-row { display: flex; gap: var(--space-2); align-items: baseline; margin-bottom: 4px; }
+.qbo-vendor-row .sub { font-size: 0.75rem; color: var(--color-text-muted); }
+
 /* Tom Select theme tweaks to match the design system */
 .ts-control {
   border-color: var(--color-border) !important;

@@ -104,7 +104,23 @@
         <span id="vendorConfirmedInline" class="vendor-confirmed-inline" style="display:none;">&#10003; Confirmed and active</span>
       </label>
       <select name="vendor_id" id="vendorSelect" placeholder="Search vendors..."></select>
+      {# 2026-10-08 (Jay): a vendor added in QuickBooks since the last sync is not in the picker yet. Check QBO
+         live before "Add a new one", which would create a duplicate of a vendor that already exists. #}
+      <a href="#" id="checkQboVendorLink" class="add-vendor-link">Not in the list? Check QuickBooks.</a>
       <a href="#" id="addNewVendorLink" class="add-vendor-link">Can't find this vendor? Add a new one.</a>
+    </div>
+
+    <div class="new-vendor-panel qbo-vendor-panel" id="qboVendorPanel" style="display:none;">
+      <div class="new-vendor-header">
+        <strong>Check QuickBooks</strong>
+        <a href="#" id="closeQboVendorLink">Close</a>
+      </div>
+      <div class="qbo-vendor-search">
+        {# No name= on purpose: this box is never submitted with the request. #}
+        <input type="text" id="qboVendorQuery" maxlength="100" autocomplete="off" placeholder="Part of the vendor's name">
+        <button type="button" class="btn btn-secondary btn-sm" id="qboVendorSearchBtn">Search QuickBooks</button>
+      </div>
+      <div class="qbo-vendor-results" id="qboVendorResults" aria-live="polite"></div>
     </div>
 
     <input type="hidden" name="using_new_vendor" id="usingNewVendor" value="0">
