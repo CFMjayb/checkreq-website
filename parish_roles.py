@@ -35,6 +35,16 @@ import rbac
 # form), the same "baseline now, more later" shape as the entity side.
 PARISH_BASE_ROLE = "parish_member"
 
+# Roles that always come WITH another parish role (Jay, 2026-10-07: "The
+# Treasurer will have the parish_finance role as well"). grant_parish_role()
+# grants each listed companion right after the role it was asked for -- the
+# parish-side mirror of rbac.grant_role also granting entity_member. They are
+# two ordinary, separate grants: Parish Finance access comes from the real
+# parish_finance row, and revoking Treasurer later does not revoke it.
+ROLE_ALSO_GRANTS: dict[str, tuple[str, ...]] = {
+    "parish_treasurer": ("parish_finance",),
+}
+
 
 def get_parish_org_id(parish_id: int) -> int | None:
     """The diocese (checkreq.organizations id) that owns this parish --
@@ -350,16 +360,20 @@ def grant_parish_role(user_id: int, parish_id: int, role_key: str,
         "WHERE user_id = %s AND parish_id = %s AND role_key = %s AND revoked_at IS NULL",
         (user_id, parish_id, role_key),
     )
-    if existing:
-        return
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO portal.parish_user_roles "
-                "(user_id, parish_id, role_key, granted_by_user_id, note) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (user_id, parish_id, role_key, granted_by_user_id, note),
-            )
+    if not existing:
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO portal.parish_user_roles "
+                    "(user_id, parish_id, role_key, granted_by_user_id, note) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (user_id, parish_id, role_key, granted_by_user_id, note),
+                )
+    # Companion roles (ROLE_ALSO_GRANTS) are ensured even when the asked-for
+    # role was already held, so re-granting Treasurer repairs a missing
+    # Parish Finance grant. Each is itself idempotent.
+    for companion in ROLE_ALSO_GRANTS.get(role_key, ()):
+        grant_parish_role(user_id, parish_id, companion, granted_by_user_id, note)
 
 
 class LastParishAdminError(Exception):
