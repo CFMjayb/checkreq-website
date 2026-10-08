@@ -47,7 +47,7 @@
             {% if t.description %}<div class="sub">{{ t.description }}</div>{% endif %}
             <div class="sub">
               Review {{ 'on' if t.requires_review else 'off (sends automatically)' }}
-              {% if t.report_type == 'bva' %}&middot; Budget: {{ t.budget_name or 'auto (the one active QBO budget for the year)' }}{% endif %}
+              {% if t.report_type == 'bva' %}&middot; Budget: {% if t.no_budget %}none (actuals only){% else %}{{ t.budget_name or 'auto (the one active QBO budget for the year)' }}{% endif %}{% endif %}
             </div>
           </td>
           <td>{{ report_types.get(t.report_type, t.report_type) }}</td>

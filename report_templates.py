@@ -107,7 +107,9 @@ def _month_end(ym: str) -> str | None:
 def _templates_for_org(org_id: int) -> list[dict]:
     return db.query(
         """SELECT t.id, t.name, t.description, t.report_type, t.is_active, t.requires_review,
-                  t.budget_name, t.full_entity, u.email AS reviewer_email,
+                  t.budget_name, t.full_entity,
+                  COALESCE((t.options ->> 'no_budget') = 'true', FALSE) AS no_budget,
+                  u.email AS reviewer_email,
                   u.display_name AS reviewer_name,
                   (SELECT string_agg(COALESCE(l.section, l.fund_group, 'Fund') || ': ' ||
                                      l.line_label || ' (' || l.account_mask || ')',

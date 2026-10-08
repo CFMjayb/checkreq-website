@@ -102,6 +102,7 @@
         <label for="budget_name">QuickBooks budget</label>
         <select id="budget_name" name="budget_name" data-current="{{ form.budget_name or '' }}">
           <option value="">Auto-pick (the one active budget for the year)</option>
+          <option value="__none__" {% if fopts.get('no_budget') %}selected{% endif %}>No budget comparison (actuals only)</option>
           {% if form.budget_name %}<option value="{{ form.budget_name }}" selected>{{ form.budget_name }}</option>{% endif %}
         </select>
         <div class="hint" id="budgetHint">Loading budget names from QuickBooks&hellip;</div>
