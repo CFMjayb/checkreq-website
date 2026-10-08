@@ -97,6 +97,10 @@ _TYPE_OPTIONS = {
 # "Show whole dollars" (2026-10-01): the engine shows Page 1 / By Month / Fund Summary figures
 # without cents; Transaction Detail keeps them. Needs no migration (options is already JSONB).
 _COMMON_OPTIONS = {"opt_whole_dollars": ("whole_dollars", False)}
+# "No budget comparison" (Jay, 2026-10-07): the QuickBooks budget picker's special entry. It is not a
+# budget name: it is stored as options.no_budget = true (with budget_name left empty), and the report
+# then shows year-to-date actuals only and never reads QuickBooks' budget.
+_NO_BUDGET = "__none__"
 _ORG_CODE_TO_QBO_COMPANY = {"DME": "dmecdf"}
 
 # Chart-of-accounts cache per org code: (fetched_at, data). Ten minutes is short
@@ -330,10 +334,12 @@ def _options_from_form(form, org_code: str, existing_options: dict | None = None
         return None, "Template name is required."
     if len(name) > 120:
         return None, "Template name is too long (120 characters at most)."
+    budget_choice = str(form.get("budget_name") or "").strip()
+    no_budget = budget_choice == _NO_BUDGET
     vals = {
         "name": name,
         "description": str(form.get("description") or "").strip() or None,
-        "budget_name": str(form.get("budget_name") or "").strip() or None,
+        "budget_name": None if no_budget else (budget_choice or None),
     }
     for k in _BOOL_OPTIONS:
         vals[k] = form.get(k) == "on"
@@ -363,6 +369,10 @@ def _options_from_form(form, org_code: str, existing_options: dict | None = None
         opts[key] = form.get(field) == "on"
     for field, (key, _default) in _COMMON_OPTIONS.items():
         opts[key] = form.get(field) == "on"
+    if rtype == "bva":                               # a Fund Summary has no budget to compare to
+        opts["no_budget"] = no_budget
+    else:
+        opts.pop("no_budget", None)
     vals["options"] = json.dumps(opts)
     return vals, None
 
@@ -453,6 +463,9 @@ async def new_template_create(request: Request):
         fdict["options"] = {key: form.get(field) == "on"
                             for field, (key, _d) in {**_TYPE_OPTIONS.get(fdict.get("report_type"), {}),
                                                      **_COMMON_OPTIONS}.items()}
+        if fdict.get("budget_name") == _NO_BUDGET:        # keep the choice on the redisplayed form
+            fdict["budget_name"] = ""
+            fdict["options"]["no_budget"] = True
         return _render(request, "admin_report_template_edit.html", user, {
             "tpl": None, "form": fdict, "reviewers": _reviewer_choices(org["id"], None),
             "report_types": REPORT_TYPES, "type_locked": False,

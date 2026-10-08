@@ -75,7 +75,19 @@
   // ── Budget picker (Options) ───────────────────────────────────────────────
   var budgetSel = document.getElementById('budget_name');
   var budgetHint = document.getElementById('budgetHint');
+  // "No budget comparison" is a choice in this same list (value __none__): the report shows year-to-date
+  // actuals only, and QuickBooks' budget is never read. Its explanation replaces the budget-count hint.
+  var NO_BUDGET = '__none__';
+  var budgetHintLoaded = budgetHint ? budgetHint.textContent : '';
+  function showBudgetHint() {
+    if (!budgetHint) return;
+    budgetHint.textContent = budgetSel.value === NO_BUDGET
+      ? 'No budget comparison: the report shows year-to-date actuals only, with no budget, variance or annual budget columns. QuickBooks’ budget is not read.'
+      : budgetHintLoaded;
+  }
   if (budgetSel) {
+    budgetSel.addEventListener('change', showBudgetHint);
+    showBudgetHint();
     fetch('/admin/report-templates/api/qbo-reference', { credentials: 'same-origin' })
       .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status); return j; }); })
       .then(function (j) {
@@ -90,12 +102,14 @@
           if (b.name === current) o.selected = true;
           budgetSel.appendChild(o);
         });
-        budgetHint.textContent = (j.budgets || []).length
+        budgetHintLoaded = (j.budgets || []).length
           ? 'Budgets found in QuickBooks: ' + j.budgets.length + '. Leave on Auto-pick unless more than one is active for the year.'
-          : 'No Profit & Loss budgets found in QuickBooks for this entity -- budget columns will be blank.';
+          : 'No Profit & Loss budgets found in QuickBooks for this entity -- budget columns will be blank. (Choose No budget comparison to drop them.)';
+        showBudgetHint();
       })
       .catch(function (err) {
-        budgetHint.textContent = "Couldn't load budget names from QuickBooks (" + err.message + '). You can still save; the current choice is kept.';
+        budgetHintLoaded = "Couldn't load budget names from QuickBooks (" + err.message + '). You can still save; the current choice is kept.';
+        showBudgetHint();
       });
   }
 
