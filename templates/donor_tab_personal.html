@@ -1,0 +1,205 @@
+{#
+donor_tab_personal.html -- the Personal tab. Included by donor_person.html (shares its context).
+
+ONE form, ONE set of fields. The screen is read as compact boxes; Edit (in the tab bar, top right) turns those same boxes into
+editable controls in place (donor_person.js flips readonly/disabled, nothing is copied or moved), and Save changes sends
+everything to POST /people/<id>/personal (donor_personal.personal_save), which applies it in one transaction. Cancel puts every
+box back as it was. Operations that are not a field (move to another household, join one, link a spouse) are separate small
+forms under the main one, shown only while editing.
+#}
+{% from "donor_macros.html" import csrf, picker, fld, sel, ro, chk with context %}
+{% set can_edit = ctx.can("people.edit") and not g.archived %}
+{% set is_org = p.record_type == "organization" %}
+{% set minor_locked = g.redacted %}
+{% set hv = hh if hh else {} %}
+
+<form id="dm-personal" method="post" action="/people/{{ pid }}/personal" class="dm-pf dm-ro"{% if can_edit %} data-editable{% endif %}>
+  {{ csrf() }}
+
+  <section class="dm-sec">
+    <h3>General</h3>
+    <div class="dm-fg">
+      {% if is_org %}
+        {{ fld("Organization name", "org_name", p.org_name, "dm-c6") }}
+      {% else %}
+        {{ fld("Title", "title", p.title, "dm-c1") }}
+        {{ fld("First name", "first_name", p.first_name, "dm-c3") }}
+        {{ fld("Middle name", "middle_name", p.middle_name, "dm-c3") }}
+        {{ fld("Suffix", "suffix", p.suffix, "dm-c1") }}
+        {{ fld("Last name", "last_name", p.last_name, "dm-c4") }}
+        {{ fld("Goes by", "goes_by", p.goes_by, "dm-c3") }}
+        {{ fld("Alt name", "alt_name", p.alt_name, "dm-c3") }}
+        {{ fld("Former name", "former_name", p.former_name, "dm-c3") }}
+        {{ sel("Gender", "gender", p.gender, ["female", "male", "nonbinary", "unknown"], "dm-c3") }}
+        {{ sel("Marital status", "marital_status", p.marital_status, ["single", "married", "widowed", "divorced", "separated", "unknown"], "dm-c3") }}
+        {{ fld("Birth date" ~ (" (age " ~ g.age ~ ")" if g.age is not none else ""), "birth_date", d(p.birth_date), "dm-c3",
+               "Hidden (under 18)" if minor_locked else "MM/DD/YYYY", minor_locked) }}
+        {{ fld("Wedding date", "wedding_date", d(p.wedding_date), "dm-c3", "Hidden (under 18)" if minor_locked else "MM/DD/YYYY", minor_locked) }}
+        {{ fld("Deceased date", "deceased_date", d(p.deceased_date), "dm-c3", "MM/DD/YYYY") }}
+        {{ ro("Spouse", (g.spouse.name if g.spouse.visible else "Not at this parish") if g.spouse else "", "dm-c3") }}
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="dm-sec">
+    <h3>Communication</h3>
+    {% if g.redacted %}
+      <p class="dm-muted dm-small">Contact details for people under 18 are visible only to clergy, membership editors, and parish admins.</p>
+    {% else %}
+    <div class="dm-fg">
+      {% for ct in g.contacts %}
+      <div class="dm-f {{ 'dm-c6' if ct.kind == 'email' else 'dm-c4' }}">
+        <span>{% if ct.kind == 'email' %}Email{% else %}{{ label(ct.subtype) }} phone{% endif %}{% if ct.is_preferred and (g.contacts|selectattr('kind', 'equalto', ct.kind)|list|length > 1) %} <em class="dm-pref">preferred</em>{% endif %}</span>
+        <input type="hidden" name="contact_ids" value="{{ ct.id }}">
+        <input type="text" name="c_{{ ct.id }}_value" value="{{ ct.value }}" readonly data-ed>
+        <span class="dm-edit-only dm-mini">
+          {% if ct.kind == 'phone' %}<select name="c_{{ ct.id }}_subtype" aria-label="Phone kind" disabled data-ed>{% for v in ["cell", "home", "work", "other"] %}<option value="{{ v }}" {{ 'selected' if ct.subtype == v }}>{{ label(v) }}</option>{% endfor %}</select>{% endif %}
+          <label><input type="radio" name="preferred_{{ ct.kind }}" value="{{ ct.id }}" {{ 'checked' if ct.is_preferred }} disabled data-ed> preferred</label>
+          <label><input type="checkbox" name="c_{{ ct.id }}_remove" value="1" disabled data-ed> remove</label>
+        </span>
+      </div>
+      {% endfor %}
+      {% if not g.contacts %}<p class="dm-muted dm-small dm-view-only dm-c12">No email or phone recorded.</p>{% endif %}
+    </div>
+    <div class="dm-fg dm-newcontacts dm-edit-only">
+      <div class="dm-newrow">
+        {{ sel("Add", "new_kind", "email", ["email", "phone"], "dm-c2", None) }}
+        {{ fld("Email or phone number", "new_value", "", "dm-c5") }}
+        {{ sel("Phone kind", "new_subtype", "cell", ["cell", "home", "work", "other"], "dm-c2", None) }}
+      </div>
+      <div class="dm-f dm-c3 dm-add"><button type="button" class="btn btn-secondary btn-sm" data-add-contact>+ Another</button></div>
+    </div>
+    {% endif %}
+  </section>
+
+  {% if not is_org %}
+  <section class="dm-sec">
+    <h3>Employment / School</h3>
+    <div class="dm-fg">
+      {{ fld("Occupation", "occupation", p.occupation, "dm-c3", "Hidden (under 18)" if minor_locked else "", minor_locked) }}
+      {{ fld("Employer", "employer", p.employer, "dm-c3", "Hidden (under 18)" if minor_locked else "", minor_locked) }}
+      {{ fld("School", "school", p.school, "dm-c4", "Hidden (under 18)" if minor_locked else "", minor_locked) }}
+      {{ sel("Grade", "grade", p.grade, ["pre_k", "k", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "college", "graduate"], "dm-c2",
+             "Hidden (under 18)" if minor_locked else "Not recorded", minor_locked) }}
+    </div>
+  </section>
+
+  <section class="dm-sec">
+    <h3>Household{% if hh %}<span class="dm-sec-note">{{ hh.members|length }} at this parish</span>{% else %}<span class="dm-sec-note">none yet: fill in an address and save to start one</span>{% endif %}</h3>
+    <div class="dm-fg">
+      {{ fld("Household name", "hh_name", hv.get("name"), "dm-c4") }}
+      {{ fld("Salutation (for example Pat & Sam)", "hh_salutation", hv.get("salutation"), "dm-c4") }}
+      {{ fld("Directory name", "hh_directory_name", hv.get("directory_name"), "dm-c4") }}
+      {{ fld("Address", "hh_address1", hv.get("address1"), "dm-c5") }}
+      {{ fld("Address line 2", "hh_address2", hv.get("address2"), "dm-c3") }}
+      {{ fld("City", "hh_city", hv.get("city"), "dm-c2") }}
+      {{ fld("State", "hh_state", hv.get("state"), "dm-c1") }}
+      {{ fld("Zip", "hh_postal_code", hv.get("postal_code"), "dm-c1") }}
+      {{ fld("Home phone", "hh_home_phone", hv.get("home_phone"), "dm-c3") }}
+    </div>
+    {% set has_mail = hv.get("mail_address1") or hv.get("mail_address2") or hv.get("mail_city") or hv.get("mail_state") or hv.get("mail_postal_code") %}
+    <div class="dm-fg dm-mailing {{ '' if has_mail else 'dm-edit-only' }}">
+      {{ fld("Mailing address, if different (used on statements and labels)", "hh_mail_address1", hv.get("mail_address1"), "dm-c5") }}
+      {{ fld("Mailing line 2", "hh_mail_address2", hv.get("mail_address2"), "dm-c3") }}
+      {{ fld("Mailing city", "hh_mail_city", hv.get("mail_city"), "dm-c2") }}
+      {{ fld("State", "hh_mail_state", hv.get("mail_state"), "dm-c1") }}
+      {{ fld("Zip", "hh_mail_postal_code", hv.get("mail_postal_code"), "dm-c1") }}
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="dm-sec">
+    <h3>At {{ parish.name }}{% if conn.is_canonical %}<span class="dm-sec-note">canonical member</span>{% endif %}</h3>
+    <div class="dm-fg">
+      {% set kinds = ["member", "giver", "visitor"] if (ctx.can("membership.edit") or conn.kind == "member") else ["giver", "visitor"] %}
+      {{ sel("Connection", "cn_kind", conn.kind, kinds, "dm-c3", None) }}
+      {{ fld("Envelope number", "cn_envelope_number", conn.envelope_number, "dm-c3") }}
+      {{ sel("Statement", "cn_statement_option", conn.statement_option, ["individual", "joint", "none"], "dm-c3", None) }}
+      {{ sel("Statement delivery", "cn_statement_delivery", conn.statement_delivery, ["print", "email"], "dm-c3", None) }}
+    </div>
+    {% if ctx.can("membership.edit") %}
+    <div class="dm-fg dm-edit-only"><div class="dm-c12">
+      <input type="hidden" name="cn_has_canonical" value="1">
+      {{ chk("Canonical member of this parish (a person is a canonical member of only one parish at a time)", "cn_is_canonical", conn.is_canonical) }}
+    </div></div>
+    {% endif %}
+  </section>
+
+  <section class="dm-sec">
+    <h3>Privacy</h3>
+    <div class="dm-fg dm-checks">
+      <input type="hidden" name="has_privacy" value="1">
+      <div class="dm-c12">
+        {{ chk("In directory", "in_directory", p.in_directory) }}
+        {{ chk("Hide phones in directory", "hide_phone_in_directory", p.hide_phone_in_directory) }}
+        {{ chk("Do not mail", "do_not_mail", p.do_not_mail) }}
+        {{ chk("Do not call", "do_not_call", p.do_not_call) }}
+        {{ chk("Do not email", "do_not_email", p.do_not_email) }}
+      </div>
+    </div>
+  </section>
+
+  <div class="dm-pf-foot dm-edit-only">
+    <button type="button" class="btn btn-secondary btn-sm" data-dm-cancel>Cancel</button>
+    <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
+  </div>
+</form>
+
+{% if can_edit and not is_org %}
+<details class="dm-edit-only dm-more">
+  <summary class="btn btn-secondary btn-sm">Household and spouse actions</summary>
+  <div class="dm-stack">
+    {% if hh %}
+    <form method="post" action="/people/{{ pid }}/household" class="dm-form dm-row">
+      {{ csrf() }}<input type="hidden" name="action" value="position">
+      <div class="field"><label>This person is a</label><select name="position">{% for v in ["primary_adult","secondary_adult","child"] %}<option value="{{ v }}" {{ 'selected' if g.household_position == v }}>{{ label(v) }}</option>{% endfor %}</select></div>
+      <button type="submit" class="btn btn-secondary btn-sm">Save position</button>
+    </form>
+    <form method="post" action="/people/{{ pid }}/household" class="dm-form dm-row">
+      {{ csrf() }}<input type="hidden" name="action" value="primary">
+      <div class="field"><label>Primary contact for the household</label>
+        <select name="member_id">{% for m in hh.members if m.position != 'child' %}<option value="{{ m.id }}" {{ 'selected' if m.is_primary_contact }}>{{ m.name }}</option>{% endfor %}</select></div>
+      <button type="submit" class="btn btn-secondary btn-sm">Set primary contact</button>
+    </form>
+    <form method="post" action="/people/{{ pid }}/household" class="dm-form dm-row" data-confirm="Move this person into a new household of their own? Their giving history stays with them.">
+      {{ csrf() }}<input type="hidden" name="action" value="new">
+      <div class="field"><label>Move to a new household as</label><select name="position">{% for v in ["primary_adult","secondary_adult"] %}<option value="{{ v }}">{{ label(v) }}</option>{% endfor %}</select></div>
+      <button type="submit" class="btn btn-secondary btn-sm">Move to a new household</button>
+    </form>
+    {% endif %}
+    <form method="post" action="/people/{{ pid }}/household" class="dm-form dm-row">
+      {{ csrf() }}<input type="hidden" name="action" value="join">
+      <div class="field"><label>Join the household of</label>{{ picker("other_person_id", "Search for a person") }}</div>
+      <div class="field"><label>as</label><select name="position">{% for v in ["secondary_adult","primary_adult","child"] %}<option value="{{ v }}">{{ label(v) }}</option>{% endfor %}</select></div>
+      <button type="submit" class="btn btn-secondary btn-sm">Join household</button>
+    </form>
+    {% if hh %}
+    <form method="post" action="/people/{{ pid }}/household" class="dm-form dm-row">
+      {{ csrf() }}<input type="hidden" name="action" value="relation">
+      <div class="field"><label>Related household of</label>{{ picker("other_person_id", "Search for a person") }}</div>
+      <div class="field"><label>How related</label><input name="description" placeholder="for example grandparents who bring a child"></div>
+      <button type="submit" class="btn btn-secondary btn-sm">Add related household</button>
+    </form>
+    {% endif %}
+    {% if g.spouse %}
+    <form method="post" action="/people/{{ pid }}/spouse" class="dm-form dm-row" data-confirm="End the spouse link for both people?">
+      {{ csrf() }}<input type="hidden" name="action" value="end">
+      <div class="field"><label>End the spouse link: reason</label><select name="reason"><option value="">No reason given</option><option value="widowed">Widowed</option><option value="divorced">Divorced</option><option value="separated">Separated</option></select></div>
+      <button type="submit" class="btn btn-secondary btn-sm">End link</button>
+    </form>
+    {% else %}
+    <form method="post" action="/people/{{ pid }}/spouse" class="dm-form dm-row">
+      {{ csrf() }}<input type="hidden" name="action" value="set">
+      <div class="field"><label>Link a spouse</label>{{ picker("spouse_person_id", "Search for a person at this parish") }}</div>
+      <div class="field"><label>Married on</label><input name="married_on" placeholder="MM/DD/YYYY"></div>
+      <button type="submit" class="btn btn-primary btn-sm">Link spouse</button>
+    </form>
+    {% endif %}
+  </div>
+</details>
+{% endif %}
+
+<div class="dm-foot-note">
+  <span>Shared profile: a change here also shows at {{ g.other_connections|length }} other {{ 'parish' if g.other_connections|length == 1 else 'parishes' }}{% if not g.other_connections %} if the person is connected to more{% endif %}.</span>
+  <span>Added {{ d(p.created_at) }} &middot; last changed {{ d(p.updated_at) }}</span>
+</div>

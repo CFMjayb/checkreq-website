@@ -1,0 +1,39 @@
+{# donor_tab_giving.html -- Giving tab. Shown only to finance roles (RL-01). `giving` comes from donor_gifts.person_giving_summary. #}
+{% from "donor_macros.html" import lock_note with context %}
+{{ lock_note("Finance roles only · giving to " ~ parish.name) }}
+{% if not giving %}
+  <p class="doc-empty">Giving history will appear here once giving is turned on and the first batch is closed.</p>
+{% else %}
+<div class="dm-stat-row">
+  <div class="dm-stat"><div class="dm-lbl">Given in {{ giving.year }}</div><div class="dm-stat-num">{{ money(giving.year_total) }}</div>
+    <div class="dm-sub">Deductible: {{ money(giving.deductible_total) }}</div>
+    {% if giving.joint_with %}<div class="dm-sub">Joint pledge with {{ giving.joint_with }}</div>{% endif %}</div>
+  {% if giving.pledge %}
+  <div class="dm-stat"><div class="dm-lbl">{{ giving.pledge.campaign_name }} pledge</div><div class="dm-stat-num">{{ money(giving.pledge.amount) }}</div>
+    <div class="dm-bar"><span style="width: {{ [giving.pledge.percent, 100]|min }}%"></span></div>
+    <div class="dm-sub">{{ giving.pledge.percent }}% given &middot; {{ money(giving.pledge.balance) }} to go &middot; {{ label(giving.pledge.status) }}</div></div>
+  {% endif %}
+  <div class="dm-stat"><div class="dm-lbl">Last gift</div><div class="dm-stat-num">{{ money(giving.last.amount) if giving.last else '' }}</div>{% if giving.last %}<div class="dm-sub">{{ d(giving.last.gift_date) }} &middot; batch {{ giving.last.batch_number }}</div>{% endif %}</div>
+</div>
+<div class="table-scroll">
+<table class="simple-table dm-table">
+  <thead><tr><th>Date</th><th>Batch</th><th>Fund</th><th>Type</th><th class="dm-num">Amount</th><th>Check</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for r in giving.rows %}
+    <tr class="{{ 'dm-archived' if r.status in ('reversed', 'returned') else '' }}"><td>{{ d(r.gift_date) }}</td><td><a href="/giving/batches/{{ r.batch_id }}">{{ r.batch_number }}</a></td><td>{{ r.fund_name }}</td><td>{{ label(r.gift_type) }}</td>
+        <td class="dm-num">{{ money(r.amount) }}</td><td>{{ r.check_number or 'cash' }}</td><td>{{ label(r.status) }}</td></tr>
+  {% else %}<tr><td colspan="7" class="doc-empty">No gifts recorded.</td></tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+{% if giving.soft_credits %}
+<div class="dm-section">
+  <div class="dm-section-head"><h3>Soft credits</h3></div>
+  <p class="dm-muted dm-small">Gifts made through another giver (for example a donor-advised fund) and credited to this person. They count toward a pledge, never toward this person's own giving or deductible total.</p>
+  <table class="simple-table dm-table">
+    <thead><tr><th>Date</th><th>Fund</th><th class="dm-num">Credited</th></tr></thead>
+    <tbody>{% for s in giving.soft_credits %}<tr><td>{{ d(s.gift_date) }}</td><td>{{ s.fund_name }}</td><td class="dm-num">{{ money(s.amount) }}</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endif %}
+{% endif %}

@@ -1,0 +1,248 @@
+{#
+donor_batch.html -- one batch on one screen: the count-sheet header, a live balance bar, keyboard entry (envelope or donor, amount,
+fund, type, check; Enter saves; fund and type carry forward), the lines, a live QuickBooks entry preview, and Close.
+
+What each person sees is decided by the service, not here: someone who only enters gifts sees the lines of an OPEN batch and only the
+totals of a closed one. The entry shown is built and stored, never sent: posting to QuickBooks is off.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf, picker with context %}
+{% block title %}Batch {{ b.number }} — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% set bal = bt.balance %}
+{% set is_open = b.status == 'open' %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/giving">&larr; All batches</a></p>
+  <div class="dm-head">
+    <h1>Batch {{ b.number }}
+      <span class="dm-status dm-status-{{ 'done' if b.status in ('closed', 'reconciled') else 'pending' }}">{{ label(b.status) }}</span>
+      {% if b.is_correction %}<span class="dm-pill">Corrections</span>{% endif %}</h1>
+    <div class="dm-head-actions dm-muted">{{ label(b.kind) }} &middot; {{ d(b.deposit_date) }}{% if b.deposit_ref %} &middot; ref {{ b.deposit_ref }}{% endif %}{% if b.memo %} &middot; {{ b.memo }}{% endif %}</div>
+  </div>
+
+  {# ── Balance ── #}
+  <div class="card dm-card dm-balance {{ 'dm-balance-ok' if bal.balanced else 'dm-balance-open' }}" id="balance">
+    {% if b.is_correction %}
+      <div><div class="dm-lbl">Net of the corrections</div><div class="dm-stat-num">{{ money(bal.actual_amount) }}</div></div>
+      <div><div class="dm-lbl">Items</div><div class="dm-stat-num">{{ bal.actual_count }}</div></div>
+      <div class="dm-balance-msg">Corrections have no count sheet. They close when a different person from the one who made them checks and closes the batch.</div>
+    {% else %}
+      <div><div class="dm-lbl">Count sheet</div><div class="dm-stat-num">{{ money(bal.expected_amount) }}</div><div class="dm-sub">{{ bal.expected_count }} item{{ '' if bal.expected_count == 1 else 's' }}</div></div>
+      <div><div class="dm-lbl">Entered</div><div class="dm-stat-num">{{ money(bal.actual_amount) }}</div><div class="dm-sub">{{ bal.actual_count }} item{{ '' if bal.actual_count == 1 else 's' }}</div></div>
+      <div class="dm-balance-msg">
+        {% if bal.balanced %}<strong class="dm-ok">Balanced.</strong> The entered gifts match the count sheet.
+        {% else %}<strong class="dm-bad">Not balanced.</strong>
+          {% if bal.amount_diff is not none and bal.amount_diff != 0 %}{{ money(bal.amount_diff|abs) }} {{ 'over' if bal.amount_diff > 0 else 'short' }}.{% endif %}
+          {% if bal.count_diff is not none and bal.count_diff != 0 %}{{ bal.count_diff|abs }} item{{ '' if bal.count_diff|abs == 1 else 's' }} {{ 'over' if bal.count_diff > 0 else 'short' }}.{% endif %}
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+  {% if is_open and can_open and not b.is_correction %}
+  <details class="dm-edit"><summary class="btn btn-secondary btn-sm">Change the count sheet or header</summary>
+    <form method="post" action="/giving/batches/{{ bid }}/header" class="dm-form dm-editform">
+      {{ csrf() }}
+      <p class="dm-muted dm-small">The expected figures are the count sheet. Changing them is logged with the old and new values.</p>
+      <div class="dm-grid">
+        <div class="field"><label>Deposit date</label><input name="deposit_date" value="{{ d(b.deposit_date) }}"></div>
+        <div class="field"><label>Expected total ($)</label><input name="expected_amount" value="{{ b.expected_amount }}"></div>
+        <div class="field"><label>Expected items</label><input name="expected_count" value="{{ b.expected_count }}"></div>
+        <div class="field"><label>Bank deposit reference</label><input name="deposit_ref" value="{{ b.deposit_ref or '' }}"></div>
+        <div class="field"><label>Cash account</label><input name="cash_account" value="{{ b.cash_account or '' }}"></div>
+        <div class="field"><label>Memo</label><input name="memo" value="{{ b.memo or '' }}"></div>
+      </div>
+      <input type="hidden" name="has_settles_to_diocese" value="1">
+      <label class="dm-check"><input type="checkbox" name="settles_to_diocese" value="1" {{ 'checked' if b.settles_to_diocese }}> This money settles to the diocese, not the parish bank</label>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </form>
+  </details>
+  {% endif %}
+
+  {# ── Entry form ── #}
+  {% if is_open and can_line and not b.is_correction %}
+  <div class="card dm-card" id="entry">
+    <div class="dm-section-head"><h3>Enter a gift</h3><a class="dm-small" href="/people/new">+ New donor</a></div>
+    <form method="post" action="/giving/batches/{{ bid }}/line" class="dm-form dm-entry-form" id="dmEntry">
+      {{ csrf() }}
+      <div class="dm-grid">
+        <div class="field"><label for="dmEnvelope">Envelope number</label><input id="dmEnvelope" name="envelope" inputmode="numeric" autocomplete="off" autofocus data-envelope-url="/giving/api/envelope"><div class="dm-sub" id="dmEnvelopeMsg" aria-live="polite"></div></div>
+        <div class="field"><label>Donor</label>{{ picker("person_id", "Search by name") }}</div>
+        <div class="field"><label for="dmAmount">Amount ($)</label><input id="dmAmount" name="amount" inputmode="decimal" autocomplete="off" required></div>
+        <div class="field"><label for="dmFund">Fund</label>
+          <select id="dmFund" name="fund_id">{% for f in funds %}<option value="{{ f.id }}" {{ 'selected' if f.id == last_fund }}>{{ f.name }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="dmType">Type</label>
+          <select id="dmType" name="gift_type">{% for v in types %}<option value="{{ v }}" {{ 'selected' if v == last_type }}>{{ label(v) }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="dmCheck">Check number (blank = cash)</label><input id="dmCheck" name="check_number" autocomplete="off"></div>
+        <div class="field"><label>Memo</label><input name="memo" maxlength="200"></div>
+        <div class="field"><label>Date received (blank = batch date)</label><input name="gift_date" placeholder="MM/DD/YYYY"></div>
+      </div>
+      <details class="dm-edit"><summary class="btn btn-secondary btn-sm">More: split, postmark, goods, fees, in-kind, stock</summary>
+        <div class="dm-grid dm-editform">
+          <div class="field"><label>Second fund (split)</label><select name="split2_fund"><option value="">None</option>{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Second amount</label><input name="split2_amount" inputmode="decimal"></div>
+          <div class="field"><label>Third fund</label><select name="split3_fund"><option value="">None</option>{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Third amount</label><input name="split3_amount" inputmode="decimal"></div>
+          <div class="field"><label>Postmark date</label><input name="postmark_date" placeholder="MM/DD/YYYY"></div>
+          <div class="field"><label>Value of goods or services given ($)</label><input name="goods_value" inputmode="decimal"></div>
+          {% if b.kind == 'deposit' %}
+          <div class="field"><label>Processing fee ($)</label><input name="fee_amount" inputmode="decimal"></div>
+          <label class="dm-check"><input type="checkbox" name="fee_covered_by_donor" value="1"> The donor covered the fee</label>
+          {% else %}
+          <div class="field"><label>In-kind description</label><input name="in_kind_description"></div>
+          <div class="field"><label>Shares (stock)</label><input name="stock_shares" inputmode="decimal"></div>
+          <div class="field"><label>Ticker symbol (stock)</label><input name="stock_symbol"></div>
+          {% endif %}
+        </div>
+      </details>
+      <label class="dm-check"><input type="checkbox" name="confirm_duplicate" value="1"> This is a different gift (same check number as one already recorded)</label>
+      <p class="dm-sub">Press Enter in the amount box to save the line. The fund and type stay as they are for the next one. A split's amounts replace the amount above.</p>
+      <button type="submit" class="btn btn-primary">Add line</button>
+    </form>
+  </div>
+  {% endif %}
+
+  {# ── Lines ── #}
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Lines</h3></div>
+    {% if bt.lines is none %}
+      <p class="dm-muted">The individual gifts of a closed batch are shown to finance roles only. The totals above are what you can see.</p>
+    {% elif bt.lines %}
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Donor</th><th>Funds</th><th>Type</th><th>Check</th><th>Memo</th><th class="dm-num">Amount</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for l in bt.lines %}
+        <tr class="{{ 'dm-archived' if l.status in ('voided',) else '' }}">
+          <td>{% if l.person_id %}<a href="/people/{{ l.person_id }}">{{ l.donor_name }}</a>{% else %}{{ l.donor_name }}{% endif %}
+            {% if l.reverses_gift_id %}<span class="dm-pill">Reversal</span>{% elif l.reclass_of_gift_id %}<span class="dm-pill">Reclass</span>{% elif l.replaces_gift_id %}<span class="dm-pill">Replacement</span>{% endif %}</td>
+          <td>{% for s in l.splits %}{{ s.fund_name }} {{ money(s.amount) }}{{ '<br>'|safe if not loop.last }}{% endfor %}</td>
+          <td>{{ label(l.gift_type) }}{% if l.in_kind_description %}<div class="dm-sub">{{ l.in_kind_description }}</div>{% endif %}{% if l.stock_symbol %}<div class="dm-sub">{{ l.stock_shares }} {{ l.stock_symbol }}</div>{% endif %}</td>
+          <td>{{ l.check_number or 'cash' }}</td>
+          <td>{{ l.memo or '' }}{% if l.correction_reason %}<div class="dm-sub">Why: {{ l.correction_reason }}</div>{% endif %}{% if l.goods_value and l.goods_value > 0 %}<div class="dm-sub">Goods or services: {{ money(l.goods_value) }}</div>{% endif %}</td>
+          <td class="dm-num">{{ money(l.amount) }}</td>
+          <td>{{ label(l.status) }}{% if l.status == 'voided' and l.void_reason %}<div class="dm-sub">{{ l.void_reason }}</div>{% endif %}</td>
+          <td class="dm-actions">
+            {% if is_open and can_line and not b.is_correction and l.status == 'recorded' %}
+              {% if l.splits|length == 1 and not l.external_id %}
+              <details class="dm-edit dm-edit-inline"><summary class="btn btn-secondary btn-sm">Change</summary>
+                <form method="post" action="/giving/gifts/{{ l.id }}/update" class="dm-form dm-editform">
+                  {{ csrf() }}<input type="hidden" name="batch_id" value="{{ bid }}">
+                  <div class="field"><label>Amount</label><input name="amount" value="{{ l.amount }}"></div>
+                  <div class="field"><label>Fund</label><select name="fund_id">{% for f in funds %}<option value="{{ f.id }}" {{ 'selected' if l.splits|length == 1 and f.id == l.splits[0].fund_id }}>{{ f.name }}</option>{% endfor %}</select></div>
+                  <div class="field"><label>Check number</label><input name="check_number" value="{{ l.check_number or '' }}"></div>
+                  <div class="field"><label>Memo</label><input name="memo" value="{{ l.memo or '' }}"></div>
+                  <p class="dm-sub">Changing the amount or fund replaces the line: the old one stays on the record, marked voided.</p>
+                  <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                </form>
+              </details>
+              {% endif %}
+              <details class="dm-edit dm-edit-inline"><summary class="btn btn-secondary btn-sm">Void</summary>
+                <form method="post" action="/giving/gifts/{{ l.id }}/void" class="dm-form dm-editform" data-confirm="Void this line? It stays on the record, marked voided.">
+                  {{ csrf() }}<input type="hidden" name="batch_id" value="{{ bid }}">
+                  <div class="field"><label>Why?</label><input name="reason" required></div>
+                  <button type="submit" class="btn btn-secondary btn-sm">Void line</button>
+                </form>
+              </details>
+            {% elif not is_open and can_correct and l.status == 'recorded' and l.amount > 0 %}
+              <details class="dm-edit dm-edit-inline"><summary class="btn btn-secondary btn-sm">Correct</summary>
+                <div class="dm-stack">
+                  <form method="post" action="/giving/gifts/{{ l.id }}/reverse" class="dm-form" data-confirm="Reverse this gift? A reversing line goes into today's correction batch.">
+                    {{ csrf() }}<input type="hidden" name="batch_id" value="{{ bid }}">
+                    <strong>Reverse</strong> (an entry error)
+                    <div class="field"><label>Why?</label><input name="reason" required></div>
+                    <details class="dm-edit"><summary class="dm-small">Also enter the corrected gift</summary>
+                      <div class="field"><label>Donor</label>{{ picker("repl_person_id", "Search by name") }}</div>
+                      <div class="field"><label>Fund</label><select name="repl_fund_id">{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+                      <div class="field"><label>Amount</label><input name="repl_amount" inputmode="decimal"></div>
+                    </details>
+                    <button type="submit" class="btn btn-secondary btn-sm">Reverse</button>
+                  </form>
+                  <form method="post" action="/giving/gifts/{{ l.id }}/return" class="dm-form" data-confirm="Mark this gift returned (NSF or rejected)?">
+                    {{ csrf() }}<input type="hidden" name="batch_id" value="{{ bid }}">
+                    <strong>Return</strong> (NSF check or ACH reject)
+                    <div class="field"><label>Why?</label><input name="reason" required></div>
+                    <button type="submit" class="btn btn-secondary btn-sm">Return</button>
+                  </form>
+                  <form method="post" action="/giving/gifts/{{ l.id }}/reclass" class="dm-form">
+                    {{ csrf() }}<input type="hidden" name="batch_id" value="{{ bid }}">
+                    <strong>Reclass</strong> (move to other funds, no cash)
+                    <div class="field"><label>Fund</label><select name="fund_id">{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+                    <div class="field"><label>Amount</label><input name="amount" value="{{ l.amount }}"></div>
+                    <div class="field"><label>Second fund</label><select name="split2_fund"><option value="">None</option>{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+                    <div class="field"><label>Second amount</label><input name="split2_amount"></div>
+                    <div class="field"><label>Why?</label><input name="reason" required></div>
+                    <button type="submit" class="btn btn-secondary btn-sm">Reclass</button>
+                  </form>
+                </div>
+              </details>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="doc-empty">No lines yet.</p>{% endif %}
+  </div>
+
+  {# ── Close, reopen ── #}
+  {% if is_open and can_close %}
+  <div class="card dm-card" id="close">
+    <div class="dm-section-head"><h3>Close this batch</h3></div>
+    {% if bt.close_problems %}
+      <p>It cannot be closed yet:</p>
+      <ul class="dm-problems">{% for p in bt.close_problems %}<li>{{ p }}</li>{% endfor %}</ul>
+    {% else %}
+      <p class="dm-ok"><strong>Everything checks out.</strong> The gifts match the count sheet and you did not enter any of them.</p>
+    {% endif %}
+    <form method="post" action="/giving/batches/{{ bid }}/close" class="dm-form" data-confirm="Close batch {{ b.number }}? A closed batch cannot be edited, only corrected. The QuickBooks entry is built and stored. It is not sent.">
+      {{ csrf() }}
+      <button type="submit" class="btn btn-primary" {{ 'disabled' if bt.close_problems else '' }}>Close batch</button>
+      <span class="dm-sub">Posting to QuickBooks is switched off. Closing builds the entry and keeps it. Nothing is sent.</span>
+    </form>
+  </div>
+  {% elif is_open and can_line and not can_close %}
+  <p class="dm-muted">Someone in Finance closes the batch once the gifts match the count sheet.</p>
+  {% endif %}
+  {% if b.status == 'closed' and can_reopen %}
+  <details class="dm-edit"><summary class="btn btn-secondary btn-sm">Reopen this batch (Finance Supervisor)</summary>
+    <form method="post" action="/giving/batches/{{ bid }}/reopen" class="dm-form dm-editform" data-confirm="Reopen batch {{ b.number }}? Your name and the reason are logged, and the stored entry is superseded.">
+      {{ csrf() }}
+      <div class="field"><label>Why is it being reopened?</label><input name="reason" required></div>
+      <button type="submit" class="btn btn-secondary">Reopen</button>
+    </form>
+  </details>
+  {% endif %}
+
+  {# ── The QuickBooks entry, built and never sent ── #}
+  {% if entry %}
+  <div class="card dm-card" id="entry-preview">
+    <div class="dm-section-head"><h3>QuickBooks entry {{ '(stored)' if entry_is_stored else '(preview, as it would be if closed now)' }}</h3>
+      {% if can_close or see_gifts %}<a class="dm-small" href="/giving/batches/{{ bid }}/entry.json">The same entry as data</a>{% endif %}</div>
+    <p class="dm-muted dm-small">Built and shown here, never sent. Posting to QuickBooks is switched off. {{ entry.doc_number }} &middot; {{ d(entry.txn_date) }} &middot; {{ entry.private_note }}</p>
+    {% if entry.problems %}<div class="banner banner-error">This entry is incomplete: {{ entry.problems|join(' ') }}</div>{% endif %}
+    {% if entry.lines %}
+    <table class="simple-table dm-table">
+      <thead><tr><th>Account</th><th>Class</th><th>Description</th><th class="dm-num">Debit</th><th class="dm-num">Credit</th></tr></thead>
+      <tbody>
+      {% for l in entry.lines %}<tr><td>{{ l.acct_num or '(not set)' }}</td><td>{{ l.class_name or '' }}</td><td>{{ l.description }}</td>
+        <td class="dm-num">{{ money(l.debit) if l.debit != '0.00' else '' }}</td><td class="dm-num">{{ money(l.credit) if l.credit != '0.00' else '' }}</td></tr>{% endfor %}
+      <tr><td colspan="3"><strong>Total</strong></td><td class="dm-num"><strong>{{ money(entry.total_debit) }}</strong></td><td class="dm-num"><strong>{{ money(entry.total_credit) }}</strong></td></tr>
+      </tbody>
+    </table>
+    {% else %}<p class="doc-empty">No QuickBooks effect: the money stays in the same accounts.</p>{% endif %}
+  </div>
+  {% endif %}
+
+  {# ── Event log ── #}
+  {% if bt.events %}
+  <details class="dm-section card dm-card"><summary><h2>History of this batch</h2></summary>
+    <table class="simple-table dm-table">
+      <thead><tr><th>When</th><th>Who</th><th>What</th><th>Why</th></tr></thead>
+      <tbody>{% for e in bt.events %}<tr><td>{{ when(e.created_at) }}</td><td>{{ names.get(e.user_id, 'User #' ~ e.user_id) }}</td><td>{{ e.kind|replace('_', ' ')|capitalize }}</td><td>{{ e.reason or '' }}</td></tr>{% endfor %}</tbody>
+    </table>
+  </details>
+  {% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script><script src="/static/js/donor_batch.js?v={{ asset_version('js/donor_batch.js') }}"></script>{% endblock %}

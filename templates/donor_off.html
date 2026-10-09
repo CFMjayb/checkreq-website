@@ -1,0 +1,28 @@
+{#
+donor_off.html -- shown instead of a Donor Management screen when it is not available: the parish has not been
+turned on, the person's roles do not open this screen, or the record was not found (a person at another parish
+reads exactly the same as a person who does not exist).
+#}
+{% extends "base.html" %}
+{% block title %}{{ 'People' if feature == 'people' else 'Giving' }} — Beacon{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+  <div class="form-card dm-narrow">
+    {% if reason == "off" %}
+      <h1>{{ 'People and membership' if feature == 'people' else 'Giving' }} is not turned on yet</h1>
+      <p>This part of Beacon has not been turned on for {{ parish.name }}. It is switched on one parish at a time by the diocese.</p>
+      {% if ctx.can("parish.activate") %}<p><a class="btn btn-primary" href="/people/settings">Turn it on in Settings</a></p>{% endif %}
+    {% elif reason == "notfound" %}
+      <h1>Not found</h1>
+      <p>That {{ what or 'person' }} was not found at {{ parish.name }}.</p>
+      <p><a class="btn btn-secondary" href="{{ back_href or '/people' }}">Back</a></p>
+    {% else %}
+      <h1>You do not have access to this</h1>
+      <p>Your role at {{ parish.name }} does not include this screen. A Parish Admin can give you a role under People &gt; Settings.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

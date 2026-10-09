@@ -1,0 +1,26 @@
+{# donor_nav.html -- the module bar shown at the top of every Donor Management page. One slim row; a page may set
+   nav_search to put the people search box at the right end of it (the person screen does, instead of a row of its own). #}
+<nav class="dm-nav" aria-label="People and giving">
+  <span class="dm-nav-parish">{{ parish.name }}</span>
+  {% for item in dm_nav %}
+  <a href="{{ item.href }}" class="{{ 'dm-nav-on' if dm_active == item.key else '' }}">{{ item.label }}</a>
+  {% endfor %}
+  {% if dm_setup %}
+  {# Maintenance (import, duplicates, settings) lives here, never as tabs of its own. #}
+  <details class="dm-setup" data-dm-setup>
+    <summary class="{{ 'dm-nav-on' if dm_active in (dm_setup | map(attribute='key') | list) else '' }}">Setup <span aria-hidden="true">&#9662;</span></summary>
+    <div class="dm-setup-menu">
+      {% for item in dm_setup %}<a href="{{ item.href }}" class="{{ 'dm-nav-on' if dm_active == item.key else '' }}">{{ item.label }}</a>{% endfor %}
+    </div>
+  </details>
+  <script src="/static/js/donor_nav.js?v={{ asset_version('js/donor_nav.js') }}" defer></script>
+  {% endif %}
+  {% if nav_search %}
+  <form method="get" action="/people" class="dm-search-mini dm-nav-search" role="search">
+    <label class="dm-sr" for="dm-q">Search people</label>
+    <input id="dm-q" type="search" name="q" placeholder="Search by name, envelope, email, or phone">
+  </form>
+  {% endif %}
+</nav>
+{% if flash_ok %}<div class="banner banner-success">{{ flash_ok }}</div>{% endif %}
+{% if flash_err %}<div class="banner banner-error">{{ flash_err }}</div>{% endif %}

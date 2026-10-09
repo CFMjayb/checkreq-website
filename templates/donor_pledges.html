@@ -1,0 +1,127 @@
+{#
+donor_pledges.html -- a campaign's pledges with fulfillment and pace, and the responses compared with the prior campaign. Finance
+roles only. Fulfillment is automatic: closed gifts to the campaign's fund inside the campaign period count, nothing is keyed
+against a pledge. Soft credits count toward a pledge but never toward the person's own giving.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf, picker with context %}
+{% block title %}Pledges — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <div class="dm-head"><h1>Pledges</h1>
+    <div class="dm-head-actions">
+      <form method="get" action="/pledges" class="dm-form-plain dm-row">
+        <label class="dm-sr" for="dmCampaign">Campaign</label>
+        <select id="dmCampaign" name="campaign">{% for c in campaigns %}<option value="{{ c.id }}" {{ 'selected' if c.id == cid }}>{{ c.name }}</option>{% endfor %}</select>
+        <button type="submit" class="btn btn-secondary btn-sm">Show</button>
+      </form>
+    </div>
+  </div>
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+  {% if not campaigns %}
+    <p class="doc-empty">There are no campaigns yet. <a href="/giving/funds">Add a campaign</a> (its fund has to accept pledges) and pledges can be recorded here.</p>
+  {% elif data %}
+  {% set camp = data.campaign %}
+  <div class="dm-stat-row">
+    <div class="dm-stat"><div class="dm-lbl">{{ camp.name }}</div><div class="dm-stat-num">{{ money(data.total_pledged) }}</div><div class="dm-sub">pledged &middot; {{ d(camp.period_start) }} to {{ d(camp.period_end) }}{% if camp.goal_amount is not none %} &middot; goal {{ money(camp.goal_amount) }}{% endif %}</div></div>
+    <div class="dm-stat"><div class="dm-lbl">Given so far</div><div class="dm-stat-num">{{ money(data.total_given) }}</div>
+      <div class="dm-bar"><span style="width: {{ [(data.total_given / data.total_pledged * 100) if data.total_pledged else 0, 100]|min }}%"></span></div></div>
+    <div class="dm-stat"><div class="dm-lbl">Pace</div><div class="dm-sub">{{ data.counts.paid_in_full }} paid in full &middot; {{ data.counts.on_track }} on track &middot; {{ data.counts.behind }} behind</div></div>
+  </div>
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Pledges</h3></div>
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Pledger</th><th>Frequency</th><th class="dm-num">Pledged</th><th class="dm-num">Given</th><th class="dm-num">To go</th><th>Pace</th>{% if can_manage %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for p in data.pledges %}
+        <tr class="{{ 'dm-archived' if p.status == 'cancelled' else '' }}">
+          <td><a href="/people/{{ p.person_id }}">{{ p.name }}</a>{% if p.joint_name %}<div class="dm-sub">Joint with {{ p.joint_name }}</div>{% endif %}</td>
+          <td>{{ label(p.frequency) }}</td>
+          <td class="dm-num">{{ money(p.amount) }}</td>
+          <td class="dm-num">{{ money(p.given) }}{% if p.given_soft %}<div class="dm-sub">includes {{ money(p.given_soft) }} soft credit</div>{% endif %}</td>
+          <td class="dm-num">{{ money(p.balance) }}</td>
+          <td>{% if p.status == 'cancelled' %}Cancelled{% else %}<span class="dm-status dm-status-{{ 'done' if p.pace_status == 'paid_in_full' else ('accepted' if p.pace_status == 'on_track' else 'pending') }}">{{ label(p.pace_status) }}</span>
+            <div class="dm-sub">{{ p.percent }}%, expected {{ money(p.expected_to_date) }} by today</div>{% endif %}</td>
+          {% if can_manage %}
+          <td>
+            {% if p.status == 'active' %}
+            <details class="dm-edit dm-edit-inline"><summary class="btn btn-secondary btn-sm">Change</summary>
+              <form method="post" action="/pledges/save" class="dm-form dm-editform">
+                {{ csrf() }}<input type="hidden" name="pledge_id" value="{{ p.id }}"><input type="hidden" name="campaign_id" value="{{ camp.id }}">
+                <div class="field"><label>Amount</label><input name="amount" value="{{ p.amount }}"></div>
+                <div class="field"><label>Frequency</label><select name="frequency">{% for v in frequencies %}<option value="{{ v }}" {{ 'selected' if p.frequency == v }}>{{ label(v) }}</option>{% endfor %}</select></div>
+                <button type="submit" class="btn btn-primary btn-sm">Save</button>
+              </form>
+              <form method="post" action="/pledges/{{ p.id }}/cancel" class="dm-form dm-editform" data-confirm="Cancel this pledge? It is kept on the record.">
+                {{ csrf() }}<input type="hidden" name="campaign_id" value="{{ camp.id }}">
+                <div class="field"><label>Why?</label><input name="reason" required></div>
+                <button type="submit" class="btn btn-secondary btn-sm">Cancel pledge</button>
+              </form>
+            </details>
+            {% endif %}
+          </td>
+          {% endif %}
+        </tr>
+      {% else %}<tr><td colspan="7" class="doc-empty">No pledges for this campaign yet.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+    {% if can_manage %}
+    <details class="dm-edit"><summary class="btn btn-primary btn-sm">+ Add a pledge</summary>
+      <form method="post" action="/pledges/save" class="dm-form dm-editform">
+        {{ csrf() }}<input type="hidden" name="campaign_id" value="{{ camp.id }}">
+        <div class="dm-grid">
+          <div class="field"><label>Pledger</label>{{ picker("person_id", "Search by name") }}</div>
+          <div class="field"><label>Joint with their spouse (optional)</label>{{ picker("joint_with_person_id", "Search for the spouse") }}</div>
+          <div class="field"><label>Amount ($)</label><input name="amount" inputmode="decimal" required></div>
+          <div class="field"><label>Frequency</label><select name="frequency">{% for v in frequencies %}<option value="{{ v }}" {{ 'selected' if v == 'monthly' }}>{{ label(v) }}</option>{% endfor %}</select></div>
+        </div>
+        <p class="dm-sub">A joint pledge needs the two people linked as spouses on their records. The pledge runs for the whole campaign unless you set dates in a change afterward.</p>
+        <button type="submit" class="btn btn-primary">Add pledge</button>
+      </form>
+    </details>
+    <details class="dm-edit"><summary class="btn btn-secondary btn-sm">+ Soft credit a gift</summary>
+      <form method="post" action="/pledges/softcredit" class="dm-form dm-editform">
+        {{ csrf() }}<input type="hidden" name="campaign_id" value="{{ camp.id }}">
+        <div class="dm-grid">
+          <div class="field"><label>Gift number (from the batch screen)</label><input name="gift_id" inputmode="numeric" required></div>
+          <div class="field"><label>Credit to</label>{{ picker("person_id", "Search by name") }}</div>
+          <div class="field"><label>Amount (blank = the whole gift)</label><input name="amount" inputmode="decimal"></div>
+          <div class="field"><label>Note</label><input name="note"></div>
+        </div>
+        <p class="dm-sub">A soft credit (for example a donor-advised fund's gift) counts toward the pledge. It is never part of the credited person's own giving or deductible total.</p>
+        <button type="submit" class="btn btn-primary">Add soft credit</button>
+      </form>
+    </details>
+    {% endif %}
+  </div>
+
+  {% if responses %}
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Responses{% if responses.prior_campaign %} compared with {{ responses.prior_campaign.name }}{% endif %}</h3></div>
+    <p class="dm-muted dm-small">Pledged {{ money(responses.total) }}{% if responses.prior_campaign %} against {{ money(responses.prior_total) }} last time{% endif %}.</p>
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Person</th><th class="dm-num">Pledge</th><th class="dm-num">Prior</th><th class="dm-num">Change</th></tr></thead>
+      <tbody>
+      {% for r in responses.responses %}
+        <tr><td><a href="/people/{{ r.person_id }}">{{ r.name }}</a>{% if r.state == 'new' %} <span class="dm-pill dm-pill-green">New</span>{% endif %}</td>
+          <td class="dm-num">{{ money(r.amount) }}</td><td class="dm-num">{{ money(r.prior_amount) if r.prior_amount is not none else '' }}</td>
+          <td class="dm-num">{% if r.change is not none %}{{ money(r.change) }}{% if r.change_pct is not none %} ({{ r.change_pct }}%){% endif %}{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% if responses.no_response %}
+    <h3>Pledged before and not yet answered</h3>
+    <table class="simple-table dm-table">
+      <thead><tr><th>Person</th><th class="dm-num">Prior pledge</th></tr></thead>
+      <tbody>{% for r in responses.no_response %}<tr><td><a href="/people/{{ r.person_id }}">{{ r.name }}</a></td><td class="dm-num">{{ money(r.prior_amount) }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}

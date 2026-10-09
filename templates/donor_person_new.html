@@ -1,0 +1,87 @@
+{#
+donor_person_new.html -- add a person or organization. If the e-mail (or name + birth date) matches a person another
+parish already has, the form offers to CONNECT to that shared profile instead of creating a second one (PF-18).
+Only a masked preview of the other parish's person is shown. The proof typed here travels with the "connect" button
+and is checked again by the server.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Add person — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/people">&larr; People</a></p>
+  <h1>Add a person</h1>
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+
+  {% if matches %}
+  <div class="form-card">
+    <h2>This person may already have a profile</h2>
+    <p>Another parish already has a profile that matches what you entered. A person keeps <strong>one shared profile</strong> across every parish they belong to. Connecting shares only the profile (name, contact details, household). It does not share any membership, sacramental, giving, or note records.</p>
+    {% for m in matches %}
+    <form method="post" action="/people/link" class="dm-form dm-inline">
+      {{ csrf() }}
+      <input type="hidden" name="person_id" value="{{ m.person_id }}">
+      <input type="hidden" name="email" value="{{ v.email }}">
+      <input type="hidden" name="first_name" value="{{ v.first_name }}">
+      <input type="hidden" name="last_name" value="{{ v.last_name }}">
+      <input type="hidden" name="birth_date" value="{{ v.birth_date }}">
+      <span class="dm-match">{{ m.preview }}{% if m.birth_year %} (born {{ m.birth_year }}){% endif %}</span>
+      <select name="connection"><option value="giver">Connect as a giver</option><option value="visitor">Connect as a visitor</option>{% if ctx.can("membership.edit") %}<option value="member">Connect as a member</option>{% endif %}</select>
+      <button type="submit" class="btn btn-primary">That is them: connect</button>
+    </form>
+    {% endfor %}
+    <form method="post" action="/people/new" class="dm-form dm-inline">
+      {{ csrf() }}
+      {% for k, val in v.items() %}<input type="hidden" name="{{ k }}" value="{{ val }}">{% endfor %}
+      <input type="hidden" name="skip_match" value="1">
+      <button type="submit" class="btn btn-secondary">No, this is someone else: create a new record</button>
+    </form>
+  </div>
+  {% else %}
+
+  {% if dups %}
+  <div class="banner banner-info">Someone with that name is already at this parish:
+    {% for x in dups %}<a href="/people/{{ x.id }}">{{ x.name }}</a>{{ ", " if not loop.last }}{% endfor %}.
+    If this is a different person, tick the box below and save again.</div>
+  {% endif %}
+
+  <form method="post" action="/people/new" class="form-card dm-form dm-new">
+    {{ csrf() }}
+    <div class="field dm-radio-row">
+      <label><input type="radio" name="record_type" value="person" {{ 'checked' if v.record_type != 'organization' }}> Person</label>
+      <label><input type="radio" name="record_type" value="organization" {{ 'checked' if v.record_type == 'organization' }}> Organization (business, foundation, other church)</label>
+    </div>
+    <div class="dm-grid" data-for="person">
+      <div class="field"><label for="first_name">First name</label><input id="first_name" name="first_name" value="{{ v.first_name or '' }}"></div>
+      <div class="field"><label for="middle_name">Middle name</label><input id="middle_name" name="middle_name" value="{{ v.middle_name or '' }}"></div>
+      <div class="field"><label for="last_name">Last name</label><input id="last_name" name="last_name" value="{{ v.last_name or '' }}"></div>
+      <div class="field"><label for="goes_by">Goes by</label><input id="goes_by" name="goes_by" value="{{ v.goes_by or '' }}"></div>
+      <div class="field"><label for="birth_date">Birth date</label><input id="birth_date" name="birth_date" value="{{ v.birth_date or '' }}" placeholder="MM/DD/YYYY"></div>
+      <div class="field"><label for="gender">Gender</label>
+        <select id="gender" name="gender"><option value="">Not recorded</option>{% for g in ["female","male","nonbinary","unknown"] %}<option value="{{ g }}" {{ 'selected' if v.gender == g }}>{{ label(g) }}</option>{% endfor %}</select></div>
+    </div>
+    <div class="dm-grid" data-for="organization" hidden>
+      <div class="field"><label for="org_name">Organization name</label><input id="org_name" name="org_name" value="{{ v.org_name or '' }}"></div>
+    </div>
+    <div class="dm-grid">
+      <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" value="{{ v.email or '' }}"></div>
+      <div class="field"><label for="phone_cell">Cell phone</label><input id="phone_cell" name="phone_cell" value="{{ v.phone_cell or '' }}"></div>
+      <div class="field"><label for="phone_home">Home phone</label><input id="phone_home" name="phone_home" value="{{ v.phone_home or '' }}"></div>
+      <div class="field"><label for="connection">At this parish</label>
+        <select id="connection" name="connection">
+          {% if ctx.can("membership.edit") %}<option value="member" {{ 'selected' if v.connection in ('', 'member', none) }}>Member</option>{% endif %}
+          <option value="giver" {{ 'selected' if v.connection == 'giver' or not ctx.can("membership.edit") }}>Giver</option>
+          <option value="visitor" {{ 'selected' if v.connection == 'visitor' }}>Visitor</option>
+        </select></div>
+    </div>
+    {% if dups %}<div class="field"><label class="dm-check"><input type="checkbox" name="allow_duplicate" value="1"> This is a different person with the same name</label></div>{% endif %}
+    <p class="dm-muted">You can add the household, envelope number, membership and the rest on the person's page after saving.</p>
+    <button type="submit" class="btn btn-primary">Add person</button>
+    <a class="btn btn-secondary" href="/people">Cancel</a>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}

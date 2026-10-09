@@ -9335,6 +9335,12 @@ import outreach_mine
 
 outreach_mine.register(app, templates=templates, current_user=_current_user, render=_render)
 
+# ── 26-129 Donor Management (people, membership, giving): ONE entry point, thin wiring only ──
+# See donor_register.py. Nothing shows for a parish until its donor.parish_settings flags are turned on.
+import donor_register
+
+donor_register.register(app, current_user=_current_user, render=_render, templates=templates)
+
 # ── Per-hostname favicon (2026-10-01, Jay) ──
 # See favicon.py. Thin wiring only: the host -> diocese lookup is the login
 # page's own resolver, so the tab icon and the login screen always agree.

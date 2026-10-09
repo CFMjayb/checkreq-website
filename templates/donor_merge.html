@@ -1,0 +1,72 @@
+{#
+donor_merge.html -- two records side by side. The person chooses which record survives and, for every field where
+the two differ, whose value to keep. Nothing is deleted: the merged record is archived with a pointer to the survivor.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Merge records — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% macro fv(v) %}{% if v is none or v == "" %}<span class="dm-muted">&mdash;</span>{% elif v is sameas true %}Yes{% elif v is sameas false %}No{% elif v.year is defined %}{{ d(v) }}{% else %}{{ v }}{% endif %}{% endmacro %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/people/duplicates{{ '?scope=diocese' if scope == 'diocese' else '' }}">&larr; Back to possible duplicates</a></p>
+  <div class="dm-head"><h1>Merge two records</h1></div>
+
+  <form method="post" action="/people/merge" class="dm-form" data-confirm="Merge these two records? The record you do not keep is archived and points to the one you keep. This can be reviewed in the change history.">
+    {{ csrf() }}
+    <input type="hidden" name="a_id" value="{{ prev.a.id }}"><input type="hidden" name="b_id" value="{{ prev.b.id }}"><input type="hidden" name="scope" value="{{ scope }}">
+
+    <div class="card dm-card">
+      <div class="dm-merge-head">
+        <div><div class="dm-lbl">Record A</div><h2>{{ prev.a.name }}</h2><div class="dm-sub">Record {{ prev.a.id }}</div></div>
+        <div><div class="dm-lbl">Record B</div><h2>{{ prev.b.name }}</h2><div class="dm-sub">Record {{ prev.b.id }}</div></div>
+      </div>
+      <div class="table-scroll"><table class="simple-table dm-table dm-merge-table">
+        <thead><tr><th>Field</th><th>Record A</th><th>Record B</th><th>Keep</th></tr></thead>
+        <tbody>
+        {% for f in prev.fields %}
+          {% set av = prev.a[f] %}{% set bv = prev.b[f] %}
+          {% if av != bv %}
+          <tr class="dm-diff">
+            <td>{{ P.FIELD_LABELS.get(f, f) }}</td>
+            <td>{{ fv(av) }}</td><td>{{ fv(bv) }}</td>
+            <td class="nowrap">
+              <label class="dm-check"><input type="radio" name="pick_{{ f }}" value="a"> A</label>
+              <label class="dm-check"><input type="radio" name="pick_{{ f }}" value="b"> B</label>
+            </td>
+          </tr>
+          {% endif %}
+        {% endfor %}
+        </tbody>
+      </table></div>
+      <p class="dm-muted dm-small">Fields that already agree are not listed. Where you pick nothing, the record you keep wins, and a blank is filled in from the other record.</p>
+    </div>
+
+    <div class="card dm-card">
+      <h3>What moves</h3>
+      <div class="dm-grid">
+        {% for key in ("a", "b") %}
+        <div class="dm-box"><div class="dm-lbl">Record {{ key|upper }}</div>
+          <div class="dm-val">
+            {{ prev[key].contacts|length }} contact detail{{ '' if prev[key].contacts|length == 1 else 's' }}
+            {% for label_, n in prev[key].counts.items() %}{% if n %}<br>{{ n }} {{ label_ }}{% endif %}{% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="dm-muted dm-small">Contact details, notes, tasks, sacramental records, transfer letters and the household place move to the record you keep. Anything that cannot move is dropped and noted. Nothing is hard-deleted.</p>
+      {% if prev.a.has_giving or prev.b.has_giving %}
+      <p class="dm-small"><strong>Giving records.</strong> {% if prev.a.has_giving and prev.b.has_giving %}Both records have giving history, so they cannot be merged.{% else %}Record {{ 'A' if prev.a.has_giving else 'B' }} has giving history, so it must be the record you keep: closed gifts are never rewritten.{% endif %}</p>
+      {% endif %}
+    </div>
+
+    <div class="dm-head-actions">
+      <button type="submit" name="keep" value="a" class="btn btn-primary" {{ 'disabled' if prev.b.has_giving }}>Keep record A (merge B into it)</button>
+      <button type="submit" name="keep" value="b" class="btn btn-primary" {{ 'disabled' if prev.a.has_giving }}>Keep record B (merge A into it)</button>
+      <a class="btn btn-secondary" href="/people/duplicates{{ '?scope=diocese' if scope == 'diocese' else '' }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}

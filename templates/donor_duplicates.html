@@ -1,0 +1,47 @@
+{#
+donor_duplicates.html -- likely duplicate pairs. Nothing is merged from here: Compare opens the merge screen, and
+"Not a duplicate" hides the pair for good. A diocese Beacon Admin may switch to the diocese-wide search.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Possible duplicates — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <div class="dm-head"><h1>Possible duplicates</h1>
+    <div class="dm-head-actions">
+      {% if can_diocese %}
+        {% if scope == "diocese" %}<a class="btn btn-secondary" href="/people/duplicates">This parish only</a>
+        {% else %}<a class="btn btn-secondary" href="/people/duplicates?scope=diocese">Search the whole diocese</a>{% endif %}
+      {% endif %}
+    </div>
+  </div>
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+  <div class="card dm-card">
+    <p class="dm-muted">{{ 'Across every parish in the diocese. Only people connected solely to this diocese can be merged.' if scope == 'diocese' else 'People at ' ~ parish.name ~ ' who share a name, an organization name or an email address. Compare two records to merge them. A merge never deletes anything: the merged record is archived with a pointer to the survivor.' }}</p>
+    {% if pairs %}
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>First record</th><th>Second record</th><th>Why they look alike</th><th></th></tr></thead>
+      <tbody>
+      {% for p in pairs %}
+        <tr>
+          <td>{{ p.a.name }}{% if p.a.birth_date %}<div class="dm-sub">Born {{ d(p.a.birth_date) }}</div>{% endif %}<div class="dm-sub">Record {{ p.a.id }}</div></td>
+          <td>{{ p.b.name }}{% if p.b.birth_date %}<div class="dm-sub">Born {{ d(p.b.birth_date) }}</div>{% endif %}<div class="dm-sub">Record {{ p.b.id }}</div></td>
+          <td>{{ p.reason|capitalize }}</td>
+          <td class="nowrap">
+            <a class="btn btn-primary btn-sm" href="/people/merge?a={{ p.a.id }}&b={{ p.b.id }}{{ '&scope=diocese' if scope == 'diocese' else '' }}">Compare</a>
+            <form method="post" action="/people/not-duplicate" class="dm-form dm-inline" data-confirm="Mark these two as different people? They will stop appearing here.">
+              {{ csrf() }}<input type="hidden" name="a" value="{{ p.a.id }}"><input type="hidden" name="b" value="{{ p.b.id }}"><input type="hidden" name="scope" value="{{ scope }}">
+              <button type="submit" class="btn btn-secondary btn-sm">Not a duplicate</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="doc-empty">No possible duplicates found.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}

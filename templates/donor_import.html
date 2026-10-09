@@ -1,0 +1,65 @@
+{#
+donor_import.html -- load people and households from the Excel template. One Upload File button. The default is a
+dry run (checks every row, writes nothing); "Load for real" is a separate, deliberate tick.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Import people — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <div class="dm-head"><h1>Import people and households</h1>
+    <div class="dm-head-actions"><a class="btn btn-secondary" href="/people/import/template.xlsx">Download the template</a></div>
+  </div>
+
+  <div class="card dm-card">
+    <p>Fill in the template, then upload it here. Beacon checks every row first and shows what it found. Nothing is saved unless the file has no errors <em>and</em> you tick &ldquo;Load for real&rdquo;. A file loads completely or not at all.</p>
+    <form method="post" action="/people/import" enctype="multipart/form-data" class="dm-form dm-editform">
+      {{ csrf() }}
+      <div class="field"><label for="dmFile">Excel file (.xlsx)</label><input id="dmFile" type="file" name="file" accept=".xlsx" required></div>
+      <label class="dm-check"><input type="checkbox" name="load_for_real" value="1"> Load for real (otherwise this is only a check)</label>
+      <label class="dm-check"><input type="checkbox" name="create_duplicates" value="1"> Create people who already exist at this parish (otherwise they are skipped)</label>
+      <button type="submit" class="btn btn-primary">Upload File</button>
+    </form>
+  </div>
+
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+
+  {% if report %}
+  <div class="card dm-card">
+    {% if report.imported %}
+      <div class="banner banner-success">Loaded {{ report.created_people }} {{ 'person' if report.created_people == 1 else 'people' }} and {{ report.created_households }} {{ 'household' if report.created_households == 1 else 'households' }}.</div>
+    {% elif report.ok %}
+      <div class="banner banner-info">{{ 'This was a check only. Nothing was saved.' if report.dry_run else 'Nothing was saved.' }} The file has no errors.</div>
+    {% else %}
+      <div class="banner banner-error">The file has {{ report.errors|length }} {{ 'error' if report.errors|length == 1 else 'errors' }}, so nothing was loaded. Fix them in the file and upload it again.</div>
+    {% endif %}
+    <div class="dm-stat-row">
+      <div class="dm-stat"><div class="dm-lbl">People rows read</div><div class="dm-stat-num">{{ report.people_rows }}</div></div>
+      <div class="dm-stat"><div class="dm-lbl">Household rows read</div><div class="dm-stat-num">{{ report.household_rows }}</div></div>
+      <div class="dm-stat"><div class="dm-lbl">Would create (people)</div><div class="dm-stat-num">{{ report.would_create_people }}</div></div>
+      <div class="dm-stat"><div class="dm-lbl">Would create (households)</div><div class="dm-stat-num">{{ report.would_create_households }}</div></div>
+      <div class="dm-stat"><div class="dm-lbl">Already at this parish</div><div class="dm-stat-num">{{ report.possible_duplicates }}</div><div class="dm-sub">{{ report.would_skip_duplicates }} would be skipped</div></div>
+    </div>
+    {% if report.example_rows_ignored %}<p class="dm-muted dm-small">{{ report.example_rows_ignored }} example row(s) in the template were ignored.</p>{% endif %}
+
+    {% if report.errors %}
+    <h3>Errors</h3>
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Sheet</th><th>Row</th><th>Column</th><th>Problem</th></tr></thead>
+      <tbody>{% for e in report.errors %}<tr><td>{{ e.sheet }}</td><td>{{ e.row }}</td><td>{{ e.column }}</td><td>{{ e.message }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+    {% if report.warnings %}
+    <h3>Warnings</h3>
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Sheet</th><th>Row</th><th>Column</th><th>Note</th></tr></thead>
+      <tbody>{% for e in report.warnings %}<tr><td>{{ e.sheet }}</td><td>{{ e.row }}</td><td>{{ e.column }}</td><td>{{ e.message }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}

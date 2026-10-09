@@ -1,0 +1,72 @@
+{# donor_tab_notes.html -- Notes and tasks (parish-only). A clergy-only note is never sent to anyone else's page. #}
+{% from "donor_macros.html" import csrf, lock_note with context %}
+{{ lock_note("Visible to " ~ parish.name ~ " only") }}
+
+<div class="dm-section">
+  <div class="dm-section-head"><h3>Notes</h3></div>
+  {% for n in notes %}
+  <div class="dm-note {{ 'dm-note-clergy' if n.visibility == 'clergy' }}">
+    <div class="dm-note-meta">
+      {% if n.keywords %}<span class="dm-pill dm-pill-green">{{ n.keywords }}</span>{% endif %}
+      {% if n.visibility == 'clergy' %}<span class="dm-clergy-only">Clergy only</span>{% endif %}
+      <span>&middot; {{ d(n.created_at) }}{% if n.author_user_id == ctx.user_id %} &middot; you{% endif %}</span>
+    </div>
+    <div class="dm-note-body">{{ n.body }}</div>
+    {% if not g.archived %}
+    <form method="post" action="/people/{{ pid }}/note/{{ n.id }}/archive" class="dm-form dm-inline" data-confirm="Archive this note? It is kept, but hidden from this list.">{{ csrf() }}<button type="submit" class="dm-linklike">Archive note</button></form>
+    {% endif %}
+  </div>
+  {% else %}<p class="doc-empty">No notes.</p>{% endfor %}
+  {% if not g.archived %}
+  <details class="dm-edit"><summary class="btn btn-primary btn-sm">+ Note</summary>
+    <form method="post" action="/people/{{ pid }}/note/add" class="dm-form dm-editform">
+      {{ csrf() }}
+      <div class="field"><label>Note</label><textarea name="body" rows="3" required></textarea></div>
+      <div class="dm-row">
+        <div class="field"><label>Keywords</label><input name="keywords" placeholder="for example Stewardship"></div>
+        <div class="field"><label>Who can read it</label>
+          <select name="visibility"><option value="staff">Parish staff</option>{% if ctx.can("notes.clergy") %}<option value="clergy">Clergy only (pastoral)</option>{% endif %}</select></div>
+      </div>
+      <button type="submit" class="btn btn-primary">Add note</button>
+    </form>
+  </details>
+  {% endif %}
+</div>
+
+<div class="dm-section">
+  <div class="dm-section-head"><h3>Tasks</h3></div>
+  {% for t in tasks %}
+  <div class="dm-task {{ 'dm-task-closed' if t.status in ('done','cancelled') }}">
+    <div>
+      <div class="dm-member-name">{{ t.title }}</div>
+      <div class="dm-sub">{% if t.assigned_to_user_id %}Assigned to {% for a in assignees if a.id == t.assigned_to_user_id %}{{ a.name }}{% else %}someone at this parish{% endfor %}{% else %}Not assigned{% endif %}{% if t.due_date %} &middot; due {{ d(t.due_date) }}{% endif %}</div>
+      {% if t.details %}<div class="dm-sub">{{ t.details }}</div>{% endif %}
+    </div>
+    <div class="dm-task-actions">
+      <span class="dm-status dm-status-{{ t.status }}">{{ label(t.status) }}</span>
+      {% if not g.archived %}
+      {% for nxt, lbl in (("accepted","Accept"),("done","Done"),("cancelled","Cancel"),("pending","Reopen")) %}
+        {% if (t.status == "pending" and nxt in ("accepted","done","cancelled")) or (t.status == "accepted" and nxt in ("done","cancelled","pending")) or (t.status in ("done","cancelled") and nxt == "pending") %}
+        <form method="post" action="/people/{{ pid }}/task/{{ t.id }}/update" class="dm-form dm-inline">{{ csrf() }}<input type="hidden" name="status" value="{{ nxt }}"><button type="submit" class="btn btn-secondary btn-sm">{{ lbl }}</button></form>
+        {% endif %}
+      {% endfor %}
+      {% endif %}
+    </div>
+  </div>
+  {% else %}<p class="doc-empty">No tasks.</p>{% endfor %}
+  {% if not g.archived %}
+  <details class="dm-edit"><summary class="btn btn-secondary btn-sm">+ Task</summary>
+    <form method="post" action="/people/{{ pid }}/task/add" class="dm-form dm-editform">
+      {{ csrf() }}
+      <div class="dm-grid">
+        <div class="field"><label>Task</label><input name="title" required></div>
+        <div class="field"><label>Due</label><input name="due_date" placeholder="MM/DD/YYYY"></div>
+        <div class="field"><label>Assign to</label>
+          <select name="assigned_to_user_id"><option value="">No one yet</option>{% for a in assignees %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}</select></div>
+      </div>
+      <div class="field"><label>Details</label><textarea name="details" rows="2"></textarea></div>
+      <button type="submit" class="btn btn-primary">Add task</button>
+    </form>
+  </details>
+  {% endif %}
+</div>

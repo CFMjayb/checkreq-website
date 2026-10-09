@@ -1,0 +1,124 @@
+{#
+donor_funds.html -- funds and campaigns. A fund is where a gift's money goes and carries the QuickBooks accounts and class the journal
+entry uses. A campaign is a pledge period for one fund. Funds are closed, never deleted. Only Finance changes them.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Funds — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/giving">&larr; Giving</a></p>
+  <div class="dm-head"><h1>Funds and campaigns</h1></div>
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Funds</h3></div>
+    {% if not can_manage %}<p class="dm-muted dm-small">Only Finance can add or change funds.</p>{% endif %}
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Fund</th><th>Income account</th><th>Class</th><th>Pledges</th><th>Status</th>{% if can_manage %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for f in funds %}
+        <tr class="{{ '' if f.is_open else 'dm-archived' }}">
+          <td><strong>{{ f.name }}</strong>{% if f.statement_name and f.statement_name != f.name %}<div class="dm-sub">Statement: {{ f.statement_name }}</div>{% endif %}
+            {% if f.liability_account %}<div class="dm-sub">Pass-through to liability {{ f.liability_account }}</div>{% endif %}
+            {% if f.donor_restriction == 'donor_restricted' %}<span class="dm-pill dm-pill-minor">Donor restricted</span>{% endif %}</td>
+          <td>{{ f.income_account or ('' if f.liability_account else '(not set)') }}</td>
+          <td>{{ f.qbo_class or '' }}</td>
+          <td>{{ 'Yes' if f.accepts_pledges else 'No' }}</td>
+          <td>{{ 'Open' if f.is_open else 'Closed' }}</td>
+          {% if can_manage %}
+          <td>
+            <details class="dm-edit dm-edit-inline"><summary class="btn btn-secondary btn-sm">Edit</summary>
+              <form method="post" action="/giving/funds/save" class="dm-form dm-editform">
+                {{ csrf() }}<input type="hidden" name="fund_id" value="{{ f.id }}">
+                <div class="dm-grid">
+                  <div class="field"><label>Name</label><input name="name" value="{{ f.name }}"></div>
+                  <div class="field"><label>Statement wording</label><input name="statement_name" value="{{ f.statement_name or '' }}"></div>
+                  <div class="field"><label>Income account</label><input name="income_account" value="{{ f.income_account or '' }}"></div>
+                  <div class="field"><label>QuickBooks class</label><input name="qbo_class" value="{{ f.qbo_class or '' }}"></div>
+                  <div class="field"><label>Liability account (pass-through)</label><input name="liability_account" value="{{ f.liability_account or '' }}"></div>
+                  <div class="field"><label>Order</label><input name="sort_order" value="{{ f.sort_order }}"></div>
+                </div>
+                {% for k, text in (("is_open", "Open (takes new gifts)"), ("accepts_pledges", "Accepts pledges"), ("tax_deductible_default", "Tax-deductible by default")) %}
+                <input type="hidden" name="has_{{ k }}" value="1"><label class="dm-check"><input type="checkbox" name="{{ k }}" value="1" {{ 'checked' if f[k] }}> {{ text }}</label>
+                {% endfor %}
+                <button type="submit" class="btn btn-primary btn-sm">Save</button>
+              </form>
+            </details>
+          </td>
+          {% endif %}
+        </tr>
+      {% else %}<tr><td colspan="6" class="doc-empty">No funds yet.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+    {% if can_manage %}
+    <details class="dm-edit"><summary class="btn btn-primary btn-sm">+ Add a fund</summary>
+      <form method="post" action="/giving/funds/save" class="dm-form dm-editform">
+        {{ csrf() }}
+        <div class="dm-grid">
+          <div class="field"><label>Name</label><input name="name" required></div>
+          <div class="field"><label>Statement wording</label><input name="statement_name"></div>
+          <div class="field"><label>Income account (QuickBooks account number)</label><input name="income_account"></div>
+          <div class="field"><label>QuickBooks class</label><input name="qbo_class"></div>
+          <div class="field"><label>Or liability account, for a pass-through fund</label><input name="liability_account"></div>
+          <div class="field"><label>Donor restriction</label><select name="donor_restriction"><option value="unrestricted">Unrestricted</option><option value="donor_restricted">Donor restricted</option></select></div>
+        </div>
+        <input type="hidden" name="has_accepts_pledges" value="1"><label class="dm-check"><input type="checkbox" name="accepts_pledges" value="1"> Accepts pledges</label>
+        <input type="hidden" name="has_tax_deductible_default" value="1"><label class="dm-check"><input type="checkbox" name="tax_deductible_default" value="1" checked> Tax-deductible by default</label>
+        <button type="submit" class="btn btn-primary">Add fund</button>
+      </form>
+    </details>
+    {% endif %}
+  </div>
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Campaigns</h3></div>
+    <p class="dm-muted dm-small">A campaign is a pledge period for one fund (for example 2027 Annual Giving). The fund stays the same every year and only the campaign changes.</p>
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Campaign</th><th>Fund</th><th>Period</th><th class="dm-num">Goal</th><th>Status</th>{% if can_manage %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for c in campaigns %}
+        <tr class="{{ '' if c.is_active else 'dm-archived' }}">
+          <td><strong>{{ c.name }}</strong></td><td>{{ c.fund_name }}</td><td>{{ d(c.period_start) }} to {{ d(c.period_end) }}</td>
+          <td class="dm-num">{{ money(c.goal_amount) if c.goal_amount is not none else '' }}</td><td>{{ 'Active' if c.is_active else 'Closed' }}</td>
+          {% if can_manage %}
+          <td>
+            <details class="dm-edit dm-edit-inline"><summary class="btn btn-secondary btn-sm">Edit</summary>
+              <form method="post" action="/giving/campaigns/save" class="dm-form dm-editform">
+                {{ csrf() }}<input type="hidden" name="campaign_id" value="{{ c.id }}">
+                <div class="dm-grid">
+                  <div class="field"><label>Name</label><input name="name" value="{{ c.name }}"></div>
+                  <div class="field"><label>Starts</label><input name="period_start" value="{{ d(c.period_start) }}"></div>
+                  <div class="field"><label>Ends</label><input name="period_end" value="{{ d(c.period_end) }}"></div>
+                  <div class="field"><label>Goal ($)</label><input name="goal_amount" value="{{ c.goal_amount if c.goal_amount is not none else '' }}"></div>
+                </div>
+                <input type="hidden" name="has_is_active" value="1"><label class="dm-check"><input type="checkbox" name="is_active" value="1" {{ 'checked' if c.is_active }}> Active</label>
+                <button type="submit" class="btn btn-primary btn-sm">Save</button>
+              </form>
+            </details>
+          </td>
+          {% endif %}
+        </tr>
+      {% else %}<tr><td colspan="6" class="doc-empty">No campaigns yet.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+    {% if can_manage %}
+    <details class="dm-edit"><summary class="btn btn-primary btn-sm">+ Add a campaign</summary>
+      <form method="post" action="/giving/campaigns/save" class="dm-form dm-editform">
+        {{ csrf() }}
+        <div class="dm-grid">
+          <div class="field"><label>Name</label><input name="name" required></div>
+          <div class="field"><label>Fund (must accept pledges)</label><select name="fund_id">{% for f in funds if f.accepts_pledges and f.is_open %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Starts</label><input name="period_start" placeholder="MM/DD/YYYY" required></div>
+          <div class="field"><label>Ends</label><input name="period_end" placeholder="MM/DD/YYYY" required></div>
+          <div class="field"><label>Goal ($, optional)</label><input name="goal_amount"></div>
+        </div>
+        <button type="submit" class="btn btn-primary">Add campaign</button>
+      </form>
+    </details>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}

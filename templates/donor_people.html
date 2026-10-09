@@ -1,0 +1,104 @@
+{#
+donor_people.html -- People: quick search (SR-01) and list. Only people connected to this parish are ever listed.
+A minor's contact details never appear here for a role that may not see them (the service blanks them).
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}People — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <div class="dm-head">
+    <h1>People</h1>
+    <div class="dm-head-actions">
+      {% if ctx.can("people.create") %}<a class="btn btn-primary" href="/people/new">+ Add person</a>{% endif %}
+    </div>
+  </div>
+
+  <form method="get" action="/people" class="dm-search dm-form-plain" role="search">
+    <label class="dm-search-box">
+      <span class="dm-sr">Search people</span>
+      <input type="search" name="q" value="{{ q }}" placeholder="Search by name, envelope, email, phone, or address" autofocus>
+    </label>
+    <div class="dm-filters">
+      {% if codes %}
+      <label>Member status
+        <select name="status">
+          <option value="">Any</option>
+          <optgroup label="Diocesan category">
+            {% for c in ["active_member","inactive_member","non_member","transferred_out","removed","deceased"] %}<option value="{{ c }}" {{ 'selected' if status == c }}>{{ label(c) }}</option>{% endfor %}
+          </optgroup>
+          <optgroup label="This parish's codes">
+            {% for c in codes %}<option value="{{ c.code }}" {{ 'selected' if status == c.code }}>{{ c.label }}</option>{% endfor %}
+          </optgroup>
+        </select>
+      </label>
+      {% endif %}
+      <label>Gender
+        <select name="gender"><option value="">Any</option>{% for v in ["female","male","nonbinary","unknown"] %}<option value="{{ v }}" {{ 'selected' if gender == v }}>{{ label(v) }}</option>{% endfor %}</select>
+      </label>
+      <label>Marital status
+        <select name="marital"><option value="">Any</option>{% for v in ["single","married","widowed","divorced","separated","unknown"] %}<option value="{{ v }}" {{ 'selected' if marital == v }}>{{ label(v) }}</option>{% endfor %}</select>
+      </label>
+      <label>Record type
+        <select name="rtype"><option value="">People and organizations</option><option value="person" {{ 'selected' if rtype == 'person' }}>People</option><option value="organization" {{ 'selected' if rtype == 'organization' }}>Organizations</option></select>
+      </label>
+      <label class="dm-check"><input type="checkbox" name="archived" value="1" {{ 'checked' if archived }}> Include archived</label>
+      <button type="submit" class="btn btn-secondary">Search</button>
+    </div>
+  </form>
+
+  {% if search_error %}<div class="banner banner-error">{{ search_error }}</div>{% endif %}
+
+  <div class="card dm-card">
+    <p class="dm-count">{{ total }} {{ 'person' if total == 1 else 'people' }}{% if q %} matching &ldquo;{{ q }}&rdquo;{% endif %}</p>
+    {% if rows %}
+    {# One line per person: name (with a small tag where it matters), street address, email, phone, status, envelope. No city or state. #}
+    <div class="table-scroll">
+      <table class="simple-table dm-table dm-people">
+        <thead><tr><th class="dm-col-name">Name</th><th class="dm-col-addr">Address</th><th class="dm-col-mail">Email</th><th class="dm-col-phone">Phone</th><th class="dm-col-stat">{% if ctx.can("membership.view") %}Status{% else %}Connection{% endif %}</th><th class="dm-col-env">Env.</th></tr></thead>
+        <tbody>
+          {% for r in rows %}
+          <tr class="{{ 'dm-archived' if r.archived else '' }}">
+            <td class="dm-col-name">
+              <a href="/people/{{ r.id }}">{{ r.name }}</a>
+              {% if r.is_minor %}<span class="dm-pill dm-pill-minor">Minor</span>{% endif %}
+              {% if r.is_placeholder %}<span class="dm-pill">Placeholder</span>{% endif %}
+              {% if r.record_type == "organization" %}<span class="dm-pill">Org</span>{% endif %}
+              {% if r.deceased_date %}<span class="dm-pill">Deceased</span>{% endif %}
+              {% if r.archived %}<span class="dm-pill">Archived</span>{% endif %}
+            </td>
+            <td class="dm-col-addr" title="{{ r.address1 or '' }}">{{ r.address1 or "" }}</td>
+            <td class="dm-col-mail" title="{{ r.email or '' }}">{{ r.email or "" }}</td>
+            <td class="dm-col-phone">{{ r.phone or r.home_phone or "" }}</td>
+            <td class="dm-col-stat">{% if ctx.can("membership.view") and r.status_label %}{{ r.status_label }}{% else %}{{ label(r.connection_kind) }}{% endif %}{% if r.is_canonical %} <span class="dm-pill dm-pill-green">Canonical</span>{% endif %}</td>
+            <td class="dm-col-env">{{ r.envelope_number or "" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if pages > 1 %}
+    <div class="dm-pager">
+      {% if page_no > 1 %}<a class="btn btn-secondary btn-sm" href="/people?q={{ q|urlencode }}&status={{ status|urlencode }}&gender={{ gender|urlencode }}&marital={{ marital|urlencode }}&rtype={{ rtype|urlencode }}&archived={{ archived|urlencode }}&page={{ page_no - 1 }}">&larr; Previous</a>{% endif %}
+      <span>Page {{ page_no }} of {{ pages }}</span>
+      {% if page_no < pages %}<a class="btn btn-secondary btn-sm" href="/people?q={{ q|urlencode }}&status={{ status|urlencode }}&gender={{ gender|urlencode }}&marital={{ marital|urlencode }}&rtype={{ rtype|urlencode }}&archived={{ archived|urlencode }}&page={{ page_no + 1 }}">Next &rarr;</a>{% endif %}
+    </div>
+    {% endif %}
+    {% else %}
+    <p class="doc-empty">{% if q or status or gender or marital or rtype %}No one matches that search at this parish.{% else %}No one has been added at this parish yet. Add a person{% if ctx.can("people.edit") %}, or load many at once from Setup &rarr; Import people{% endif %}.{% endif %}</p>
+    {% endif %}
+  </div>
+
+  <p class="dm-foot">
+    <a href="/people/directory">Parish directory</a>
+    {% if ctx.can("people.edit") %}
+    &middot; <a href="/people/export.csv?kind=roll">Export roll (CSV)</a> &middot;
+    <a href="/people/export.csv?kind=directory">Export directory (CSV)</a>
+    <span class="dm-muted"> &mdash; each download is logged; people under 18 are left out unless you ask for them on the directory page.</span>
+    {% endif %}
+  </p>
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}
