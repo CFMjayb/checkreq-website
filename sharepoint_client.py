@@ -37,6 +37,17 @@ _SECRET_NAME = "sharepoint-credentials"
 _cached_creds: dict | None = None
 _token_cache = {"token": None, "expires_at": 0}
 
+# Every call to Graph has a timeout (2026-10-09). `requests` has NONE by default, so a hung
+# connection used to wait forever -- and a submission waiting forever froze everything that
+# shared its thread. (connect, read) in seconds: a small call that has not answered within 30 s is
+# dead; moving a file (up to the 25 MB upload cap) may legitimately take longer.
+_TIMEOUT = (10, 30)
+_TIMEOUT_TRANSFER = (10, 120)
+
+# A SharePoint site's id never changes, so look it up once per process and entity instead of
+# on every submission (an extra ~0.3 s Graph call each time). Only a success is kept.
+_site_id_cache: dict[tuple[str, str], str] = {}
+
 
 def _read_secret(name: str) -> str:
     from google.cloud import secretmanager
@@ -65,7 +76,7 @@ def get_access_token() -> str:
         "client_id": c["client_id"],
         "client_secret": c["client_secret"],
         "scope": SCOPE,
-    })
+    }, timeout=_TIMEOUT)
     if not resp.ok:
         raise RuntimeError(f"Microsoft token request failed ({resp.status_code}): {resp.text[:500]}")
     data = resp.json()
@@ -89,9 +100,16 @@ def _check(resp: requests.Response, what: str) -> requests.Response:
 
 def get_site_id(token: str, hostname: str, site_path: str) -> str:
     """hostname='cornerstonefranciscan.sharepoint.com', site_path='/sites/servicesteam'."""
+    key = (hostname, site_path)
+    cached = _site_id_cache.get(key)
+    if cached:
+        return cached
     url = f"{GRAPH_BASE}/sites/{hostname}:{site_path}"
-    resp = _check(requests.get(url, headers=_headers(token)), f"site resolution for {hostname}:{site_path}")
-    return resp.json()["id"]
+    resp = _check(requests.get(url, headers=_headers(token), timeout=_TIMEOUT),
+                  f"site resolution for {hostname}:{site_path}")
+    site_id = resp.json()["id"]
+    _site_id_cache[key] = site_id
+    return site_id
 
 
 def upload_bytes(token: str, site_id: str, folder_path: str, filename: str, data: bytes, content_type: str) -> dict:
@@ -101,7 +119,8 @@ def upload_bytes(token: str, site_id: str, folder_path: str, filename: str, data
     seg = f"{folder_path.strip('/')}/{filename}"
     url = f"{GRAPH_BASE}/sites/{site_id}/drive/root:/{seg}:/content"
     resp = _check(
-        requests.put(url, headers=_headers(token, content_type="application/octet-stream"), data=data),
+        requests.put(url, headers=_headers(token, content_type="application/octet-stream"), data=data,
+                     timeout=_TIMEOUT_TRANSFER),
         f'upload "{seg}"',
     )
     return resp.json()
@@ -122,7 +141,8 @@ def download_bytes(token: str, site_id: str, file_path: str) -> bytes:
     tenant access, avoiding a second, unrelated login wall."""
     seg = file_path.strip("/")
     url = f"{GRAPH_BASE}/sites/{site_id}/drive/root:/{seg}:/content"
-    resp = _check(requests.get(url, headers=_headers(token, content_type=None)), f'download "{seg}"')
+    resp = _check(requests.get(url, headers=_headers(token, content_type=None), timeout=_TIMEOUT_TRANSFER),
+                  f'download "{seg}"')
     return resp.content
 
 
@@ -137,7 +157,7 @@ def list_folder(token: str, site_id: str, folder_path: str) -> list[dict]:
         url = f"{GRAPH_BASE}/sites/{site_id}/drive/root:/{seg}:/children?$top=500"
     else:
         url = f"{GRAPH_BASE}/sites/{site_id}/drive/root/children?$top=500"
-    resp = requests.get(url, headers=_headers(token))
+    resp = requests.get(url, headers=_headers(token), timeout=_TIMEOUT)
     if resp.status_code == 404:
         return []
     _check(resp, f'list "{seg or "/"}"')
@@ -241,7 +261,7 @@ def ensure_folder(token: str, site_id: str, parent_path: str, name: str) -> None
            else f"{GRAPH_BASE}/sites/{site_id}/drive/root/children")
     resp = requests.post(url, headers=_headers(token), json={
         "name": name, "folder": {}, "@microsoft.graph.conflictBehavior": "fail",
-    })
+    }, timeout=_TIMEOUT)
     if resp.status_code not in (201, 409):
         raise RuntimeError(f'create folder "{name}" under "{parent_path}" failed '
                             f'({resp.status_code}): {resp.text[:300]!r}')
@@ -263,6 +283,6 @@ def delete_file(token: str, site_id: str, file_path: str) -> None:
     this exact function, fixed before ever relying on it)."""
     seg = file_path.strip("/")
     url = f"{GRAPH_BASE}/sites/{site_id}/drive/root:/{seg}"
-    resp = requests.delete(url, headers=_headers(token, content_type=None))
+    resp = requests.delete(url, headers=_headers(token, content_type=None), timeout=_TIMEOUT)
     if resp.status_code not in (204, 404):
         raise RuntimeError(f'Graph delete "{seg}" failed ({resp.status_code}): {resp.text[:300]!r}')
