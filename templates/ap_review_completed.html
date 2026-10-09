@@ -33,6 +33,7 @@
       <th class="col-entity">Entity</th>
       <th class="col-program">Program Area</th>
       <th class="col-vendor">Vendor</th>
+      <th class="col-invoice">Invoice #</th>
       <th class="col-amount">Amount</th>
       <th class="col-date">Posted</th>
       <th class="col-actions">Actions</th>
@@ -44,6 +45,7 @@
       <td class="col-entity">{{ r.org_code }}</td>
       <td class="col-program">{{ r.program_area_title }}</td>
       <td class="col-vendor">{{ r.vendor_name }}</td>
+      <td class="col-invoice">{{ r.invoice_number or "—" }}</td>
       <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
       <td class="col-date">{{ r.updated_at.strftime("%Y-%m-%d %H:%M") if r.updated_at else "—" }}</td>
       <td class="col-actions">
@@ -52,7 +54,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="8">Nothing posted yet.</td></tr>
+    <tr><td colspan="9">Nothing posted yet.</td></tr>
     {% endfor %}
   </table>
 </div>

@@ -148,6 +148,7 @@ import art_preapproval
 import security_headers
 import upload_guard
 import submission_guard
+import invoice_numbers
 import csrf_guard
 import error_log
 
@@ -1625,6 +1626,7 @@ def edit_request_form(request_number: str, request: Request, add_error: str = ""
         "requested_pay_date": pr["requested_pay_date"].isoformat() if pr["requested_pay_date"] else None,
         "description": pr["description"] or "",
         "special_instructions": pr["special_instructions"] or "",
+        "invoice_number": pr.get("invoice_number") or "",
         "gl_lines": [
             {"gl_account_id": g["gl_account_id"], "amount": float(g["amount"]), "memo": g["memo"] or "",
              "account_number": g["account_number"], "account_name": g["account_name"]}
@@ -3113,6 +3115,16 @@ async def _extract_and_match_invoice(content: bytes, mime_type: str, org: dict) 
     at all."""
     result = await asyncio.to_thread(document_extract.extract_fields, content, mime_type)
 
+    # 2026-10-09: the invoice number read off the document. It becomes the QuickBooks Bill no., which
+    # QuickBooks limits to 21 characters -- a longer one is left for the person to enter rather than cut.
+    _inv = invoice_numbers.clean(result.get("invoice_number"))
+    if len(_inv) > invoice_numbers.MAX_LEN:
+        result.setdefault("caveats", []).append(
+            f"The invoice number ({_inv}) is longer than QuickBooks allows for a Bill number "
+            f"({invoice_numbers.MAX_LEN} characters), so it was not filled in -- please enter a shorter one.")
+        _inv = ""
+    result["invoice_number"] = _inv or None
+
     matched_vendor_id = None
     possible_vendor_matches: list[dict] = []
     vendor_name = result.get("vendor_name")
@@ -3516,6 +3528,7 @@ def _voucher_context(payment_request_id: int) -> dict | None:
         "voucher_amount_words": _amount_to_words(amount),
         "voucher_program_area": pr["program_area_title"],
         "voucher_description": pr["description"] or "—",
+        "voucher_invoice_number": pr.get("invoice_number") or "",
         "voucher_gl_lines": [
             {"account": f"{g['account_number']} - {g['account_name']}", "amount": float(g["amount"]), "memo": g["memo"]}
             for g in gl_lines
@@ -4403,6 +4416,10 @@ async def _new_request_submit_body(request: Request, form):
         d_pay_date = form.get("requested_pay_date") or None
         d_description = form.get("description", "")
         d_special = form.get("special_instructions", "")
+        d_invoice = invoice_numbers.clean(form.get("invoice_number")) or None
+        if d_invoice and len(d_invoice) > invoice_numbers.MAX_LEN:
+            return JSONResponse({"error": f"The invoice number can be at most {invoice_numbers.MAX_LEN} "
+                                          f"characters (QuickBooks' limit for a Bill number)."}, status_code=400)
 
         # Tolerant GL parse: a blank or half-typed row is skipped rather than
         # rejected, which is the whole point of a draft.
@@ -4457,10 +4474,11 @@ async def _new_request_submit_body(request: Request, form):
                     cur.execute(
                         "UPDATE checkreq.payment_requests SET program_area_id = %s, "
                         "  vendor_id = %s, amount = %s, requested_pay_date = %s, "
-                        "  description = %s, special_instructions = %s, updated_at = NOW() "
+                        "  description = %s, special_instructions = %s, invoice_number = %s, "
+                        "  updated_at = NOW() "
                         "WHERE id = %s AND org_id = %s",
                         (d_program_area_id, d_vendor_id, d_total, d_pay_date,
-                         d_description, d_special, d_pr_id, org_id))
+                         d_description, d_special, d_invoice, d_pr_id, org_id))
                     _finish_draft_txn(cur, d_pr_id)
         else:
             def _do_new_draft_insert(request_number):
@@ -4471,11 +4489,11 @@ async def _new_request_submit_body(request: Request, form):
                             "INSERT INTO checkreq.payment_requests "
                             "(request_number, request_type, org_id, program_area_id, "
                             " submitter_user_id, vendor_id, amount, requested_pay_date, "
-                            " description, special_instructions, status) "
-                            "VALUES (%s, 'check_request', %s, %s, %s, %s, %s, %s, %s, %s, 'Draft') "
+                            " description, special_instructions, invoice_number, status) "
+                            "VALUES (%s, 'check_request', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Draft') "
                             "RETURNING id",
                             (request_number, org_id, d_program_area_id, user["id"],
-                             d_vendor_id, d_total, d_pay_date, d_description, d_special))
+                             d_vendor_id, d_total, d_pay_date, d_description, d_special, d_invoice))
                         pr_id = cur.fetchone()["id"]
                         submission_guard.link(cur, guard_token, pr_id)
                         _finish_draft_txn(cur, pr_id)
@@ -4597,6 +4615,11 @@ async def _new_request_submit_body(request: Request, form):
         return JSONResponse({"error": "Pay Date is required."}, status_code=400)
     description = form.get("description", "")
     special_instructions = form.get("special_instructions", "")
+    # Invoice number (2026-10-09): optional, at most QuickBooks' 21-character Bill-number limit.
+    invoice_number = invoice_numbers.clean(form.get("invoice_number")) or None
+    if invoice_number and len(invoice_number) > invoice_numbers.MAX_LEN:
+        return JSONResponse({"error": f"The invoice number can be at most {invoice_numbers.MAX_LEN} "
+                                      f"characters (QuickBooks' limit for a Bill number)."}, status_code=400)
 
     # Ask My Accountant (2026-08-16, per Jay's revision of the original
     # "Ask My Accountant" thread-log design): the submitter still picks a
@@ -4694,6 +4717,26 @@ async def _new_request_submit_body(request: Request, form):
     overspend_detail = "\n".join(
         e["detail"] for e in budget_result["buffer_notice"] + budget_result["cfo_required"]
     ) or None
+
+    # Duplicate check (2026-10-09, Jay: "there should be a check to see if an invoice is posting twice").
+    # Same pattern as the over-budget confirmation just above: the first attempt is answered with a 409
+    # the page turns into a dialog; the resubmission carries confirmed_duplicate=1 (and a reason, which an
+    # invoice-number match requires). Runs for a new request, a draft being finished, and an edit that
+    # changed the vendor or the invoice number -- never for an edit that left both alone, so an old
+    # request can still be fixed. The rules and the reasons for them are in invoice_numbers.py.
+    dup_found, dup_confirm = None, None
+    if not using_new_vendor and vendor_id is not None and (
+            existing_pr is None or existing_pr["status"] in ("Draft", "Rejected", "Returned by AP")
+            or vendor_id != existing_pr["vendor_id"]
+            or invoice_numbers.normalize(invoice_number) != invoice_numbers.normalize(existing_pr["invoice_number"])):
+        dup_found = invoice_numbers.find_matches(
+            org_id, vendor_id, invoice_number, total_amount, existing_pr["id"] if existing_pr else None)
+        if dup_found["invoice"] or dup_found["amount"]:
+            dup_confirm = invoice_numbers.confirmed(form, dup_found)
+            if dup_confirm is None:
+                return JSONResponse(invoice_numbers.confirmation_needed(dup_found, invoice_number), status_code=409)
+        else:
+            dup_found = None
 
     # 2026-09-14: existing-vendor W-9 year-to-date check (see
     # _check_existing_vendor_w9's own docstring) -- computed once here,
@@ -4936,7 +4979,8 @@ async def _new_request_submit_body(request: Request, form):
                         UPDATE checkreq.payment_requests SET
                             program_area_id = %s, vendor_id = %s, vendor_request_id = %s,
                             amount = %s, requested_pay_date = %s, description = %s,
-                            special_instructions = %s, status = %s, current_approver_id = %s,
+                            special_instructions = %s, invoice_number = %s,
+                            status = %s, current_approver_id = %s,
                             serial_group_current = %s, approval_chain_summary = %s,
                             overspend_flagged = %s, overspend_detail = %s, budget_checked_at = NOW(),
                             existing_vendor_w9_flagged = %s, existing_vendor_w9_detail = %s,
@@ -4944,12 +4988,15 @@ async def _new_request_submit_body(request: Request, form):
                         WHERE id = %s
                         """,
                         (program_area_id, vendor_id, new_vendor_request_id, total_amount,
-                         requested_pay_date, description, special_instructions,
+                         requested_pay_date, description, special_instructions, invoice_number,
                          initial_status, first_display_approver, first_serial_group,
                          chain_summary, overspend_flagged, overspend_detail,
                          existing_vendor_w9_flagged, existing_vendor_w9_detail, pre_approved,
                          payment_request_id),
                     )
+                    if dup_confirm:
+                        invoice_numbers.log_confirmation(
+                            cur, payment_request_id, user["id"], dup_found, dup_confirm, impersonated_by)
 
                     cur.execute(
                         "DELETE FROM checkreq.payment_request_gl_lines WHERE payment_request_id = %s",
@@ -5145,7 +5192,8 @@ async def _new_request_submit_body(request: Request, form):
                         UPDATE checkreq.payment_requests SET
                             program_area_id = %s, vendor_id = %s, vendor_request_id = %s,
                             amount = %s, requested_pay_date = %s, description = %s,
-                            special_instructions = %s, status = %s, current_approver_id = %s,
+                            special_instructions = %s, invoice_number = %s,
+                            status = %s, current_approver_id = %s,
                             serial_group_current = %s, approval_chain_summary = %s,
                             cfo_override = FALSE, cfo_override_date = NULL,
                             overspend_flagged = %s, overspend_detail = %s, budget_checked_at = NOW(),
@@ -5154,7 +5202,7 @@ async def _new_request_submit_body(request: Request, form):
                         WHERE id = %s
                         """,
                         (program_area_id, vendor_id, new_vendor_request_id, total_amount,
-                         requested_pay_date, description, special_instructions,
+                         requested_pay_date, description, special_instructions, invoice_number,
                          initial_status,
                          first_display_approver, first_serial_group,
                          chain_summary, overspend_flagged, overspend_detail,
@@ -5172,15 +5220,18 @@ async def _new_request_submit_body(request: Request, form):
                         UPDATE checkreq.payment_requests SET
                             program_area_id = %s, vendor_id = %s, vendor_request_id = %s,
                             requested_pay_date = %s, description = %s,
-                            special_instructions = %s,
+                            special_instructions = %s, invoice_number = %s,
                             overspend_flagged = %s, overspend_detail = %s, budget_checked_at = NOW(),
                             updated_at = NOW()
                         WHERE id = %s
                         """,
                         (program_area_id, vendor_id, new_vendor_request_id,
-                         requested_pay_date, description, special_instructions,
+                         requested_pay_date, description, special_instructions, invoice_number,
                          overspend_flagged, overspend_detail, payment_request_id),
                     )
+                if dup_confirm:
+                    invoice_numbers.log_confirmation(
+                        cur, payment_request_id, user["id"], dup_found, dup_confirm, impersonated_by)
 
                 # Replace GL lines wholesale -- delete + reinsert, matching
                 # this codebase's stated preference for straightforward code
@@ -5212,11 +5263,16 @@ async def _new_request_submit_body(request: Request, form):
                              e["annual_budget"], e["projected"], e["buffer_amount"]),
                         )
 
+                # 2026-10-09: the invoice number drives the Bill no. and the duplicate hold, so a change (or
+                # blanking it) is written to the history, the same way an AP edit already does.
+                _old_inv = invoice_numbers.clean(existing_pr["invoice_number"])
+                inv_note = (f' Invoice #: "{_old_inv}" -> "{invoice_number or ""}".'
+                            if (invoice_number or "") != _old_inv else "")
                 if reset_approval:
                     if vendor_changed or amount_changed:
                         audit_comment = (
                             f"Vendor and/or amount changed on edit (was ${old_total:,.2f}, "
-                            f"now ${total_amount:,.2f}) -- approval workflow reset.\n{chain_summary}"
+                            f"now ${total_amount:,.2f}) -- approval workflow reset.{inv_note}\n{chain_summary}"
                         )
                     else:
                         # status_forces_reset case (Decision 1) -- neither
@@ -5225,7 +5281,7 @@ async def _new_request_submit_body(request: Request, form):
                         # re-enter the chain regardless of what changed.
                         audit_comment = (
                             f"Request was '{existing_pr['status']}' -- edited and resubmitted "
-                            f"for approval (re-enters the chain regardless of what changed).\n{chain_summary}"
+                            f"for approval (re-enters the chain regardless of what changed).{inv_note}\n{chain_summary}"
                         )
                     cur.execute(
                         "INSERT INTO checkreq.audit_log "
@@ -5242,7 +5298,7 @@ async def _new_request_submit_body(request: Request, form):
                         " previous_status, new_status, impersonated_by_user_id) "
                         "VALUES (%s, %s, %s, %s, %s, %s, %s)",
                         (payment_request_id, user["id"], "Edited",
-                         "Fields updated (vendor and amount unchanged; approval workflow untouched).",
+                         "Fields updated (vendor and amount unchanged; approval workflow untouched)." + inv_note,
                          existing_pr["status"], existing_pr["status"], impersonated_by),
                     )
 
@@ -5283,15 +5339,17 @@ async def _new_request_submit_body(request: Request, form):
                     INSERT INTO checkreq.payment_requests
                         (request_number, request_type, org_id, program_area_id, submitter_user_id,
                          vendor_id, amount, requested_pay_date, description, special_instructions,
+                         invoice_number,
                          status, current_approver_id, serial_group_current, approval_chain_summary,
                          overspend_flagged, overspend_detail,
                          existing_vendor_w9_flagged, existing_vendor_w9_detail,
                          pre_approved, budget_checked_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                     RETURNING id
                     """,
                     (request_number, request_type, org_id, program_area_id, user["id"],
                      vendor_id, total_amount, requested_pay_date, description, special_instructions,
+                     invoice_number,
                      initial_status,
                      first_display_approver, first_serial_group,
                      chain_summary, overspend_flagged, overspend_detail,
@@ -5299,6 +5357,9 @@ async def _new_request_submit_body(request: Request, form):
                 )
                 payment_request_id = cur.fetchone()["id"]
                 submission_guard.link(cur, guard_token, payment_request_id)
+                if dup_confirm:
+                    invoice_numbers.log_confirmation(
+                        cur, payment_request_id, user["id"], dup_found, dup_confirm, impersonated_by)
 
                 for acct_id, amt, memo in gl_lines:
                     cur.execute(
@@ -5966,10 +6027,12 @@ async def _finish_invoice_processing(payment_request_id: int, request_number: st
                 """
                 UPDATE checkreq.payment_requests
                 SET program_area_id = %s, vendor_id = %s, amount = %s, description = %s,
+                    invoice_number = %s,
                     invoice_extracted_vendor = %s, invoice_extracted_amount = %s, intake_status = %s::jsonb
                 WHERE id = %s
                 """,
                 (program_area_id, vendor_id, extracted_amount or 0, result.get("description") or "",
+                 result.get("invoice_number"),
                  vendor_name, extracted_amount, json.dumps(intake_status), payment_request_id),
             )
             # A handwritten/stamped GL account found directly on the
@@ -6235,6 +6298,7 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
         rows = db.query(
             """
             SELECT pr.id AS pr_id, pr.submitter_user_id, pr.request_number, pr.request_type, pr.amount, pr.status,
+                   pr.invoice_number,
                    pr.approval_chain_summary, pr.created_at, pr.requested_pay_date, o.code AS org_code,
                    COALESCE(pa.title, 'All Program Areas') AS program_area_title, u.display_name AS submitter_name,
                    u.email AS submitter_email,
@@ -6257,6 +6321,7 @@ def my_requests(request: Request, submitted: str = "", archive_warning: str = ""
         rows = db.query(
             """
             SELECT pr.id AS pr_id, pr.submitter_user_id, pr.request_number, pr.request_type, pr.amount, pr.status,
+                   pr.invoice_number,
                    pr.approval_chain_summary, pr.created_at, pr.requested_pay_date, o.code AS org_code,
                    COALESCE(pa.title, 'All Program Areas') AS program_area_title,
                    v.display_name AS vendor_display_name,
@@ -6401,6 +6466,7 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
         rows = db.query(
             """
             SELECT DISTINCT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount,
+                   pr.invoice_number,
                    pr.status, pr.approval_chain_summary, pr.created_at, pr.requested_pay_date,
                    o.code AS org_code,
                    COALESCE(pa.title, 'All Program Areas') AS program_area_title, u.display_name AS submitter_name,
@@ -6427,6 +6493,7 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
         rows = db.query(
             """
             SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
+                   pr.invoice_number,
                    pr.approval_chain_summary, pr.created_at, pr.requested_pay_date,
                    o.code AS org_code,
                    COALESCE(pa.title, 'All Program Areas') AS program_area_title,
@@ -6950,6 +7017,7 @@ def admin_all_requests(request: Request, vendor: str = "",
     rows = db.query(
         f"""
         SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount, pr.status,
+               pr.invoice_number,
                pr.created_at, pr.updated_at, o.code AS org_code,
                COALESCE(pa.title, 'All Program Areas') AS program_area_title, u.display_name AS submitter_name,
                u.email AS submitter_email,
@@ -7440,6 +7508,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
         completed_rows = db.query(
             f"""
             SELECT pr.request_number, pr.request_type, pr.amount, pr.qbo_bill_id,
+                   pr.invoice_number,
                    pr.qbo_bill_url, pr.updated_at, o.code AS org_code,
                    COALESCE(pa.title, 'All Program Areas') AS program_area_title,
                    v.display_name AS vendor_display_name,
@@ -7480,6 +7549,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
     rows = db.query(
         f"""
         SELECT pr.id AS pr_id, pr.request_number, pr.request_type, pr.amount,
+               pr.invoice_number, pr.org_id, pr.vendor_id,
                pr.approval_chain_summary, pr.created_at, pr.vendor_request_id,
                pr.overspend_flagged, pr.overspend_detail,
                pr.existing_vendor_w9_flagged, pr.existing_vendor_w9_detail,
@@ -7576,6 +7646,12 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
                 r["w9_waiver_note"] = "Vendor: W-9 not required"
         r["can_waive_w9"] = bool(r["vendor_gate_wait"] and "W-9" in r["vendor_gate_wait"])
         r["chain_short"] = (r.get("approval_chain_summary") or "").split("\n")[0]
+        # 2026-10-09: same invoice number already submitted for this vendor -> the row is held here, with
+        # the earlier request named, until AP acknowledges it on the AP edit screen (post_to_qbo re-checks).
+        _dup = invoice_numbers.posting_block(
+            {"id": r["pr_id"], "org_id": r["org_id"], "vendor_id": r["vendor_id"],
+             "invoice_number": r["invoice_number"]})
+        r["dup_hold"] = invoice_numbers.describe(_dup) if _dup else None
 
     # Ask My Accountant (2026-08-16): requests waiting on AP to assign GL
     # coding before the approval chain can even start -- same screen/role
@@ -7864,8 +7940,19 @@ def ap_edit_form(request_number: str, request: Request, error: str = "", saved: 
     )
     ctx = _voucher_context(pr["id"]) or {}
     w9_target = _w9_target(pr)
+    # Duplicate check (2026-10-09): every earlier request with this invoice number for this vendor, and
+    # whether AP's acknowledgement is still outstanding (it holds "Post to QBO" until given).
+    dup_matches = invoice_numbers.find_matches(
+        pr["org_id"], pr["vendor_id"], pr["invoice_number"], 0, pr["id"])["invoice"] if pr["vendor_id"] else []
+    dup_holding = invoice_numbers.holding_matches(pr) if dup_matches else []
+    dup_hold = invoice_numbers.posting_block(pr) if dup_holding else []
+    # "hold": request(s) that can hold this one use this number and AP has not acknowledged them;
+    # "acknowledged": AP did; "later": only requests submitted AFTER this one (and not posted) use the number
+    # (this one is not held, theirs are).
+    dup_state = ("hold" if dup_hold else "acknowledged" if dup_holding else "later" if dup_matches else "")
     return _render(request, "ap_edit.html", user, {
         **ctx,
+        "dup_matches": dup_matches, "dup_hold": dup_hold, "dup_state": dup_state,
         "pr": pr, "request_number": request_number, "pr_status": pr["status"],
         "editable": _request_is_editable(pr["status"]),
         "vendor": vendor, "new_vendor_name": new_vendor_name,
@@ -7939,6 +8026,10 @@ async def ap_edit_submit(request_number: str, request: Request):
         return fail("Pay date is not a valid date.")
     description = form.get("description", pr["description"] or "")
     special_instructions = form.get("special_instructions", pr["special_instructions"] or "")
+    invoice_number = invoice_numbers.clean(form.get("invoice_number", pr["invoice_number"] or "")) or None
+    if invoice_number and len(invoice_number) > invoice_numbers.MAX_LEN:
+        return fail(f"The invoice number can be at most {invoice_numbers.MAX_LEN} characters "
+                    f"(QuickBooks' limit for a Bill number).")
 
     try:
         gl_lines = [
@@ -8015,6 +8106,8 @@ async def ap_edit_submit(request_number: str, request: Request):
         changes.append(f"Description: \"{pr['description'] or ''}\" -> \"{description}\"")
     if (special_instructions or "") != (pr["special_instructions"] or ""):
         changes.append("Special Instructions changed")
+    if (invoice_number or "") != invoice_numbers.clean(pr["invoice_number"]):
+        changes.append(f"Invoice #: \"{invoice_numbers.clean(pr['invoice_number'])}\" -> \"{invoice_number or ''}\"")
     if gl_lines and fmt_old != fmt_new:
         changes.append(f"GL: {fmt_old} -> {fmt_new}")
 
@@ -8043,12 +8136,13 @@ async def ap_edit_submit(request_number: str, request: Request):
                 UPDATE checkreq.payment_requests SET
                     program_area_id = %s, vendor_id = %s, vendor_request_id = %s, amount = %s,
                     requested_pay_date = %s, description = %s, special_instructions = %s,
+                    invoice_number = %s,
                     existing_vendor_w9_flagged = %s, existing_vendor_w9_detail = %s,
                     overspend_flagged = %s, overspend_detail = %s, updated_at = NOW()
                 WHERE id = %s
                 """,
                 (program_area_id, vendor_id, vendor_request_id, total_amount, requested_pay_date,
-                 description, special_instructions, w9_flagged, w9_detail,
+                 description, special_instructions, invoice_number, w9_flagged, w9_detail,
                  overspend_flagged, overspend_detail, pr["id"]),
             )
             if gl_lines and action != "save_start":
@@ -8086,6 +8180,7 @@ async def ap_edit_submit(request_number: str, request: Request):
                                     program_area_id != pr["program_area_id"] or
                                     requested_pay_date != pr["requested_pay_date"] or
                                     (description or "") != (pr["description"] or "") or
+                                    (invoice_number or "") != invoice_numbers.clean(pr["invoice_number"]) or
                                     (gl_lines and fmt_old != fmt_new)):
         try:
             org_full = db.query_one(
@@ -8338,6 +8433,14 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
     if pr["status"] != "Approved":
         return False, f"someone already acted on this request (status is now {pr['status']})"
 
+    # 2026-10-09 (Jay: "there should be a check to see if an invoice is posting twice"): a request whose
+    # invoice number was already submitted for this vendor waits here until AP acknowledges it on the AP
+    # edit screen. Re-checked live every time, before anything is created in QuickBooks. Batch posts
+    # reach this too, so they report it per request.
+    dup_hold = invoice_numbers.posting_block(pr)
+    if dup_hold:
+        return False, invoice_numbers.hold_message(dup_hold)
+
     company = pr["org_code"]
 
     # Step 2/3/4: New Vendor Onboarding gate + vendor creation, only if this
@@ -8444,11 +8547,14 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
     except Exception as exc:
         print(f"[post_to_qbo] approval log build failed for {request_number}: {exc}")
 
+    # 2026-10-09 (Jay): the Bill no. in QuickBooks is the vendor's invoice number, or the CR number when the
+    # request has none. The CR number then moves into the Bill memo so a Bill can still be found from a CR.
     result, bill_error = qbo_mcp_client.create_bill(
         company, qbo_vendor_id,
         date.today().isoformat(),
-        bill_lines, doc_number=pr["request_number"],
-        private_note=pr["description"] or f"Check Request {pr['request_number']}",
+        bill_lines,
+        doc_number=invoice_numbers.bill_number(pr.get("invoice_number"), pr["request_number"]),
+        private_note=invoice_numbers.bill_memo(pr.get("invoice_number"), pr["request_number"], pr["description"]),
         due_date=pr["requested_pay_date"].isoformat() if pr["requested_pay_date"] else None,
         attachments=qbo_attachments,
     )
@@ -9512,6 +9618,13 @@ outreach_admin.register(app, current_user=_current_user, current_org=_current_or
 import outreach_mine
 
 outreach_mine.register(app, templates=templates, current_user=_current_user, render=_render)
+
+# ── Invoice numbers (2026-10-09): AP's "this is not a duplicate" action. See invoice_numbers.py. Thin wiring only. ──
+invoice_numbers.register(
+    app, current_user=_current_user,
+    impersonated_by=lambda request: (_real_user(request)["id"] if request.session.get("impersonating_user_id") else None),
+    can_ap_edit=_can_ap_edit, request_is_editable=_request_is_editable,
+)
 
 # ── 26-129 Donor Management (people, membership, giving): ONE entry point, thin wiring only ──
 # See donor_register.py. Nothing shows for a parish until its donor.parish_settings flags are turned on.

@@ -52,6 +52,7 @@
       <th class="col-entity">Entity</th>
       <th class="col-program">Program Area</th>
       <th class="col-vendor">Vendor</th>
+      <th class="col-invoice">Invoice #</th>
       <th class="col-submitter">Submitted By</th>
       <th class="col-amount">Amount</th>
       <th class="col-status">Status</th>
@@ -66,6 +67,7 @@
       <td class="col-entity">{{ r.org_code }}</td>
       <td class="col-program">{{ r.program_area_title }}</td>
       <td class="col-vendor">{{ r.vendor_name }}</td>
+      <td class="col-invoice">{{ r.invoice_number or "—" }}</td>
       <td class="col-submitter">{{ r.submitter_name or r.submitter_email }}</td>
       <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
       <td class="col-status status-cell">
@@ -96,7 +98,7 @@
       <td class="col-actions"><a href="/requests/{{ r.request_number }}/pdf" target="_blank">PDF</a></td>
     </tr>
     {% else %}
-    <tr><td colspan="11">No requests yet.</td></tr>
+    <tr><td colspan="12">No requests yet.</td></tr>
     {% endfor %}
   </table>
 </div>

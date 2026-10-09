@@ -38,6 +38,7 @@ involved and who has already acted. Click a Request # to view the full check req
       <th class="col-program">Program Area</th>
       <th class="col-neededby">Needed By</th>
       <th class="col-vendor">Vendor</th>
+      <th class="col-invoice">Invoice #</th>
       {% if show_all %}<th class="col-submitter">Submitted By</th>{% endif %}
       <th class="col-amount">Amount</th>
       <th class="col-chain">Chain</th>
@@ -52,6 +53,7 @@ involved and who has already acted. Click a Request # to view the full check req
       <td class="col-program program-area-cell">{{ r.program_area_title }}</td>
       <td class="col-neededby">{{ r.requested_pay_date.strftime("%Y-%m-%d") if r.requested_pay_date else "—" }}</td>
       <td class="col-vendor">{{ r.vendor_name }}</td>
+      <td class="col-invoice">{{ r.invoice_number or "—" }}</td>
       {% if show_all %}<td class="col-submitter">{{ r.submitter_name or r.submitter_email }}</td>{% endif %}
       <td class="col-amount">${{ "%.2f"|format(r.amount) }}</td>
       <td class="col-chain status-cell">
@@ -101,7 +103,7 @@ involved and who has already acted. Click a Request # to view the full check req
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="{{ 10 if show_all else 9 }}">Nothing waiting on your approval.</td></tr>
+    <tr><td colspan="{{ 11 if show_all else 10 }}">Nothing waiting on your approval.</td></tr>
     {% endfor %}
   </table>
 </div>

@@ -36,6 +36,9 @@ the final PDF are the same document:
      (labels and values rendered jammed together with zero gap in the PDF
      until a literal space was added here) -#}
   <div class="voucher-row"><span class="label">Program Area</span> <span data-field="program_area">{{ voucher_program_area }}</span></div>
+  {#- Invoice # (2026-10-09): shown only when there is one, so older requests look exactly as before.
+     The row is always in the markup (hidden when blank) so the live preview can reveal it as it is typed. -#}
+  <div class="voucher-row" data-row="invoice_number"{% if not voucher_invoice_number %} hidden{% endif %}><span class="label">Invoice #</span> <span data-field="invoice_number">{{ voucher_invoice_number }}</span></div>
   <div class="voucher-row"><span class="label">Description</span> <span data-field="description">{{ voucher_description }}</span></div>
 
   <table class="voucher-gl-table">

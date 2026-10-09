@@ -36,7 +36,10 @@ EXTRACTION_SCHEMA = {
         "vendor_name": {"type": ["string", "null"]},
         "amount": {"type": ["number", "null"]},
         "date": {"type": ["string", "null"], "description": "ISO 8601 YYYY-MM-DD"},
-        "description": {"type": ["string", "null"], "description": "Invoice/PO number or a brief description of what this is for"},
+        # 2026-10-09 (Jay): the vendor's own invoice number now has its own field (it becomes the Bill no.
+        # in QuickBooks), so "description" is just a short description and must not repeat it.
+        "invoice_number": {"type": ["string", "null"], "description": "The vendor's own invoice number exactly as printed on the document (the 'Invoice #' / 'Invoice No.' / 'Inv' field) -- NOT a PO number, order number, account or customer number, statement number or confirmation number. Null if the document shows no invoice number."},
+        "description": {"type": ["string", "null"], "description": "A brief description of what this is for. Do not repeat the invoice number here."},
         # Vendor address block (Jay, 2026-07-29: "if I decide to add a new
         # vendor... you should pull that information" -- a "Sold By" /
         # remit-to block on the invoice). Deliberately separate fields, not
@@ -75,7 +78,7 @@ EXTRACTION_SCHEMA = {
         "caveats": {"type": "array", "items": {"type": "string"}, "description": "Anything ambiguous that affects confidence -- multiple totals found, low image quality, an illegible handwritten annotation, etc. Do NOT report an ambiguous date format here (Jay, 2026-09-22: not valuable) -- just pick the most plausible interpretation for the date field itself."},
     },
     "required": [
-        "vendor_name", "amount", "date", "description",
+        "vendor_name", "amount", "date", "invoice_number", "description",
         "vendor_address_line1", "vendor_address_line2", "vendor_city",
         "vendor_state", "vendor_zip", "vendor_phone", "vendor_contact_email",
         "coded_gl_account", "service_address", "confidence", "caveats",
@@ -86,7 +89,10 @@ EXTRACTION_SCHEMA = {
 _PROMPT = (
     "This is a check-request supporting document -- an invoice or receipt from "
     "an arbitrary vendor. Extract the vendor name, the total amount due, the "
-    "document date, a brief description or invoice/PO number, and -- if a "
+    "document date, the vendor's own invoice number (only the invoice number "
+    "itself -- never a PO, order, account, customer or statement number), a "
+    "brief description of what the document is for (do not repeat the invoice "
+    "number in it), and -- if a "
     "'Sold By' / 'From' / remit-to address block for the VENDOR itself is "
     "present (not the customer's own 'Sold To'/'Bill To' address) -- the "
     "vendor's own mailing address, city, state, zip, phone, and contact "
