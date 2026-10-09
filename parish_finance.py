@@ -34,6 +34,7 @@ invoices are already scoped to this one parish via its own AR Customer id.
 from __future__ import annotations
 
 import html
+from offloop import offloop
 import re
 
 from fastapi import APIRouter, Request
@@ -508,6 +509,7 @@ def _submit_and_notify(parish: dict, diocese_org: dict, user: dict, subject: str
 
 
 @router.post("/parish-finance/ask-business-office")
+@offloop
 async def ask_business_office(request: Request):
     user, parish, diocese_org, err = _parish_context(request)
     if err:
@@ -526,6 +528,7 @@ async def ask_business_office(request: Request):
 
 
 @router.post("/parish-finance/request-direct-debit")
+@offloop
 async def request_direct_debit(request: Request):
     user, parish, diocese_org, err = _parish_context(request)
     if err:

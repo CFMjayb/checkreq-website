@@ -81,6 +81,7 @@ only qbo-mcp-server holds the QBO OAuth tokens.
 from __future__ import annotations
 
 from datetime import date, datetime
+from offloop import offloop
 
 from fastapi import APIRouter, Request, UploadFile
 
@@ -778,6 +779,7 @@ async def organizations_save_cornerstone_color(request: Request):
 
 
 @router.post("/admin/setup/organizations/{org_id}/upload-logo")
+@offloop
 async def organizations_upload_logo(org_id: int, request: Request, logo: UploadFile):
     """A diocese's own logo, shown next to the "Beacon" wordmark whenever
     that diocese (or one of its parishes, in Parish Mode) is the active
@@ -822,6 +824,7 @@ async def organizations_upload_logo(org_id: int, request: Request, logo: UploadF
 
 
 @router.post("/admin/setup/organizations/{org_id}/remove-logo")
+@offloop
 async def organizations_remove_logo(org_id: int, request: Request):
     user, err = _require_setup_admin(request)
     if err:

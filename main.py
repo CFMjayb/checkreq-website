@@ -84,6 +84,7 @@ those other features was touched or at risk.
 from __future__ import annotations
 
 import asyncio
+from offloop import offloop
 import base64
 import difflib
 import hmac
@@ -2946,6 +2947,7 @@ def api_vendor_preapproval_status(request: Request, vendor_id: int = 0):
 
 
 @app.post("/api/budget-check-submission")
+@offloop
 async def api_budget_check_submission(request: Request):
     """Pre-flight check the GL Coding screen calls right before actually
     submitting, so a tier-3 (over budget beyond the account's buffer) line
@@ -5579,6 +5581,7 @@ def remove_attachment(request_number: str, attachment_id: int, request: Request)
 
 
 @app.post("/requests/{request_number}/attachments/add")
+@offloop
 async def add_attachment(request_number: str, request: Request):
     """The Edit page's "Add" button -- per Jay's request (2026-07-26):
     "Additional files can also be uploaded during edit." A standalone
@@ -5831,6 +5834,7 @@ def _create_invoice_stub(org: dict, user: dict, source_channel: str = "manual_up
     return payment_request_id, request_number
 
 
+@offloop
 async def _finish_invoice_processing(payment_request_id: int, request_number: str, org: dict, user: dict,
                                       filename: str, mime_type: str, content: bytes) -> None:
     """Layer 2b (2026-09-22): the slow part of ingesting one invoice file --
@@ -6408,6 +6412,7 @@ def my_approvals(request: Request, view: str = "mine", approved: str = "",
 
 
 @app.post("/requests/{request_number}/approve")
+@offloop
 async def approve_request(request_number: str, request: Request):
     """AP Review Workflow Plan.md, Section 2b. The real gate is
     checkreq.approval_actions, not current_approver_id (display-only) --
@@ -6463,6 +6468,7 @@ async def approve_request(request_number: str, request: Request):
 
 
 @app.post("/requests/{request_number}/reject")
+@offloop
 async def reject_request(request_number: str, request: Request):
     """AP Review Workflow Plan.md, Section 2c. Mid-chain reject -- from
     anywhere in the chain, unconditionally terminal for that chain:
@@ -6576,6 +6582,7 @@ def email_action_form(token: str, request: Request, action: str = "approve"):
 
 
 @app.post("/email-action/{token}", response_class=HTMLResponse)
+@offloop
 async def email_action_submit(token: str, request: Request):
     form = await request.form()
     action = form.get("action", "approve")
@@ -6641,6 +6648,7 @@ async def email_action_submit(token: str, request: Request):
 
 
 @app.post("/internal/send-daily-digest")
+@offloop
 async def send_daily_digest(request: Request):
     """Cloud Scheduler -> this endpoint, once daily (Jay, 2026-07-30: "a
     daily email that summarizes all the different things they need to
@@ -7563,6 +7571,7 @@ def gl_account_options_for_request(request_number: str, request: Request):
 
 
 @app.post("/requests/{request_number}/assign-gl-coding")
+@offloop
 async def assign_gl_coding(request_number: str, request: Request):
     """Ask My Accountant, Stage 2: AP assigns the real GL line(s) to a
     request that skipped GL Coding at submission -- the moment the approval
@@ -7798,6 +7807,7 @@ def ap_edit_form(request_number: str, request: Request, error: str = "", saved: 
 
 
 @app.post("/requests/{request_number}/ap-edit")
+@offloop
 async def ap_edit_submit(request_number: str, request: Request):
     user = _current_user(request)
     if not user:
@@ -8133,6 +8143,7 @@ def w9_file_view(request_number: str, request: Request):
 
 
 @app.post("/requests/{request_number}/w9-confirm")
+@offloop
 async def w9_confirm(request_number: str, request: Request):
     user = _current_user(request)
     if not user:
@@ -8406,6 +8417,7 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
 
 
 @app.post("/requests/{request_number}/post-to-qbo")
+@offloop
 async def post_to_qbo(request_number: str, request: Request):
     """AP Review Workflow Plan.md, Section 4 -- sequencing and failure
     handling, implemented exactly per that section's own numbered steps
@@ -8481,6 +8493,7 @@ async def post_to_qbo(request_number: str, request: Request):
 
 
 @app.post("/admin/ap-review/post-batch")
+@offloop
 async def post_batch_to_qbo(request: Request):
     """Batch variant of post_to_qbo() (2026-09-10, Jay: "I also like the
     idea of checking multiple and clicking a 'Post to QBO' batch button at
@@ -8668,6 +8681,7 @@ def ap_review_confirm_existing_vendor_w9(request_number: str, request: Request):
 
 
 @app.post("/requests/{request_number}/ap-return")
+@offloop
 async def ap_return_request(request_number: str, request: Request):
     """AP Review Workflow Plan.md, Section 3 ('Return to Submitter') +
     Decision 1: AP-stage rejection uses a NEW, distinct 'Returned by AP'
@@ -8805,6 +8819,7 @@ def vendor_w9_upload_form(token: str, request: Request):
 
 
 @app.post("/vendor-w9-upload/{token}", response_class=HTMLResponse)
+@offloop
 async def vendor_w9_upload_submit(token: str, request: Request, file: UploadFile):
     """2026-09-14: widened the same way as the GET route above. The
     existing-vendor branch skips the separate "staff confirms receipt"
