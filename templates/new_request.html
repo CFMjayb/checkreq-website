@@ -35,6 +35,10 @@
     <input type="hidden" name="request_type" value="{{ edit_data.request_type if edit_data else 'check_request' }}">
     {% if edit_data %}
     <input type="hidden" name="editing_request_number" value="{{ edit_data.editing_request_number }}">
+    {% elif submission_token %}
+    {# One-time token for this rendering of a brand-new request: lets the server
+       recognise and refuse a repeat of the same submission (submission_guard.py). #}
+    <input type="hidden" name="submission_token" value="{{ submission_token }}">
     {% endif %}
 
     {# 2026-09-22 (bulk Invoice Intake redesign): this box exists to let
