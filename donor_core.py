@@ -174,6 +174,10 @@ class Ctx:
     roles: frozenset = frozenset()
     caps: frozenset = frozenset()
     is_diocesan_admin: bool = False          # Beacon Admin at the parish's own diocese
+    # Beacon Admin or Setup Admin at the parish's own diocese (Jay, 2026-10-09: "A Beacon Admin or a Setup Admin should be able to
+    # self assign any role"). The one exception to "nobody gives themselves a finance role or Clergy": it waives that refusal and the
+    # "must already have a login at this parish" check for the person's OWN grants. Every such grant is noted as self-assigned.
+    may_self_assign: bool = False
     settings: dict = field(default_factory=dict)
 
     def can(self, capability: str) -> bool:
@@ -208,15 +212,19 @@ def need_giving(ctx: Ctx, capability: str, message: str | None = None) -> None:
 
 def make_ctx(user_id: int, parish_id: int, roles=(), *, user_label: str = "", parish_name: str = "",
              org_id: int | None = None, is_parish_manager: bool = False, can_activate: bool = False,
-             is_diocesan_admin: bool = False, settings: dict | None = None) -> Ctx:
+             is_diocesan_admin: bool = False, may_self_assign: bool | None = None, settings: dict | None = None) -> Ctx:
     """Build a Ctx from explicit facts (what donor_roles.build_ctx does after it has read them). Used by
-    tests and by scripts so the capability table above is the only place capabilities are defined."""
+    tests and by scripts so the capability table above is the only place capabilities are defined.
+    `may_self_assign` defaults to is_diocesan_admin (a Beacon Admin may); a Setup Admin passes it True without being a Beacon
+    Admin. Someone who may give themselves any role also manages roles at the parish, so it adds roles.manage."""
     roles = frozenset(roles)
+    if may_self_assign is None:
+        may_self_assign = bool(is_diocesan_admin)
     return Ctx(
         user_id=user_id, user_label=user_label or f"User #{user_id}", parish_id=parish_id,
         parish_name=parish_name or f"Parish #{parish_id}", org_id=org_id, roles=roles,
-        caps=caps_for(roles, is_parish_manager, can_activate), is_diocesan_admin=is_diocesan_admin,
-        settings=dict(settings or {}),
+        caps=caps_for(roles, is_parish_manager or may_self_assign, can_activate), is_diocesan_admin=is_diocesan_admin,
+        may_self_assign=bool(may_self_assign), settings=dict(settings or {}),
     )
 
 

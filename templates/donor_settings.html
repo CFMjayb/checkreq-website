@@ -83,7 +83,7 @@ donor_settings.html -- Settings: turn Donor Management on (diocese only), the QB
   {% if ctx.can("roles.manage") %}
   <details class="dm-section card dm-card" open>
     <summary><h2>Who can do what</h2></summary>
-    <p class="dm-muted">Donor roles are given per parish. Who holds which role, and giving or taking roles away, is now on the <a href="/people/users"><strong>Users</strong> screen</a> in this Setup menu. No one can give themselves a finance role or the Clergy role. What each role means:</p>
+    <p class="dm-muted">Donor roles are given per parish. Who holds which role, and giving or taking roles away, is now on the <a href="/people/users"><strong>Users</strong> screen</a> in this Setup menu. No one can give themselves a finance role or the Clergy role, except a Beacon Admin or Setup Admin at the diocese. What each role means:</p>
     <dl class="dm-defs">
       {% for r in catalog %}<dt>{{ r.label }}</dt><dd>{{ r.description }}</dd>{% endfor %}
     </dl>

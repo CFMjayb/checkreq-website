@@ -17,6 +17,11 @@ TouchPoint's Users list: a filter row, a count, one dense sortable table with th
     <div class="dm-head-actions"><a class="btn btn-secondary btn-sm" href="/parish-access-request">User Access (add or remove a login)</a></div>
   </div>
 
+  {% if ctx.may_self_assign %}
+  <div class="banner banner-info">As {{ 'a Beacon Admin' if ctx.is_diocesan_admin else 'a Setup Admin' }} at this diocese you can give yourself any role here, a finance role or Clergy included. Each one is noted as self-assigned.
+    <a class="btn btn-secondary btn-sm" href="/people/users/{{ ctx.user_id }}">Your roles</a></div>
+  {% endif %}
+
   <form method="get" action="/people/users" class="dm-search dm-form-plain dm-userfilter" role="search">
     <div class="dm-filters">
       <label>Name / email <input type="search" name="q" value="{{ f.q }}" placeholder="Name or email" autofocus></label>
@@ -88,6 +93,6 @@ TouchPoint's Users list: a filter row, a count, one dense sortable table with th
     <p class="doc-empty">{% if f.q or f.role or f.within or f.idle %}No login matches that search at this parish.{% else %}No one has a Beacon login at this parish yet. Add them under User Access first.{% endif %}</p>
     {% endif %}
   </div>
-  <p class="dm-foot dm-muted dm-small">Donor roles are given per parish. Someone must already have a Beacon login at this parish. No one can give themselves a finance role or the Clergy role.</p>
+  <p class="dm-foot dm-muted dm-small">Donor roles are given per parish. Someone must already have a Beacon login at this parish. No one can give themselves a finance role or the Clergy role, except a Beacon Admin or Setup Admin at the diocese.</p>
 </div>
 {% endblock %}

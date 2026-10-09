@@ -6,7 +6,8 @@ no existing table is written). The existing Parish Admin role is READ from porta
 maps to "edit people and households, manage donor roles" (Requirements doc, role table).
 
   build_ctx(user, parish)      the Ctx every service function takes (reads, never writes)
-  role_grant / role_revoke     parish-scoped donor roles; rule 5: nobody grants themselves a finance role
+  role_grant / role_revoke     parish-scoped donor roles; rule 5: nobody grants themselves a finance role, EXCEPT a
+                               Beacon Admin or Setup Admin at the parish's diocese (Jay, 2026-10-09), noted as self-assigned
   diocesan_finance_grant       diocese-scoped role, granted only by that diocese's Beacon Admin
   role_roster                  the User Access panel's list
   settings_get / settings_update   activation ("turn Donor Management on for this parish") and options
@@ -159,18 +160,33 @@ def effective_roles(user_id: int, parish_id: int, org_id: int | None) -> set[str
 
 def build_ctx(user: dict, parish: dict) -> Ctx:
     """The Ctx for this signed-in person at this parish. `parish` is the dict
-    parish_mode.effective_parish_mode returns (never a client-supplied id)."""
+    parish_mode.effective_parish_mode returns (never a client-supplied id).
+
+    A Beacon Admin or a Setup Admin held AT THE PARISH'S OWN DIOCESE may give themselves any role (Jay, 2026-10-09), so they also
+    manage roles here (roles.manage). Only the Beacon Admin may activate the parish or give Diocesan Finance."""
     uid, pid, org_id = user["id"], parish["id"], parish.get("org_id")
     roles = effective_roles(uid, pid, org_id)
     is_dioc_admin = parish_roles.holds_role_at_parish_org(uid, "beacon_admin", org_id)
+    is_setup_admin = parish_roles.holds_role_at_parish_org(uid, "setup_admin", org_id)
+    may_self = is_dioc_admin or is_setup_admin
     can_activate = is_dioc_admin or parish_roles.holds_role_at_parish_org(uid, "parish_mode_user", org_id)
-    manager = parish_roles.is_parish_manager(uid, pid)
+    manager = may_self or parish_roles.is_parish_manager(uid, pid)
     return Ctx(
         user_id=uid, user_label=user.get("display_name") or user.get("email") or f"User #{uid}",
         parish_id=pid, parish_name=parish.get("name") or "", org_id=org_id, roles=frozenset(roles),
-        caps=caps_for(roles, manager, can_activate), is_diocesan_admin=is_dioc_admin,
+        caps=caps_for(roles, manager, can_activate), is_diocesan_admin=is_dioc_admin, may_self_assign=may_self,
         settings=settings_get(pid),
     )
+
+
+def _self_assigning(ctx: Ctx, user_id: int) -> bool:
+    """True when the person is giving a role to THEMSELVES and is a Beacon Admin or Setup Admin at this parish's diocese: the one
+    case where the 'nobody gives themselves a finance or Clergy role' and 'must already have a login here' rules are waived."""
+    return bool(ctx.may_self_assign) and user_id == ctx.user_id
+
+
+def _self_label(ctx: Ctx) -> str:
+    return "Self-assigned by Beacon Admin" if ctx.is_diocesan_admin else "Self-assigned by Setup Admin"
 
 
 def role_grant(ctx: Ctx, user_id: int, role_key: str, note: str | None = None, *, cur=None) -> dict:
@@ -183,14 +199,18 @@ def role_grant(ctx: Ctx, user_id: int, role_key: str, note: str | None = None, *
         raise NotFound("That role does not exist.")
     if role["scope"] != "parish":
         raise InvalidInput("That role is given by the diocese, not by a parish.")
-    if role["is_finance"] and user_id == ctx.user_id:
+    self_ok = _self_assigning(ctx, user_id)
+    if role["is_finance"] and user_id == ctx.user_id and not self_ok:
         raise PermissionDenied("No one can give themselves a finance role. Ask a second Parish Admin or the diocese.")
-    if role_key in SECOND_PERSON_ROLES and user_id == ctx.user_id:
+    if role_key in SECOND_PERSON_ROLES and user_id == ctx.user_id and not self_ok:
         raise PermissionDenied(f"No one can give themselves the {role['label']} role. Ask a second Parish Admin or the diocese.")
     if not user_exists(user_id):
         raise NotFound("That person does not have a Beacon login.")
-    if not user_at_parish(user_id, ctx.parish_id):
+    if not self_ok and not user_at_parish(user_id, ctx.parish_id):
         raise InvalidInput("That person has no Beacon login role at this parish yet. Add them under User Access first.")
+    note = clean_text(note, field="note")
+    if self_ok:                                              # every self-assignment says so, in the grant and in the change log
+        note = f"{note} · {_self_label(ctx)}" if note else _self_label(ctx)
     with tx(cur) as c:
         c.execute("SELECT id FROM donor.role_grant WHERE role_key = %s AND user_id = %s AND parish_id = %s "
                   "AND revoked_at IS NULL", (role_key, user_id, ctx.parish_id))
@@ -200,9 +220,10 @@ def role_grant(ctx: Ctx, user_id: int, role_key: str, note: str | None = None, *
         c.execute(
             "INSERT INTO donor.role_grant (role_key, user_id, parish_id, granted_by_user_id, note) "
             "VALUES (%s,%s,%s,%s,%s) RETURNING id",
-            (role_key, user_id, ctx.parish_id, ctx.user_id, clean_text(note, field="note")))
+            (role_key, user_id, ctx.parish_id, ctx.user_id, clean_text(note, field="note", max_len=200)))
         gid = c.fetchone()["id"]
-        log_change(c, ctx, "role_grant", gid, role_key, None, f"user {user_id}", kind="grant", scope="parish")
+        log_change(c, ctx, "role_grant", gid, role_key, None, f"user {user_id}", kind="grant", scope="parish",
+                   reason=_self_label(ctx) if self_ok else None)
         return {"id": gid, "created": True}
 
 
@@ -222,10 +243,12 @@ def role_revoke(ctx: Ctx, user_id: int, role_key: str, reason: str | None = None
 
 
 def diocesan_finance_grant(ctx: Ctx, user_id: int, *, cur=None) -> dict:
-    """The diocese-level audit role. Only that diocese's Beacon Admin may give it, never to themselves."""
+    """The diocese-level audit role. Only that diocese's Beacon Admin may give it (a Setup Admin may not, not even to themselves),
+    and not to themselves either unless they may give themselves any role, which a Beacon Admin may (Jay, 2026-10-09)."""
     if not ctx.is_diocesan_admin or ctx.org_id is None:
         raise PermissionDenied("Only the diocese's Beacon Admin can give Diocesan Finance.")
-    if user_id == ctx.user_id:
+    self_ok = _self_assigning(ctx, user_id)
+    if user_id == ctx.user_id and not self_ok:
         raise PermissionDenied("No one can give themselves a finance role.")
     if not user_exists(user_id):
         raise NotFound("That person does not have a Beacon login.")
@@ -235,10 +258,12 @@ def diocesan_finance_grant(ctx: Ctx, user_id: int, *, cur=None) -> dict:
         existing = c.fetchone()
         if existing:
             return {"id": existing["id"], "created": False}
-        c.execute("INSERT INTO donor.role_grant (role_key, user_id, org_id, granted_by_user_id) "
-                  "VALUES ('diocesan_finance', %s, %s, %s) RETURNING id", (user_id, ctx.org_id, ctx.user_id))
+        c.execute("INSERT INTO donor.role_grant (role_key, user_id, org_id, granted_by_user_id, note) "
+                  "VALUES ('diocesan_finance', %s, %s, %s, %s) RETURNING id",
+                  (user_id, ctx.org_id, ctx.user_id, _self_label(ctx) if self_ok else None))
         gid = c.fetchone()["id"]
-        log_change(c, ctx, "role_grant", gid, "diocesan_finance", None, f"user {user_id}", kind="grant", scope="parish")
+        log_change(c, ctx, "role_grant", gid, "diocesan_finance", None, f"user {user_id}", kind="grant", scope="parish",
+                   reason=_self_label(ctx) if self_ok else None)
         return {"id": gid, "created": True}
 
 
@@ -464,7 +489,8 @@ def user_detail(ctx: Ctx, user_id: int) -> dict:
     role was given. Needs roles.manage. A login with no role at this parish reads as not found."""
     ctx.require("roles.manage", "Only a Parish Admin or the diocese can see who holds which role.")
     u = login_row(user_id)
-    if not u or not user_at_parish(user_id, ctx.parish_id):
+    self_ok = _self_assigning(ctx, user_id)
+    if not u or not (self_ok or user_at_parish(user_id, ctx.parish_id)):
         raise NotFound("That login was not found at this parish.")
     catalog = {r["key"]: r for r in db.query("SELECT * FROM donor.role WHERE is_active ORDER BY sort_order")}
     mine = db.query(
@@ -484,7 +510,7 @@ def user_detail(ctx: Ctx, user_id: int) -> dict:
         if r["phase"] > phase_max and not have:
             return None                      # a role of a part that is not switched on is not offered, but is always shown once held
         locked, why = False, ""
-        if not have and is_self and (r["is_finance"] or key in SECOND_PERSON_ROLES):
+        if not have and is_self and (r["is_finance"] or key in SECOND_PERSON_ROLES) and not self_ok:
             locked, why = True, "No one can give themselves this role. Ask a second Parish Admin or the diocese."
         if r["scope"] == "diocese" and not (ctx.is_diocesan_admin and ctx.org_id is not None):
             locked, why = True, "Only the diocese's Beacon Admin can give this role."
@@ -510,7 +536,7 @@ def user_detail(ctx: Ctx, user_id: int) -> dict:
         by_user.setdefault(g["user_id"], []).append(g["role_key"])
     copy_from = [{"id": r["id"], "name": r["name"], "roles": sorted(by_user.get(r["id"], []))} for r in roster]
     return {
-        "id": u["id"], "name": u["display_name"] or u["email"], "email": u["email"], "is_self": is_self,
+        "id": u["id"], "name": u["display_name"] or u["email"], "email": u["email"], "is_self": is_self, "self_assign": self_ok,
         "last_sign_in": org_time.format_local(u["last_login_at"], zone) if u["last_login_at"] else None,
         "is_parish_admin": parish_roles.user_has_parish_role(user_id, "parish_admin", ctx.parish_id),
         "person_id": _person_links(ctx, [u["email"]]).get(u["email"].strip().lower()),
@@ -521,8 +547,8 @@ def user_detail(ctx: Ctx, user_id: int) -> dict:
 def roles_set(ctx: Ctx, user_id: int, wanted, note: str | None = None, *, cur=None) -> dict:
     """Make this login's donor roles at THIS parish exactly `wanted` (a list of role keys), in ONE transaction: every role that
     is ticked and not held is given, every role held and not ticked is taken away, or nothing changes at all. Same rules as
-    role_grant: roles.manage; nobody gives themselves a finance or second-person role; diocesan roles only by the diocese's
-    Beacon Admin. Returns {"added": [labels], "removed": [labels]}. Taking a role away needs no second person."""
+    role_grant: roles.manage; nobody gives themselves a finance or second-person role (except a Beacon Admin or Setup Admin at the
+    diocese, who may give themselves any role); diocesan roles only by the diocese's Beacon Admin. Returns {"added": [labels], "removed": [labels]}. Taking a role away needs no second person."""
     ctx.require("roles.manage", "Only a Parish Admin or the diocese can give or take away roles.")
     wanted = {str(k).strip() for k in (wanted or []) if k and str(k).strip()}
     catalog = {r["key"]: r for r in db.query("SELECT * FROM donor.role WHERE is_active")}
@@ -530,7 +556,7 @@ def roles_set(ctx: Ctx, user_id: int, wanted, note: str | None = None, *, cur=No
         raise NotFound("That role does not exist.")
     if not user_exists(user_id):
         raise NotFound("That person does not have a Beacon login.")
-    if not user_at_parish(user_id, ctx.parish_id):
+    if not (_self_assigning(ctx, user_id) or user_at_parish(user_id, ctx.parish_id)):
         raise InvalidInput("That person has no Beacon login role at this parish yet. Add them under User Access first.")
     note = clean_text(note, field="note", max_len=120)
     with tx(cur) as c:

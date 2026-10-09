@@ -44,6 +44,7 @@ boxes to match another login: nothing is saved until Save.
       </span>
     </div>
     <p class="dm-muted dm-small">Tick the roles this login needs at {{ parish.name }}, then Save. Unticking takes a role away. Nothing changes until you Save. A role you cannot give shows greyed with the reason.</p>
+    {% if u.self_assign %}<p class="dm-small"><strong>These are your own roles.</strong> As {{ 'a Beacon Admin' if ctx.is_diocesan_admin else 'a Setup Admin' }} at this diocese you may give yourself any role{% if not ctx.is_diocesan_admin %} except Diocesan Finance, which only a Beacon Admin can give{% endif %}. What you add is noted as self-assigned in the history.</p>{% endif %}
 
     <div class="dm-rolegrid">
       {% for g in u.groups %}

@@ -1055,6 +1055,9 @@ def portal(request: Request):
     modules = MODULES
     if org and cornerstone_mode.is_cornerstone_org(org["id"]):
         modules = [m for m in MODULES if m["key"] in CORNERSTONE_MODULE_KEYS] + CORNERSTONE_ONLY_MODULES
+        # 2026-10-09 (Jay): People & Giving (Donor Management) of the served parish, shown only when it is switched on for that
+        # parish and this person has something to open there. [] otherwise; see donor_register.cornerstone_modules.
+        modules = modules + donor_register.cornerstone_modules(user, org)
 
     return _render(request, "portal.html", user, {"modules": modules})
 
@@ -9514,7 +9517,7 @@ outreach_mine.register(app, templates=templates, current_user=_current_user, ren
 # See donor_register.py. Nothing shows for a parish until its donor.parish_settings flags are turned on.
 import donor_register
 
-donor_register.register(app, current_user=_current_user, render=_render, templates=templates)
+donor_register.register(app, current_user=_current_user, render=_render, templates=templates, current_org=_current_org)
 
 # ── Per-hostname favicon (2026-10-01, Jay) ──
 # See favicon.py. Thin wiring only: the host -> diocese lookup is the login
