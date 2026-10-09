@@ -33,6 +33,7 @@ isn't a silent trap.
 from __future__ import annotations
 
 from urllib.parse import quote
+from offloop import offloop
 
 from fastapi import APIRouter, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -173,6 +174,7 @@ def manage_parishes_page(request: Request, error: str = ""):
 
 
 @router.post("/admin/manage-parishes/add")
+@offloop
 async def add_parish(request: Request):
     """2026-09-13, Jay: there was no UI anywhere to add a new parish to
     portal.parishes -- every one of EDOM's ~95 / DME's ~65 rows was created
@@ -381,6 +383,7 @@ async def set_databank_contact_id(parish_id: int, request: Request):
 
 
 @router.post("/admin/manage-parishes/{parish_id}/upload-logo")
+@offloop
 async def upload_parish_logo(parish_id: int, request: Request, logo: UploadFile):
     """2026-08-29, Jay: a parish's own logo, shown next to its name in the
     Parish Mode main content area (parish_view.html) -- distinct from a

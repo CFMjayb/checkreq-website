@@ -79,6 +79,7 @@ force=True regardless of the value passed.
 from __future__ import annotations
 
 import difflib
+from offloop import offloop
 import re
 
 from fastapi import APIRouter, Request, UploadFile, File, Form
@@ -531,6 +532,7 @@ def parish_documents_page(request: Request):
 
 
 @router.post("/parish-documents/upload")
+@offloop
 async def parish_documents_upload(request: Request, file: UploadFile = File(...), target: str = Form("parish")):
     """target='parish' -> Parish Files (the parish's own library);
     target='diocese' -> For the Diocese (an outbox to the diocesan office).
@@ -564,6 +566,7 @@ async def parish_documents_upload(request: Request, file: UploadFile = File(...)
 
 
 @router.post("/parish-documents/delete")
+@offloop
 async def parish_documents_delete(request: Request):
     user, parish, org, err = _parish_context(request)
     if err:
@@ -687,6 +690,7 @@ def admin_parish_documents_page(request: Request, parish_id: int = 0):
 
 
 @router.post("/admin/parish-documents/{parish_id}/upload")
+@offloop
 async def admin_parish_documents_upload(parish_id: int, request: Request, file: UploadFile = File(...)):
     """Admin uploads always go into Read Only Files -- see module docstring."""
     user, err = _require_docs_admin(request)
@@ -716,6 +720,7 @@ async def admin_parish_documents_upload(parish_id: int, request: Request, file: 
 
 
 @router.post("/admin/parish-documents/{parish_id}/delete")
+@offloop
 async def admin_parish_documents_delete(parish_id: int, request: Request):
     """Handles a rel_path from either section shown on this page -- Read
     Only Files (staff cleaning up their own uploads) or For the Diocese
@@ -820,6 +825,7 @@ def admin_resource_library_page(request: Request):
 
 
 @router.post("/admin/resource-library/upload")
+@offloop
 async def admin_resource_library_upload(request: Request, file: UploadFile = File(...)):
     user, err = _require_docs_admin(request)
     if err:
@@ -843,6 +849,7 @@ async def admin_resource_library_upload(request: Request, file: UploadFile = Fil
 
 
 @router.post("/admin/resource-library/delete")
+@offloop
 async def admin_resource_library_delete(request: Request):
     user, err = _require_docs_admin(request)
     if err:

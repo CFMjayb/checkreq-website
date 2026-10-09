@@ -27,6 +27,7 @@ approved). Deliberately a separate module: main.py only gains the register call.
 from __future__ import annotations
 
 import base64
+from offloop import offloop
 import hmac
 import json
 import os
@@ -92,6 +93,7 @@ def _pdf_bytes(data: dict) -> bytes | None:
 
 def register(app) -> None:
     @app.post("/webhooks/formstack-documents")
+    @offloop
     async def formstack_documents_webhook(request: Request):
         if not _authorized(request):
             print(json.dumps({"event": "sma_webhook_rejected", "reason": "bad or missing secret"}))

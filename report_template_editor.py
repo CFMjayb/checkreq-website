@@ -55,6 +55,7 @@ Actual vs Budget line is never silently read as a Fund Summary line or back.
 from __future__ import annotations
 
 import asyncio
+from offloop import offloop
 import json
 import re
 import time
@@ -724,6 +725,7 @@ def _clean_line(r: dict, report_type: str = "bva") -> tuple[dict | None, str | N
 
 
 @router.post("/admin/report-templates/{template_id}/lines/save")
+@offloop
 async def save_lines(request: Request, template_id: int):
     user, org, err = _require_access(request)
     if err:
@@ -1031,6 +1033,7 @@ async def fund_mask_lines(request: Request, template_id: int):
 
 
 @router.get("/admin/report-templates/api/classes")
+@offloop
 async def qbo_classes(request: Request):
     """The current entity's QuickBooks classes for the Lines grid's Class picker:
     {"classes": [{id, name, active}]} sorted by name. Inactive classes are included

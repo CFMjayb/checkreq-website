@@ -52,6 +52,7 @@ low-traffic internal tool.
 from __future__ import annotations
 
 import os
+from offloop import offloop
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -230,6 +231,7 @@ def feedback_page(request: Request, submitted: bool = False):
 
 
 @router.post("/feedback/message")
+@offloop
 async def feedback_message(request: Request):
     """Send one user message, get Claude's reply, append both to
     feedback_messages. Creates a new open conversation on first use."""
@@ -297,6 +299,7 @@ async def feedback_message(request: Request):
 
 
 @router.post("/feedback/{conversation_id}/close")
+@offloop
 async def feedback_close(conversation_id: int, request: Request):
     """Ends the conversation: one final Claude call over the full
     transcript produces the structured summary, which becomes the

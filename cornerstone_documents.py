@@ -44,6 +44,7 @@ or a live cornerstone_employee grant at this specific served org.
 from __future__ import annotations
 
 from fastapi import APIRouter, Request, UploadFile, File, Form
+from offloop import offloop
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 
 import rbac
@@ -186,6 +187,7 @@ def _cornerstone_context(request: Request):
 #    parish_documents.py's own page route) ──────────────────────────────────
 
 @router.post("/cornerstone-documents/upload")
+@offloop
 async def cornerstone_documents_upload(request: Request, file: UploadFile = File(...), target: str = Form("from_parish")):
     user, org, entity_folder, err = _cornerstone_context(request)
     if err:
@@ -214,6 +216,7 @@ async def cornerstone_documents_upload(request: Request, file: UploadFile = File
 
 
 @router.post("/cornerstone-documents/delete")
+@offloop
 async def cornerstone_documents_delete(request: Request):
     user, org, entity_folder, err = _cornerstone_context(request)
     if err:
