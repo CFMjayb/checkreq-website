@@ -730,6 +730,14 @@ def _record_build_error(letter_id: int, message: str) -> None:
         log.warning("could not record a build error: %s", type(exc).__name__)
 
 
+def _fresh(run_id: int, letter_id: int) -> dict | None:
+    """The letter after re-deriving its flags from today's data."""
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            _refresh(cur, letter_id)
+    return get_letter(run_id, letter_id)
+
+
 USER_FACING = (fs.FormstackError, sma_pdf.PdfError, SmaError)
 
 
@@ -815,6 +823,11 @@ def build_chunk(org_id: int, run_id: int, user_id: int | None, *, limit: int = 6
                 for L in batch:
                     if time.monotonic() - started > seconds:
                         break
+                    # Flags are stored, and the world moves: a parish may have been deactivated or a login revoked since
+                    # the last edit. Re-derive this letter's flags NOW, and skip it if anything blocks it.
+                    L = _fresh(run_id, L["id"])
+                    if not L or L["status"] != "draft" or not _buildable(L):
+                        continue
                     try:
                         _build_one(run, L, doc_id, cover, user_id, "original")
                         result["built"] += 1
@@ -861,7 +874,7 @@ def rebuild_letter(org_id: int, run_id: int, letter_id: int, user_id: int | None
             if not lock.fetchone()["got"]:
                 raise SmaError("Another build of this run is still running. Try again in a minute.")
             try:
-                L = get_letter(run_id, letter_id)             # fresh, under the lock
+                L = _fresh(run_id, letter_id)                 # flags re-derived from today's data, under the lock
                 if not L or L["status"] == "excluded" or not _buildable(L, allow_failed=True):
                     raise SmaError("Settle the flags that block building first (parish match, adjustment, figures).")
                 try:
