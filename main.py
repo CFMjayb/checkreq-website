@@ -4189,6 +4189,11 @@ async def new_request_submit(request: Request):
                           "or use Request Access to ask for it."},
                 status_code=403,
             )
+    elif form.get("save_as_draft") == "1" and not (form.get("program_area_id") or "").strip():
+        # Save as Draft (2026-10-09): a draft may be saved before a program area is chosen. int("") would
+        # raise here, above the draft branch. The draft branch below stores a blank one as None and does
+        # its own access check for a chosen one, so a blank draft just skips this submit-time parse.
+        program_area_id = None
     else:
         program_area_id = int(form["program_area_id"])
         if not _user_can_submit_for(user, program_area_id, org_id):
