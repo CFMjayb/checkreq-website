@@ -16,12 +16,14 @@ from decimal import Decimal
 from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse
 
+import cornerstone_mode
 import donor_roles
 import parish_mode
 from donor_core import label
 
 _current_user = None
 _render = None
+_current_org = None
 
 
 def check_path_ids(request: Request) -> None:
@@ -32,9 +34,29 @@ def check_path_ids(request: Request) -> None:
             raise HTTPException(status_code=404, detail="Not found")
 
 
-def configure(*, current_user, render) -> None:
-    global _current_user, _render
-    _current_user, _render = current_user, render
+def configure(*, current_user, render, current_org=None) -> None:
+    global _current_user, _render, _current_org
+    _current_user, _render, _current_org = current_user, render, current_org
+
+
+def acting_parish(request: Request, user: dict):
+    """The parish this person is working in, or None. Same source as the rest of the Parish Portal (a native parish login or a
+    Parish Mode preview), PLUS Cornerstone Mode: working inside a Cornerstone-served client's own entity (Jay, 2026-10-09: "so
+    I logged in to dev, switched to Cornerstone Mode, select CTK ... how do I get to Donor Management?") reaches the parish that
+    entity is linked to, the same fallback parish_documents uses. Never a client-supplied id. Sets request.state.dm_home, where the
+    'back' link goes: the Parish Home page, or the portal when in Cornerstone Mode (there is no Parish Home there)."""
+    parish, _preview = parish_mode.effective_parish_mode(request, user)
+    if parish:
+        request.state.dm_home = "/parish-view"
+        return parish
+    if _current_org is not None:
+        org = _current_org(request)
+        if org and cornerstone_mode.is_cornerstone_org(org["id"]):
+            parish = cornerstone_mode.get_parish_for_org(org["id"])
+            if parish:
+                request.state.dm_home = "/portal"
+                return parish
+    return None
 
 
 def fmt_date(v) -> str:
@@ -90,6 +112,7 @@ def page(request: Request, template: str, user: dict, parish: dict, ctx, active:
     flash = request.session.pop("dm_flash", None) if "dm_flash" in request.session else None
     data = {
         "ctx": ctx, "parish": parish, "dm_nav": nav_items(ctx), "dm_setup": setup_items(ctx), "dm_active": active,
+        "dm_home": getattr(request.state, "dm_home", "/parish-view"),
         "d": fmt_date, "money": fmt_money,
         "when": fmt_when, "label": label,
         "flash_ok": flash[1] if flash and flash[0] == "ok" else None,
@@ -109,7 +132,7 @@ def gate(request: Request, *, need: str | None = "people.view", feature: str = "
     user = _current_user(request)
     if not user:
         return None, None, None, RedirectResponse("/login")
-    parish, _preview = parish_mode.effective_parish_mode(request, user)
+    parish = acting_parish(request, user)
     if not parish:
         return None, None, None, RedirectResponse("/parish-view")
     ctx = donor_roles.build_ctx(user, parish)

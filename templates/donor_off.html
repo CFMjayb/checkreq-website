@@ -9,7 +9,7 @@ reads exactly the same as a person who does not exist).
 {% block content %}
 <div class="page-shell-wide dm-page">
   {% include "donor_nav.html" %}
-  <p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+  <p class="back-link"><a href="{{ dm_home or '/parish-view' }}">&larr; Back to {{ parish.name if dm_home != '/portal' else 'the portal' }}</a></p>
   <div class="form-card dm-narrow">
     {% if reason == "off" %}
       <h1>{{ 'People and membership' if feature == 'people' else 'Giving' }} is not turned on yet</h1>
