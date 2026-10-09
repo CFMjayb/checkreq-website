@@ -689,6 +689,15 @@ function unlockSubmitButtons() {
   submitInFlight = false;
   formSubmitButtons().forEach(b => { b.disabled = false; b.classList.remove('btn-loading'); });
 }
+// "Save as Draft" (2026-10-09). A form POSTed with fetch() sends new FormData(form), which
+// NEVER includes the button that was clicked, so the server never heard "save_as_draft=1"
+// and treated a draft click as a normal submission (budget check, approver emails...).
+// The flag is added by hand in submitFormViaFetch(); and a draft skips every rule that
+// exists to make a SUBMISSION sound (vendor chosen, pre-approval file, budget confirmation),
+// exactly as the server's own draft branch already does.
+function isDraftButton(btn) {
+  return !!btn && btn.name === 'save_as_draft';
+}
 // Back/forward can restore this page from the browser's cache with the buttons
 // still locked and spinning: clear that. (A repeat submit from a restored page is
 // harmless -- the server answers it with the request the first one created.)
@@ -707,9 +716,11 @@ window.addEventListener('pageshow', (ev) => { if (ev.persisted) unlockSubmitButt
 // leaves the form exactly as the user left it, ready to fix and retry.
 async function submitFormViaFetch(form, submitterBtn) {
   lockSubmitButtons(submitterBtn);
+  const body = new FormData(form);
+  if (isDraftButton(submitterBtn)) body.set('save_as_draft', '1');   // not part of new FormData(form), see isDraftButton
   let resp;
   try {
-    resp = await fetch(form.action, { method: 'POST', body: new FormData(form) });
+    resp = await fetch(form.action, { method: 'POST', body });
   } catch {
     setStatus('submitError', "Couldn't reach the server -- please check your connection and try again.");
     unlockSubmitButtons();
@@ -1303,6 +1314,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // navigates away except on a genuine success.
     e.preventDefault();
     if (submitInFlight) return;   // a second click / Enter while the first submit is still being sent
+    if (isDraftButton(e.submitter)) {
+      // Unfinished work: no vendor / pre-approval / budget rules, no pre-flight check. The
+      // server's draft branch relaxes the same ones (access checks still apply).
+      await submitFormViaFetch(e.target, e.submitter);
+      return;
+    }
     if (!vendorSelectionIsValid()) {
       setVendorValidationMessage('Please select a vendor from the list, or click "Add a new one" below.');
       document.getElementById('vendorSelect').closest('.field').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1376,6 +1393,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     hidden.value = '1';
     await submitFormViaFetch(form, e.submitter);
+  });
+
+  // Enter in a single-line field must not send the form. The browser's "implicit submission"
+  // clicks the FIRST button tied to the form, which is "Save as Draft" (it sits first in the
+  // header): without this, a stray Enter would save a draft, and before the draft fix it
+  // submitted a real request. A field that handles Enter itself (the vendor / GL pickers, the
+  // QuickBooks lookup) has already cancelled the key by the time it reaches here.
+  document.getElementById('reqForm').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.defaultPrevented || e.isComposing) return;
+    const t = e.target;
+    if (t && t.tagName === 'INPUT' && !['submit', 'button', 'reset', 'image', 'file'].includes(t.type)) e.preventDefault();
   });
 
   document.getElementById('payDateInput').addEventListener('input', refreshPreview);
