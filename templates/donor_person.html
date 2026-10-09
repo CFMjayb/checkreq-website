@@ -1,0 +1,134 @@
+{#
+donor_person.html -- the person record, laid out like the Ministry Connect people screen: a slim identity bar (name, badges, and
+one line of address, email and phones), a narrow side column (household, parish connections), tabs, and compact fields.
+Nothing here takes more room than it has to: the fields must start high on the screen. The Personal tab has ONE Edit button
+(in the tab bar) that turns its fields editable in place; see donor_tab_personal.html and donor_person.js.
+Parish-only tabs carry the lock line. One tab's data is loaded per page view.
+
+Privacy that is enforced by the service layer, not here: a minor's birth date and contacts are already blanked for roles
+that may not see them (g.redacted), only household members connected to THIS parish are listed, a spouse at another
+parish is not named, and other parishes appear by name and connection kind only.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf, picker with context %}
+{% block title %}{{ title_name }} — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% set hh = g.household %}
+{% set conn = g.connection %}
+{% set mem = g.membership %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% set nav_search = true %}
+  {% include "donor_nav.html" %}
+
+  {% if g.archived %}
+  <div class="banner banner-info dm-archived-banner">This person is archived at {{ parish.name }}. They are hidden from search and mailings, and their records are kept.
+    {% if ctx.can("people.edit") %}
+    <form method="post" action="/people/{{ pid }}/restore" class="dm-form dm-inline">{{ csrf() }}<button type="submit" class="btn btn-secondary btn-sm">Restore</button></form>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="dm-record">
+    <aside class="dm-aside">
+      <div class="dm-aside-box">
+        <h2>Household</h2>
+        {% if hh %}
+        <ul class="dm-members">
+          {% for m in hh.members %}
+          <li class="{{ 'dm-member-self' if m.id == pid else '' }}">
+            <div class="dm-member-name">{% if m.id == pid %}{{ m.name }}{% else %}<a href="/people/{{ m.id }}">{{ m.name }}</a>{% endif %}</div>
+            <div class="dm-sub">{% if m.age is not none %}{{ m.age }} &middot; {% endif %}{{ label(m.connection_kind) }} &middot; {{ label(m.position) }}{% if m.is_primary_contact %} &middot; Primary{% endif %}{% if m.spouse_id and m.spouse_id in hh.members|map(attribute='id')|list %} &middot; Spouse{% endif %}</div>
+            {% if m.is_minor %}<span class="dm-pill dm-pill-minor">Under 18</span>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% for r in hh.relations %}<p class="dm-sub dm-rel">Related: {{ r.related_name or 'another household' }} ({{ r.description }})</p>{% endfor %}
+        {% else %}
+        <p class="dm-muted dm-small">Not in a household yet.</p>
+        {% endif %}
+      </div>
+
+      <div class="dm-aside-box" title="One shared profile. Each parish sees only its own membership, sacraments, giving, and notes.">
+        <h2>Parish connections</h2>
+        <ul class="dm-conns">
+          <li><span class="dm-dot {{ 'dm-dot-on' if conn.kind == 'member' else 'dm-dot-ring' }}"></span>
+            <div><div class="dm-member-name">{{ parish.name }}</div>
+              <div class="dm-sub">{% if conn.is_canonical %}Canonical member{% else %}{{ label(conn.kind) }}{% endif %} since {{ conn.connected_at.year }}</div></div></li>
+          {% for o in g.other_connections %}
+          <li><span class="dm-dot dm-dot-ring"></span>
+            <div><div class="dm-member-name">{{ other_names.get(o.parish_id, 'Another parish') }}</div>
+              <div class="dm-sub">{{ label(o.kind) }} since {{ o.connected_at.year }}</div></div></li>
+          {% endfor %}
+        </ul>
+      </div>
+    </aside>
+
+    <section class="dm-main">
+      <header class="dm-id">
+        <span class="dm-avatar-s" aria-hidden="true">{{ initials }}</span>
+        <div class="dm-id-text">
+          <div class="dm-id-top">
+            <h1>{{ p.full_name }}{% if p.goes_by and p.record_type != 'organization' %} <span class="dm-goesby">&ldquo;{{ p.goes_by }}&rdquo;</span>{% endif %}</h1>
+            <div class="dm-badges">
+              {% if hh and g.household_position %}<span class="dm-badge dm-badge-outline">{{ label(g.household_position) }}</span>{% endif %}
+              <span class="dm-badge {{ 'dm-badge-solid' if conn.kind == 'member' else 'dm-badge-outline' }}">{{ label(conn.kind) }}</span>
+              {% if mem and mem.canonical_standing != 'not_set' %}<span class="dm-badge dm-badge-soft">{{ label(mem.canonical_standing) }}</span>{% endif %}
+              {% if conn.envelope_number %}<span class="dm-badge dm-badge-gold">Envelope {{ conn.envelope_number }}</span>{% endif %}
+              {% if g.is_minor %}<span class="dm-badge dm-badge-warn">Under 18</span>{% endif %}
+              {% if p.is_placeholder %}<span class="dm-badge dm-badge-outline">Placeholder donor</span>{% endif %}
+              {% if p.deceased_date %}<span class="dm-badge dm-badge-outline">Deceased</span>{% endif %}
+              {% if p.record_type == 'organization' %}<span class="dm-badge dm-badge-outline">Organization</span>{% endif %}
+            </div>
+          </div>
+          <div class="dm-id-line">
+            {% if hh and (hh.address1 or hh.city) %}
+            {% set city_line = ((hh.city or '') ~ (', ' if hh.city and hh.state else '') ~ (hh.state or '') ~ (' ' if hh.postal_code else '') ~ (hh.postal_code or '')) %}
+            <span>&#8962; {{ [hh.address1, hh.address2, city_line] | select | join(', ') }}</span>
+            {% endif %}
+            {% if g.redacted %}<span class="dm-muted">Contact details are hidden for people under 18.</span>{% else %}
+            {% set emails = g.contacts|selectattr('kind','equalto','email')|list %}{% set phones = g.contacts|selectattr('kind','equalto','phone')|list %}
+            {% if emails %}<span><a href="mailto:{{ emails[0].value }}">{{ emails[0].value }}</a></span>{% endif %}
+            {% for ph in phones %}<span>{{ {'cell':'C','home':'H','work':'W'}.get(ph.subtype, '') }} {{ ph.value }}</span>{% endfor %}
+            {% if not emails and not phones and not (hh and (hh.address1 or hh.city)) %}<span class="dm-muted">No address, email or phone recorded.</span>{% endif %}
+            {% endif %}
+          </div>
+        </div>
+        {% if ctx.can("people.edit") and not g.archived %}
+        <details class="dm-menu"><summary class="btn btn-secondary btn-sm">Actions</summary>
+          <div class="dm-menu-pop">
+            <a href="/people/duplicates">Find duplicates</a>
+            <form method="post" action="/people/{{ pid }}/archive" class="dm-form" data-confirm="Archive this person at {{ parish.name }}? They will drop out of search and mailings. Their records are kept.">
+              {{ csrf() }}<button type="submit" class="dm-linklike">Archive at this parish</button></form>
+          </div>
+        </details>
+        {% endif %}
+      </header>
+
+      <div class="dm-tabbar">
+        <div class="dm-tabs" role="tablist" aria-label="Person record">
+          {% for key, lbl in tabs %}<a role="tab" aria-selected="{{ 'true' if tab == key else 'false' }}" class="{{ 'dm-tab-on' if tab == key }}" href="/people/{{ pid }}?tab={{ key }}">{{ lbl }}</a>{% endfor %}
+        </div>
+        {% if tab == "personal" and ctx.can("people.edit") and not g.archived %}
+        <div class="dm-tab-actions">
+          <button type="button" class="btn btn-secondary btn-sm dm-view-only" data-dm-edit>Edit</button>
+          <button type="button" class="btn btn-secondary btn-sm dm-edit-only" data-dm-cancel>Cancel</button>
+          <button type="submit" form="dm-personal" class="btn btn-primary btn-sm dm-edit-only">Save changes</button>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="dm-panel">
+        {% if tab == "personal" %}{% include "donor_tab_personal.html" %}
+        {% elif tab == "membership" %}{% include "donor_tab_membership.html" %}
+        {% elif tab == "sacraments" %}{% include "donor_tab_sacraments.html" %}
+        {% elif tab == "giving" %}{% include "donor_tab_giving.html" %}
+        {% elif tab == "notes" %}{% include "donor_tab_notes.html" %}
+        {% elif tab == "system" %}{% include "donor_tab_system.html" %}
+        {% endif %}
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}

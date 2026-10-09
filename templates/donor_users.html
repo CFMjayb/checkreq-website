@@ -1,0 +1,93 @@
+{#
+donor_users.html -- Setup > Users: everyone with a Beacon login at this parish and the donor roles each holds, laid out like
+TouchPoint's Users list: a filter row, a count, one dense sortable table with the roles inline. Needs roles.manage.
+#}
+{% extends "base.html" %}
+{% block title %}Users — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% macro sort_link(key, text) -%}
+  {%- set nxt = 'desc' if (f.sort == key and f.dir != 'desc') else 'asc' -%}
+  <a href="/people/users?q={{ f.q|urlencode }}&role={{ f.role|urlencode }}&within={{ f.within|urlencode }}&idle={{ f.idle|urlencode }}&rows={{ f.rows|urlencode }}&sort={{ key }}&dir={{ nxt }}">{{ text }}{% if f.sort == key %} <span aria-hidden="true">{{ '▼' if f.dir == 'desc' else '▲' }}</span>{% endif %}</a>
+{%- endmacro %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <div class="dm-head">
+    <h1>Users <span class="dm-count-badge" title="Logins at this parish">{{ data.total }}</span></h1>
+    <div class="dm-head-actions"><a class="btn btn-secondary btn-sm" href="/parish-access-request">User Access (add or remove a login)</a></div>
+  </div>
+
+  <form method="get" action="/people/users" class="dm-search dm-form-plain dm-userfilter" role="search">
+    <div class="dm-filters">
+      <label>Name / email <input type="search" name="q" value="{{ f.q }}" placeholder="Name or email" autofocus></label>
+      <label>Role
+        <select name="role">
+          <option value="">Any</option>
+          <option value="parish_admin" {{ 'selected' if f.role == 'parish_admin' }}>Parish Admin</option>
+          {% for r in data.role_options %}<option value="{{ r.key }}" {{ 'selected' if f.role == r.key }}>{{ r.label }}</option>{% endfor %}
+          <option value="none" {{ 'selected' if f.role == 'none' }}>No donor role</option>
+        </select>
+      </label>
+      <label>Last sign-in within (days) <input name="within" value="{{ f.within }}" inputmode="numeric" size="5"></label>
+      <label>No sign-ins for (days) <input name="idle" value="{{ f.idle }}" inputmode="numeric" size="5"></label>
+      <label>Show
+        <select name="rows">
+          {% for n in row_choices %}<option value="{{ n }}" {{ 'selected' if data.per_page == n and f.rows != 'all' }}>{{ n }}</option>{% endfor %}
+          <option value="all" {{ 'selected' if f.rows == 'all' }}>All</option>
+        </select> rows
+      </label>
+      <input type="hidden" name="sort" value="{{ f.sort }}"><input type="hidden" name="dir" value="{{ f.dir }}">
+      <a class="btn btn-secondary btn-sm" href="/people/users">Clear</a>
+      <button type="submit" class="btn btn-primary btn-sm">Search</button>
+    </div>
+  </form>
+
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+
+  <div class="card dm-card">
+    {% if data.rows %}
+    <div class="table-scroll">
+      <table class="simple-table dm-table dm-users">
+        <thead><tr>
+          <th class="dm-col-name">{{ sort_link('name', 'Name') }}</th>
+          <th class="dm-col-mail">{{ sort_link('email', 'Username / email') }}</th>
+          <th class="dm-col-last">{{ sort_link('last', 'Last sign-in') }}</th>
+          <th class="dm-col-roles">{{ sort_link('roles', 'Roles') }}</th>
+          <th class="dm-col-act"></th>
+        </tr></thead>
+        <tbody>
+        {% for r in data.rows %}
+          <tr>
+            <td class="dm-col-name"><a href="/people/users/{{ r.id }}">{{ r.name }}</a></td>
+            <td class="dm-col-mail" title="{{ r.email }}">{{ r.email }}</td>
+            <td class="dm-col-last">{{ r.last_sign_in or "Never" }}</td>
+            <td class="dm-col-roles">
+              {% if r.is_parish_admin %}<span class="dm-pill dm-pill-green" title="Given under User Access">Parish Admin</span>{% endif %}
+              {% for x in r.donor_roles %}<span class="dm-pill dm-pill-green">{{ x.label }}</span>{% endfor %}
+              {% if not r.is_parish_admin and not r.donor_roles %}<span class="dm-muted">None</span>{% endif %}
+            </td>
+            <td class="dm-col-act nowrap">
+              <a class="btn btn-secondary btn-sm" href="/people/users/{{ r.id }}">Edit roles</a>
+              {% if r.person_id %}<a class="dm-linklike" href="/people/{{ r.person_id }}?tab=system">Person</a>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="dm-muted dm-small">Showing {{ data.rows|length }} of {{ data.total }} login{{ '' if data.total == 1 else 's' }}.</p>
+    {% if data.pages > 1 %}
+    <div class="dm-pager">
+      {% set base = "/people/users?q=" ~ (f.q|urlencode) ~ "&role=" ~ (f.role|urlencode) ~ "&within=" ~ (f.within|urlencode) ~ "&idle=" ~ (f.idle|urlencode) ~ "&rows=" ~ (f.rows|urlencode) ~ "&sort=" ~ f.sort ~ "&dir=" ~ f.dir %}
+      {% if data.page > 1 %}<a class="btn btn-secondary btn-sm" href="{{ base }}&page={{ data.page - 1 }}">&larr; Previous</a>{% endif %}
+      <span>Page {{ data.page }} of {{ data.pages }}</span>
+      {% if data.page < data.pages %}<a class="btn btn-secondary btn-sm" href="{{ base }}&page={{ data.page + 1 }}">Next &rarr;</a>{% endif %}
+    </div>
+    {% endif %}
+    {% else %}
+    <p class="doc-empty">{% if f.q or f.role or f.within or f.idle %}No login matches that search at this parish.{% else %}No one has a Beacon login at this parish yet. Add them under User Access first.{% endif %}</p>
+    {% endif %}
+  </div>
+  <p class="dm-foot dm-muted dm-small">Donor roles are given per parish. Someone must already have a Beacon login at this parish. No one can give themselves a finance role or the Clergy role.</p>
+</div>
+{% endblock %}

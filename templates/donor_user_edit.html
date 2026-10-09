@@ -1,0 +1,78 @@
+{#
+donor_user_edit.html -- Setup > Users > Manage one login: who they are, and the role boxes in groups (like TouchPoint's role form).
+One Save applies every ticked and unticked box together or not at all (donor_roles.roles_set). "Copy roles from" only ticks the
+boxes to match another login: nothing is saved until Save.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}{{ u.name }} — Users — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/people/users">&larr; All users</a></p>
+  <div class="dm-head">
+    <h1>Manage user <span class="dm-goesby">{{ u.name }}</span></h1>
+    <div class="dm-head-actions">
+      {% if u.person_id %}<a class="btn btn-secondary btn-sm" href="/people/{{ u.person_id }}?tab=system">Open person record</a>{% endif %}
+    </div>
+  </div>
+
+  <div class="card dm-card">
+    <div class="dm-fg">
+      <div class="dm-f dm-c4"><span>Username / email</span><input type="text" value="{{ u.email }}" readonly tabindex="-1"></div>
+      <div class="dm-f dm-c3"><span>Last sign-in</span><input type="text" value="{{ u.last_sign_in or 'Never' }}" readonly tabindex="-1"></div>
+      <div class="dm-f dm-c5"><span>Parish Admin</span>
+        <input type="text" value="{{ 'Yes' if u.is_parish_admin else 'No' }} (given under User Access)" readonly tabindex="-1"></div>
+    </div>
+  </div>
+
+  <form method="post" action="/people/users/{{ u.id }}/roles" class="card dm-card dm-roleform" id="dm-roleform">
+    {{ csrf() }}
+    <div class="dm-section-head"><h2>Roles</h2>
+      <span class="dm-roleform-tools">
+        {% if u.copy_from %}
+        <label class="dm-copyroles">Copy roles from
+          <select id="dm-copy-from" aria-label="Copy roles from another login">
+            <option value="">Choose a person...</option>
+            {% for c in u.copy_from %}<option value="{{ c.id }}" data-roles="{{ c.roles|join(',') }}">{{ c.name }}{% if not c.roles %} (no donor roles){% endif %}</option>{% endfor %}
+          </select>
+        </label>
+        <button type="button" class="btn btn-secondary btn-sm" id="dm-copy-go">Fill the boxes</button>
+        {% endif %}
+        <button type="button" class="btn btn-secondary btn-sm" id="dm-clear-all">Clear all</button>
+      </span>
+    </div>
+    <p class="dm-muted dm-small">Tick the roles this login needs at {{ parish.name }}, then Save. Unticking takes a role away. Nothing changes until you Save. A role you cannot give shows greyed with the reason.</p>
+
+    <div class="dm-rolegrid">
+      {% for g in u.groups %}
+      <div class="dm-rolegroup">
+        <h3>{{ g.title }}</h3>
+        {% for r in g["items"] %}
+        <label class="dm-rolebox {{ 'dm-rolebox-locked' if r.locked }}" title="{{ r.description }}{% if r.why %} — {{ r.why }}{% endif %}">
+          <input type="checkbox" name="role_key" value="{{ r.key }}" {{ 'checked' if r.checked }} {{ 'disabled' if r.locked and not r.checked }}>
+          <span class="dm-rolebox-text"><strong>{{ r.label }}</strong>{% if r.is_finance %} <em class="dm-pref">finance</em>{% endif %}
+            <span class="dm-sub">{{ r.description }}</span>
+            {% if r.given %}<span class="dm-sub">Given {{ r.given }}</span>{% endif %}
+            {% if r.locked and not r.checked %}<span class="dm-sub dm-warn">{{ r.why }}</span>{% endif %}
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="dm-fg">
+      <label class="dm-f dm-c6"><span>Note (kept with the role in the history)</span><input type="text" name="note" maxlength="120" placeholder="for example: new treasurer from January"></label>
+    </div>
+    <div class="dm-pf-foot">
+      <a class="btn btn-secondary btn-sm" href="/people/users">Cancel</a>
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+    </div>
+  </form>
+
+  <p class="dm-muted dm-small">Parish Admin is given or taken away under User Access. To see Beacon exactly as this person sees it, use Impersonate a User under Administrative Tasks. A login is added or removed under User Access, never here.</p>
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/donor_users.js?v={{ asset_version('js/donor_users.js') }}"></script>{% endblock %}

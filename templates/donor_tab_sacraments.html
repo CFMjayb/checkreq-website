@@ -1,0 +1,55 @@
+{# donor_tab_sacraments.html -- Sacraments tab (entering parish only; registers are permanent, so records are voided, never deleted). #}
+{% from "donor_macros.html" import csrf, lock_note, picker with context %}
+{{ lock_note("Recorded by " ~ parish.name ~ " · not shown to this person's other parishes") }}
+
+<div class="dm-section">
+  <div class="dm-section-head"><h3>Sacramental and pastoral events</h3>
+    <a class="dm-small" href="/people/{{ pid }}?tab=sacraments{{ '' if show_voided else '&voided=1' }}">{{ 'Hide voided' if show_voided else 'Show voided' }}</a></div>
+  {% if events %}
+  <div class="table-scroll">
+  <table class="simple-table dm-table">
+    <thead><tr><th>Event</th><th>Date</th><th>Officiant</th><th>Place</th><th>Register</th><th></th></tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr class="{{ 'dm-archived' if e.voided_at else '' }}">
+        <td><strong>{{ label(e.kind) }}</strong>{% if e.related_first or e.related_last %}<div class="dm-sub">with {{ e.related_first or '' }} {{ e.related_last or '' }}</div>{% endif %}{% if e.voided_at %}<div class="dm-sub">Voided: {{ e.void_reason }}</div>{% endif %}</td>
+        <td>{{ d(e.event_date) }}{% if e.date_approximate %} (approximate){% endif %}</td>
+        <td>{{ e.officiant_name or '' }}</td>
+        <td>{{ e.place or '' }}</td>
+        <td>{{ e.register_ref or '' }}</td>
+        <td>
+          {% if ctx.can("sacrament.edit") and not e.voided_at and not g.archived %}
+          <details class="dm-edit dm-edit-inline"><summary class="btn btn-secondary btn-sm">Void</summary>
+            <form method="post" action="/people/{{ pid }}/sacrament/{{ e.id }}/void" class="dm-form dm-editform" data-confirm="Void this record? It stays in the register with your reason.">
+              {{ csrf() }}<div class="field"><label>Why is it being voided?</label><input name="reason" required></div>
+              <button type="submit" class="btn btn-secondary btn-sm">Void record</button>
+            </form>
+          </details>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="doc-empty">No sacramental events recorded by this parish.</p>{% endif %}
+
+  {% if ctx.can("sacrament.edit") and not g.archived %}
+  <details class="dm-edit"><summary class="btn btn-primary btn-sm">+ Add event</summary>
+    <form method="post" action="/people/{{ pid }}/sacrament/add" class="dm-form dm-editform">
+      {{ csrf() }}
+      <div class="dm-grid">
+        <div class="field"><label>Event</label><select name="kind">{% for v in ["baptism","confirmation","reception","reaffirmation","marriage","burial"] %}<option value="{{ v }}">{{ label(v) }}</option>{% endfor %}</select></div>
+        <div class="field"><label>Date</label><input name="event_date" placeholder="MM/DD/YYYY"></div>
+        <div class="field"><label>Officiant</label><input name="officiant_name" placeholder="The Rev. ..."></div>
+        <div class="field"><label>Place</label><input name="place"></div>
+        <div class="field"><label>Register book and page</label><input name="register_ref"></div>
+        <div class="field"><label>For a marriage: the other person</label>{{ picker("related_person_id", "Search for a person at this parish") }}</div>
+      </div>
+      <label class="dm-check"><input type="checkbox" name="date_approximate" value="1"> The date is approximate</label>
+      <div class="field"><label>Notes</label><textarea name="notes" rows="2"></textarea></div>
+      <button type="submit" class="btn btn-primary">Record event</button>
+    </form>
+  </details>
+  {% endif %}
+</div>

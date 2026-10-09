@@ -1,0 +1,78 @@
+{#
+donor_batches.html -- Giving home: gift batches (open one, see them all) and this year's totals by fund. Individual gifts are never
+listed here. A batch's number, date, expected and actual totals are enough for anyone who enters gifts.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Giving — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <div class="dm-head"><h1>Giving</h1>
+    <div class="dm-head-actions"><a class="btn btn-secondary" href="/giving/funds">Funds and campaigns</a></div>
+  </div>
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+
+  {% if ctx.can("batch.open") %}
+  <details class="dm-section card dm-card" {{ 'open' if not batches else '' }}>
+    <summary><h2>Open a batch</h2></summary>
+    <p class="dm-muted">Enter what the count sheet says first. A batch closes only when the gifts you enter add up to it.</p>
+    <form method="post" action="/giving/batches/open" class="dm-form dm-editform">
+      {{ csrf() }}
+      <div class="dm-grid">
+        <div class="field"><label>Kind</label><select name="kind"><option value="deposit">Deposit (checks and cash)</option><option value="non_deposit">Non-deposit (stock, in-kind)</option></select></div>
+        <div class="field"><label>Deposit date</label><input name="deposit_date" value="{{ today[5:7] }}/{{ today[8:10] }}/{{ today[0:4] }}" placeholder="MM/DD/YYYY"></div>
+        <div class="field"><label>Expected total ($)</label><input name="expected_amount" inputmode="decimal" required></div>
+        <div class="field"><label>Expected items</label><input name="expected_count" inputmode="numeric" required></div>
+        <div class="field"><label>Default fund</label><select name="default_fund_id"><option value="">None</option>{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+        <div class="field"><label>Default gift type</label><select name="default_gift_type"><option value="">Automatic</option>{% for v in ["tax_deductible","non_deductible","non_gift_receipt","in_kind","stock"] %}<option value="{{ v }}">{{ label(v) }}</option>{% endfor %}</select></div>
+        <div class="field"><label>Bank deposit reference</label><input name="deposit_ref"></div>
+        <div class="field"><label>Cash account (blank: the parish default)</label><input name="cash_account"></div>
+        <div class="field"><label>Memo</label><input name="memo"></div>
+      </div>
+      <label class="dm-check"><input type="checkbox" name="settles_to_diocese" value="1"> This money settles to the diocese, not the parish bank</label>
+      <button type="submit" class="btn btn-primary">Open batch</button>
+    </form>
+  </details>
+  {% endif %}
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Batches</h3>
+      <span class="dm-small">
+        {% for s, lbl in (("", "All"), ("open", "Open"), ("closed", "Closed"), ("reconciled", "Reconciled")) %}<a href="/giving{{ '?status=' ~ s if s else '' }}" class="{{ 'dm-tab-on' if status == s else '' }}">{{ lbl }}</a>{{ ' · ' if not loop.last }}{% endfor %}
+      </span>
+    </div>
+    {% if batches %}
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Batch</th><th>Date</th><th>Kind</th><th>Status</th><th class="dm-num">Expected</th><th class="dm-num">Entered</th><th class="dm-num">Items</th><th>Notes</th></tr></thead>
+      <tbody>
+      {% for b in batches %}
+        <tr>
+          <td><a href="/giving/batches/{{ b.id }}"><strong>{{ b.number }}</strong></a>{% if b.is_correction %} <span class="dm-pill">Corrections</span>{% endif %}</td>
+          <td>{{ d(b.deposit_date) }}</td><td>{{ label(b.kind) }}</td>
+          <td><span class="dm-status dm-status-{{ 'done' if b.status in ('closed', 'reconciled') else 'pending' }}">{{ label(b.status) }}</span></td>
+          <td class="dm-num">{{ money(b.expected_amount) if b.expected_amount is not none else '' }}</td>
+          <td class="dm-num">{{ money(b.actual_amount) }}</td>
+          <td class="dm-num">{{ b.actual_count }}{% if b.expected_count is not none and not b.is_correction %} of {{ b.expected_count }}{% endif %}</td>
+          <td class="dm-sub">{{ b.memo or '' }}{% if b.closed_under_exception %} Closed under the single-person exception.{% endif %}{% if b.reopened_count %} Reopened {{ b.reopened_count }}×.{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="doc-empty">No batches yet.{% if ctx.can("batch.open") %} Open one above.{% endif %}</p>{% endif %}
+  </div>
+
+  {% if totals %}
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>{{ year }} so far, by fund</h3></div>
+    <p class="dm-muted dm-small">Closed batches only, by gift date. No donor is named here.</p>
+    <table class="simple-table dm-table">
+      <thead><tr><th>Fund</th><th class="dm-num">Items</th><th class="dm-num">Total</th></tr></thead>
+      <tbody>{% for t in totals %}<tr><td>{{ t.fund_name }}</td><td class="dm-num">{{ t["items"] }}</td><td class="dm-num">{{ money(t.total) }}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}

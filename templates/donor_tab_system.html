@@ -1,0 +1,66 @@
+{# donor_tab_system.html -- user account (the Beacon login and donor roles that belong to this person), change history with
+   one-click undo of a single change (PF-12), merge history, links. #}
+{% from "donor_macros.html" import csrf with context %}
+{% if show_access %}
+<div class="dm-section" id="user-account">
+  <div class="dm-section-head"><h3>User account</h3>
+    <a class="btn btn-secondary btn-sm" href="/people/users">All users</a>
+  </div>
+  {% if access %}
+  <div class="table-scroll">
+  <table class="simple-table dm-table dm-compact">
+    <thead><tr><th>Login</th><th>Donor roles here</th><th>Last sign-in</th><th></th></tr></thead>
+    <tbody>
+    {% for u in access %}
+      <tr>
+        <td>{{ u.name }}{% if u.email != u.name %} <span class="dm-sub">{{ u.email }}</span>{% endif %}{% if u.is_parish_admin %} <span class="dm-pill dm-pill-green">Parish Admin</span>{% endif %}</td>
+        <td>{% for r in u.roles %}<div><span class="dm-pill dm-pill-green">{{ r.label }}</span> <span class="dm-sub">given {{ d(r.granted_at) }}{% if r.granted_by_name %} by {{ r.granted_by_name }}{% endif %}{% if r.note %} &middot; {{ r.note }}{% endif %}</span></div>{% else %}<span class="dm-muted">No donor role</span>{% endfor %}</td>
+        <td class="nowrap">{{ u.last_sign_in or "Never" }}</td>
+        <td class="nowrap"><a class="btn btn-secondary btn-sm" href="/people/users/{{ u.user_id }}">Edit roles</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="dm-muted dm-small">A login belongs to this person when its email is one of their email addresses. Roles are given and taken away on the Users screen under Setup. Parish Admin is given under User Access.</p>
+  {% else %}
+  <p class="doc-empty">No Beacon login matches this person's email addresses.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="dm-section">
+  <div class="dm-section-head"><h3>Change history</h3></div>
+  {% if changes %}
+  <div class="table-scroll">
+  <table class="simple-table dm-table">
+    <thead><tr><th>Date</th><th>Who &middot; parish</th><th>Field</th><th>Before</th><th>After</th><th></th></tr></thead>
+    <tbody>
+    {% for c in changes %}
+      <tr class="{{ 'dm-archived' if c.undone_at else '' }}">
+        <td class="nowrap">{{ d(c.created_at) }}</td>
+        <td>{{ c.who }} &middot; {{ c.parish_label }}</td>
+        <td>{{ c.field_label }}{% if c.kind != 'update' %} <span class="dm-sub">({{ c.kind }})</span>{% endif %}</td>
+        <td class="dm-muted">{{ c.old_value or '' }}</td>
+        <td>{{ c.new_value or '' }}{% if c.undone_at %} <span class="dm-sub">(undone)</span>{% endif %}</td>
+        <td>
+          {% if c.undoable %}
+          <form method="post" action="/people/{{ pid }}/undo/{{ c.id }}" class="dm-form dm-inline" data-confirm="Undo this change and restore the old value?">{{ csrf() }}<button type="submit" class="btn btn-secondary btn-sm">Undo</button></form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="dm-muted dm-small">Changes to the shared profile show at every parish this person is connected to, and name the parish that made them. Changes to this parish's own records are shown here only. A change can be undone only if the value has not been changed again since.</p>
+  {% else %}<p class="doc-empty">No changes recorded.</p>{% endif %}
+</div>
+
+<div class="dm-section">
+  <div class="dm-grid">
+    <div class="dm-box"><div class="dm-lbl">Merge history</div><div class="dm-val">{% if merges %}{{ merges|length }} merge{{ 's' if merges|length != 1 }} into this record{% else %}No merges{% endif %}</div></div>
+    <div class="dm-box"><div class="dm-lbl">Databank link</div><div class="dm-val">{% if p.databank_contact_id %}Contact {{ p.databank_contact_id }}{% else %}Not linked{% endif %}</div></div>
+    <div class="dm-box"><div class="dm-lbl">Record number</div><div class="dm-val">{{ pid }}</div></div>
+  </div>
+</div>

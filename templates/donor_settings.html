@@ -1,0 +1,94 @@
+{#
+donor_settings.html -- Settings: turn Donor Management on (diocese only), the QBO account names, member status codes
+(each mapped to a fixed diocesan category) and who holds which donor role at this parish.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Settings — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <div class="dm-head"><h1>Settings</h1></div>
+
+  {% if ctx.can("parish.activate") or ctx.can("funds.manage") %}
+  <details class="dm-section card dm-card" open>
+    <summary><h2>Turn on and accounts</h2></summary>
+    <form method="post" action="/people/settings/activation" class="dm-form dm-editform">
+      {{ csrf() }}
+      {% if ctx.can("parish.activate") %}
+      <p class="dm-muted">These are the diocese's decisions. Donor Management is switched on one parish at a time.</p>
+      {% for key, text in (("people_enabled", "People and membership"), ("giving_enabled", "Giving (funds, batches, pledges)"), ("allow_single_person_batch", "Allow one person to enter and close a batch (small parishes)"), ("qbo_posting_enabled", "Allow posting the journal entry to QuickBooks")) %}
+      <label class="dm-check"><input type="hidden" name="has_{{ key }}" value="1"><input type="checkbox" name="{{ key }}" value="1" {{ 'checked' if s[key] }}> {{ text }}</label>
+      {% endfor %}
+      <p class="dm-muted dm-small">Posting to QuickBooks stays off tonight: the entry is built and shown, never sent.</p>
+      {% endif %}
+      <div class="dm-grid">
+        <div class="field"><label>QuickBooks company</label><input name="qbo_company_key" value="{{ s.qbo_company_key or '' }}"></div>
+        <div class="field"><label>Default cash account</label><input name="default_cash_account" value="{{ s.default_cash_account or '' }}"></div>
+        <div class="field"><label>Processing fee account</label><input name="processing_fee_account" value="{{ s.processing_fee_account or '' }}"></div>
+        <div class="field"><label>Due from diocese account</label><input name="due_from_diocese_account" value="{{ s.due_from_diocese_account or '' }}"></div>
+        <div class="field"><label>Investment account (for stock gifts)</label><input name="investment_account" value="{{ s.investment_account or '' }}"></div>
+        <div class="field"><label>In-kind gifts account</label><input name="in_kind_account" value="{{ s.in_kind_account or '' }}"></div>
+        <div class="field"><label>Default QuickBooks class</label><input name="default_class" value="{{ s.default_class or '' }}"></div>
+      </div>
+      <button type="submit" class="btn btn-primary">Save settings</button>
+    </form>
+  </details>
+  {% endif %}
+
+  {% if s.people_enabled and ctx.can("membership.view") %}
+  <details class="dm-section card dm-card" open>
+    <summary><h2>Member status codes</h2></summary>
+    <p class="dm-muted">Each code is this parish's own word for a kind of member, and each one counts as one fixed diocesan category in the annual report.</p>
+    <div class="table-scroll">
+    <table class="simple-table dm-table">
+      <thead><tr><th>Code</th><th>Label</th><th>Counts as</th><th>Order</th><th>Active</th><th></th></tr></thead>
+      <tbody>
+      {% for c in codes %}
+        <tr class="{{ '' if c.is_active else 'dm-archived' }}">
+          {% if ctx.can("membership.edit") %}
+          <form method="post" action="/people/settings/status-code" id="sc-{{ c.id }}" class="dm-form">{{ csrf() }}<input type="hidden" name="code_id" value="{{ c.id }}"></form>
+          <td><strong>{{ c.code }}</strong></td>
+          <td><input form="sc-{{ c.id }}" name="label" value="{{ c.label }}" aria-label="Label for {{ c.code }}"></td>
+          <td><select form="sc-{{ c.id }}" name="diocesan_category" aria-label="Category for {{ c.code }}">{% for v in categories %}<option value="{{ v }}" {{ 'selected' if c.diocesan_category == v }}>{{ label(v) }}</option>{% endfor %}</select></td>
+          <td><input form="sc-{{ c.id }}" name="sort_order" value="{{ c.sort_order }}" size="4" aria-label="Order for {{ c.code }}"></td>
+          <td><input form="sc-{{ c.id }}" type="checkbox" name="is_active" value="1" {{ 'checked' if c.is_active }} aria-label="{{ c.code }} is active"></td>
+          <td><button form="sc-{{ c.id }}" type="submit" class="btn btn-secondary btn-sm">Save</button></td>
+          {% else %}
+          <td><strong>{{ c.code }}</strong></td><td>{{ c.label }}</td><td>{{ label(c.diocesan_category) }}</td><td>{{ c.sort_order }}</td><td>{{ 'Yes' if c.is_active else 'No' }}</td><td></td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% if ctx.can("membership.edit") %}
+    <details class="dm-edit"><summary class="btn btn-secondary btn-sm">+ Add a status code</summary>
+      <form method="post" action="/people/settings/status-code" class="dm-form dm-editform">
+        {{ csrf() }}
+        <div class="dm-grid">
+          <div class="field"><label>Code</label><input name="code" maxlength="20" placeholder="for example PLEDGING" required></div>
+          <div class="field"><label>Label</label><input name="label" maxlength="60" required></div>
+          <div class="field"><label>Counts as</label><select name="diocesan_category">{% for v in categories %}<option value="{{ v }}">{{ label(v) }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Order</label><input name="sort_order" value="100" size="4"></div>
+        </div>
+        <button type="submit" class="btn btn-primary">Add code</button>
+      </form>
+    </details>
+    {% endif %}
+  </details>
+  {% endif %}
+
+  {% if ctx.can("roles.manage") %}
+  <details class="dm-section card dm-card" open>
+    <summary><h2>Who can do what</h2></summary>
+    <p class="dm-muted">Donor roles are given per parish. Who holds which role, and giving or taking roles away, is now on the <a href="/people/users"><strong>Users</strong> screen</a> in this Setup menu. No one can give themselves a finance role or the Clergy role. What each role means:</p>
+    <dl class="dm-defs">
+      {% for r in catalog %}<dt>{{ r.label }}</dt><dd>{{ r.description }}</dd>{% endfor %}
+    </dl>
+  </details>
+  {% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}

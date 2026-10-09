@@ -1,0 +1,36 @@
+{#
+donor_macros.html -- small helpers shared by the Donor Management templates. Import with context:
+  {% from "donor_macros.html" import box, csrf, lock_note with context %}
+#}
+{% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">{% endmacro %}
+
+{# A read-only labelled value, like the boxes in the person-record mockup. #}
+{% macro box(lbl, val) %}<div class="dm-box"><div class="dm-lbl">{{ lbl }}</div><div class="dm-val">{% if val is not none and val != "" %}{{ val }}{% endif %}</div></div>{% endmacro %}
+
+{#
+The compact, edit-in-place fields of the person screen (one control per field, never a second copy for editing).
+  fld  a text field     sel  a pick list (values run through label())     ro  a value that is never editable
+  chk  a check box
+Every control carries data-ed: donor_person.js turns it from read-only (the screen as it is read) into editable
+(after Edit) without moving or duplicating anything. `locked` keeps a control read-only even in edit mode (a minor's
+birth date for a role that may not see it). `cls` is the column span: dm-c1 .. dm-c12 of a twelve-column grid.
+#}
+{% macro fld(lbl, name, val, cls="dm-c3", ph="", locked=False) %}<label class="dm-f {{ cls }}"><span>{{ lbl }}</span><input type="text" name="{{ name }}" value="{{ val if val is not none else '' }}"{% if ph %} placeholder="{{ ph }}"{% endif %} readonly data-ed{% if locked %} data-locked disabled{% endif %}></label>{% endmacro %}
+
+{% macro sel(lbl, name, val, values, cls="dm-c3", blank="Not recorded", locked=False) %}<label class="dm-f {{ cls }}"><span>{{ lbl }}</span><select name="{{ name }}" disabled data-ed{% if locked %} data-locked{% endif %}>{% if blank is not none %}<option value="">{{ blank }}</option>{% endif %}{% for v in values %}<option value="{{ v }}" {{ 'selected' if val == v }}>{{ label(v) }}</option>{% endfor %}</select></label>{% endmacro %}
+
+{% macro ro(lbl, val, cls="dm-c3") %}<label class="dm-f {{ cls }}"><span>{{ lbl }}</span><input type="text" value="{{ val if val is not none else '' }}" readonly tabindex="-1"></label>{% endmacro %}
+
+{% macro chk(lbl, name, on, value="1") %}<label class="dm-chk"><input type="checkbox" name="{{ name }}" value="{{ value }}" {{ 'checked' if on }} disabled data-ed> {{ lbl }}</label>{% endmacro %}
+
+{# The "visible to this parish only" line on parish-scoped tabs. #}
+{% macro lock_note(text) %}<p class="dm-lock"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg> {{ text }}</p>{% endmacro %}
+
+{# A person picker: type to search people at this parish, choose one, the hidden field carries the id. #}
+{% macro picker(name, placeholder="Search by name") %}
+<div class="dm-picker">
+  <input type="text" class="dm-picker-input" placeholder="{{ placeholder }}" autocomplete="off" aria-label="{{ placeholder }}">
+  <input type="hidden" name="{{ name }}" value="">
+  <div class="dm-picker-list" hidden></div>
+</div>
+{% endmacro %}

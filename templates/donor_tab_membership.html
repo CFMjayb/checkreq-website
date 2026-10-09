@@ -1,0 +1,85 @@
+{# donor_tab_membership.html -- Membership tab (parish-only). Included by donor_person.html. #}
+{% from "donor_macros.html" import csrf, box, lock_note with context %}
+{% set can_mem = ctx.can("membership.edit") and not g.archived %}
+{{ lock_note("Visible to " ~ parish.name ~ " only") }}
+
+<div class="dm-section">
+  <div class="dm-section-head"><h3>Canonical standing</h3></div>
+  <div class="dm-grid">
+    {{ box("Standing", label(mem.canonical_standing) if mem else "Not set") }}
+    {{ box("Adult member", ("Yes" if adult.adult else "No") ~ " · calculated" ~ ((" (" ~ adult.reason ~ ")") if adult.reason else "")) }}
+    {{ box("Last reviewed", d(mem.standing_reviewed_on) if mem and mem.standing_reviewed_on else "") }}
+  </div>
+  <p class="dm-muted dm-small">Communicant and communicant in good standing rest on worship and Communion, which Beacon does not track, so clergy set them by hand. The wording of Canon I.17 is under revision.</p>
+  {% if ctx.can("standing.review") and not g.archived %}
+  <details class="dm-edit"><summary class="btn btn-secondary btn-sm">Review</summary>
+    <form method="post" action="/people/{{ pid }}/standing" class="dm-form dm-editform dm-row">
+      {{ csrf() }}
+      <div class="field"><label>Standing</label>
+        <select name="standing">{% for v in ["not_set","baptized_member","communicant","communicant_in_good_standing"] %}<option value="{{ v }}" {{ 'selected' if mem and mem.canonical_standing == v }}>{{ label(v) }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Reviewed on</label><input name="reviewed_on" placeholder="MM/DD/YYYY (blank = today)"></div>
+      <button type="submit" class="btn btn-primary">Record review</button>
+    </form>
+  </details>
+  {% endif %}
+</div>
+
+<div class="dm-section">
+  <div class="dm-section-head"><h3>Membership</h3></div>
+  <div class="dm-grid">
+    {{ box("Member status", mem.status_label if mem else "") }}
+    {{ box("How joined", label(mem.how_joined) if mem and mem.how_joined else "") }}
+    {{ box("Join date", d(mem.join_date) if mem and mem.join_date else "") }}
+    {{ box("Removal date and reason", ((d(mem.removal_date) ~ " ") if mem and mem.removal_date else "") ~ (label(mem.removal_reason) if mem and mem.removal_reason else "")) }}
+  </div>
+  {% if can_mem %}
+  <details class="dm-edit"><summary class="btn btn-secondary btn-sm">Edit</summary>
+    <form method="post" action="/people/{{ pid }}/membership" class="dm-form dm-editform">
+      {{ csrf() }}
+      <div class="dm-grid">
+        <div class="field"><label>Member status</label>
+          <select name="status_code_id"><option value="">None</option>
+            {% for c in codes %}<option value="{{ c.id }}" {{ 'selected' if mem and mem.status_code_id == c.id }}>{{ c.label }} ({{ label(c.diocesan_category) }})</option>{% endfor %}</select></div>
+        <div class="field"><label>How joined</label>
+          <select name="how_joined"><option value="">Not recorded</option>{% for v in ["baptism","transfer","confirmation","reception","reaffirmation","other"] %}<option value="{{ v }}" {{ 'selected' if mem and mem.how_joined == v }}>{{ label(v) }}</option>{% endfor %}</select></div>
+        <div class="field"><label>Join date</label><input name="join_date" placeholder="MM/DD/YYYY" value="{{ d(mem.join_date) if mem and mem.join_date else '' }}"></div>
+        <div class="field"><label>Removal date</label><input name="removal_date" placeholder="MM/DD/YYYY" value="{{ d(mem.removal_date) if mem and mem.removal_date else '' }}"></div>
+        <div class="field"><label>Removal reason</label>
+          <select name="removal_reason"><option value="">None</option>{% for v in ["transferred","moved","deceased","inactive","other"] %}<option value="{{ v }}" {{ 'selected' if mem and mem.removal_reason == v }}>{{ label(v) }}</option>{% endfor %}</select></div>
+      </div>
+      <p class="dm-muted dm-small">A member status makes this person a member of this parish. A status that means they have left (transferred out, removed, deceased) also clears their canonical membership here.</p>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </form>
+  </details>
+  {% endif %}
+</div>
+
+<div class="dm-section">
+  <div class="dm-section-head"><h3>Transfer letters</h3></div>
+  {% if letters %}
+  <table class="simple-table dm-table">
+    <thead><tr><th>Direction</th><th>Other parish</th><th>Requested</th><th>Issued</th><th>Received</th><th>Status</th></tr></thead>
+    <tbody>{% for t in letters %}
+      <tr><td>{{ label(t.direction) }}</td><td>{{ t.other_parish or '' }}</td><td>{{ d(t.requested_on) }}</td><td>{{ d(t.issued_on) }}</td><td>{{ d(t.received_on) }}</td><td>{{ label(t.status) }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+  {% else %}<p class="doc-empty">No transfer letters.</p>{% endif %}
+  {% if ctx.can("transfer.edit") and not g.archived %}
+  <details class="dm-edit"><summary class="btn btn-secondary btn-sm">Add or update a letter</summary>
+    <form method="post" action="/people/{{ pid }}/transfer" class="dm-form dm-editform">
+      {{ csrf() }}
+      <div class="dm-grid">
+        {% if letters %}<div class="field"><label>Update an existing letter?</label>
+          <select name="letter_id"><option value="">No, add a new one</option>{% for t in letters %}<option value="{{ t.id }}">{{ label(t.direction) }}: {{ t.other_parish or 'unnamed' }}</option>{% endfor %}</select></div>{% endif %}
+        <div class="field"><label>Direction</label><select name="direction"><option value="incoming">Incoming (to this parish)</option><option value="outgoing">Outgoing</option></select></div>
+        <div class="field"><label>Other parish</label><input name="other_parish" placeholder="Name, city, state"></div>
+        <div class="field"><label>Requested</label><input name="requested_on" placeholder="MM/DD/YYYY"></div>
+        <div class="field"><label>Issued</label><input name="issued_on" placeholder="MM/DD/YYYY"></div>
+        <div class="field"><label>Received</label><input name="received_on" placeholder="MM/DD/YYYY"></div>
+        <div class="field"><label>Status</label><select name="status">{% for v in ["requested","issued","received","accepted","cancelled"] %}<option value="{{ v }}">{{ label(v) }}</option>{% endfor %}</select></div>
+      </div>
+      <button type="submit" class="btn btn-primary">Save letter</button>
+    </form>
+  </details>
+  {% endif %}
+</div>

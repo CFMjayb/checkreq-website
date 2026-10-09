@@ -1,0 +1,41 @@
+{#
+donor_directory.html -- the parish directory: active members who asked to be listed. People under 18 are left out
+unless a role that may see them asks, and a person who hides their phone shows no number (the service blanks it).
+#}
+{% extends "base.html" %}
+{% block title %}Directory — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/people">&larr; Back to People</a></p>
+  <div class="dm-head"><h1>Parish directory</h1>
+    <div class="dm-head-actions">
+      {% if ctx.can("minors.details") %}
+        {% if minors %}<a class="btn btn-secondary" href="/people/directory">Leave out people under 18</a>
+        {% else %}<a class="btn btn-secondary" href="/people/directory?minors=1">Include people under 18</a>{% endif %}
+      {% endif %}
+      <a class="btn btn-secondary" href="/people/export.csv?kind=directory{{ '&minors=1' if minors else '' }}">Export (CSV)</a>
+    </div>
+  </div>
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+  <div class="card dm-card">
+    <p class="dm-count">{{ rows|length }} {{ 'listing' if rows|length == 1 else 'listings' }}{{ '' if minors else ' (people under 18 are not shown)' }}</p>
+    {% if rows %}
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Name</th><th>Address</th><th>Email</th><th>Phone</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><a href="/people/{{ r.id }}">{{ r.name }}</a>{% if r.is_minor %} <span class="dm-pill dm-pill-minor">Minor</span>{% endif %}</td>
+          <td>{% if r.address1 %}{{ r.address1 }}{% if r.address2 %}, {{ r.address2 }}{% endif %}<div class="dm-sub">{{ r.city or '' }}{% if r.state %}, {{ r.state }}{% endif %} {{ r.postal_code or '' }}</div>{% endif %}</td>
+          <td>{{ r.email or "" }}</td>
+          <td class="nowrap">{{ r.phone or r.home_phone or "" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="doc-empty">No one is listed in the directory yet.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}
