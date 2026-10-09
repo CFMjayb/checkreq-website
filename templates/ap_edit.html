@@ -21,7 +21,7 @@ Approval" instead. See main.py's ap_edit_form / ap_edit_submit.
 <p class="back-link"><a href="{{ back_url }}">&larr; Back</a> · {{ _gl("ap-review-w9", "How AP Review and W-9s work") }}
   · <a href="/requests/{{ request_number }}/pdf" target="_blank">Open as PDF</a></p>
 
-{% if saved %}<div class="banner banner-success">Changes saved.</div>{% endif %}
+{% if saved %}<div class="banner banner-success">{{ "Duplicate check acknowledged." if saved == 'dupack' else "Changes saved." }}</div>{% endif %}
 {% if request.query_params.get('w9_waived') %}<div class="banner banner-success">W-9 waiver updated.</div>{% endif %}
 {% if request.query_params.get('w9_confirmed') == '1' %}<div class="banner banner-success">W-9 confirmed. The tax ID and 1099 setting were sent to QuickBooks and the W-9 is attached to the vendor.</div>{% endif %}
 {% if request.query_params.get('w9_confirmed') == 'noattach' %}<div class="banner banner-error">W-9 confirmed and the tax ID/1099 setting were sent to QuickBooks, but the W-9 file could not be attached -- attach it to the vendor in QuickBooks by hand. Details are in the request history.</div>{% endif %}
@@ -42,6 +42,41 @@ Approval" instead. See main.py's ap_edit_form / ap_edit_submit.
       {% if pr.overspend_flagged %}<dt>Budget</dt><dd class="pre">{{ pr.overspend_detail }}</dd>{% endif %}
     </dl>
   </div>
+
+  {# 2026-10-09 (Jay: "there should be a check to see if an invoice is posting twice"): an earlier request for
+     this vendor carries the same invoice number. Until AP acknowledges it here, with a reason, "Post to QBO"
+     is held for this request (AP Review shows the same hold). The acknowledgement is tied to the invoice
+     number as it is now: changing the number re-opens the check. #}
+  {% if dup_matches %}
+  <div class="card ap-edit-card" id="duplicate">
+    <h2>Possible duplicate invoice</h2>
+    <p>Invoice <b>{{ pr.invoice_number }}</b> was already submitted for this vendor:</p>
+    <ul>
+      {% for m in dup_matches %}
+      <li><a href="/requests/{{ m.request_number }}/view">{{ m.request_number }}</a> —
+        {{ m.status }}, ${{ "{:,.2f}".format(m.amount) }}, {{ m.date }}{% if m.submitter %}, {{ m.submitter }}{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% if dup_state == 'hold' %}
+    <p class="sub">This request cannot be posted to QuickBooks until you confirm it is not a duplicate.</p>
+    {% if editable %}
+    <form method="post" action="/requests/{{ request_number }}/duplicate-ack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <div class="field">
+        <label for="dupReason">Why is this not a duplicate? (required)</label>
+        <textarea id="dupReason" name="reason" rows="2" required></textarea>
+      </div>
+      <button type="submit" class="btn btn-primary">Not a duplicate — allow posting</button>
+    </form>
+    {% endif %}
+    {% elif dup_state == 'acknowledged' %}
+    <p class="sub">Acknowledged by AP (see the request history).</p>
+    {% else %}
+    <p class="sub">These were submitted after this request, so this one is not held. Each of them needs AP's
+      acknowledgement before it can be posted.</p>
+    {% endif %}
+  </div>
+  {% endif %}
 
   {% if editable %}
   <form method="post" action="/requests/{{ request_number }}/ap-edit" class="card ap-edit-card" id="apEditForm">
@@ -78,6 +113,11 @@ Approval" instead. See main.py's ap_edit_form / ap_edit_submit.
       </div>
     </div>
 
+    <div class="field">
+      <label for="apInvoice">Invoice # <span class="sub">(becomes the QuickBooks Bill no.; blank uses the CR number)</span></label>
+      <input type="text" id="apInvoice" name="invoice_number" autocomplete="off"
+             value="{{ pr.invoice_number or '' }}">
+    </div>
     <div class="field">
       <label for="apDescription">Description</label>
       <textarea id="apDescription" name="description" rows="2">{{ pr.description or "" }}</textarea>

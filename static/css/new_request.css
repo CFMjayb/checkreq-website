@@ -228,6 +228,8 @@
   grid-template-columns: 1fr 1fr;
   gap: var(--space-3);
 }
+/* Invoice # (2026-10-09): a short box beside the Description, not a half-width one. */
+.field-row.field-row-invoice { grid-template-columns: 11rem 1fr; }
 
 .field-disclosure { margin-bottom: var(--space-2); }
 .field-disclosure summary {

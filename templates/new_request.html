@@ -193,9 +193,22 @@
         ID / SSN / EIN is collected here -- that comes back separately via the W-9 itself.</p>
     </div>
 
-    <div class="field">
-      <label>Description / Reason</label>
-      <input type="text" name="description" id="descriptionInput" value="{{ edit_data.description if edit_data else '' }}" required autocomplete="off">
+    {# 2026-10-09 (Jay): the vendor's own invoice number. Optional; filled from the invoice when one is
+       uploaded. It becomes the Bill no. in QuickBooks (the CR number is used when it is blank), and the
+       same vendor + invoice number cannot be submitted twice without an explicit confirmation.
+       21 characters is QuickBooks' limit for a Bill number. #}
+    <div class="field-row field-row-invoice">
+      <div class="field">
+        <label for="invoiceNumberInput">Invoice #</label>
+        {# No maxlength on purpose: a longer pasted number would be silently cut and could then match the wrong
+           invoice. The server refuses more than 21 characters and says so. #}
+        <input type="text" name="invoice_number" id="invoiceNumberInput" autocomplete="off"
+               placeholder="optional, max 21" value="{{ edit_data.invoice_number if edit_data else '' }}">
+      </div>
+      <div class="field">
+        <label for="descriptionInput">Description / Reason</label>
+        <input type="text" name="description" id="descriptionInput" value="{{ edit_data.description if edit_data else '' }}" required autocomplete="off">
+      </div>
     </div>
 
     <details class="field-disclosure"{% if edit_data and edit_data.special_instructions %} open{% endif %}>

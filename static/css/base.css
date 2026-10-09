@@ -550,6 +550,9 @@ table.approvals-table .col-type, table.approvals-table .col-entity { min-width: 
 table.approvals-table .col-program { min-width: 150px; }
 table.approvals-table .col-neededby, table.approvals-table .col-date { min-width: 95px; white-space: nowrap; }
 table.approvals-table .col-vendor { min-width: 200px; }
+/* Invoice # (2026-10-09): the vendor's own number, up to QuickBooks' 21 characters -- wraps rather than
+   truncates, so a long one is still readable. */
+table.approvals-table .col-invoice, table.approvals-table td.invoice-cell { min-width: 110px; overflow-wrap: anywhere; }
 table.approvals-table .col-submitter { min-width: 130px; }
 table.approvals-table .col-amount { min-width: 85px; white-space: nowrap; }
 table.approvals-table .col-chain { min-width: 90px; white-space: nowrap; }

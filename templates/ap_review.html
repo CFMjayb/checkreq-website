@@ -109,13 +109,13 @@ that writes to QuickBooks.</p>
   <table class="simple-table ap-compact-table">
     <tr>
       <th class="col-select"><input type="checkbox" id="selectAllCheckbox" title="Select all postable rows"></th>
-      <th>Request #</th><th>Entity</th><th>Vendor</th><th>Program Area</th>
+      <th>Request #</th><th>Entity</th><th>Vendor</th><th>Invoice #</th><th>Program Area</th>
       <th>Submitted By</th><th class="num">Amount</th><th>Status</th><th>Actions</th>
     </tr>
     {% for r in rows %}
     <tr>
       <td class="col-select">
-        {% if not r.vendor_gate_wait %}
+        {% if not r.vendor_gate_wait and not r.dup_hold %}
         <input type="checkbox" class="batchSelectCheckbox" value="{{ r.request_number }}">
         {% endif %}
       </td>
@@ -123,6 +123,7 @@ that writes to QuickBooks.</p>
         <div class="sub">{{ r.type_abbr }}</div></td>
       <td>{{ r.org_code }}</td>
       <td>{{ r.vendor_name }}</td>
+      <td class="invoice-cell">{{ r.invoice_number or "—" }}</td>
       <td>{{ r.program_area_title }}</td>
       <td>{{ r.submitter_name or r.submitter_email }}</td>
       <td class="num">${{ "{:,.2f}".format(r.amount) }}</td>
@@ -132,8 +133,13 @@ that writes to QuickBooks.</p>
         {% if r.existing_vendor_w9_flagged and r.w9_requested_at %}
         <div class="sub">W-9 requested {{ r.w9_requested_at.strftime("%Y-%m-%d") }}</div>
         {% endif %}
-        {% else %}
+        {% elif not r.dup_hold %}
         <span class="badge badge-approved">Ready to post</span>
+        {% endif %}
+        {% if r.dup_hold %}
+        {# 2026-10-09: same invoice number already submitted for this vendor -- held until AP acknowledges it. #}
+        <div><span class="badge badge-pending" title="{{ r.dup_hold }}">Possible duplicate invoice</span></div>
+        <div class="sub">{{ r.dup_hold }}</div>
         {% endif %}
         {% if r.w9_waiver_note %}<div class="sub">{{ r.w9_waiver_note }}</div>{% endif %}
         {% if r.overspend_flagged %}
@@ -146,8 +152,11 @@ that writes to QuickBooks.</p>
           <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
           <input type="hidden" name="dev_confirmed" value="1">
           <button type="submit" class="btn btn-primary btn-sm"
-                  {% if r.vendor_gate_wait %}disabled title="{{ r.vendor_gate_wait }}"{% endif %}>Post to QBO</button>
+                  {% if r.vendor_gate_wait %}disabled title="{{ r.vendor_gate_wait }}"{% elif r.dup_hold %}disabled title="Possible duplicate invoice -- acknowledge it on the Edit screen first"{% endif %}>Post to QBO</button>
         </form>
+        {% if r.dup_hold %}
+        <a class="btn btn-primary btn-sm" href="/requests/{{ r.request_number }}/ap-edit#duplicate">Review duplicate</a>
+        {% endif %}
         {% if r.w9_needs_review and not r.existing_vendor_w9_flagged %}
         <a class="btn btn-primary btn-sm" href="/requests/{{ r.request_number }}/ap-edit#w9">Review W-9</a>
         {% endif %}
@@ -191,7 +200,7 @@ that writes to QuickBooks.</p>
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="9">Nothing waiting for AP review.</td></tr>
+    <tr><td colspan="10">Nothing waiting for AP review.</td></tr>
     {% endfor %}
   </table>
 </div>

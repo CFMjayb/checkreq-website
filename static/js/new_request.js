@@ -609,6 +609,11 @@ function refreshPreview() {
   setField('vendor', usingNewVendor ? (computeNewVendorDisplayName() || '—') : vendorDisplayText);
   setField('date', formatDisplayDate(document.getElementById('payDateInput').value));
   setField('description', document.getElementById('descriptionInput').value || '—');
+  // Invoice # (2026-10-09): the voucher's row appears only once there is a number to show.
+  const invNumber = (document.getElementById('invoiceNumberInput').value || '').trim();
+  setField('invoice_number', invNumber);
+  const invRow = document.querySelector('#voucherPreview [data-row="invoice_number"]');
+  if (invRow) invRow.hidden = !invNumber;
 
   const paSel = document.getElementById('programAreaSelect');
   setField('program_area', paSel.selectedIndex > 0 ? paSel.options[paSel.selectedIndex].text : '—');
@@ -875,6 +880,33 @@ async function submitFormViaFetch(form, submitterBtn) {
   try {
     const data = await resp.json();
     if (data.error) message = data.error;
+    // Duplicate check (2026-10-09, Jay: "there should be a check to see if an invoice is posting twice").
+    // The server answered 409: this vendor already has this invoice number (or, with no invoice number
+    // to go by, a request for the same amount a few days ago). Ask, name the earlier request, and send
+    // the form again with the answer -- an invoice-number match needs a reason, which is logged and
+    // shown to AP. Cancelling leaves the form as it was.
+    if (resp.status === 409 && data.needs_duplicate_confirmation) {
+      const isInvoice = data.level === 'invoice';
+      const result = await showActionModal({
+        title: isInvoice ? 'Possible Duplicate Invoice' : 'Possible Duplicate Request',
+        hint: escapeHtml(data.detail) + (isInvoice
+          ? ' If this is a different invoice, say why below; otherwise cancel and check the earlier request.'
+          : ' If this is a different invoice, continue.'),
+        placeholder: isInvoice ? 'Why is this not a duplicate? (required)' : 'Optional note',
+        required: !!data.reason_required,
+        confirmLabel: 'This is a different invoice — Submit',
+      });
+      if (result === null) { unlockSubmitButtons(); return; }   // cancelled -- back to editing
+      const added = [['confirmed_duplicate', '1'], ['duplicate_reason', result]].map(([name, value]) => {
+        const el = document.createElement('input');
+        el.type = 'hidden'; el.name = name; el.value = value;
+        form.appendChild(el);
+        return el;
+      });
+      try { await submitFormViaFetch(form, submitterBtn); }
+      finally { added.forEach(el => el.remove()); }   // a later edit must be asked again
+      return;
+    }
   } catch {
     // A non-JSON error body (an unexpected 500 page, say) -- keep the
     // generic message rather than show raw HTML.
@@ -1043,6 +1075,12 @@ function applyExtractedFields(data, filename) {
     const descInput = document.getElementById('descriptionInput');
     descInput.value = data.description;
     markAutoFilled(descInput);
+  }
+  // 2026-10-09 (Jay): the invoice number read off the invoice goes in its own box.
+  if (data.invoice_number) {
+    const invInput = document.getElementById('invoiceNumberInput');
+    invInput.value = data.invoice_number;
+    markAutoFilled(invInput);
   }
   if (data.amount) {
     const firstAmt = document.querySelector('#glLines .gl-line .glAmount');
@@ -1680,6 +1718,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('payDateInput').addEventListener('input', refreshPreview);
   document.getElementById('descriptionInput').addEventListener('input', refreshPreview);
+  document.getElementById('invoiceNumberInput').addEventListener('input', refreshPreview);
   document.getElementById('programAreaSelect').addEventListener('change', () => {
     refreshAllGlAccountOptions();
     refreshPreview();
