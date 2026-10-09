@@ -204,6 +204,23 @@
   font-size: 0.95rem; cursor: pointer; padding: 0 4px; line-height: 1;
 }
 .attachment-empty { font-size: 0.8rem; color: var(--color-text-muted); margin-bottom: var(--space-2); }
+
+/* "Add Supporting Document" (new request only, 2026-10-09). Sits directly
+   under the prefill upload box and reuses its dashed-box look and the
+   Edit-page attachment-list row styling above, so the two upload surfaces
+   read as one family. The list stays inside the box and scrolls past ~3
+   files rather than pushing the form down (this page is tight on height). */
+.supporting-docs-hint { margin-left: var(--space-2); font-size: 0.76rem; color: var(--color-text-muted); }
+.supporting-docs-list { list-style: none; margin: 0; padding: 0; max-height: 96px; overflow-y: auto; }
+.supporting-docs-list:not(:empty) { margin-top: var(--space-2); }
+.supporting-doc-name {
+  background: none; border: none; padding: 0; font: inherit; text-align: left;
+  color: var(--color-franciscan-green); cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.supporting-doc-name:hover { text-decoration: underline; }
+.supporting-docs-list .attachment-remove-btn { margin-left: auto; }
+#supportingDocsError:empty { display: none; }
 .attachment-add-form { display: flex; align-items: center; gap: var(--space-2); }
 .attachment-add-form input[type=file] { font-size: 0.76rem; flex: 1; min-width: 0; }
 .field-row {

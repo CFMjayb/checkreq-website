@@ -58,9 +58,35 @@
        see new_request.js) begins the upload immediately, no second click. #}
     <div class="upload-row">
       <button type="button" class="btn btn-secondary btn-sm" id="attachmentsUploadBtn">📎 Upload File to Prefill Form</button>
-      <input type="file" name="attachments" id="attachmentsInput" multiple hidden
+      {# 2026-10-09: single-file on purpose. This is the document the form is
+         read from and shown on the right; it used to accept several files,
+         of which only the first was read and the rest rode along unseen.
+         Anything else goes through "Add Supporting Document" below. #}
+      <input type="file" name="attachments" id="attachmentsInput" hidden
              accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
     </div>
+
+    {# 2026-10-09 (Jay): "a user needs the ability to upload a document
+       separate from the document they load to prefill the form."
+       New requests only -- an existing request already has the Attachments
+       section further down (its own Upload File button). These files are
+       NOT read by the extraction and never touch the form fields; they are
+       posted under the same "attachments" name, so the server archives them
+       exactly like the prefill document (and keeps them on a saved draft).
+       The visible list is the source of truth: new_request.js keeps the file
+       array and rebuilds this input's FileList from it so a single file can
+       be removed before submitting. One button, no separate Choose-file
+       control (Standing UI-UX Rule 7). #}
+    {% if not edit_data %}
+    <div class="upload-row supporting-docs-row">
+      <button type="button" class="btn btn-secondary btn-sm" id="supportingDocsBtn">📎 Add Supporting Document</button>
+      <span class="supporting-docs-hint">Kept with the request; not used to fill in the form.</span>
+      <input type="file" name="attachments" id="supportingDocsInput" multiple hidden
+             accept="application/pdf,image/jpeg,image/png,image/gif,image/webp">
+      <ul class="supporting-docs-list" id="supportingDocsList" aria-live="polite"></ul>
+      <div class="upload-status error" id="supportingDocsError" role="alert"></div>
+    </div>
+    {% endif %}
     {% endif %}
 
     {% if 'pre_approved_submitter' in entity_roles %}
