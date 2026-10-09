@@ -102,6 +102,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Resp
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.concurrency import run_in_threadpool
 
 import psycopg
 import session_guard
@@ -4155,6 +4156,36 @@ def _submit_with_request_number_retry(request_type: str, do_insert):
 
 @app.post("/new-request")
 async def new_request_submit(request: Request):
+    """Thin async shell (2026-10-09, the 8.5 s stall found with production
+    CR26-016 / CR26-017). This route used to do everything on the server's ONE
+    event loop: ~15 synchronous database calls, QuickBooks lookups, one email
+    per approver, a Chromium PDF render and the GCS / SharePoint uploads (5 to
+    9 s per submission, worst case 11 s). While it ran, every other request on
+    the instance -- other users' pages, /health, approvals -- waited behind it,
+    and a second submission's insert ran 8.5 s after it arrived.
+
+    The body below is UNCHANGED (still an `async def`, so its `await`s on the
+    uploaded files keep working); it now runs in a worker thread with its own
+    private event loop, where blocking costs nobody else anything. Only the
+    form is read here, on the server's loop, because the request body belongs
+    to it. Same result, same redirects, same archive warning for the person
+    submitting; the instance simply stays responsive meanwhile."""
+    form = await request.form()
+    return await run_in_threadpool(_run_in_own_event_loop, _new_request_submit_body, request, form)
+
+
+def _run_in_own_event_loop(coro_fn, *args):
+    """Runs one coroutine to completion on a fresh event loop in the calling
+    (worker) thread. The request's contextvars (the per-request database
+    connection) travel with the thread through run_in_threadpool. A plain
+    selector loop on purpose: the server itself runs on uvloop (uvicorn[standard]),
+    and this private loop only ever awaits file reads, so it should not depend on
+    how uvloop behaves in a worker thread."""
+    with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
+        return runner.run(coro_fn(*args))
+
+
+async def _new_request_submit_body(request: Request, form):
     user = _current_user(request)
     if not user:
         return RedirectResponse("/login")
@@ -4168,7 +4199,7 @@ async def new_request_submit(request: Request):
         return RedirectResponse("/portal")
     org_id = org["id"]
 
-    form = await request.form()
+    # (the form was read by the shell above: new_request_submit)
     request_type = form.get("request_type", "check_request")
     if request_type not in _ALLOWED_REQUEST_TYPES:
         return JSONResponse({"error": "Invalid request type."}, status_code=400)
@@ -8873,6 +8904,18 @@ async def vendor_w9_upload_submit(token: str, request: Request, file: UploadFile
     })
 
 
+# One Chromium at a time (2026-10-09). Each render launches a browser of roughly
+# 550 MB, and the service has 1 GiB (the July 2026 out-of-memory crash was exactly
+# this). While submissions ran on the server's single event loop they were
+# serialised by accident; now that they run in worker threads, two could render
+# at once, so this makes the one-at-a-time rule explicit. A render that cannot
+# get its turn within the wait fails with a clear error (the caller already turns
+# a render failure into the archive warning) instead of waiting forever behind a
+# hung browser.
+_PDF_RENDER_LOCK = threading.Semaphore(1)
+_PDF_RENDER_WAIT_SECONDS = 120
+
+
 def _html_to_pdf_bytes(html: str) -> bytes:
     """Renders arbitrary HTML/CSS to PDF bytes using a real headless Chromium
     instance via Playwright. Replaces xhtml2pdf (2026-07-25) after Jay
@@ -8926,8 +8969,13 @@ def _html_to_pdf_bytes(html: str) -> bytes:
             result["error"] = exc
 
     t = threading.Thread(target=_run)
-    t.start()
-    t.join()
+    if not _PDF_RENDER_LOCK.acquire(timeout=_PDF_RENDER_WAIT_SECONDS):
+        raise RuntimeError("The PDF renderer is busy right now. Please try again in a minute.")
+    try:
+        t.start()
+        t.join()
+    finally:
+        _PDF_RENDER_LOCK.release()
     if "error" in result:
         raise result["error"]
     return result["pdf"]
