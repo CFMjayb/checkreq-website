@@ -145,6 +145,7 @@ import notifications
 import art_preapproval
 import security_headers
 import upload_guard
+import submission_guard
 import csrf_guard
 import error_log
 
@@ -1479,6 +1480,10 @@ def new_request_form(request: Request):
 
     return _render(request, "new_request.html", user, {
         "today": date.today().isoformat(),
+        # One-time token for THIS rendering of the form: a second submission
+        # carrying it (a double click, a retry, the Back button) cannot create a
+        # second request -- see submission_guard.py (CR26-016/017, 2026-10-09).
+        "submission_token": submission_guard.new_token(),
         # Blank-state values for the live voucher preview's initial DOM --
         # new_request.js overwrites these via data-field targeting as the
         # user types. Real values (for the PDF) come from _voucher_context().
@@ -4233,6 +4238,18 @@ async def new_request_submit(request: Request):
                 status_code=400,
             )
 
+    # Double-submit guard (2026-10-09, production CR26-016/017). A brand-new
+    # request or draft carries the one-time token its form was rendered with; if
+    # that token already produced a request, answer with the first submission's
+    # own redirect and create nothing. The claim inside the insert transaction
+    # (below) is what makes this hold when two submissions arrive together.
+    guard_token = None if editing_request_number else submission_guard.token_from_form(form)
+    if guard_token:
+        already_submitted = submission_guard.find_existing(guard_token)
+        if already_submitted:
+            return RedirectResponse(
+                submission_guard.redirect_url(already_submitted, form.get("ui_variant")), status_code=303)
+
     # -- SAVE AS DRAFT (2026-08-17) ------------------------------------------
     # Jay: "add a feature that allows a Check Request to be saved as a Draft
     # (like you do for Invoice upload)."
@@ -4350,6 +4367,7 @@ async def new_request_submit(request: Request):
             def _do_new_draft_insert(request_number):
                 with db.connect() as conn:
                     with conn.cursor() as cur:
+                        submission_guard.claim(cur, guard_token)   # raises DuplicateSubmission on a repeat
                         cur.execute(
                             "INSERT INTO checkreq.payment_requests "
                             "(request_number, request_type, org_id, program_area_id, "
@@ -4360,11 +4378,17 @@ async def new_request_submit(request: Request):
                             (request_number, org_id, d_program_area_id, user["id"],
                              d_vendor_id, d_total, d_pay_date, d_description, d_special))
                         pr_id = cur.fetchone()["id"]
+                        submission_guard.link(cur, guard_token, pr_id)
                         _finish_draft_txn(cur, pr_id)
                         return pr_id
 
-            d_request_number, d_pr_id = _submit_with_request_number_retry(
-                "check_request", _do_new_draft_insert)
+            try:
+                d_request_number, d_pr_id = _submit_with_request_number_retry(
+                    "check_request", _do_new_draft_insert)
+            except submission_guard.DuplicateSubmission:
+                return RedirectResponse(
+                    submission_guard.redirect_url(submission_guard.find_existing(guard_token),
+                                                  form.get("ui_variant")), status_code=303)
 
         # A draft cannot carry an in-progress NEW vendor: checkreq.vendor_requests
         # is CHECK-constrained to pending_approval/approved/rejected/posted_to_qbo
@@ -5142,6 +5166,7 @@ async def new_request_submit(request: Request):
     def _do_new_submission_insert(request_number):
         with db.connect() as conn:
             with conn.cursor() as cur:
+                submission_guard.claim(cur, guard_token)   # raises DuplicateSubmission on a repeat
                 cur.execute(
                     """
                     INSERT INTO checkreq.payment_requests
@@ -5162,6 +5187,7 @@ async def new_request_submit(request: Request):
                      existing_vendor_w9_flagged, existing_vendor_w9_detail, pre_approved),
                 )
                 payment_request_id = cur.fetchone()["id"]
+                submission_guard.link(cur, guard_token, payment_request_id)
 
                 for acct_id, amt, memo in gl_lines:
                     cur.execute(
@@ -5241,8 +5267,15 @@ async def new_request_submit(request: Request):
                     )
                 return payment_request_id
 
-    request_number, payment_request_id = _submit_with_request_number_retry(
-        request_type, _do_new_submission_insert)
+    try:
+        request_number, payment_request_id = _submit_with_request_number_retry(
+            request_type, _do_new_submission_insert)
+    except submission_guard.DuplicateSubmission:
+        # Another submission carrying this form's token won the race and has
+        # already created the request: send this one to the same place.
+        return RedirectResponse(
+            submission_guard.redirect_url(submission_guard.find_existing(guard_token),
+                                          form.get("ui_variant")), status_code=303)
 
     # Tier-2 budget overage: FYI-only CFO notification, after commit (a real
     # external email send, matching every other notification's post-commit

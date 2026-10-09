@@ -664,6 +664,36 @@ function initDirtyTracking() {
   form.addEventListener('change', () => { formDirty = true; });
 }
 
+// Double-submit lock (2026-10-09, production CR26-016 / CR26-017). A person
+// clicked Submit, nothing visibly happened for a few seconds (the pre-flight
+// budget check and the upload run first), they clicked again, and two full
+// $25,000 requests were created 1.2 seconds apart. The buttons used to be
+// disabled only inside submitFormViaFetch(), AFTER the pre-flight and any
+// confirmation dialog -- so the first seconds of every submit were unguarded.
+// Now the first accepted submit locks the form's buttons at once, and a second
+// submit event is ignored until that one has either failed (unlock) or
+// succeeded (the page navigates away). The server refuses a repeat too, using
+// the one-time token this form was rendered with (submission_guard.py).
+let submitInFlight = false;
+function formSubmitButtons(extra) {
+  const set = new Set(document.querySelectorAll('button[form="reqForm"]'));
+  if (extra) set.add(extra);
+  return [...set];
+}
+function lockSubmitButtons(submitterBtn) {
+  submitInFlight = true;
+  formSubmitButtons(submitterBtn).forEach(b => { b.disabled = true; });
+  showButtonLoading(submitterBtn || document.querySelector('button.btn-primary[form="reqForm"]'));
+}
+function unlockSubmitButtons() {
+  submitInFlight = false;
+  formSubmitButtons().forEach(b => { b.disabled = false; b.classList.remove('btn-loading'); });
+}
+// Back/forward can restore this page from the browser's cache with the buttons
+// still locked and spinning: clear that. (A repeat submit from a restored page is
+// harmless -- the server answers it with the request the first one created.)
+window.addEventListener('pageshow', (ev) => { if (ev.persisted) unlockSubmitButtons(); });
+
 // Real bug, 2026-09-23: #reqForm used to be submitted as a real native
 // browser form POST once every client-side pre-flight check passed --
 // fine when the server agrees, but a rejection main.py's own validation
@@ -676,13 +706,13 @@ function initDirtyTracking() {
 // but a rejection renders inline in the Status & Messages panel and
 // leaves the form exactly as the user left it, ready to fix and retry.
 async function submitFormViaFetch(form, submitterBtn) {
-  showButtonLoading(submitterBtn);
+  lockSubmitButtons(submitterBtn);
   let resp;
   try {
     resp = await fetch(form.action, { method: 'POST', body: new FormData(form) });
   } catch {
     setStatus('submitError', "Couldn't reach the server -- please check your connection and try again.");
-    if (submitterBtn) { submitterBtn.disabled = false; submitterBtn.classList.remove('btn-loading'); }
+    unlockSubmitButtons();
     return;
   }
   if (resp.ok) {
@@ -699,7 +729,7 @@ async function submitFormViaFetch(form, submitterBtn) {
   }
   setStatus('submitError', message);
   document.getElementById('statusPanelBody').scrollIntoView({ behavior: 'smooth', block: 'center' });
-  if (submitterBtn) { submitterBtn.disabled = false; submitterBtn.classList.remove('btn-loading'); }
+  unlockSubmitButtons();
 }
 
 function applyVendorMatch(id, name) {
@@ -1272,6 +1302,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // shows a server rejection inline (statusState.submitError) and never
     // navigates away except on a genuine success.
     e.preventDefault();
+    if (submitInFlight) return;   // a second click / Enter while the first submit is still being sent
     if (!vendorSelectionIsValid()) {
       setVendorValidationMessage('Please select a vendor from the list, or click "Add a new one" below.');
       document.getElementById('vendorSelect').closest('.field').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1305,6 +1336,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // this is purely so the confirmation is a real dialog, not a raw
     // error page on the actual submit attempt.
     const form = e.target;
+    // Lock NOW, before the pre-flight check and any confirmation dialog below
+    // (those are where the seconds of silence were, CR26-016/017).
+    lockSubmitButtons(e.submitter);
     const already = form.querySelector('input[name="confirmed_overbudget"]');
     if (already && already.value === '1') {
       await submitFormViaFetch(form, e.submitter); // already confirmed
@@ -1330,7 +1364,7 @@ document.addEventListener('DOMContentLoaded', () => {
         hint: cfoRequired.join(' '),
         confirmLabel: 'Submit Anyway',
       });
-      if (result === null) return; // cancelled -- back to editing
+      if (result === null) { unlockSubmitButtons(); return; } // cancelled -- back to editing
     }
 
     let hidden = form.querySelector('input[name="confirmed_overbudget"]');
