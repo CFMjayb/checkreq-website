@@ -4156,6 +4156,56 @@ def _submit_with_request_number_retry(request_type: str, do_insert):
     raise last_exc
 
 
+async def _read_form_attachments(form):
+    """Reads and validates every file posted under the form's "attachments"
+    name (the prefill upload and any supporting documents -- the browser
+    sends them all under that one name). Returns (files, error_response):
+    files is a list of (filename, sniffed_content_type, bytes); error_response
+    is a ready-to-return JSONResponse when any file is too large or not an
+    allowed type (and files is then empty), else None.
+
+    Extracted 2026-10-09 from new_request_submit's own inline loop so the
+    save-as-draft branch -- which returns long before that loop -- applies
+    exactly the same H2 rules (25MB cap, type decided by the bytes, never the
+    client's claim; Security Assessment 2026-09-19) instead of either dropping
+    files or having a second, weaker copy of the check."""
+    files: list[tuple[str, str, bytes]] = []
+    for f in form.getlist("attachments"):
+        if getattr(f, "filename", None):
+            content = await f.read()
+            if content:
+                if len(content) > upload_guard.MAX_UPLOAD_BYTES:
+                    return [], JSONResponse({"error": "An attachment is too large (max 25MB per file)."}, status_code=400)
+                ok, sniffed = upload_guard.sniff_allowed(content, f.content_type)
+                if not ok:
+                    return [], JSONResponse({"error": f"Attachment rejected: {sniffed}"}, status_code=400)
+                files.append((f.filename, sniffed, content))
+    return files, None
+
+
+def _archive_user_files(org: dict, payment_request_id: int, request_number: str,
+                         files: list[tuple[str, str, bytes]], user_id: int) -> tuple[list[str], str | None]:
+    """Archives each user-supplied file to an EXISTING request (GCS staging,
+    then the entity's SharePoint archive) via _archive_one_file -- the same
+    per-file path the Edit page's Add button uses. One bad file never stops
+    the rest. Returns (names of files that failed, first error text or None)
+    so the caller can tell the user instead of dropping a file silently.
+    Used by the save-as-draft branch and the draft-finalize branch of
+    new_request_submit (a draft used to keep none of its files)."""
+    failed: list[str] = []
+    first_error: str | None = None
+    for filename, content_type, data in files:
+        try:
+            _archive_one_file(org, payment_request_id, request_number, "user_upload",
+                              filename, content_type, data, user_id)
+        except Exception as exc:
+            print(f"[draft-attachments] {request_number}: could not archive {filename!r}: {exc}")
+            failed.append(filename)
+            if first_error is None:
+                first_error = str(exc)
+    return failed, first_error
+
+
 @app.post("/new-request")
 async def new_request_submit(request: Request):
     """Thin async shell (2026-10-09, the 8.5 s stall found with production
@@ -4336,6 +4386,14 @@ async def _new_request_submit_body(request: Request, form):
             return JSONResponse(
                 {"error": "You don't have access to that program area."}, status_code=403)
 
+        # 2026-10-09 (Jay: "go with B for drafts"): a draft keeps its files.
+        # Validated HERE, before any row is written, with the same rules as a
+        # real submission -- a file that would be refused later must be
+        # refused now, not saved into a draft and then fail at submit time.
+        d_files, d_file_err = await _read_form_attachments(form)
+        if d_file_err:
+            return d_file_err
+
         d_using_new_vendor = form.get("using_new_vendor") == "1"
         d_vendor_id = (int(form["vendor_id"])
                        if (not d_using_new_vendor and form.get("vendor_id")) else None)
@@ -4435,6 +4493,20 @@ async def _new_request_submit_body(request: Request, form):
         # request in front of a vendor approver. Reported in the banner rather
         # than dropped silently, which would be a data-loss bug.
         extra = "&new_vendor_dropped=1" if d_using_new_vendor else ""
+
+        # Files are archived AFTER the draft row is committed (they need its
+        # id and request_number) and only the files picked in THIS save are
+        # archived -- never the generated voucher PDF, which is a submission
+        # snapshot (see the block comment above this branch). A file that
+        # could not be archived is named in the banner rather than lost
+        # silently; the draft itself is saved either way.
+        if d_files:
+            failed, first_error = _archive_user_files(
+                org, d_pr_id, d_request_number, d_files, user["id"])
+            extra += f"&draft_files_saved={len(d_files) - len(failed)}"
+            if failed:
+                extra += ("&draft_file_warning=" + quote(", ".join(failed))
+                          + "&draft_file_reason=" + quote((first_error or "")[:200]))
         return RedirectResponse(
             "/my-requests?draft_saved=" + d_request_number + extra, status_code=303)
 
@@ -4633,25 +4705,13 @@ async def _new_request_submit_body(request: Request, form):
     # Optional user attachments (not required -- see form). Read all bytes
     # now, while we still have the async UploadFile objects; everything
     # downstream (archival) works with plain bytes.
-    uploaded_attachments: list[tuple[str, str, bytes]] = []
-    for f in form.getlist("attachments"):
-        if getattr(f, "filename", None):
-            content = await f.read()
-            if content:
-                # H2 (Security Assessment 2026-09-19): this path used to
-                # store whatever content_type the client declared, with no
-                # allowlist and no size cap -- and view_attachment served
-                # it back inline under that type. Now: 25MB cap (same as
-                # parish_documents.py), and the stored type is what the
-                # bytes actually are (PDF/JPEG/PNG/GIF/WebP only), never
-                # the client's claim. Rejects the whole submission -- an
-                # approver must never be handed an unreviewable file.
-                if len(content) > upload_guard.MAX_UPLOAD_BYTES:
-                    return JSONResponse({"error": "An attachment is too large (max 25MB per file)."}, status_code=400)
-                ok, sniffed = upload_guard.sniff_allowed(content, f.content_type)
-                if not ok:
-                    return JSONResponse({"error": f"Attachment rejected: {sniffed}"}, status_code=400)
-                uploaded_attachments.append((f.filename, sniffed, content))
+    # H2 (Security Assessment 2026-09-19): 25MB cap, and the stored type is
+    # what the bytes actually are, never the client's claim -- see
+    # _read_form_attachments. Rejects the whole submission: an approver must
+    # never be handed an unreviewable file.
+    uploaded_attachments, _attach_err = await _read_form_attachments(form)
+    if _attach_err:
+        return _attach_err
 
     # Pre-Approved Submission Designation (Pre-Approved Submission Plan.md,
     # 2026-08-01): "certain submitters are allowed to designate that the
@@ -4937,9 +4997,18 @@ async def _new_request_submit_body(request: Request, form):
                     notify_group = advanced
             _notify_approvers_for_group(payment_request_id, notify_group, request)
 
-            # Archive ONLY the generated voucher PDF -- the real invoice was
-            # already archived (source='user_upload') back at intake time.
+            # Files already on the draft (Invoice Intake's raw invoice, or
+            # what was kept when this draft was saved) are archived already --
+            # NOT re-archived here. Two things are archived now: any file the
+            # submitter picked in THIS submit (2026-10-09: they used to be
+            # dropped on this path, silently), then the generated voucher PDF.
             archive_warning = None
+            if uploaded_attachments:
+                failed_names, first_error = _archive_user_files(
+                    org, payment_request_id, request_number, uploaded_attachments, user["id"])
+                if failed_names:
+                    archive_warning = (f"These file(s) were not saved: {', '.join(failed_names)}"
+                                       f" ({first_error})")
             try:
                 _archive_one_file(
                     org, payment_request_id, request_number, "generated_pdf",
@@ -4947,7 +5016,8 @@ async def _new_request_submit_body(request: Request, form):
                     render_check_voucher_pdf(payment_request_id), user["id"],
                 )
             except Exception as exc:
-                archive_warning = str(exc)
+                # Keep a file warning from above rather than overwrite it.
+                archive_warning = f"{archive_warning}; {exc}" if archive_warning else str(exc)
 
             redirect_url = f"/my-requests?submitted={request_number}"
             if archive_warning:
@@ -5368,7 +5438,11 @@ async def _new_request_submit_body(request: Request, form):
     else:
         redirect_url = f"/my-requests?submitted={request_number}"
     if archive_warning:
-        from urllib.parse import quote
+        # (A function-local "from urllib.parse import quote" used to sit here;
+        # it made quote() a LOCAL name for this whole function, so the
+        # draft-finalize branch's own quote() call above -- reached first --
+        # would have raised UnboundLocalError on an archive failure. The
+        # module-level import is the one used now.)
         redirect_url += f"&archive_warning={quote(archive_warning)}"
     return RedirectResponse(redirect_url, status_code=303)
 

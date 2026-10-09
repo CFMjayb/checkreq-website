@@ -32,7 +32,22 @@
   kept. A new vendor is created when the request is submitted, not when it is
   drafted — please re-enter them then, or pick an existing vendor.
   {% endif %}
+  {# 2026-10-09: a draft keeps the files attached when it was saved (they are
+     archived like any other attachment). The count is what was actually kept;
+     any that failed are named in the error banner below. #}
+  {% if request.query_params.get('draft_files_saved', '0') not in ('', '0') %}
+  <br>{{ request.query_params.get('draft_files_saved') }} attached
+  file(s) saved with the draft.
+  {% endif %}
 </div>
+{% if request.query_params.get('draft_file_warning') %}
+<div class="banner banner-error">
+  The draft was saved, but these file(s) could <strong>not</strong> be saved with
+  it: {{ request.query_params.get('draft_file_warning') }}
+  {% if request.query_params.get('draft_file_reason') %}({{ request.query_params.get('draft_file_reason') }}){% endif %}.
+  Open the draft and attach them again before submitting.
+</div>
+{% endif %}
 {% endif %}
 {% if edited %}
 <div class="banner banner-success">

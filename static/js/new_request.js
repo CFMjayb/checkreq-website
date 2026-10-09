@@ -1321,6 +1321,124 @@ async function handleAttachmentUpload(fileInput) {
   }
 }
 
+// ---- Supporting documents (new request only) ----
+// 2026-10-09 (Jay): "a user needs the ability to upload a document separate
+// from the document they load to prefill the form." These files are posted
+// under the same "attachments" name as the prefill document (the server
+// archives everything under that name -- see _read_form_attachments in
+// main.py) but are NEVER sent to /api/extract-document and never touch a
+// form field. supportingFiles is the source of truth; the hidden input's
+// FileList is rebuilt from it (DataTransfer) so one file can be removed
+// before submitting -- a native file input can only be cleared as a whole.
+const SUPPORTING_ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const SUPPORTING_MAX_FILE_BYTES = 25 * 1024 * 1024;   // same per-file cap the server enforces
+const SUPPORTING_MAX_TOTAL_BYTES = 30 * 1024 * 1024;  // Cloud Run refuses a request over 32 MiB outright
+let supportingFiles = [];
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function attachedBytesSoFar() {
+  // Prefill document + supporting documents: both ride in the one POST.
+  const prefill = document.getElementById('attachmentsInput');
+  const prefillBytes = prefill && prefill.files && prefill.files[0] ? prefill.files[0].size : 0;
+  return prefillBytes + supportingFiles.reduce((sum, f) => sum + f.size, 0);
+}
+
+function syncSupportingInput() {
+  const input = document.getElementById('supportingDocsInput');
+  if (!input) return;
+  try {
+    const dt = new DataTransfer();
+    supportingFiles.forEach(f => dt.items.add(f));
+    input.files = dt.files;   // programmatic assignment does not fire "change"
+  } catch {
+    // A browser without DataTransfer: the input keeps the user's last pick,
+    // which is still what gets posted -- only per-file removal is lost.
+  }
+}
+
+function setSupportingError(message) {
+  const el = document.getElementById('supportingDocsError');
+  if (el) el.textContent = message || '';
+}
+
+function renderSupportingList() {
+  const list = document.getElementById('supportingDocsList');
+  if (!list) return;
+  list.innerHTML = '';
+  supportingFiles.forEach((file, idx) => {
+    const li = document.createElement('li');
+    li.className = 'attachment-item';
+
+    // The name opens the file in the right-hand viewer (Standing UI-UX
+    // Rule 8) -- the same showDocumentPreview() the prefill upload uses,
+    // not a separate rendering path.
+    const nameBtn = document.createElement('button');
+    nameBtn.type = 'button';
+    nameBtn.className = 'supporting-doc-name';
+    nameBtn.textContent = file.name;           // textContent: a file name is never trusted as HTML
+    nameBtn.title = 'Show in the viewer';
+    nameBtn.addEventListener('click', () => showDocumentPreview(file));
+
+    const meta = document.createElement('span');
+    meta.className = 'attachment-meta';
+    meta.textContent = formatFileSize(file.size);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'attachment-remove-btn';
+    removeBtn.title = 'Remove';
+    removeBtn.setAttribute('aria-label', `Remove ${file.name}`);
+    removeBtn.innerHTML = '&times;';
+    removeBtn.addEventListener('click', () => {
+      supportingFiles.splice(idx, 1);
+      syncSupportingInput();
+      renderSupportingList();
+      setSupportingError('');
+      formDirty = true;
+    });
+
+    li.append(nameBtn, meta, removeBtn);
+    list.appendChild(li);
+  });
+}
+
+function handleSupportingUpload(input) {
+  const problems = [];
+  Array.from(input.files || []).forEach(f => {
+    const alreadyHave = supportingFiles.some(x => x.name === f.name && x.size === f.size && x.lastModified === f.lastModified);
+    if (alreadyHave) return;
+    // Some systems report no type at all for a perfectly good file; fall back
+    // to the extension. The server decides by the file's own bytes either way.
+    const ext = (f.name.split('.').pop() || '').toLowerCase();
+    const typeOk = SUPPORTING_ALLOWED_TYPES.includes(f.type)
+      || (!f.type && ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext));
+    if (!typeOk) {
+      problems.push(`"${f.name}" isn't a PDF or image (JPEG, PNG, GIF, WebP) and wasn't added.`);
+      return;
+    }
+    if (f.size > SUPPORTING_MAX_FILE_BYTES) {
+      problems.push(`"${f.name}" is over 25 MB and wasn't added.`);
+      return;
+    }
+    if (attachedBytesSoFar() + f.size > SUPPORTING_MAX_TOTAL_BYTES) {
+      problems.push(`"${f.name}" wasn't added: the files on this request can total at most 30 MB.`);
+      return;
+    }
+    supportingFiles.push(f);
+  });
+  // Always rebuild from the array -- a native picker replaces the input's
+  // files with only the latest pick (and some browsers clear them when the
+  // dialog is cancelled), so the array, not the input, is what we keep.
+  syncSupportingInput();
+  renderSupportingList();
+  setSupportingError(problems.join(' '));
+}
+
 // Jay, 2026-07-29: "you never get the opportunity to look at the [uploaded]
 // document." 2026-09-22 correction: the right pane no longer mirrors the
 // CR form at all (see new_request.html's own comment), so there's nothing
@@ -1400,6 +1518,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (attachmentsUploadBtn) {
     attachmentsUploadBtn.addEventListener('click', () => document.getElementById('attachmentsInput').click());
   }
+  const supportingDocsBtn = document.getElementById('supportingDocsBtn');
+  const supportingDocsInput = document.getElementById('supportingDocsInput');
+  if (supportingDocsBtn && supportingDocsInput) {
+    supportingDocsBtn.addEventListener('click', () => supportingDocsInput.click());
+    supportingDocsInput.addEventListener('change', () => handleSupportingUpload(supportingDocsInput));
+  }
   const attachmentAddBtn = document.getElementById('attachmentAddBtn');
   if (attachmentAddBtn) {
     attachmentAddBtn.addEventListener('click', () => document.getElementById('attachmentAddInput').click());
@@ -1474,8 +1598,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // not just a file freshly picked in this exact submit.
     const preApprovedBox = document.getElementById('preApprovedCheckbox');
     if (preApprovedBox && preApprovedBox.checked) {
-      const attachmentsInputEl = document.getElementById('attachmentsInput');
-      const newlyAttached = attachmentsInputEl ? attachmentsInputEl.files.length : 0;
+      // Counts every file input posting under "attachments": the prefill
+      // document AND any supporting documents (2026-10-09) -- someone may
+      // well attach the approval itself as a supporting document.
+      const newlyAttached = [...document.querySelectorAll('#reqForm input[type="file"][name="attachments"]')]
+        .reduce((n, el) => n + el.files.length, 0);
       const alreadyAttached = window.EXISTING_ATTACHMENT_COUNT || 0;
       if (newlyAttached === 0 && alreadyAttached === 0) {
         setStatus('preApprovedWarning', true);
@@ -1505,7 +1632,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let cfoRequired = [];
     try {
-      const resp = await fetch('/api/budget-check-submission', { method: 'POST', body: new FormData(form) });
+      // The budget check only reads the coding lines; leave the attached
+      // files out so they are not uploaded a second time just for this.
+      const preflight = new FormData(form);
+      preflight.delete('attachments');
+      const resp = await fetch('/api/budget-check-submission', { method: 'POST', body: preflight });
       const data = await resp.json();
       cfoRequired = data.cfo_required || [];
     } catch {
