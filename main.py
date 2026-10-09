@@ -9311,6 +9311,12 @@ import sma_webhook
 
 sma_webhook.register(app)
 
+# ── 26-129 SMA letters (plan revision 12, step 1): run list, check sheet and parish pages ──
+# See sma_letters.py. Entity-scoped (Beacon Admin or Setup Admin at the CURRENT entity). Thin wiring only.
+import sma_letters
+
+sma_letters.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+
 # ── 26-156: shared Email Response Engine, public response side (polls now, SMA letters later) ──
 # See outreach_public.py. Token-authenticated, CSRF-exempt via /respond/. Thin wiring only.
 import outreach_public

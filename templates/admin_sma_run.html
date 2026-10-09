@@ -1,0 +1,133 @@
+{#
+admin_sma_run.html -- 26-129 SMA letters (plan revision 12, step 1): the CHECK SHEET for one run (sma_letters.py).
+One row per parish: figures, flags, signers, status and notes. static/js/sma_run.js runs the chunked Build button and
+the row filters; everything else works without it.
+#}
+{% extends "base.html" %}
+{% block title %}{{ run.title }} — SMA Letters — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/sma_letters.css?v={{ asset_version('css/sma_letters.css') }}">
+{% endblock %}
+{% block content %}
+{% from "_guide_link.html" import guide_link %}
+<div class="page-shell-wide sm-page" id="sm-run" data-run="{{ run.id }}">
+  <h1>{{ run.title }} {{ guide_link("sma-letters", "How to use SMA letters") }}</h1>
+  <p class="back-link"><a href="/admin/sma-letters">&larr; Back to SMA letters</a></p>
+
+  {% if msg %}<div class="banner banner-success">{{ msg }}</div>{% endif %}
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+  {% if test %}<div class="banner banner-info"><strong>Test run.</strong> Letters are built with Formstack test merges and carry a SAMPLE watermark. No email is sent from this page.</div>{% endif %}
+
+  <div class="sm-head">
+    <span class="sm-pill sm-pill-{{ run.status }}">{{ run_status_label }}</span>
+    <span class="sm-pill sm-pill-{{ run.run_type }}">{{ "Test run" if test else "Real run" }}</span>
+    <span>Allocation year <strong>{{ run.year }}</strong></span>
+    <span>Model file <strong>{{ model_summary.model_file }}</strong></span>
+    <span>Created {{ created_text }}</span>
+  </div>
+
+  <div class="sm-cards">
+    <div class="sm-card"><div class="sm-big">{{ summary.total }}</div>Parishes</div>
+    <div class="sm-card"><div class="sm-big">{{ summary.built }}</div>Built</div>
+    <div class="sm-card sm-card-key"><div class="sm-big">{{ summary.ready }}</div>Ready to post</div>
+    <div class="sm-card {{ 'sm-card-warn' if summary.blocked }}"><div class="sm-big">{{ summary.blocked }}</div>Need attention</div>
+    <div class="sm-card"><div class="sm-big">{{ summary.warn }}</div>Warnings</div>
+    <div class="sm-card"><div class="sm-big">{{ summary.excluded }}</div>Excluded</div>
+  </div>
+
+  {# ── before building ─────────────────────────────────────────── #}
+  <div class="sm-steps">
+    <div class="sm-step {{ 'is-done' if rates_confirmed }}">
+      <h3>1. Rates</h3>
+      <p>{{ rates.noi }} of income, less {{ rates.noe }} of operating expense, less ${{ rates.flat }}.
+         {{ "The lesser of the three-year-average test and the latest-year test." if rates.lesser else "Formula A only." }}
+         From the model's Assumptions tab.</p>
+      {% if rates_confirmed %}<p>Confirmed by {{ rates_by }}.</p>
+      {% elif open %}
+      <form method="post" action="/admin/sma-letters/{{ run.id }}/confirm-rates">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" class="btn btn-secondary">These are the voted rates</button>
+      </form>{% endif %}
+    </div>
+    <div class="sm-step {{ 'is-done' if run.cover_path }}">
+      <h3>2. Cover letter</h3>
+      {% if run.cover_path %}<p>{{ run.cover_filename }} ({{ run.cover_pages }} page{{ "s" if run.cover_pages != 1 }}), uploaded {{ cover_uploaded }}. It goes in front of every letter.</p>
+      {% else %}<p>A PDF, the same for every parish. It goes in front of every letter.</p>{% endif %}
+      {% if open %}
+      <form method="post" action="/admin/sma-letters/{{ run.id }}/cover" enctype="multipart/form-data"{% if summary.built %} data-confirm="{{ summary.built }} letter{{ 's are' if summary.built != 1 else ' is' }} already built. A new cover letter makes each of them need a rebuild, which costs one Formstack merge per letter. Replace it?"{% endif %}>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <input type="file" name="cover_file" accept="application/pdf,.pdf" required aria-label="Cover letter PDF">
+        <button type="submit" class="btn btn-secondary">{{ "Replace" if run.cover_path else "Upload" }}</button>
+      </form>{% endif %}
+    </div>
+    <div class="sm-step {{ 'is-done' if templates_ready }}">
+      <h3>3. Templates in Formstack</h3>
+      <p>{{ "The letter and signing-form templates are in Formstack Documents." if templates_ready else "Send the two Word templates to Formstack Documents once." }} This uses no merges.</p>
+      {% if open %}
+      <form method="post" action="/admin/sma-letters/{{ run.id }}/templates">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" class="btn btn-secondary">{{ "Update templates" if templates_ready else "Send templates" }}</button>
+      </form>{% endif %}
+    </div>
+    <div class="sm-step">
+      <h3>4. Build the letters</h3>
+      <p>{{ build.buildable }} letter{{ "s" if build.buildable != 1 }} ready to build{% if build.blocked %}, {{ build.blocked }} waiting on a flag{% endif %}. Each build uses one {{ "test" if test else "real" }} merge.</p>
+      {% if allowance.ok %}<p class="hint">Formstack {{ "test" if test else "real" }} merges: {{ allowance.used }} of {{ allowance.limit }} used, {{ allowance.remaining }} left{% if allowance.resets %}. Resets {{ allowance.resets }}{% endif %}.</p>
+      {% else %}<p class="hint">Formstack allowance unavailable ({{ allowance.why }}).</p>{% endif %}
+      {% if build.reasons %}<p class="hint">{{ build.reasons|join(" ") }}</p>{% endif %}
+      {% if open %}<button type="button" class="btn btn-primary" id="sm-build" {{ "disabled" if not build.can_build }}>Build {{ build.buildable }} letter{{ "s" if build.buildable != 1 }}</button>{% endif %}
+    </div>
+  </div>
+  <div id="sm-progress" class="sm-progress" hidden aria-live="polite"></div>
+
+  {% if model_summary.model_warnings or model_summary.beacon_parishes_not_in_model %}
+  <section class="form-card">
+    <details>
+      <summary><strong>About this model</strong> <span class="hint">({{ model_summary.model_parishes }} parishes in the model)</span></summary>
+      {% if model_summary.model_warnings %}<p><strong>Model notes</strong></p><ul>{% for w in model_summary.model_warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}
+      {% if model_summary.beacon_parishes_not_in_model %}
+      <p><strong>Active Beacon parishes the model does not list</strong> <span class="hint">(they get no letter in this run unless matched to a model row)</span></p>
+      <ul>{% for p in model_summary.beacon_parishes_not_in_model %}<li>{{ p.code }} {{ p.name }}</li>{% endfor %}</ul>{% endif %}
+    </details>
+  </section>
+  {% endif %}
+
+  {# ── the check sheet ─────────────────────────────────────────── #}
+  <h2>Check sheet</h2>
+  <div class="sm-actions">
+    <a class="btn btn-secondary" href="/admin/sma-letters/{{ run.id }}/export.csv">Download (CSV)</a>
+    <span class="hint">{{ merges.real }} real and {{ merges.test }} test letter merges built through this run.</span>
+  </div>
+  <div class="sm-filters" role="group" aria-label="Filter the check sheet">
+    <button type="button" class="btn btn-secondary is-on" data-filter="all">All</button>
+    <button type="button" class="btn btn-secondary" data-filter="attention">Need attention ({{ summary.blocked }})</button>
+    <button type="button" class="btn btn-secondary" data-filter="warnings">Warnings</button>
+    <button type="button" class="btn btn-secondary" data-filter="ready">Ready to post ({{ summary.ready }})</button>
+    <button type="button" class="btn btn-secondary" data-filter="unbuilt">Not built</button>
+    <button type="button" class="btn btn-secondary" data-filter="excluded">Excluded ({{ summary.excluded }})</button>
+  </div>
+  <div class="sm-scroll">
+    <table class="sm-table" id="sm-table">
+      <thead><tr><th>Parish</th><th class="num">Allocation</th><th class="num">{{ run.prior_year }} · change</th><th>Signers</th><th>Status</th><th>Flags</th><th>Last note</th><th></th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr data-status="{{ r.status }}" data-blocks="{{ r.blocks }}" data-warns="{{ r.warns }}" class="{{ 'is-blocked' if r.blocks and r.status != 'excluded' }} {{ 'is-excluded' if r.status == 'excluded' }}">
+          <td><a href="/admin/sma-letters/{{ run.id }}/letters/{{ r.id }}">{{ r.letter_name }}</a>
+            <span class="sm-sub">{% if r.code %}{{ r.code }} · {% endif %}model: {{ r.model_name }}{% if r.match == 'unmatched' %} · <strong>not matched</strong>{% endif %}</span></td>
+          <td class="num">{% if r.status != 'excluded' %}${{ r.total }}{% if r.adjusted %}<span class="sm-sub"><span class="sm-pill sm-pill-adj">{{ r.adjustment }}</span></span>{% endif %}{% endif %}</td>
+          <td class="num">{% if r.prior %}${{ r.prior }}{% if r.change %}<span class="sm-sub">{{ r.change }}</span>{% endif %}{% else %}—{% endif %}</td>
+          <td>{% for s in r.signers %}<span class="sm-sub" style="margin:0">{{ s.role }}: {{ s.name }}</span>{% else %}<span class="sm-sub">none chosen</span>{% endfor %}</td>
+          <td><span class="sm-pill sm-pill-{{ r.status }}">{{ r.status_label }}{% if r.version %} v{{ r.version }}{% endif %}</span></td>
+          <td><ul class="sm-flags">{% for f in r.flags %}{% if f.severity != 'info' or r.status == 'excluded' %}<li class="sm-flag-{{ f.severity }}">{{ f.text }}</li>{% endif %}{% endfor %}</ul></td>
+          <td class="sm-note-line">{% if r.note %}{{ r.note }}<span class="sm-sub">{{ r.note_by }}{% if r.note_at %} · {{ r.note_at }}{% endif %}{% if r.note_auto %} · automatic{% endif %}</span>{% endif %}</td>
+          <td>{% if r.version %}<a href="/admin/sma-letters/{{ run.id }}/letters/{{ r.id }}/pdf" target="_blank" rel="noopener">PDF</a>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/sma_run.js?v={{ asset_version('js/sma_run.js') }}"></script>
+{% endblock %}

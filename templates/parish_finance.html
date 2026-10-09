@@ -15,6 +15,15 @@ diocese for the Parish Finance role if you need access.</div>
 {% if request.query_params.get('requested') %}<div class="banner banner-success">Direct debit enrollment requested — the Business Office will follow up to complete it.</div>{% endif %}
 {% if request.query_params.get('error') == 'already_requested' %}<div class="banner banner-info">A direct debit request is already on file for this parish.</div>{% endif %}
 
+{% if sma_letter %}
+<div class="card">
+  <h2 style="margin-bottom:4px">{{ sma_letter.year }} Shared Ministry Allocation Letter</h2>
+  <p class="sub">{{ sma_letter.letter_name }}{% if sma_letter.amount %} &middot; ${{ sma_letter.amount }}{% endif %}</p>
+  <p>{{ sma_letter.status_text }}</p>
+  <p><a href="/parish-finance/sma-letter.pdf" class="btn btn-sm" target="_blank" rel="noopener">View the letter (PDF)</a></p>
+</div>
+{% endif %}
+
 <div class="card">
   <h2 style="margin-bottom:4px">Shared Ministry Allocation</h2>
   {% if not has_ar %}

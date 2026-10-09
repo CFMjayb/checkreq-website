@@ -1,0 +1,203 @@
+{#
+admin_sma_letter.html -- 26-129 SMA letters (plan revision 12, step 1): one parish in a run (sma_letters.py).
+Figures and name, the adjustment the model carries, the signers, the parish match, notes, and the letter's versions.
+Plain forms only (no script needed). Everything here re-checks on the server that the run belongs to this entity.
+#}
+{% extends "base.html" %}
+{% block title %}{{ L.letter_name }} — SMA Letters — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/sma_letters.css?v={{ asset_version('css/sma_letters.css') }}">
+{% endblock %}
+{% block content %}
+{% from "_guide_link.html" import guide_link %}
+{% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">{% endmacro %}
+<div class="page-shell-wide sm-page">
+  <h1>{{ L.letter_name }} {{ guide_link("sma-letters", "How to use SMA letters") }}</h1>
+  <p class="back-link"><a href="/admin/sma-letters/{{ run.id }}">&larr; Back to the check sheet</a></p>
+
+  {% if msg %}<div class="banner banner-success">{{ msg }}</div>{% endif %}
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+
+  <div class="sm-head">
+    <span class="sm-pill sm-pill-{{ L.status }}">{{ row.status_label }}{% if L.current_version %} v{{ L.current_version }}{% endif %}</span>
+    <span>{% if L.parish_id %}Beacon parish <strong>{% if L.parish_code %}{{ L.parish_code }} {% endif %}{{ L.parish_name }}</strong>{% else %}<strong>Not matched to a Beacon parish</strong>{% endif %}</span>
+    <span>Model row <strong>{{ L.model_name }}</strong>{% if L.model_city %}, {{ L.model_city }}{% endif %}{% if L.ueid %} (UEID {{ L.ueid }}){% endif %}</span>
+    <span>{{ run.title }}</span>
+  </div>
+
+  {# ── flags ─────────────────────────────────────────────────── #}
+  <section class="form-card">
+    <h2>Flags</h2>
+    {% if L.flags %}<ul class="sm-flags">{% for f in L.flags %}<li class="sm-flag-{{ f.severity }}">{{ "Blocks posting: " if f.severity == "block" }}{{ f.text }}</li>{% endfor %}</ul>
+    {% else %}<p>Nothing to look at. This parish is ready once its letter is built.</p>{% endif %}
+  </section>
+
+  {# ── the letter ────────────────────────────────────────────── #}
+  <section class="form-card">
+    <h2>Letter</h2>
+    {% if versions %}
+    <div class="sm-scroll"><table class="sm-table">
+      <thead><tr><th>Version</th><th>Reason</th><th class="num">Pages</th><th>Built</th><th>Merge</th><th></th></tr></thead>
+      <tbody>{% for v in versions %}
+        <tr><td>v{{ v.version }}{% if v.version == L.current_version %} (current){% endif %}</td><td>{{ v.reason }}</td><td class="num">{{ v.pages }}</td>
+            <td>{{ v.created_text }}</td><td>{{ "Test (SAMPLE watermark)" if v.merge_mode == "test" else "Real" }}</td>
+            <td><a href="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/pdf?v={{ v.version }}" target="_blank" rel="noopener">Open PDF</a></td></tr>
+      {% endfor %}</tbody></table></div>
+    {% else %}<p>No letter has been built for this parish yet. Build the run from the check sheet.</p>{% endif %}
+    {% if open and can_rebuild %}
+    <form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/rebuild" class="sm-row" data-confirm="Build a new version of this letter? It uses one Formstack merge.">
+      {{ csrf() }}
+      <input type="text" name="reason" maxlength="200" placeholder="Why (for the version list)" aria-label="Reason for the new version">
+      <button type="submit" class="btn btn-secondary">{{ "Rebuild letter" if L.current_version else "Build this letter now" }}</button>
+    </form>
+    {% elif open and L.status != "excluded" %}<p class="hint">Settle the flags that block building (parish match, adjustment, figures) before this letter can be built.</p>{% endif %}
+  </section>
+
+  {# ── the numbers ───────────────────────────────────────────── #}
+  <section class="form-card">
+    <h2>Allocation</h2>
+    <div class="sm-scroll"><table class="sm-table">
+      <tbody>
+        <tr><td>Formula A (three-year average)</td><td class="num">${{ "{:,.2f}".format(L.formula_a or 0) }}</td></tr>
+        <tr><td>Formula B (latest year)</td><td class="num">${{ "{:,.2f}".format(L.formula_b or 0) }}</td></tr>
+        <tr><td>Formula result (the lesser, rounded)</td><td class="num">${{ "{:,}".format(L.formula_total or 0) }}</td></tr>
+        <tr><td>Adjustment</td><td class="num">{{ row.adjustment }}</td></tr>
+        <tr><td><strong>Printed on the letter</strong></td><td class="num"><strong>${{ "{:,}".format(L.total_allocation or 0) }}</strong></td></tr>
+        <tr><td>The model's own result</td><td class="num">{% if L.model_total is not none %}${{ "{:,.2f}".format(L.model_total) }}{% else %}—{% endif %}</td></tr>
+        <tr><td>Ties to the model?</td><td class="num">{{ {"match": "Yes", "mismatch": "No", "none": "Nothing to compare"}[L.tie_out] }}</td></tr>
+        <tr><td>{{ run.prior_year }} allocation</td><td class="num">${{ row.prior or "0" }}{% if row.change %} ({{ row.change }}){% endif %}</td></tr>
+      </tbody></table></div>
+  </section>
+
+  {% if open and L.status != "excluded" %}
+  <section class="form-card">
+    <h2>Name and figures</h2>
+    <p class="hint">The name is printed on the letter. Change a figure only to correct a mistake. Beacon asks why and writes it in the notes, and the letter then no longer has to tie to the model.</p>
+    <form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/update">
+      {{ csrf() }}
+      <div class="sm-grid">
+        <div><label for="f-name">Name on the letter</label><input id="f-name" type="text" name="letter_name" value="{{ L.letter_name }}" maxlength="120" required></div>
+        <div><label for="f-y1">Income {{ run.year1 }}</label><input id="f-y1" type="text" inputmode="decimal" name="noi_y1" value="{{ figures.noi_y1 }}"></div>
+        <div><label for="f-y2">Income {{ run.year2 }} (estimated)</label><input id="f-y2" type="text" inputmode="decimal" name="noi_y2" value="{{ figures.noi_y2 }}"></div>
+        <div><label for="f-y3">Income {{ run.year3 }}</label><input id="f-y3" type="text" inputmode="decimal" name="noi_y3" value="{{ figures.noi_y3 }}"></div>
+        <div><label for="f-noe">Operating expense {{ run.year3 }}</label><input id="f-noe" type="text" inputmode="decimal" name="noe" value="{{ figures.noe }}"></div>
+        <div><label for="f-prior">{{ run.prior_year }} allocation</label><input id="f-prior" type="text" inputmode="decimal" name="prior_allocation" value="{{ figures.prior_allocation }}"></div>
+      </div>
+      <p><label for="f-reason">Why the figures are being changed (needed only if you change one)</label>
+         <input id="f-reason" type="text" name="reason" maxlength="500" style="width:100%"></p>
+      <p><button type="submit" class="btn btn-primary">Save</button></p>
+    </form>
+  </section>
+
+  <section class="form-card">
+    <h2>Adjustment</h2>
+    <p class="hint">The model carries a few documented hand adjustments into its allocation (a 50% reduction, or the latest-year test). Beacon never applies one by itself. Confirm one here and the letter says so in words.</p>
+    {% if suggested and L.adjustment_kind == "none" %}
+    <div class="sm-hint-box">The model shows <strong>${{ row.model_total_text }}</strong>. That matches <strong>{{ dict(adjustment_kinds)[suggested] }}</strong> applied to the formula result.
+      <form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/adjustment" class="sm-row">{{ csrf() }}
+        <input type="hidden" name="kind" value="{{ suggested }}">
+        <button type="submit" class="btn btn-primary">Confirm this adjustment</button>
+      </form></div>
+    {% endif %}
+    <form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/adjustment">
+      {{ csrf() }}
+      <div class="sm-grid">
+        <div><label for="a-kind">Adjustment</label>
+          <select id="a-kind" name="kind">{% for k, label in adjustment_kinds %}<option value="{{ k }}" {{ "selected" if k == L.adjustment_kind }}>{{ label }}</option>{% endfor %}</select></div>
+        <div><label for="a-amt">Amount to print (custom only)</label><input id="a-amt" type="text" inputmode="numeric" name="amount" value="{{ L.adjustment_amount if L.adjustment_amount is not none else '' }}"></div>
+      </div>
+      <p><label for="a-text">What the letter says (leave blank for the standard sentence)</label>
+         <textarea id="a-text" name="text" rows="2" maxlength="400">{{ L.adjustment_text }}</textarea></p>
+      <p><button type="submit" class="btn btn-secondary">Save adjustment</button></p>
+    </form>
+  </section>
+  {% endif %}
+
+  {# ── signers ───────────────────────────────────────────────── #}
+  <section class="form-card">
+    <h2>Signers</h2>
+    <p class="hint">At least one signer must be clergy or the Senior Warden. A Treasurer may sign too but not alone. They are pre-filled from Beacon's parish roles. Numbers follow the chosen signers in order{% if numbered %}: {% for s in numbered %}{{ s.signer_no }} = {{ s.name or s.email }}{{ ", " if not loop.last }}{% endfor %}{% endif %}.</p>
+    {% for role, label in roles %}
+      <h3>{{ label }}</h3>
+      {% set of_role = signers|selectattr("role", "equalto", role)|list %}
+      {% if of_role %}
+      <div class="sm-scroll"><table class="sm-table"><tbody>
+        {% for s in of_role %}<tr>
+          <td class="{{ 'sm-chosen' if s.chosen }}">{{ s.name }}{% if s.chosen %} <span class="sm-pill sm-pill-created">chosen</span>{% endif %}
+            <span class="sm-sub">{{ s.email }}{% if s.title %} · {{ s.title }}{% endif %} · {{ "added by hand" if s.source == "manual" else "from Beacon" }}</span></td>
+          <td>{% if open %}
+            {% if not s.chosen %}<form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/signers" class="sm-inline">{{ csrf() }}
+              <input type="hidden" name="action" value="choose"><input type="hidden" name="role" value="{{ role }}"><input type="hidden" name="index" value="{{ loop.index0 }}">
+              <button type="submit" class="btn btn-secondary">Use this person</button></form>{% endif %}
+            {% if s.source == "manual" %}<form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/signers" class="sm-inline">{{ csrf() }}
+              <input type="hidden" name="action" value="remove"><input type="hidden" name="index" value="{{ s.index }}">
+              <button type="submit" class="btn btn-secondary">Remove</button></form>{% endif %}
+          {% endif %}</td></tr>{% endfor %}
+      </tbody></table></div>
+      {% if open and of_role|selectattr("chosen")|list %}<form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/signers" class="sm-inline">{{ csrf() }}
+        <input type="hidden" name="action" value="none"><input type="hidden" name="role" value="{{ role }}">
+        <button type="submit" class="btn btn-secondary">Nobody signs as {{ label }}</button></form>{% endif %}
+      {% else %}<p class="hint">Nobody with this role is on file in Beacon.</p>{% endif %}
+    {% endfor %}
+    {% if open %}
+    <h3>Add a person</h3>
+    <form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/signers">
+      {{ csrf() }}<input type="hidden" name="action" value="add">
+      <div class="sm-grid">
+        <div><label for="s-role">Role</label><select id="s-role" name="role">{% for role, label in roles %}<option value="{{ role }}">{{ label }}</option>{% endfor %}</select></div>
+        <div><label for="s-name">Name</label><input id="s-name" type="text" name="name" maxlength="120" required></div>
+        <div><label for="s-email">Email</label><input id="s-email" type="email" name="email" maxlength="200" required></div>
+      </div>
+      <p><button type="submit" class="btn btn-secondary">Add and choose</button></p>
+    </form>
+    {% if L.parish_id %}<form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/signers" class="sm-inline" data-confirm="Go back to the signers Beacon pre-fills? Anyone added by hand is removed.">
+      {{ csrf() }}<input type="hidden" name="action" value="reset"><button type="submit" class="btn btn-secondary">Reset to Beacon's pre-fill</button></form>{% endif %}
+    {% endif %}
+  </section>
+
+  {# ── the parish match ──────────────────────────────────────── #}
+  {% if open %}
+  <section class="form-card">
+    <h2>Beacon parish</h2>
+    {% if L.parish_id %}
+      <p>Matched {{ {"ueid": "by UEID", "name": "by name and city", "manual": "by hand"}[L.match_status] }} to <strong>{% if L.parish_code %}{{ L.parish_code }} {% endif %}{{ L.parish_name }}</strong>.</p>
+      <form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/parish" class="sm-inline" data-confirm="Remove the parish match? The signers are cleared.">
+        {{ csrf() }}<input type="hidden" name="action" value="clear"><button type="submit" class="btn btn-secondary">Remove the match</button></form>
+    {% else %}
+      <form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/parish" class="sm-row">
+        {{ csrf() }}
+        <select name="parish_id" aria-label="Beacon parish" required>
+          <option value="">Choose the Beacon parish for "{{ L.model_name }}"…</option>
+          {% for p in parish_options %}<option value="{{ p.id }}">{{ p.code }} {{ p.name }}{% if p.city %}, {{ p.city }}{% endif %}{{ "" if p.is_active else " (inactive)" }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="btn btn-primary">Match</button>
+      </form>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {# ── notes ─────────────────────────────────────────────────── #}
+  <section class="form-card">
+    <h2>Notes</h2>
+    <p class="hint">What has happened with this parish. Signer changes and edits are written here automatically.</p>
+    <form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/note" class="sm-row">
+      {{ csrf() }}
+      <input type="text" name="text" maxlength="1000" placeholder="Add a note" aria-label="Add a note" style="flex:1 1 20rem" required>
+      <button type="submit" class="btn btn-secondary">Add note</button>
+    </form>
+    <ul class="sm-notes">{% for n in notes %}<li class="{{ 'sm-auto' if n.auto }}"><span class="sm-meta">{{ n.at }} · {{ n.by }}{{ " · automatic" if n.auto }}</span>{{ n.text }}</li>{% endfor %}</ul>
+  </section>
+
+  {% if open %}
+  <section class="form-card">
+    <h2>{{ "Include in this run" if L.status == "excluded" else "Exclude from this run" }}</h2>
+    <form method="post" action="/admin/sma-letters/{{ run.id }}/letters/{{ L.id }}/exclude" class="sm-row">
+      {{ csrf() }}
+      {% if L.status == "excluded" %}<input type="hidden" name="action" value="include"><button type="submit" class="btn btn-secondary">Include again</button>
+      {% else %}<input type="hidden" name="action" value="exclude"><input type="text" name="reason" maxlength="300" placeholder="Why (for example: merged into another parish)" aria-label="Reason for excluding" style="flex:1 1 20rem">
+        <button type="submit" class="btn btn-secondary" data-confirm="Exclude this parish? No letter will be posted for it.">Exclude</button>{% endif %}
+    </form>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

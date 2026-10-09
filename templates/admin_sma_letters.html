@@ -1,0 +1,64 @@
+{#
+admin_sma_letters.html -- 26-129 SMA letters (plan revision 12, step 1): this entity's runs and the
+"New run" form (sma_letters.py). Entity-scoped: only runs of the currently selected entity are listed.
+#}
+{% extends "base.html" %}
+{% block title %}SMA Letters — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/sma_letters.css?v={{ asset_version('css/sma_letters.css') }}">
+{% endblock %}
+{% block content %}
+{% from "_guide_link.html" import guide_link %}
+<div class="page-shell-wide sm-page">
+  <h1>Shared Ministry Allocation Letters {{ guide_link("sma-letters", "How to use SMA letters") }}</h1>
+  <p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+  <p class="sub">Build each parish's allocation letter from the Task Force model, check every parish on one sheet, and get the letters ready to post. Nothing is emailed from this page.</p>
+
+  {% if msg %}<div class="banner banner-success">{{ msg }}</div>{% endif %}
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+
+  <section class="form-card">
+    <h2>New run</h2>
+    <p class="hint">Upload the Task Force model workbook itself (the Excel file with the Parish Data and Method A tabs). Beacon reads the rates and each parish's figures from it, works out every letter with its own formula, and checks that it ties to the model.</p>
+    <form method="post" action="/admin/sma-letters/new" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <div class="sm-grid">
+        <div><label for="sm-model">Model workbook (.xlsx)</label><input id="sm-model" type="file" name="model_file" accept=".xlsx" required></div>
+        <div><label for="sm-title">Name for this run</label><input id="sm-title" type="text" name="title" maxlength="150" placeholder="2027 Shared Ministry Allocation letters"></div>
+        <div><label for="sm-type">Run type</label>
+          <select id="sm-type" name="run_type">
+            <option value="test">Test run (Formstack test merges, SAMPLE watermark)</option>
+            <option value="real">Real run (uses real merges)</option>
+          </select></div>
+        <div><label for="sm-addr">Test address</label><input id="sm-addr" type="email" name="test_address" maxlength="200" placeholder="used when emails are added in step 2"></div>
+      </div>
+      <p><button type="submit" class="btn btn-primary">Create run</button></p>
+    </form>
+  </section>
+
+  {% if runs %}
+  <div class="sm-scroll">
+    <table class="sm-table">
+      <thead><tr><th>Run</th><th>Year</th><th>Type</th><th>Status</th><th class="num">Parishes</th><th class="num">Built</th><th class="num">Ready to post</th><th class="num">Excluded</th><th>Created</th></tr></thead>
+      <tbody>
+      {% for r in runs %}
+        <tr>
+          <td><a href="/admin/sma-letters/{{ r.id }}">{{ r.title }}</a></td>
+          <td>{{ r.year }}</td>
+          <td><span class="sm-pill sm-pill-{{ r.run_type }}">{{ "Test run" if r.run_type == "test" else "Real run" }}</span></td>
+          <td><span class="sm-pill sm-pill-{{ r.status }}">{{ r.status_label }}</span></td>
+          <td class="num">{{ r.n_letters }}</td>
+          <td class="num">{{ r.n_built }}</td>
+          <td class="num">{{ r.n_ready }}</td>
+          <td class="num">{{ r.n_excluded }}</td>
+          <td>{{ r.created_text }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="form-card"><p>No runs yet for {{ current_org.code }}. Create the first one above.</p></div>
+  {% endif %}
+</div>
+{% endblock %}

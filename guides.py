@@ -58,6 +58,13 @@ GUIDES = {
         "back_url": "/admin/polls",
         "back_label": "Polls & Surveys",
     },
+    # 2026-10-08 (26-129): the SMA letters run list, check sheet and parish pages (sma_letters.py).
+    "sma-letters": {
+        "title": "SMA Letters",
+        "template": "guide_sma_letters.html",
+        "back_url": "/admin/sma-letters",
+        "back_label": "SMA Letters",
+    },
 }
 
 

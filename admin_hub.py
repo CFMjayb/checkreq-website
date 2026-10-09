@@ -166,6 +166,14 @@ _CARDS = [
     # operational queues, whereas this HR group is deliberately the four
     # CONFIGURATION screens only (HR Activation, Employees, Payroll Periods,
     # Time Categories). See MODULES in main.py, gate "timekeeping_reviewer".
+
+    # 26-129 SMA letters (2026-10-08, plan revision 12 step 1): build each parish's Shared Ministry Allocation
+    # letter from the Task Force model and check them on one sheet. Entity-scoped (Setup Admin or Beacon Admin at
+    # the CURRENT entity) and EDOM only (the parishes are EDOM's), matching sma_letters._guard -- so it is in
+    # _ENTITY_SCOPED_TITLES below.
+    {"title": "SMA Letters", "desc": "Build each parish's Shared Ministry Allocation letter from the Task Force model, and check them on one sheet.",
+     "url": "/admin/sma-letters", "role": ["setup_admin", "beacon_admin"], "group": "parish", "entity_codes": ["EDOM"],
+     "guide": "sma-letters"},
 ]
 
 # Fixed display order + section headings -- per Jay's explicit request,
@@ -184,7 +192,8 @@ _CARD_GROUPS = [
 # by design/necessity like everything else in this hub) -- see admin_hub()'s
 # own docstring for why this distinction matters.
 _ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes", "Payroll Periods", "Time Categories",
-                          "HR Activation", "Employees", "Report Templates", "Polls & Surveys"}
+                          "HR Activation", "Employees", "Report Templates", "Polls & Surveys",
+                          "SMA Letters"}
 
 
 @router.get("/admin", response_class=HTMLResponse)
@@ -255,6 +264,9 @@ def admin_hub(request: Request):
             visible = rbac.user_has_any_role(user["id"], c["role"], org_id=None)
         else:
             visible = rbac.user_has_role(user["id"], c["role"], org_id=None)
+        # 26-157: a card may name the only entities (checkreq.organizations.code) it is for.
+        if visible and c.get("entity_codes"):
+            visible = bool(org) and str(org.get("code") or "").strip().upper() in c["entity_codes"]
         # 2026-08-16, Jay: HR cards (and any future feature-gated card)
         # additionally require the diocese feature itself to be turned on
         # -- checked here, generically, rather than folded into the role

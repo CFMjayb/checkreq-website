@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">Build each parish's Shared Ministry Allocation letter from the Task Force model, and check every parish on one sheet.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="where">
+    <h2>Where to find it</h2>
+    <p><strong>Administrative Tasks</strong> &rarr; <strong>Parish</strong> &rarr; <strong>SMA Letters</strong>. You need to be a <strong>Setup Admin</strong> or <strong>Beacon Admin</strong> at the entity you are working in (the Episcopal Diocese of Maryland).</p>
+    <p>This first part only <strong>builds and checks</strong> the letters. Nothing is emailed or posted from it. Posting, the emails to signers, signing, uploads and appeals come next.</p>
+  </section>
+
+  <section class="hiw-section" id="steps">
+    <h2>Making a run in five steps</h2>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard">
+        <h3>1. Upload the model</h3>
+        <p>On <strong>SMA Letters</strong>, choose the Task Force model workbook itself (the Excel file with the Parish Data and Method A tabs) and make a <strong>run</strong>. Beacon reads the rates and each parish's figures from it, works out every letter with its own formula, and checks that it matches the model. Choose <strong>Test run</strong> first: it uses Formstack's free test merges and stamps SAMPLE on the letters.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>2. Confirm the rates</h3>
+        <p>The check sheet shows the rates read from the model (for example 18%, 4% and a $5,000 flat deduction). Press <strong>These are the voted rates</strong> once you have checked them. Nothing is built until you do.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>3. Upload the cover letter</h3>
+        <p>A PDF, the same for every parish. Beacon puts it in front of each letter. If you change it later, <strong>every letter already built needs a rebuild, and each rebuild uses one Formstack merge</strong>, so settle the cover letter before you build.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>4. Send the templates</h3>
+        <p>Once, <strong>Send templates</strong> puts the letter and signing-form Word templates into Formstack Documents. It uses no merges.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>5. Build the letters</h3>
+        <p><strong>Build</strong> makes each parish's letter a few at a time while you watch. If you close the page halfway, open it again and press Build again: only letters not yet built are made, so nothing is built twice. Each letter uses <strong>one</strong> Formstack merge; the page shows how many are left this month. A letter that fails to build is set aside with the reason on its row, so Build does not try it again and again: fix the cause, then press <strong>Build this letter now</strong> on its page.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="hiw-section" id="checksheet">
+    <h2>Reading the check sheet</h2>
+    <ul>
+      <li>One row per parish: the allocation, last year's and the change, who will sign, the status, anything to look at, and the latest note. Click a parish for its own page.</li>
+      <li>The top counts show how many parishes are <strong>ready to post</strong>, <strong>need attention</strong> (a red flag), or have <strong>warnings</strong>. The filter buttons narrow the list.</li>
+      <li><strong>Download (CSV)</strong> gives the whole sheet as a spreadsheet.</li>
+      <li>A letter is <strong>ready</strong> when it is built and has no red flag.</li>
+    </ul>
+  </section>
+
+  <section class="hiw-section" id="flags">
+    <h2>What the flags mean</h2>
+    <ul>
+      <li><strong>Red (blocks posting):</strong> the parish is not matched to a Beacon parish; it is inactive (closed or merged); the model's figures do not tie to Beacon's; the model shows a hand adjustment that has not been confirmed; no usable signer; or the letter is out of date after a change.</li>
+      <li><strong>Amber (look at it):</strong> the model marks that parish's data as missing or incomplete; no parochial report for the latest year; figures the model left blank; a middle year that is not the average of the other two; a letter whose last build failed; a zero allocation; figures were edited here; a very long parish name.</li>
+      <li>Click the parish to fix it. After a fix, rebuild the letter if its figures, name or adjustment changed.</li>
+    </ul>
+  </section>
+
+  <section class="hiw-section" id="adjustments">
+    <h2>Adjustments the model carries</h2>
+    <p>The model hand-adjusts a few parishes (for example a <strong>50% reduction</strong>, or using the <strong>latest-year test</strong> when a parish has fewer than three years of data). Beacon never applies one on its own. When the model's number matches an adjustment, the parish's page offers <strong>Confirm this adjustment</strong>, and the letter then says so in words. If you would rather use the plain formula, leave it and exclude or edit the parish.</p>
+  </section>
+
+  <section class="hiw-section" id="signers">
+    <h2>Signers</h2>
+    <ul>
+      <li><strong>The rule:</strong> every parish needs at least one signer, and at least one must be <strong>clergy or the Senior Warden</strong>. A Treasurer may sign too, but not alone.</li>
+      <li>Signers are pre-filled from the parish roles Beacon already holds. The clergy signer is the person with the highest title in the clergy directory (Rector, Vicar or Priest-in-Charge before an interim, an associate or a deacon).</li>
+      <li>On a parish's page you can choose another person for a role, say a role has nobody signing, or add someone by hand. Every change is written in the parish's notes automatically. No email is sent.</li>
+    </ul>
+  </section>
+
+  <section class="hiw-section" id="changes">
+    <h2>Changing a figure or a name</h2>
+    <ul>
+      <li>The <strong>name on the letter</strong> defaults to the Beacon parish name and city. Change it on the parish's page.</li>
+      <li>Change a <strong>figure</strong> only to correct a mistake. Beacon asks why and records the before and after in the notes. The letter then no longer has to tie to the model.</li>
+      <li>A letter built before a change is marked out of date until it is rebuilt as a new version. Older versions are kept.</li>
+    </ul>
+  </section>
+
+  <section class="hiw-section" id="notes">
+    <h2>Notes, excluding a parish and matching</h2>
+    <ul>
+      <li><strong>Notes</strong> on each parish are your tally of what has happened. Your own notes and the automatic ones (figure edits, adjustments, signer changes) appear together.</li>
+      <li><strong>Exclude</strong> a parish that should not get a letter (for example one merged into another). It can be included again.</li>
+      <li>A model row that Beacon could not match to a parish is shown as <strong>not matched</strong>. Open it and choose the Beacon parish.</li>
+    </ul>
+  </section>
+
+</div>
+{% endblock %}

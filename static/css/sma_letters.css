@@ -1,0 +1,75 @@
+/* 26-129 SMA letters (plan revision 12, step 1): the run list, the check sheet and a parish's page
+   (admin_sma_letters.html, admin_sma_run.html, admin_sma_letter.html). Everything is scoped under .sm-page / .sm-*
+   so it cannot leak into any other page. Uses the shared tokens only. */
+
+.sm-page .sm-head { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-5); align-items: center;
+  margin: var(--space-3) 0; color: var(--color-text-muted); font-size: 0.92rem; }
+.sm-page .sm-head strong { color: var(--color-ink); }
+.sm-scroll { overflow-x: auto; }
+.sm-inline { display: inline; margin: 0; }
+.sm-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: var(--space-3) 0; }
+.sm-page .hint { color: var(--color-text-muted); font-weight: 400; font-size: 0.88rem; }
+
+/* pills */
+.sm-pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 600;
+  background: #e6e2d4; color: var(--color-ink); white-space: nowrap; }
+.sm-pill-draft, .sm-pill-preparing { background: #ece9dd; color: #5b5546; }
+.sm-pill-created, .sm-pill-built { background: #d8ecdd; color: #1d5b32; }
+.sm-pill-posted, .sm-pill-complete { background: #cfe8d6; color: #17542c; }
+.sm-pill-excluded, .sm-pill-closed { background: #dfe3e8; color: #3e4854; }
+.sm-pill-test { background: #dbe8f6; color: #1f4e79; }
+.sm-pill-real { background: #fdf0c9; color: #7a5b00; }
+.sm-pill-adj { background: #efe3f6; color: #5a2d78; }
+
+/* number cards */
+.sm-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--space-3); margin: var(--space-4) 0; }
+.sm-card { background: #fff; border: 1px solid var(--color-border); border-radius: 10px; padding: var(--space-3); text-align: center; }
+.sm-card-key { border-color: #5aa06f; background: #f0f8f2; }
+.sm-card-warn { border-color: #d4756a; background: #fdf1ef; }
+.sm-big { font-size: 1.7rem; font-weight: 700; line-height: 1.1; }
+
+/* the setup steps */
+.sm-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-3); margin: var(--space-4) 0; }
+.sm-step { background: #fff; border: 1px solid var(--color-border); border-radius: 10px; padding: var(--space-3); }
+.sm-step h3 { margin: 0 0 var(--space-2) 0; font-size: 1rem; }
+.sm-step.is-done { border-color: #5aa06f; background: #f6fbf7; }
+.sm-step p { margin: 0 0 var(--space-2) 0; font-size: 0.9rem; }
+.sm-step form { margin: 0; }
+.sm-progress { background: #fdf0c9; border: 1px solid #e3c766; border-radius: 8px; padding: var(--space-3); margin: var(--space-3) 0; }
+.sm-progress.sm-bad { background: #fdf1ef; border-color: #d4756a; }
+
+/* tables */
+.sm-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.sm-table th, .sm-table td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+.sm-table th { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-muted); }
+.sm-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sm-table tr.is-blocked td:first-child { box-shadow: inset 3px 0 0 #d4756a; }
+.sm-table tr.is-excluded td { color: var(--color-text-muted); }
+.sm-sub { display: block; color: var(--color-text-muted); font-size: 0.82rem; }
+.sm-flags { margin: 0; padding: 0; list-style: none; }
+.sm-flags li { margin: 0 0 3px 0; font-size: 0.84rem; }
+.sm-flag-block { color: #8a2a20; font-weight: 600; }
+.sm-flag-warn { color: #7a5b00; }
+.sm-flag-info { color: var(--color-text-muted); }
+.sm-note-line { font-size: 0.84rem; color: var(--color-text-muted); max-width: 22rem; }
+
+/* filters */
+.sm-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-3) 0; }
+.sm-filters .is-on { background: var(--color-ink); color: #fff; }
+
+/* forms */
+.sm-page textarea, .sm-page input[type="text"], .sm-page input[type="email"], .sm-page input[type="number"], .sm-page select { max-width: 100%; box-sizing: border-box; }
+.sm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--space-3); }
+.sm-grid label { display: block; font-weight: 600; font-size: 0.88rem; margin-bottom: 2px; }
+.sm-grid input { width: 100%; }
+.sm-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-bottom: var(--space-2); }
+.sm-notes { list-style: none; margin: 0; padding: 0; }
+.sm-notes li { padding: 7px 0; border-bottom: 1px solid var(--color-border); font-size: 0.9rem; }
+.sm-notes .sm-meta { color: var(--color-text-muted); font-size: 0.8rem; display: block; }
+.sm-notes .sm-auto { color: var(--color-text-muted); }
+.sm-hint-box { background: #faf8f1; border: 1px dashed var(--color-border); border-radius: 8px; padding: var(--space-3); margin: var(--space-3) 0; }
+.sm-chosen { font-weight: 700; }
+
+@media (max-width: 640px) {
+  .sm-cards { grid-template-columns: repeat(2, 1fr); }
+}

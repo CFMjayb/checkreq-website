@@ -47,6 +47,7 @@ import parish_requests
 import qbo_mcp_client
 import email_client
 import registry
+import sma_parish_view          # the read-only SMA letter section (26-129 plan rev 12)
 
 router = APIRouter()
 
@@ -296,7 +297,25 @@ def parish_finance_page(request: Request):
         "has_loan_mapping": bool(parish.get("middendorf_gl_account")),
         "payments": payments, "payments_error": payments_error,
         "has_ap": bool(parish.get("qbo_ap_vendor_id")),
+        "sma_letter": sma_parish_view.for_parish(parish),
     })
+
+
+@router.get("/parish-finance/sma-letter.pdf")
+def sma_letter_pdf(request: Request):
+    """This parish's own SMA letter (the newest one in a posted real run). The parish comes from the session, never
+    from the request, so one parish cannot ask for another's letter."""
+    user, parish, diocese_org, err = _parish_context(request)
+    if err:
+        return err
+    if not can_view_finance(user, parish):
+        return JSONResponse({"error": "You do not have permission to view this parish's finances."}, status_code=403)
+    got = sma_parish_view.pdf_for_parish(parish)
+    if not got:
+        return JSONResponse({"error": "No letter is available yet."}, status_code=404)
+    return Response(got[0], media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{sma_parish_view.safe_filename(got[1])}"',
+                             "Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/parish-finance/sma-payments/{year}", response_class=HTMLResponse)
