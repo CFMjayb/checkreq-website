@@ -29,6 +29,7 @@ from decimal import Decimal
 
 import donor_batches as B
 import donor_gifts as G
+import donor_noncontrib as NC
 from donor_core import (
     Conflict, Ctx, InvalidInput, NotFound, clean_text, log_change, need_giving, to_money, tx,
 )
@@ -91,7 +92,8 @@ def _mark_and_reverse(ctx: Ctx, gift_id: int, reason, new_status: str, replaceme
     with tx(cur) as c:
         g, batch = _target(c, ctx, gift_id)
         cb = _correction_batch(c, ctx, batch["kind"])
-        neg = [{"fund_id": s["fund_id"], "amount": -Decimal(s["amount"]), "fund_name": s["fund_name"]} for s in g["splits"]]
+        neg = [{"fund_id": s["fund_id"], "gl_account_id": s.get("gl_account_id"), "amount": -Decimal(s["amount"]), "fund_name": s["fund_name"],
+                "gl_label": s.get("gl_label")} for s in g["splits"]]
         rid = G.insert_gift_row(c, ctx, cb["id"], _fields_from(g, -1), neg, reverses_gift_id=gift_id, correction_reason=why,
                                 kind="reverse" if new_status == "reversed" else "return")
         c.execute("UPDATE donor.gift SET status = %s, correction_reason = %s, corrected_at = NOW(), corrected_by_user_id = %s, updated_at = NOW() WHERE id = %s",
@@ -128,7 +130,25 @@ def gift_reclass(ctx: Ctx, gift_id: int, new_splits: list[dict], reason: str, *,
         g, batch = _target(c, ctx, gift_id)
         cb = _correction_batch(c, ctx, batch["kind"])
         checked, seen = [], set()
+        is_nc = g["gift_type"] == "non_gift_receipt"
         for s in new_splits or []:
+            if is_nc:
+                # A non-gift receipt moves between GL accounts, never into a fund. A fund that came along (the form always has one) is ignored.
+                try:
+                    aid = int(s.get("gl_account_id"))
+                except (TypeError, ValueError):
+                    raise InvalidInput("Pick the GL account for every amount.", "gl_account_id")
+                if aid in seen:
+                    raise InvalidInput("List each GL account once.", "gl_account_id")
+                seen.add(aid)
+                amt = to_money(s.get("amount"), field="amount")
+                if amt <= ZERO:
+                    raise InvalidInput("Every amount must be more than zero.", "amount")
+                acct = NC.allowed_account(c, ctx, aid)
+                checked.append({"fund_id": None, "gl_account_id": aid, "amount": amt, "fund_name": None, "gl_label": NC.account_label(acct)})
+                continue
+            if s.get("gl_account_id") not in (None, "") and s.get("fund_id") in (None, ""):
+                raise InvalidInput("Only a non-gift receipt is coded to a GL account. Pick a fund.", "fund_id")
             try:
                 fid = int(s.get("fund_id"))
             except (TypeError, ValueError):
@@ -145,18 +165,21 @@ def gift_reclass(ctx: Ctx, gift_id: int, new_splits: list[dict], reason: str, *,
                 raise NotFound("That fund was not found at this parish.")
             if not f["is_open"]:
                 raise InvalidInput(f"The fund '{f['name']}' is closed and takes no new money.", "fund_id")
-            checked.append({"fund_id": fid, "amount": amt, "fund_name": f["name"]})
+            checked.append({"fund_id": fid, "gl_account_id": None, "amount": amt, "fund_name": f["name"], "gl_label": None})
         if not checked:
-            raise InvalidInput("Say which funds the money should go to.", "fund_id")
+            raise InvalidInput("Say which GL accounts the money should go to." if is_nc else "Say which funds the money should go to.", "gl_account_id" if is_nc else "fund_id")
         total = sum((s["amount"] for s in checked), ZERO)
         if total != g["amount"]:
             raise InvalidInput(f"The new funds add up to ${G.money(total)} but the gift is ${G.money(g['amount'])}. A reclass moves the whole gift.", "amount")
-        if sorted((s["fund_id"], s["amount"]) for s in checked) == sorted((s["fund_id"], s["amount"]) for s in g["splits"]):
-            raise InvalidInput("Those are the funds the gift is already in.", "fund_id")
-        out_splits = [{"fund_id": s["fund_id"], "amount": -Decimal(s["amount"]), "fund_name": s["fund_name"]} for s in g["splits"]]
+        key = lambda x: (x["fund_id"] or 0, x.get("gl_account_id") or 0, x["amount"])
+        if sorted(map(key, checked)) == sorted(map(key, g["splits"])):
+            raise InvalidInput("Those are the GL accounts the receipt is already in." if is_nc else "Those are the funds the gift is already in.",
+                               "gl_account_id" if is_nc else "fund_id")
+        out_splits = [{"fund_id": s["fund_id"], "gl_account_id": s.get("gl_account_id"), "amount": -Decimal(s["amount"]), "fund_name": s["fund_name"],
+                       "gl_label": s.get("gl_label")} for s in g["splits"]]
         out_id = G.insert_gift_row(c, ctx, cb["id"], _fields_from(g, -1), out_splits, reclass_of_gift_id=gift_id, correction_reason=why, kind="reclass")
         in_id = G.insert_gift_row(c, ctx, cb["id"], _fields_from(g, 1), checked, reclass_of_gift_id=gift_id, correction_reason=why, kind="reclass")
-        log_change(c, ctx, "gift", gift_id, "Funds", ", ".join(f"{s['fund_name']}:{G.money(s['amount'])}" for s in g["splits"]),
-                   ", ".join(f"{s['fund_name']}:{G.money(s['amount'])}" for s in checked), person_id=g["person_id"], kind="reclass", scope="parish", reason=why)
+        log_change(c, ctx, "gift", gift_id, "GL accounts" if is_nc else "Funds", ", ".join(f"{s['target_name']}:{G.money(s['amount'])}" for s in g["splits"]),
+                   ", ".join(f"{s['fund_name'] or s['gl_label']}:{G.money(s['amount'])}" for s in checked), person_id=g["person_id"], kind="reclass", scope="parish", reason=why)
         B._event(c, ctx, cb["id"], "correction", reason=why, detail={"original_gift_id": gift_id, "action": "reclass", "out_gift_id": out_id, "in_gift_id": in_id})
         return {"out_gift_id": out_id, "in_gift_id": in_id, "batch_id": cb["id"], "batch_number": cb["number"]}

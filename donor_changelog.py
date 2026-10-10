@@ -81,7 +81,7 @@ _OPEN_TABLES = {"person", "household", "person_contact", "parish_connection", "h
 _ROW_CAP = {
     "gift": "giving.read", "gift_split": "giving.read", "batch": "giving.read", "pledge": "giving.read", "soft_credit": "giving.read",
     "pledge_request": "giving.read",
-    "fund": "giving.read", "campaign": "giving.read",
+    "fund": "giving.read", "campaign": "giving.read", "noncontribution_account": "giving.read",
     "membership": "membership.view", "member_status_code": "membership.view",
     "sacramental_event": "sacrament.view", "transfer_letter": "sacrament.view",
     "note": "notes.clergy",          # a clergy-only note must not be hinted at; the note list itself is filtered by visibility

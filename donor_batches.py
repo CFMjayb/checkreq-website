@@ -30,6 +30,7 @@ from decimal import Decimal
 import db
 import donor_funds as F
 import donor_gifts as G
+import donor_noncontrib as NC
 import donor_qbo_entry as Q
 from donor_core import (
     Conflict, Ctx, InvalidInput, NotFound, PermissionDenied, check_enum, clean_text, diff_fields, log_change, need_giving,
@@ -39,7 +40,7 @@ from donor_core import (
 BATCH_KINDS = ("deposit", "non_deposit")
 ZERO = Decimal("0.00")
 LINE_LABELS = {"person_id": "Donor", "gift_date": "Gift date", "postmark_date": "Postmark date", "gift_type": "Gift type",
-               "check_number": "Check number", "memo": "Memo", "goods_value": "Value of goods or services", "splits": "Funds",
+               "check_number": "Check number", "memo": "Memo", "goods_value": "Value of goods or services", "splits": "Funds or GL accounts",
                "fee_amount": "Processing fee", "fee_covered_by_donor": "Fee covered by donor", "in_kind_description": "In-kind description",
                "book_value": "Book value", "stock_shares": "Shares", "stock_symbol": "Stock symbol", "stock_value": "Value at receipt"}
 
@@ -134,7 +135,8 @@ def _entry_funds(c, ctx: Ctx) -> dict:
 
 
 def _build(c, ctx: Ctx, batch: dict, lines: list[dict]) -> dict:
-    return Q.build_entry(batch, [g for g in lines if g["status"] != "voided"], _entry_funds(c, ctx), ctx.settings)
+    return Q.build_entry(batch, [g for g in lines if g["status"] != "voided"], _entry_funds(c, ctx), ctx.settings,
+                         gl_accounts=NC.accounts_by_id(c, ctx.parish_id))
 
 
 def _close_problems(c, ctx: Ctx, batch: dict, lines: list[dict]) -> list[str]:
@@ -162,7 +164,16 @@ def _close_problems(c, ctx: Ctx, batch: dict, lines: list[dict]) -> list[str]:
     for g in live:
         if g["person_id"] is None and g["gift_type"] != "non_gift_receipt":
             out.append(f"Line {g['id']} has no donor.")
-    positive_funds = {s["fund_id"] for g in live for s in g["splits"] if s["amount"] > 0}
+    for g in live:
+        if g["gift_type"] == "non_gift_receipt" and any(not s.get("gl_account_id") for s in g["splits"]):
+            out.append(f"Line {g['id']} is a non-gift receipt with no GL account. Pick the account before closing the batch.")
+    positive_gl = {s["gl_account_id"] for g in live for s in g["splits"] if s.get("gl_account_id") and s["amount"] > 0}
+    if positive_gl:
+        c.execute("SELECT account_number, account_name FROM donor.noncontribution_account WHERE id = ANY(%s) AND NOT is_active ORDER BY account_number", (list(positive_gl),))
+        for a in c.fetchall():
+            out.append(f"The GL account {NC.account_label(a)} has been turned off since these receipts were entered. "
+                       "Void those lines or ask Finance to turn the account back on.")
+    positive_funds = {s["fund_id"] for g in live for s in g["splits"] if s["amount"] > 0 and s.get("fund_id")}
     if positive_funds:
         c.execute("SELECT name FROM donor.fund WHERE id = ANY(%s) AND NOT is_open ORDER BY name", (list(positive_funds),))
         for f in c.fetchall():
@@ -199,7 +210,8 @@ def batch_get(ctx: Ctx, batch_id: int) -> dict:
         preview = _build(c, ctx, batch, lines) if (lines is not None and batch["status"] == "open" and lines) else None
         problems = _close_problems(c, ctx, batch, lines if lines is not None else G.batch_lines(c, batch_id)) if (batch["status"] == "open" and ctx.can("batch.close")) else None
         return {"batch": batch, "balance": bal, "lines": lines, "events": events, "entry": entry, "preview": preview,
-                "close_problems": problems, "can_close": problems == [] if problems is not None else False}
+                "close_problems": problems, "can_close": problems == [] if problems is not None else False,
+                "noncontribution": NC.batch_noncontribution_summary(c, batch_id)}
 
 
 def qbo_preview(ctx: Ctx, batch_id: int) -> dict:
@@ -319,7 +331,7 @@ def _current_as_data(g: dict, splits: list[dict]) -> dict:
     d = {k: g[k] for k in ("person_id", "gift_date", "postmark_date", "gift_type", "check_number", "memo", "goods_value", "fee_amount",
                            "fee_covered_by_donor", "in_kind_description", "book_value", "stock_shares", "stock_symbol", "stock_value",
                            "source", "external_id")}
-    d["splits"] = [{"fund_id": s["fund_id"], "amount": s["amount"]} for s in splits]
+    d["splits"] = [{"fund_id": s["fund_id"], "gl_account_id": s.get("gl_account_id"), "amount": s["amount"]} for s in splits]
     return d
 
 
@@ -339,9 +351,11 @@ def batch_update_line(ctx: Ctx, gift_id: int, changes: dict, *, cur=None) -> dic
         merged = _current_as_data(g, g["splits"])
         if "splits" in changes:
             merged["splits"] = changes["splits"]
-        elif "fund_id" in changes or "amount" in changes:
-            merged["splits"] = [{"fund_id": changes.get("fund_id", g["splits"][0]["fund_id"] if len(g["splits"]) == 1 else None),
-                                 "amount": changes.get("amount", g["amount"] if len(g["splits"]) == 1 else None)}]
+        elif "fund_id" in changes or "gl_account_id" in changes or "amount" in changes:
+            one = len(g["splits"]) == 1
+            merged["splits"] = [{"fund_id": changes.get("fund_id", g["splits"][0]["fund_id"] if one else None),
+                                 "gl_account_id": changes.get("gl_account_id", g["splits"][0].get("gl_account_id") if one else None),
+                                 "amount": changes.get("amount", g["amount"] if one else None)}]
         for k, v in changes.items():
             if k in merged and k != "splits":
                 merged[k] = v
@@ -351,8 +365,8 @@ def batch_update_line(ctx: Ctx, gift_id: int, changes: dict, *, cur=None) -> dic
                   "in_kind_description", "book_value", "stock_shares", "stock_symbol", "stock_value"):
             if g[k] != line[k]:
                 diffs.append((k, g[k], line[k]))
-        old_split = sorted((s["fund_id"], s["amount"]) for s in g["splits"])
-        new_split = sorted((s["fund_id"], s["amount"]) for s in line["splits"])
+        old_split = sorted((s["fund_id"] or 0, s.get("gl_account_id") or 0, s["amount"]) for s in g["splits"])
+        new_split = sorted((s["fund_id"] or 0, s.get("gl_account_id") or 0, s["amount"]) for s in line["splits"])
         splits_changed = old_split != new_split
         if not diffs and not splits_changed:
             return {"id": gift_id, "changed": []}
@@ -368,9 +382,9 @@ def batch_update_line(ctx: Ctx, gift_id: int, changes: dict, *, cur=None) -> dic
             c.execute("UPDATE donor.gift SET status = 'voided', void_reason = 'Replaced by an edit', voided_at = NOW(), "
                       "voided_by_user_id = %s, updated_at = NOW() WHERE id = %s", (ctx.user_id, gift_id))
             new_id = G.insert_gift_row(c, ctx, g["batch_id"], line, line["splits"], kind="update")
-            log_change(c, ctx, "gift", gift_id, LINE_LABELS["splits"], ", ".join(f"{f}:{G.money(a)}" for f, a in old_split),
-                       ", ".join(f"{f}:{G.money(a)}" for f, a in new_split), person_id=line["person_id"], scope="parish",
-                       reason=f"replaced by line {new_id}")
+            log_change(c, ctx, "gift", gift_id, LINE_LABELS["splits"], ", ".join(f"{s['target_name']}:{G.money(s['amount'])}" for s in g["splits"]),
+                       ", ".join(f"{s.get('fund_name') or s.get('gl_label')}:{G.money(s['amount'])}" for s in line["splits"]), person_id=line["person_id"],
+                       scope="parish", reason=f"replaced by line {new_id}")
             _event(c, ctx, g["batch_id"], "replace_line", detail={"gift_id": gift_id, "new_gift_id": new_id})
             return {"id": new_id, "replaced_gift_id": gift_id, "changed": [k for k, _, _ in diffs] + ["splits"]}
         c.execute(f"UPDATE donor.gift SET {', '.join(f'{k} = %s' for k, _, _ in diffs)}, updated_at = NOW() WHERE id = %s",

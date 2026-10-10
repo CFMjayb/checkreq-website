@@ -63,6 +63,22 @@
     });
     env.addEventListener('change', lookup);
   }
+  // A non-gift receipt (rent, a reimbursement) is coded to a GL account, not a fund: swap the pickers when the type changes. The picker that
+  // is not in use is disabled so the browser does not send it, and hidden so the clerk does not see it.
+  var typeSel = document.getElementById('dmType');
+  function swapTarget() {
+    if (!typeSel) { return; }
+    var nc = typeSel.value === 'non_gift_receipt';
+    form.querySelectorAll('.dm-gl-only, #dmGlField').forEach(function (el) {
+      el.hidden = !nc;
+      el.querySelectorAll('select').forEach(function (s) { s.disabled = !nc; });
+    });
+    form.querySelectorAll('.dm-fund-only, #dmFundField').forEach(function (el) {
+      el.hidden = nc;
+      el.querySelectorAll('select').forEach(function (s) { s.disabled = nc; });
+    });
+  }
+  if (typeSel) { typeSel.addEventListener('change', swapTarget); swapTarget(); }
   // Back to the start of the next line once the page has reloaded after a save.
   if (env && window.location.hash === '#entry') { env.focus(); }
 }());

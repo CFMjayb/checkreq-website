@@ -63,7 +63,8 @@ HOUSEHOLD_POSITIONS = ("primary_adult", "secondary_adult", "child")
 CONNECTION_KINDS = ("member", "giver", "visitor")
 STATEMENT_OPTIONS = ("individual", "joint", "none")
 STATEMENT_DELIVERIES = ("email", "print")
-DIOCESAN_CATEGORIES = ("active_member", "inactive_member", "non_member", "transferred_out", "removed", "deceased")
+DIOCESAN_CATEGORIES = ("active_member", "inactive_member", "non_member", "transferred_out", "removed", "deceased",
+                       "organization", "renter")   # organization and renter added by migration 085 (MS-11)
 MEMBER_CATEGORIES = ("active_member", "inactive_member")
 LEAVING_CATEGORIES = ("transferred_out", "removed", "deceased")
 HOW_JOINED = ("baptism", "transfer", "confirmation", "reception", "reaffirmation", "other")
@@ -90,6 +91,7 @@ LABELS = {
     "email": "Email", "print": "Print",
     "active_member": "Active member", "inactive_member": "Inactive member", "non_member": "Not a member",
     "transferred_out": "Transferred out", "removed": "Removed", "deceased": "Deceased",
+    "organization": "Organization", "renter": "Renter",
     "baptism": "Baptism", "transfer": "Transfer", "confirmation": "Confirmation", "reception": "Reception",
     "reaffirmation": "Reaffirmation", "marriage": "Marriage", "burial": "Burial", "other": "Other",
     "transferred": "Transferred", "moved": "Moved", "inactive": "Inactive",
