@@ -18,10 +18,13 @@ nothing is logged but ids.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
+import time
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from starlette.concurrency import run_in_threadpool
 
 import donor_pledge_requests as PR
 import donor_portal as PP
@@ -137,15 +140,22 @@ def signin_get():
 
 
 @portal.post("/my/signin")
-async def signin_post(request: Request, background: BackgroundTasks):
+async def signin_post(request: Request):
+    started = time.monotonic()
     form = await request.form()
     email = str(form.get("email") or "").strip()
     if not email:
         return _page(request, "donor_portal_signin.html", None, {"error": "Enter your email address."}, status=400)
-    res = L.request_code(email, L.client_ip(request))
+    ip = L.client_ip(request)
+    res = L.request_code(email, ip)
     request.session[L.CHALLENGE_KEY] = res["token"]
-    if res["send"]:                                  # emailed AFTER the answer goes out, so the answer is the same either way
-        background.add_task(L.send_code_email, res["send"][0], res["send"][1])
+    if res["send"]:                                  # sent NOW, before the answer (a job after the answer was not run on Cloud Run)
+        await run_in_threadpool(L.send_code_email, res["send"][0], res["send"][1], ip)     # in a worker thread: the server's loop stays free
+    # Matched or not, throttled or not, the answer takes the same time: the send takes about a second for an address that has a
+    # login and nothing for one that has not, which would tell a stranger who is a member. Pad every answer up to the floor.
+    wait = L.MIN_SIGNIN_SECONDS - (time.monotonic() - started)
+    if wait > 0:
+        await asyncio.sleep(wait)
     return _redirect("/my/code")
 
 
