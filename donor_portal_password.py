@@ -144,10 +144,11 @@ def _fails_by_ip(ip: str) -> int:
     return row["n"] if row else 0
 
 
-def password_signin(email: str, password: str, ip: str, parish_id: int | None = None) -> dict:
+def password_signin(email: str, password: str, ip: str, link_parish_id: int | None = None) -> dict:
     """{"status": "signed_in", "session_token", "person_id", "parish_id"}, {"status": "choose", "challenge_token"} when it matches two
-    spouses or two parishes, or {"status": "bad"} (one answer for everything that did not work). `parish_id` is the parish whose own
-    sign-in link was opened: only logins at that parish are tried, so that link can never sign anyone in at another parish."""
+    spouses or two parishes, or {"status": "bad"} (one answer for everything that did not work). `link_parish_id` is the parish whose
+    own sign-in link was opened: a proven person with access there goes straight in there; one with access only at OTHER parishes gets
+    a menu of those (nothing opens until they pick), never a silent landing in a parish they did not come for (L.apply_link)."""
     typed = (email or "").strip().lower()[:254]
     ekey = L.email_key(typed)
     pw = password or ""
@@ -159,7 +160,7 @@ def password_signin(email: str, password: str, ip: str, parish_id: int | None = 
         _burn()
         L.log_event("password_failed", email_key_value=ekey, ip=ip, detail="ip limit")
         return {"status": "bad"}
-    candidates = L.find_candidates(typed, parish_id)            # the same query whoever it is
+    candidates = L.find_candidates(typed)                       # the same query whoever it is, for every parish
     logins = []
     for person_id, parish_id in candidates:
         row = db.query_one("SELECT id, password_hash, failed_password_attempts, password_locked_until FROM donor.parishioner_login "
@@ -175,7 +176,7 @@ def password_signin(email: str, password: str, ip: str, parish_id: int | None = 
     result = None
     with db.connect() as conn:
         with conn.cursor() as cur:
-            options = L._options_for(cur, matched)
+            options, straight_in = L.apply_link(L._options_for(cur, matched), link_parish_id)
             if options:
                 raw = pysecrets.token_urlsafe(32)
                 cur.execute(
@@ -184,7 +185,7 @@ def password_signin(email: str, password: str, ip: str, parish_id: int | None = 
                     "RETURNING id", (L._token_hash(raw), ekey, L._code_hash(raw, pysecrets.token_urlsafe(8)), json.dumps(matched),
                                      json.dumps(options), sorted({o["parish_id"] for o in options}), L.CODE_TTL_MINUTES, ip))
                 cid = cur.fetchone()["id"]
-                if len(options) == 1:
+                if len(options) == 1 and straight_in:
                     result = L._open_session(cur, cid, options[0]["person_id"], options[0]["parish_id"], ip)
                 else:
                     result = {"status": "choose", "challenge_token": raw}

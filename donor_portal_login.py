@@ -100,9 +100,10 @@ def parish_lookup(parish_id: int) -> dict | None:
 
 # ── the per-parish sign-in link /my/<slug> (2026-10-10) ─────────────────────────────────────────
 # A parish's link name is kept on its settings (donor.parish_settings.portal_slug), made from the parish name when the portal is switched
-# on, and editable by the diocese. It chooses which parish's logo and name the sign-in page shows AND which parish the visitor may sign
-# in to (Jay, 2026-10-10: a link for one parish must never land a member in another): an address with no login at that parish gets the
-# same answer as an address with no account at all.
+# on, and editable by the diocese. It chooses which parish's logo and name the sign-in page shows AND which parish a proven person is
+# signed in to (Jay, 2026-10-10: a link for one parish must never silently land a member in another). Who is allowed in is still decided
+# by the code or password alone, for every parish; the link only decides, AFTER that, whether they go straight in (they have access at
+# this parish) or are shown a menu of the parishes they do have access to (apply_link). A stranger learns nothing either way.
 RESERVED_SLUGS = {"signin", "code", "choose", "signout", "personal", "giving", "pledges", "help", "logo", "static", "my",
                   "start", "password", "set-password", "email"}
 
@@ -181,18 +182,13 @@ def _parish_ok(parish_id: int) -> bool:
     return p is None or bool(p.get("is_active", True))            # no registry row (a synthetic test parish) is not a reason to refuse
 
 
-def find_candidates(email: str, parish_id: int | None = None) -> list[list[int]]:
+def find_candidates(email: str) -> list[list[int]]:
     """[[person_id, parish_id], ...] for every person who has an ENABLED parishioner login whose sign-in email is this address and who
     may sign in: that email is still an active email on their profile, they are a person (not an organization or placeholder), not
     archived, not deceased, not under 18, connected to the parish, at a parish whose portal is on. Nobody is found by email match
-    alone: without an enabled login row nothing is found. The query runs for every request, matched or not. With `parish_id` (the
-    parish whose own sign-in link the visitor opened) only logins AT THAT PARISH are found."""
-    sql = _ELIGIBLE_SELECT + "   AND l.login_email = %s "
-    params: list = [(email or "").strip().lower()]
-    if parish_id is not None:
-        sql += "   AND pc.parish_id = %s "
-        params.append(int(parish_id))
-    rows = db.query(sql + "ORDER BY pc.parish_id, pc.person_id", tuple(params))
+    alone: without an enabled login row nothing is found. The query runs for every request, matched or not, and covers EVERY parish:
+    which parish the person ends up in is decided only AFTER they have proved who they are (apply_link)."""
+    rows = db.query(_ELIGIBLE_SELECT + "   AND l.login_email = %s ORDER BY pc.parish_id, pc.person_id", ((email or "").strip().lower(),))
     return [[r["person_id"], r["parish_id"]] for r in rows if _not_minor(r) and _parish_ok(r["parish_id"])]
 
 
@@ -231,16 +227,15 @@ def log_event(kind: str, *, email_key_value: str | None = None, person_id: int |
 
 
 # ── step 1: ask for a code ──────────────────────────────────────────────────────────────────────
-def request_code(email: str, ip: str, parish_id: int | None = None) -> dict:
+def request_code(email: str, ip: str) -> dict:
     """Store a challenge and decide whether a code goes out. Returns {"token": raw challenge token for the signed cookie,
     "send": None or (address, code) for the caller to email before it answers}. The same queries run, one challenge row
-    is written and one event is logged whether or not the address matched, so nothing about the page or the timing tells.
-    `parish_id` is the parish whose sign-in link was opened: a code goes out only for a login at that parish."""
+    is written and one event is logged whether or not the address matched, so nothing about the page or the timing tells."""
     typed = (email or "").strip().lower()[:254]
     ekey = email_key(typed)
     raw = pysecrets.token_urlsafe(32)
     code = f"{pysecrets.randbelow(1_000_000):06d}"
-    candidates = find_candidates(typed, parish_id)           # the same query for every request, however the text looks
+    candidates = find_candidates(typed)                      # the same query for every request, however the text looks
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS n FROM donor.parishioner_challenge WHERE email_key = %s AND NOT throttled "
@@ -327,13 +322,29 @@ def _options_for(cur, candidates: list) -> list[dict]:
     return out
 
 
+def apply_link(options: list[dict], link_parish_id: int | None) -> tuple[list[dict], bool]:
+    """Which parish a PROVEN person ends up in, given the parish whose own sign-in link they opened (Jay, 2026-10-10: a link for one
+    parish must never silently land a member in another). Returns (options, straight_in).
+      * no link opened: all the options, straight in when there is only one (as before);
+      * the person has access at the link's parish: only those options, straight in (or a pick between spouses);
+      * the person has access ONLY elsewhere: all their options and straight_in False, so even a single one is shown as a menu
+        ("you don't have access to this parish, but you do have access to ...") and nothing opens until they pick it.
+    Only called after a code or password has proved who they are, so the menu tells nobody anything about anyone else."""
+    if link_parish_id is None:
+        return options, True
+    here = [o for o in options if o["parish_id"] == link_parish_id]
+    if here:
+        return here, True
+    return options, False
+
+
 def _fail_count_by_ip(ip: str) -> int:
     row = db.query_one("SELECT COUNT(*) AS n FROM donor.parishioner_signin_event WHERE ip = %s AND kind = 'code_failed' "
                        "AND created_at > NOW() - make_interval(mins => %s)", (ip, IP_WINDOW_MINUTES))
     return row["n"] if row else 0
 
 
-def verify_code(raw_token: str, code: str, ip: str) -> dict:
+def verify_code(raw_token: str, code: str, ip: str, link_parish_id: int | None = None) -> dict:
     """{"status": "signed_in", "session_token": ..., "person_id", "parish_id"} when exactly one person can continue,
     {"status": "choose"} when there is a choice to make, {"status": "blocked"} when the code was right but nobody can be signed in
     (the people on that address are unrelated, or no longer eligible), {"status": "bad"} for everything else (one answer for a
@@ -365,12 +376,12 @@ def verify_code(raw_token: str, code: str, ip: str) -> dict:
                 if not cur.fetchone():                                  # a second request with the right code arrived together
                     result = {"status": "bad"}
                 else:
-                    options = _options_for(cur, row["candidates"] or [])
+                    options, straight_in = apply_link(_options_for(cur, row["candidates"] or []), link_parish_id)
                     cur.execute("UPDATE donor.parishioner_challenge SET options = %s::jsonb WHERE id = %s", (json.dumps(options), row["id"]))
                     if not options:
                         cur.execute("UPDATE donor.parishioner_challenge SET consumed_at = NOW() WHERE id = %s", (row["id"],))
                         result = {"status": "blocked", "email_key": row["email_key"]}
-                    elif len(options) == 1:
+                    elif len(options) == 1 and straight_in:
                         result = _open_session(cur, row["id"], options[0]["person_id"], options[0]["parish_id"], ip)
                         result["email_key"] = row["email_key"]
                     else:
@@ -416,7 +427,8 @@ def pending_choices(raw_token: str) -> list[dict] | None:
     for o in row["options"] or []:
         person = db.query_one("SELECT first_name, last_name, goes_by FROM donor.person WHERE id = %s", (o["person_id"],)) or {}
         parish = parish_lookup(o["parish_id"]) or {}
-        out.append({"label": f"{_person_name(person) or 'Person'} at {parish.get('name') or 'this parish'}"})
+        out.append({"label": f"{_person_name(person) or 'Person'} at {parish.get('name') or 'this parish'}", "parish_id": o["parish_id"],
+                    "parish_name": parish.get("name") or "this parish"})
     return out
 
 
