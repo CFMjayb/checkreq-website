@@ -389,6 +389,38 @@ def record_period_hours(org_id: int, *, period_id: int, parish_code: str, catego
                     "hours": float(h), "proposed_hours": None}
 
 
+def record_history_line(cur, *, period_id: int, staff_id: int, category_id: int, hours: Decimal,
+                        source_ref: str | None, flags: list[str], actor_user_id: int | None) -> str:
+    """The history load (26-158 step 5): one paid-register line, confirmed, into a period that is
+    already closed. Works on the caller's cursor so the loader can run against dev or production with
+    its own connection. Idempotent: the same hours and flags change nothing. It never overwrites a
+    line that came from anywhere but the register (a live email line wins). Returns created |
+    unchanged | updated | skipped_other_source."""
+    cur.execute("SELECT * FROM portal.time_period_totals WHERE period_id = %s AND staff_id = %s AND category_id = %s "
+                "FOR UPDATE", (period_id, staff_id, category_id))
+    ex = cur.fetchone()
+    flags = sorted(set(flags))
+    now = dt.datetime.now(dt.timezone.utc)
+    if ex is None:
+        cur.execute(
+            "INSERT INTO portal.time_period_totals (period_id, staff_id, category_id, hours, source, source_ref, "
+            "review_status, flags, created_by_user_id, reviewed_by_user_id, reviewed_at) "
+            "VALUES (%s,%s,%s,%s,'register',%s,'confirmed',%s,%s,%s,%s) RETURNING id",
+            (period_id, staff_id, category_id, hours, source_ref, flags, actor_user_id, actor_user_id, now))
+        _log_edit(cur, cur.fetchone()["id"], None, hours, None, "confirmed", actor_user_id, "register",
+                  "History load from the labor distribution")
+        return "created"
+    if ex["source"] != "register":
+        return "skipped_other_source"
+    if Decimal(ex["hours"]) == hours and sorted(ex["flags"] or []) == flags and ex["review_status"] == "confirmed":
+        return "unchanged"
+    cur.execute("UPDATE portal.time_period_totals SET hours = %s, source_ref = %s, review_status = 'confirmed', "
+                "flags = %s, updated_at = now() WHERE id = %s", (hours, source_ref, flags, ex["id"]))
+    _log_edit(cur, ex["id"], Decimal(ex["hours"]), hours, ex["review_status"], "confirmed", actor_user_id, "register",
+              "History load re-run")
+    return "updated"
+
+
 def record_register_hours(org_id: int, *, period_id: int, parish_code: str, employee_number: str,
                           category_key: str, hours, source_ref: str | None = None,
                           actor_user_id: int | None = None) -> dict:

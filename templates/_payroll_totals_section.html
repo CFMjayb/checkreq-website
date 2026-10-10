@@ -22,6 +22,11 @@
       <td>{{ r.source }}{% if r.message_url %} &middot; <a href="{{ r.message_url }}" target="_blank" rel="noopener">email</a>{% endif %}
         {% if r.quote %}<div class="ph-quote">&ldquo;{{ r.quote }}&rdquo;</div>{% endif %}
         {% if r.proposed_quote %}<div class="ph-quote">new: &ldquo;{{ r.proposed_quote }}&rdquo;{% if r.proposed_url %} <a href="{{ r.proposed_url }}" target="_blank" rel="noopener">email</a>{% endif %}</div>{% endif %}
+        {% if 'email_match' in r.flags %}<div class="ph-state-ok ph-small">Email check: matches the email</div>{% endif %}
+        {% if 'email_differs' in r.flags %}<div class="ph-state-attn ph-small">Email check: the email shows a different number</div>{% endif %}
+        {% if 'email_named_no_number' in r.flags %}<div class="ph-small sub">Email check: named in an email, no number found</div>{% endif %}
+        {% if 'email_standing' in r.flags %}<div class="ph-small sub">Email check: standing hours</div>{% endif %}
+        {% if 'email_none' in r.flags %}<div class="ph-small sub">Email check: no email found</div>{% endif %}
         {% if 'jump' in r.flags %}<div class="ph-state-attn ph-small">Much higher than usual</div>{% endif %}
         {% if 'not_hourly' in r.flags %}<div class="ph-small sub">Not an hourly employee (information only)</div>{% endif %}
         {% if 'inactive_employee' in r.flags %}<div class="ph-state-attn ph-small">Inactive employee</div>{% endif %}
