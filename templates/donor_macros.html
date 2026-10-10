@@ -15,13 +15,18 @@ Every control carries data-ed: donor_person.js turns it from read-only (the scre
 (after Edit) without moving or duplicating anything. `locked` keeps a control read-only even in edit mode (a minor's
 birth date for a role that may not see it). `cls` is the column span: dm-c1 .. dm-c12 of a twelve-column grid.
 #}
-{% macro fld(lbl, name, val, cls="dm-c3", ph="", locked=False) %}<label class="dm-f {{ cls }}"><span>{{ lbl }}</span><input type="text" name="{{ name }}" value="{{ val if val is not none else '' }}"{% if ph %} placeholder="{{ ph }}"{% endif %} readonly data-ed{% if locked %} data-locked disabled{% endif %}></label>{% endmacro %}
-
-{% macro sel(lbl, name, val, values, cls="dm-c3", blank="Not recorded", locked=False) %}<label class="dm-f {{ cls }}"><span>{{ lbl }}</span><select name="{{ name }}" disabled data-ed{% if locked %} data-locked{% endif %}>{% if blank is not none %}<option value="">{{ blank }}</option>{% endif %}{% for v in values %}<option value="{{ v }}" {{ 'selected' if val == v }}>{{ label(v) }}</option>{% endfor %}</select></label>{% endmacro %}
-
+{#
+SELF MODE (the parishioner's own screen is this same person screen with switches, never a copy of it): when `self_mode` is set, a
+control whose `name` is not in `self_editable` (set by the route from donor_portal.SELF_EDITABLE) is drawn as a read-only box with no
+name, so it can never be posted. Staff pages never set self_mode, so nothing changes for them.
+#}
 {% macro ro(lbl, val, cls="dm-c3") %}<label class="dm-f {{ cls }}"><span>{{ lbl }}</span><input type="text" value="{{ val if val is not none else '' }}" readonly tabindex="-1"></label>{% endmacro %}
 
-{% macro chk(lbl, name, on, value="1") %}<label class="dm-chk"><input type="checkbox" name="{{ name }}" value="{{ value }}" {{ 'checked' if on }} disabled data-ed> {{ lbl }}</label>{% endmacro %}
+{% macro fld(lbl, name, val, cls="dm-c3", ph="", locked=False) %}{% if self_mode and name not in self_editable %}{{ ro(lbl, val, cls) }}{% else %}<label class="dm-f {{ cls }}"><span>{{ lbl }}</span><input type="text" name="{{ name }}" value="{{ val if val is not none else '' }}"{% if ph %} placeholder="{{ ph }}"{% endif %} readonly data-ed{% if locked %} data-locked disabled{% endif %}></label>{% endif %}{% endmacro %}
+
+{% macro sel(lbl, name, val, values, cls="dm-c3", blank="Not recorded", locked=False) %}{% if self_mode and name not in self_editable %}{{ ro(lbl, label(val) if val else "", cls) }}{% else %}<label class="dm-f {{ cls }}"><span>{{ lbl }}</span><select name="{{ name }}" disabled data-ed{% if locked %} data-locked{% endif %}>{% if blank is not none %}<option value="">{{ blank }}</option>{% endif %}{% for v in values %}<option value="{{ v }}" {{ 'selected' if val == v }}>{{ label(v) }}</option>{% endfor %}</select></label>{% endif %}{% endmacro %}
+
+{% macro chk(lbl, name, on, value="1") %}{% if self_mode and name not in self_editable %}<label class="dm-chk"><input type="checkbox" {{ 'checked' if on }} disabled> {{ lbl }}</label>{% else %}<label class="dm-chk"><input type="checkbox" name="{{ name }}" value="{{ value }}" {{ 'checked' if on }} disabled data-ed> {{ lbl }}</label>{% endif %}{% endmacro %}
 
 {# The "visible to this parish only" line on parish-scoped tabs. #}
 {% macro lock_note(text) %}<p class="dm-lock"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg> {{ text }}</p>{% endmacro %}

@@ -16,6 +16,20 @@ A minor's contact details never appear here for a role that may not see them (th
     </div>
   </div>
 
+  {# Messages from parishioners (Get Help on their own screen). A staff-visible record: no email is sent to anyone. #}
+  {% if portal_messages %}
+  <div class="card dm-card" id="messages">
+    <div class="dm-section-head"><h3>Messages from parishioners <span class="dm-count-badge">{{ portal_messages|length }}</span></h3></div>
+    {% for m in portal_messages %}
+    <div class="dm-note">
+      <div class="dm-note-meta"><a href="/people/{{ m.person_id }}">{{ m.name }}</a> <span>&middot; {{ d(m.created_at) }}</span>{% if m.subject %} <strong>{{ m.subject }}</strong>{% endif %}</div>
+      <div class="dm-note-body">{{ m.body }}</div>
+      <form method="post" action="/people/messages/{{ m.id }}/done" class="dm-form dm-inline">{{ csrf() }}<button type="submit" class="btn btn-secondary btn-sm">Mark done</button></form>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <form method="get" action="/people" class="dm-search dm-form-plain" role="search">
     <label class="dm-search-box">
       <span class="dm-sr">Search people</span>

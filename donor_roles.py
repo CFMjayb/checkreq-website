@@ -52,12 +52,14 @@ SETTING_DEFAULTS = {
     "qbo_posting_enabled": False,
     # added by migration 077 (giving). Read tolerantly below so Phase 1 works before 077 is applied.
     "investment_account": None, "in_kind_account": None, "default_class": None,
+    # added by migration 082 (Parishioner Self-Service): the diocese's switch for the parishioner's own screen (/my). Off until turned on.
+    "portal_enabled": False,
 }
 # Which settings need which capability to change.
-_DIOCESAN_SETTINGS = {"people_enabled", "giving_enabled", "allow_single_person_batch", "qbo_posting_enabled"}
+_DIOCESAN_SETTINGS = {"people_enabled", "giving_enabled", "allow_single_person_batch", "qbo_posting_enabled", "portal_enabled"}
 _ACCOUNT_SETTINGS = {"qbo_company_key", "default_cash_account", "processing_fee_account", "due_from_diocese_account",
                      "investment_account", "in_kind_account", "default_class"}
-_BOOL_SETTINGS = {"people_enabled", "giving_enabled", "allow_single_person_batch", "qbo_posting_enabled"}
+_BOOL_SETTINGS = {"people_enabled", "giving_enabled", "allow_single_person_batch", "qbo_posting_enabled", "portal_enabled"}
 
 
 # ── Read-only lookups into existing tables (test seams) ─────────────────────────────────────────

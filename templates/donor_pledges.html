@@ -20,6 +20,69 @@ against a pledge. Soft credits count toward a pledge but never toward the person
     </div>
   </div>
   {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+
+  {# Requests from parishioners (Parishioner Self-Service). A request is never a pledge: nothing changes until Finance approves, and
+     approving runs the same pledge service as "+ Add a pledge" below. You may correct the amount, how often and the dates first.
+     Nobody answers their own request. Declining needs a reason (the parishioner sees it) and the request stays on the record. #}
+  {% if can_manage and (requests or answered) %}
+  <div class="card dm-card" id="requests">
+    <div class="dm-section-head"><h3>Requests from parishioners{% if requests %} <span class="dm-count-badge">{{ requests|length }}</span>{% endif %}</h3></div>
+    {% if requests %}
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Who</th><th>Request</th><th>Campaign</th><th>Note</th><th>Sent</th><th></th></tr></thead>
+      <tbody>
+      {% for r in requests %}
+        <tr>
+          <td><a href="/people/{{ r.person_id }}">{{ r.name }}</a>{% if r.joint_name %}<div class="dm-sub">Joint with {{ r.joint_name }}</div>{% endif %}
+            {% if r.prior %}<div class="dm-sub">Last time: {{ money(r.prior.amount) }} ({{ r.prior.campaign }})</div>{% endif %}</td>
+          <td>{% if r.kind == 'new' %}<strong>New pledge</strong><div>{{ money(r.amount) }} {{ label(r.frequency)|lower }}</div><div class="dm-sub">{{ d(r.start_date) }} to {{ d(r.end_date) }}</div>
+              {% elif r.kind == 'change' %}<strong>Change</strong><div>{{ money(r.current_amount) }} {{ label(r.current_frequency)|lower }} &rarr; {{ money(r.amount) }} {{ label(r.frequency)|lower }}</div>
+              {% else %}<strong>Cancel</strong><div>the pledge of {{ money(r.current_amount) }} {{ label(r.current_frequency)|lower }}</div>{% endif %}</td>
+          <td>{{ r.campaign_name }}</td>
+          <td>{{ r.note or '' }}</td>
+          <td>{{ d(r.created_at) }}</td>
+          <td>
+            <details class="dm-edit dm-edit-inline"><summary class="btn btn-primary btn-sm">Approve</summary>
+              <form method="post" action="/pledges/requests/{{ r.id }}/approve" class="dm-form dm-editform">
+                {{ csrf() }}
+                {% if r.kind != 'cancel' %}
+                <div class="field"><label>Amount ($)</label><input name="amount" value="{{ r.amount }}"></div>
+                <div class="field"><label>Frequency</label><select name="frequency">{% for v in frequencies %}<option value="{{ v }}" {{ 'selected' if r.frequency == v }}>{{ label(v) }}</option>{% endfor %}</select></div>
+                {% endif %}
+                {% if r.kind == 'new' %}
+                <div class="field"><label>Starts</label><input name="start_date" value="{{ d(r.start_date) }}"></div>
+                <div class="field"><label>Ends</label><input name="end_date" value="{{ d(r.end_date) }}"></div>
+                {% endif %}
+                <div class="field"><label>A note (optional)</label><input name="decision_note" maxlength="200"></div>
+                <button type="submit" class="btn btn-primary btn-sm">Approve and {{ 'add the pledge' if r.kind == 'new' else ('change the pledge' if r.kind == 'change' else 'cancel the pledge') }}</button>
+              </form>
+            </details>
+            <details class="dm-edit dm-edit-inline"><summary class="btn btn-secondary btn-sm">Decline</summary>
+              <form method="post" action="/pledges/requests/{{ r.id }}/decline" class="dm-form dm-editform">
+                {{ csrf() }}
+                <div class="field"><label>Why? (the parishioner will see this)</label><input name="reason" maxlength="200" required></div>
+                <button type="submit" class="btn btn-secondary btn-sm">Decline the request</button>
+              </form>
+            </details>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="dm-muted dm-small">No request is waiting.</p>{% endif %}
+    {% if answered %}
+    <details class="dm-edit"><summary class="btn btn-secondary btn-sm">Recently answered ({{ answered|length }})</summary>
+      <div class="table-scroll"><table class="simple-table dm-table dm-compact">
+        <thead><tr><th>Who</th><th>Request</th><th>Campaign</th><th>Answer</th><th>When</th></tr></thead>
+        <tbody>{% for r in answered %}<tr><td><a href="/people/{{ r.person_id }}">{{ r.name }}</a></td>
+          <td>{{ {'new': 'New pledge', 'change': 'Change', 'cancel': 'Cancel'}[r.kind] }}{% if r.amount is not none %} {{ money(r.amount) }}{% endif %}</td><td>{{ r.campaign_name }}</td>
+          <td>{{ 'Approved' if r.status == 'approved' else 'Declined' }}{% if r.decision_reason %}<div class="dm-sub">{{ r.decision_reason }}</div>{% endif %}</td><td>{{ d(r.decided_at) }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </details>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if not campaigns %}
     <p class="doc-empty">There are no campaigns yet. <a href="/giving/funds">Add a campaign</a> (its fund has to accept pledges) and pledges can be recorded here.</p>
   {% elif data %}

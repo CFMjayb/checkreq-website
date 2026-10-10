@@ -80,12 +80,13 @@ def _field_label(row: dict) -> str:
 _OPEN_TABLES = {"person", "household", "person_contact", "parish_connection", "household_member", "spouse_link", "household_relation"}
 _ROW_CAP = {
     "gift": "giving.read", "gift_split": "giving.read", "batch": "giving.read", "pledge": "giving.read", "soft_credit": "giving.read",
+    "pledge_request": "giving.read",
     "fund": "giving.read", "campaign": "giving.read",
     "membership": "membership.view", "member_status_code": "membership.view",
     "sacramental_event": "sacrament.view", "transfer_letter": "sacrament.view",
     "note": "notes.clergy",          # a clergy-only note must not be hinted at; the note list itself is filtered by visibility
     "task": "notes.staff",
-    "role_grant": "roles.manage", "parish_settings": "roles.manage",
+    "role_grant": "roles.manage", "parish_settings": "roles.manage", "parishioner_login": "roles.manage",
 }
 
 
@@ -136,6 +137,8 @@ def changes_for_person(ctx: Ctx, person_id: int, limit: int = 100) -> list[dict]
     out = []
     for r in rows:
         r["who"] = names.get(r["user_id"]) or (f"User #{r['user_id']}" if r["user_id"] else "System")
+        if r["user_id"] == 0 and (r.get("reason") or "").startswith("Parishioner self-service"):
+            r["who"] = "The parishioner (self-service)"      # a change the person made themselves on their own screen (user 0, no roles)
         r["parish_label"] = "This parish" if r["parish_id"] == ctx.parish_id else (
             pnames.get(r["parish_id"]) or (f"Parish #{r['parish_id']}" if r["parish_id"] else ""))
         r["field_label"] = _field_label(r)

@@ -22,6 +22,7 @@ import donor_corrections as K
 import donor_funds as F
 import donor_gifts as G
 import donor_households as H
+import donor_pledge_requests as PR
 import donor_pledges as PL
 import donor_qbo_entry as Q
 import donor_web as W
@@ -355,6 +356,8 @@ async def campaign_save(request: Request):
             changes = {k: form.get(k) for k in ("name", "period_start", "period_end", "goal_amount") if k in form}
             if "has_is_active" in form:
                 changes["is_active"] = _flag(form, "is_active")
+            if "has_online_pledging" in form:
+                changes["online_pledging"] = _flag(form, "online_pledging")
             r = F.campaign_update(ctx, cid, changes)
             return W.back(request, "/giving/funds", ok="Saved." if r["changed"] else "Nothing to change.")
         F.campaign_create(ctx, {k: form.get(k) for k in ("fund_id", "name", "period_start", "period_end", "goal_amount")})
@@ -383,8 +386,13 @@ def pledges_page(request: Request, campaign: str = "", prior: str = ""):
             responses = PL.campaign_responses(ctx, cid, pid)
         except DonorError as e:
             error = e.message
+    # Requests from parishioners (Parishioner Self-Service). Fail soft: a screen about pledges must open even if the request tables are
+    # not there yet (migration 082).
+    requests = W.safe(lambda: PR.waiting_requests(ctx), []) if ctx.can("pledges.manage") else []
+    answered = W.safe(lambda: PR.recently_answered(ctx), []) if ctx.can("pledges.manage") else []
     return W.page(request, "donor_pledges.html", user, parish, ctx, "pledges", {
         "campaigns": campaigns, "cid": cid, "prior_id": pid, "data": data, "responses": responses, "error": error,
+        "requests": requests, "answered": answered,
         "frequencies": PL.FREQUENCIES, "can_manage": ctx.can("pledges.manage"), "today": dt.date.today().isoformat()})
 
 

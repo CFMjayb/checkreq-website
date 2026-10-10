@@ -1,0 +1,25 @@
+{#
+donor_tab_help.html -- the parishioner's Get help tab (self_mode only, inside the same person screen): a short message to the parish office.
+The message becomes a staff-visible record (People page, "Messages from parishioners"). Plain text only, autoescaped. No email goes to
+staff.
+#}
+<h3>Get help</h3>
+<p>Send a message to the {{ parish.name }} office. Use it to ask for a correction to your name, address or birth date, to ask about a gift or a statement, or anything else. The office will see it the next time they open their People page, so for something urgent please call.</p>
+{% if form_error %}<div class="banner banner-error">{{ form_error }}</div>{% endif %}
+<form method="post" action="/my/help" class="dm-form pp-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+  <div class="field"><label for="pp-subject">Subject (optional)</label><input id="pp-subject" name="subject" maxlength="120" value="{{ fv.subject if fv else '' }}"></div>
+  <div class="field"><label for="pp-body">Your message</label><textarea id="pp-body" name="body" maxlength="2000" required>{{ fv.body if fv else '' }}</textarea></div>
+  <button type="submit" class="btn btn-primary">Send message</button>
+</form>
+{% if sent %}
+<div class="dm-section">
+  <div class="dm-section-head"><h3>Your recent messages</h3></div>
+  <div class="table-scroll">
+  <table class="simple-table dm-table pp-table">
+    <thead><tr><th>Sent</th><th>Subject</th><th>Status</th></tr></thead>
+    <tbody>{% for m in sent %}<tr><td data-label="Sent">{{ d(m.created_at) }}</td><td data-label="Subject">{{ m.subject or '(no subject)' }}</td><td data-label="Status">{{ 'Seen by the office' if m.status == 'done' else 'Sent' }}</td></tr>{% endfor %}</tbody>
+  </table>
+  </div>
+</div>
+{% endif %}

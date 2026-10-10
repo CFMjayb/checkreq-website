@@ -18,6 +18,8 @@ import donor_merge as MG
 import donor_notes as N
 import donor_people as P
 import donor_personal as PS
+import donor_portal as PP
+import donor_portal_admin as PA
 import donor_roles
 import donor_web as W
 from donor_core import DonorError, NotFound, initials
@@ -56,7 +58,10 @@ def people_list(request: Request, q: str = "", status: str = "", gender: str = "
     except DonorError as e:
         error = e.message
     codes = MS.status_code_list(ctx) if ctx.can("membership.view") else []
+    # Get Help messages from parishioners (Parishioner Self-Service): the staff-visible record, People editors only. Fail soft.
+    portal_messages = W.safe(lambda: PP.messages_waiting(ctx), []) if (ctx.settings.get("portal_enabled") and ctx.can("people.edit")) else []
     return W.page(request, "donor_people.html", user, parish, ctx, "people", {
+        "portal_messages": portal_messages,
         "rows": rows, "total": total, "q": q, "status": status, "gender": gender, "marital": marital, "rtype": rtype,
         "archived": archived, "page_no": page, "page_size": PAGE_SIZE, "codes": codes, "search_error": error,
         "pages": (total + PAGE_SIZE - 1) // PAGE_SIZE,
@@ -202,6 +207,9 @@ def person_record(person_id: int, request: Request, tab: str = "personal", voide
             extra.update(giving=None)
     elif tab == "system":
         extra.update(changes=CL.changes_for_person(ctx, person_id), merges=MG.merge_history_for(ctx, person_id))
+        if ctx.can("roles.manage") and not g["redacted"]:
+            # "Parishioner login (self-service)": the member's own login, created ONLY here and separate from the Beacon staff login above.
+            extra["portal_login"] = W.safe(lambda: PA.login_panel(ctx, person_id), None)
     return W.page(request, "donor_person.html", user, parish, ctx, "people", extra)
 
 

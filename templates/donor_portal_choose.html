@@ -1,0 +1,17 @@
+{#
+donor_portal_choose.html -- after a verified code, when one address reaches more than one person (spouses sharing a mailbox) or one
+person at more than one parish. The buttons send only the index of a choice the server stored itself; the server checks it again.
+#}
+{% extends "donor_portal_base.html" %}
+{% block title %}Who is signing in?{% endblock %}
+{% block content %}
+<div class="pp-card pp-narrow">
+  <h1>Who is signing in?</h1>
+  <p>Your code worked. This address is on file for more than one choice. Pick the one that is you.</p>
+  <form method="post" action="/my/choose" class="pp-choices">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    {% for ch in choices %}<button type="submit" name="option" value="{{ loop.index0 }}" class="btn btn-secondary btn-block">{{ ch.label }}</button>{% endfor %}
+  </form>
+  <p class="pp-hint">You will see only your own information, never anyone else's.</p>
+</div>
+{% endblock %}

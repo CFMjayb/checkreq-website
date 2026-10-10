@@ -3,7 +3,7 @@
 <nav class="dm-nav" aria-label="People and giving">
   <span class="dm-nav-parish">{{ parish.name }}</span>
   {% for item in dm_nav %}
-  <a href="{{ item.href }}" class="{{ 'dm-nav-on' if dm_active == item.key else '' }}">{{ item.label }}</a>
+  <a href="{{ item.href }}" class="{{ 'dm-nav-on' if dm_active == item.key else '' }}">{{ item.label }}{% if dm_counts and dm_counts.get(item.key) %} <span class="dm-count-badge" title="{{ 'Requests from parishioners waiting for Finance' if item.key == 'pledges' else 'Messages from parishioners waiting' }}">{{ dm_counts.get(item.key) }}</span>{% endif %}</a>
   {% endfor %}
   {% if dm_setup %}
   {# Maintenance (import, duplicates, settings) lives here, never as tabs of its own. #}

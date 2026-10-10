@@ -1,0 +1,20 @@
+{#
+donor_portal_code.html -- step two: the six-digit code. It says "if that address is on file" because the page is identical for an
+address that matched and one that did not.
+#}
+{% extends "donor_portal_base.html" %}
+{% block title %}Enter your code{% endblock %}
+{% block content %}
+<div class="pp-card pp-narrow">
+  <h1>Enter your code</h1>
+  <p>If that address is set up for a login at a parish that uses this page, we have emailed it a six-digit code. The code works for 10 minutes, and only once.</p>
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+  <form method="post" action="/my/code" class="dm-form pp-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <div class="field"><label for="pp-code">Six-digit code</label>
+      <input id="pp-code" class="pp-code" type="text" name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="6" autofocus required></div>
+    <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+  </form>
+  <p class="pp-hint" style="margin-top:12px"><a href="/my">Use a different address, or ask for a new code</a></p>
+</div>
+{% endblock %}
