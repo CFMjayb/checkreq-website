@@ -30,6 +30,11 @@ _ISSUE = {
     "conflict": "Parish daily grid and email both have hours: pick one",
     "pending_hire": "New hire not on the roster yet",
 }
+_EMAIL_CHECK = {
+    "email_match": "matches the email", "email_differs": "email shows a different number",
+    "email_named_no_number": "named in an email, no number", "email_standing": "standing hours",
+    "email_none": "no email found",
+}
 _DETAIL_SQL = """
     SELECT p.code AS parish_code, p.name AS parish_name, sr.last_name, sr.first_name,
            c.label AS category_label, te.work_date, te.hours
@@ -105,7 +110,8 @@ def build_export_workbook(org: dict, period: dict) -> bytes:
 
     wh = wb.create_sheet("Hours")
     _header(wh, 1, ["Parish Code", "Parish", "Employee #", "Last Name", "First Name", "Category",
-                    "Counted hours", "Source", "Review status", "Email", "Daily grid hours", "Period total"])
+                    "Counted hours", "Source", "Review status", "Email", "Daily grid hours", "Period total",
+                    "Email check"])
     for i, r in enumerate(rows, start=2):
         wh.cell(row=i, column=1, value=r["parish_code"])
         wh.cell(row=i, column=2, value=r["parish_name"])
@@ -120,9 +126,10 @@ def build_export_workbook(org: dict, period: dict) -> bytes:
         _link(wh, i, 10, r["source_ref"])
         wh.cell(row=i, column=11, value=None if r["grid_hours"] is None else float(r["grid_hours"])).number_format = "0.00"
         wh.cell(row=i, column=12, value=None if r["line_hours"] is None else float(r["line_hours"])).number_format = "0.00"
+        wh.cell(row=i, column=13, value=", ".join(_EMAIL_CHECK[f] for f in r["flags"] if f in _EMAIL_CHECK) or None)
     if not rows:
         wh.cell(row=2, column=1, value="No hours recorded for this period yet.")
-    _widths(wh, [12, 32, 14, 18, 14, 14, 14, 10, 40, 14, 16, 14])
+    _widths(wh, [12, 32, 14, 18, 14, 14, 14, 10, 40, 14, 16, 14, 34])
 
     wd = wb.create_sheet("Detail")
     _header(wd, 1, ["Parish Code", "Parish", "Last Name", "First Name", "Category", "Date", "Hours"])
