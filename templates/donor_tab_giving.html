@@ -18,7 +18,7 @@ picker, the summary by fund, and the notes about corrections and statements. Ple
   <div class="pp-giving-title">
     <h3>Your giving</h3>
     <form method="get" action="/my/giving" class="pp-filter">
-      <label>Show <select name="year" data-autosubmit aria-label="Year">
+      <label><select name="year" data-autosubmit aria-label="Year">
         {% for y in ([this_year] + giving.years + ([giving.year] if giving.year else []))|unique|sort(reverse=true) %}<option value="{{ y }}" {{ 'selected' if giving.year == y }}>{{ y }}{{ ' (so far)' if y == this_year }}</option>{% endfor %}
         <option value="all" {{ 'selected' if giving.year is none }}>All years</option>
       </select></label>

@@ -71,6 +71,9 @@
 .pp-giving-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 8px; }
 .pp-giving-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
 .pp-giving-title h3, .pp-giving-title form { margin: 0; }
+.pp-giving-title h3 { line-height: 1.2; }
+.pp-giving-title .pp-filter { align-items: center; margin: 0; }          /* "Your giving" and the year box share one centre line (Jay, 2026-10-10) */
+.pp-giving-title .pp-filter label { margin: 0; display: block; }
 .pp-giving-top .pp-subtabs { margin: 0; }
 .pp-gifts { margin-top: 20px; }
 .pp-gifts > summary { cursor: pointer; padding: 4px 0; }
