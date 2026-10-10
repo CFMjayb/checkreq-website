@@ -1,0 +1,13 @@
+/* 26-158: period totals on the backfill grid, status board extras, variance, parish profile. */
+.ph-card { margin-bottom: 16px; }
+.ph-msg { margin: 8px 0; }
+.ph-inline { display: inline-flex; gap: 4px; align-items: center; margin: 0 4px 0 0; }
+.ph-inline input[type="number"] { width: 5.5em; }
+.ph-quote { color: var(--color-muted, #6b6b6b); font-size: 0.85em; max-width: 24em; }
+.ph-state-ok { color: #1f6b3a; }
+.ph-state-attn { color: #9c0006; font-weight: 600; }
+.ph-small { font-size: 0.85em; }
+.ph-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ph-tight td, .ph-tight th { padding: 4px 8px; vertical-align: top; }
+.ph-final { border-left: 4px solid #1f6b3a; padding-left: 10px; }
+.ph-notfinal { border-left: 4px solid #9c0006; padding-left: 10px; }

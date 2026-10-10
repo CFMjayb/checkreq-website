@@ -1,0 +1,64 @@
+{# 26-158: the period totals recorded for this parish (emails, standing hours, the diocese). #}
+<link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
+{% set pm = request.query_params.get('pmsg') %}{% set pe = request.query_params.get('perr') %}
+{% if pm %}<div class="banner banner-success ph-msg">{{ pm }}</div>{% endif %}
+{% if pe %}<div class="banner banner-error ph-msg">{{ pe }}</div>{% endif %}
+{% if payroll_totals and payroll_totals.rows %}
+<div class="card ph-card">
+  <h2 style="margin-bottom:4px">Period totals</h2>
+  <p class="sub" style="margin-top:0">Hours recorded for the whole period (from emails and other sources), apart from the daily grid below.
+    {% if not payroll_totals.writable %}This period is not open, so these lines are read-only.{% endif %}</p>
+  <div class="table-scroll">
+  <table class="simple-table ph-tight">
+    <tr><th>Employee</th><th>Category</th><th>Hours</th><th>Source</th><th>Status</th><th></th></tr>
+    {% for r in payroll_totals.rows %}
+    <tr>
+      <td>{{ r.last_name }}, {{ r.first_name }}{% if r.employee_number %} <span class="sub ph-small">#{{ r.employee_number }}</span>{% endif %}</td>
+      <td>{{ r.category_label }}</td>
+      <td>{{ "%.2f"|format(r.line_hours) }}
+        {% if r.proposed_hours is not none %}<br><span class="ph-state-attn ph-small">new figure: {{ "%.2f"|format(r.proposed_hours) }}</span>{% endif %}
+        {% if r.grid_hours is not none %}<br><span class="ph-small sub">daily grid: {{ "%.2f"|format(r.grid_hours) }}</span>{% endif %}
+      </td>
+      <td>{{ r.source }}{% if r.message_url %} &middot; <a href="{{ r.message_url }}" target="_blank" rel="noopener">email</a>{% endif %}
+        {% if r.quote %}<div class="ph-quote">&ldquo;{{ r.quote }}&rdquo;</div>{% endif %}
+        {% if r.proposed_quote %}<div class="ph-quote">new: &ldquo;{{ r.proposed_quote }}&rdquo;{% if r.proposed_url %} <a href="{{ r.proposed_url }}" target="_blank" rel="noopener">email</a>{% endif %}</div>{% endif %}
+        {% if 'jump' in r.flags %}<div class="ph-state-attn ph-small">Much higher than usual</div>{% endif %}
+        {% if 'not_hourly' in r.flags %}<div class="ph-small sub">Not an hourly employee (information only)</div>{% endif %}
+        {% if 'inactive_employee' in r.flags %}<div class="ph-state-attn ph-small">Inactive employee</div>{% endif %}
+      </td>
+      <td><span class="{{ 'ph-state-ok' if r.state == 'ok' else 'ph-state-attn' }}">{{ r.state_label }}</span></td>
+      <td>
+        {% if payroll_totals.writable and r.review_status != 'rejected' %}
+        <div class="ph-actions">
+          {% set base = '/admin/timekeeping/status/' ~ payroll_totals.period_id ~ '/' ~ payroll_totals.parish_id ~ '/totals/' ~ r.line_id ~ '/' %}
+          {% if r.state == 'conflict' %}
+            <form class="ph-inline" method="post" action="{{ base }}use_total"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Use period total</button></form>
+            <form class="ph-inline" method="post" action="{{ base }}use_grid"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Use daily grid</button></form>
+          {% elif r.state == 'proposal' %}
+            <form class="ph-inline" method="post" action="{{ base }}accept_proposal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Use new figure</button></form>
+            <form class="ph-inline" method="post" action="{{ base }}dismiss_proposal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Keep current</button></form>
+          {% elif r.state == 'pending_hire' %}
+            <span class="sub ph-small">Approve the new hire in Time Review first.</span>
+          {% else %}
+            {% if r.state == 'needs_review' %}
+            <form class="ph-inline" method="post" action="{{ base }}accept"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Accept</button></form>
+            {% endif %}
+            <form class="ph-inline" method="post" action="{{ base }}edit"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="number" name="hours" step="0.25" min="0" max="300" value="{{ '%.2f'|format(r.line_hours) }}" aria-label="Hours"><button class="btn btn-sm" type="submit">Save hours</button></form>
+          {% endif %}
+          <form class="ph-inline" method="post" action="{{ base }}reject"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Reject</button></form>
+        </div>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% if payroll_totals.writable %}
+  <form method="post" action="/admin/timekeeping/status/{{ payroll_totals.period_id }}/{{ payroll_totals.parish_id }}/totals/accept-all" style="margin-top:8px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <button class="btn btn-sm" type="submit">Accept all plain lines for this parish</button>
+    <span class="sub ph-small">Lines with a flag, a waiting figure or a conflict are left for you to look at.</span>
+  </form>
+  {% endif %}
+</div>
+{% endif %}

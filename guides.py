@@ -51,6 +51,13 @@ GUIDES = {
         "back_url": "/admin/ap-review",
         "back_label": "AP Review",
     },
+    # 2026-10-10 (26-158): parish hours that arrive by email, the Time Status checklist.
+    "payroll-hours": {
+        "title": "Payroll Hours from Email",
+        "template": "guide_payroll_hours.html",
+        "back_url": "/admin/timekeeping/status",
+        "back_label": "Time Status",
+    },
     # 2026-10-06 (26-156): polling the holders of a Beacon role by email.
     "polls": {
         "title": "Polls & Surveys",

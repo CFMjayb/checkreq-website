@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Payroll profile — {{ parish.name }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
+<div class="page-shell-wide">
+<h1>Payroll profile <span class="sub">— {{ parish.name }}</span></h1>
+<p class="back-link"><a href="/admin/timekeeping/status">&larr; Back to Time Status</a></p>
+{% if request.query_params.get('saved') %}<div class="banner banner-success">Saved.</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
+
+<div class="card ph-card">
+  <h2>How this parish usually gives its hours</h2>
+  <form method="post" action="/admin/timekeeping/parish-profile/{{ parish.id }}/save">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <label>Pattern
+      <select name="pattern">
+        {% for key, label in patterns.items() %}
+        <option value="{{ key }}"{% if profile and profile.pattern == key %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select></label>
+    <label style="display:block;margin-top:8px">Notes
+      <input type="text" name="notes" maxlength="500" value="{{ profile.notes if profile and profile.notes else '' }}" style="width:100%"></label>
+    <p class="sub">A parish set to "Standing hours" or "No hours expected" shows <strong>Not Expected</strong> on the Time Status board instead of Not Started.</p>
+    <button class="btn" type="submit">Save</button>
+  </form>
+</div>
+
+<div class="card ph-card">
+  <h2>People who send this parish's hours</h2>
+  <p class="sub" style="margin-top:0">These are matched against incoming mail. They are separate from the people who receive the payroll reports.</p>
+  <table class="simple-table ph-tight">
+    <tr><th>Name</th><th>Email</th><th>How added</th><th>Last seen</th><th></th></tr>
+    {% for s in submitters %}
+    <tr><td>{{ s.name or "" }}</td><td>{{ s.email }}</td><td>{{ s.source or "" }}</td><td>{{ s.last_seen or "" }}</td>
+      <td><form class="ph-inline" method="post" action="/admin/timekeeping/parish-profile/{{ parish.id }}/sender-remove">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="email" value="{{ s.email }}">
+        <button class="btn btn-sm" type="submit">Remove</button></form></td></tr>
+    {% else %}
+    <tr><td colspan="5" class="sub">None yet. They are added as mail arrives, or here.</td></tr>
+    {% endfor %}
+  </table>
+  <form method="post" action="/admin/timekeeping/parish-profile/{{ parish.id }}/sender-add" class="ph-actions" style="margin-top:8px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <input type="text" name="name" placeholder="Name (optional)" aria-label="Name">
+    <input type="email" name="email" placeholder="Email address" aria-label="Email address" required>
+    <button class="btn btn-sm" type="submit">Add</button>
+  </form>
+  {% if recipients %}
+  <p class="sub" style="margin-top:12px">Payroll report recipients (shown for reference, not used to match hours):
+    {% for r in recipients %}{{ r.email }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+  {% endif %}
+</div>
+</div>
+{% endblock %}

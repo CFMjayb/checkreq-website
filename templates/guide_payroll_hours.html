@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">Parish hours that arrive by email, from the inbox to the Checkwriters sheet.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="how">
+    <h2>How it works</h2>
+    <p>Each pay period, parishes email the hours of their hourly staff to the payroll mailbox. The payroll inbox routine reads the mail and records each person's <strong>period total</strong> in Beacon, marked with where it came from and a link to the email. <strong>Time Status</strong> is the checklist for the period. Nothing here ever holds pay: hours only.</p>
+  </section>
+
+  <section class="hiw-section" id="board">
+    <h2>The Time Status board</h2>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard">
+        <h3>Status</h3>
+        <p><strong>Received by email</strong> means an email arrived for that parish. <strong>Not Expected</strong> replaces Not Started for a parish whose pattern is standing hours or none (set on its <strong>Profile</strong>).</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>Channel, Expected, Emails</h3>
+        <p>How the parish gave its hours this period, how it usually does, and how many emails arrived (with the time of the first).</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>To review</h3>
+        <p>Lines that still need a decision from you. Open the parish (<strong>View / Edit</strong>) to see them under <strong>Period totals</strong>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="hiw-section" id="review">
+    <h2>Reviewing a line</h2>
+    <p>Every line shows the hours, the source, the sentence the number came from and a link to the email.</p>
+    <ul>
+      <li><strong>Accept</strong> confirms it. <strong>Save hours</strong> corrects it and confirms it. <strong>Reject</strong> sets it aside (it is kept, never deleted).</li>
+      <li><strong>A different figure is waiting</strong>: a later email gave other hours for a line you already confirmed. The confirmed hours stay in force until you choose <strong>Use new figure</strong> or <strong>Keep current</strong>.</li>
+      <li><strong>Conflict with the daily grid</strong>: the parish entered hours in Beacon <em>and</em> sent an email. Neither counts until you choose <strong>Use period total</strong> or <strong>Use daily grid</strong>.</li>
+      <li><strong>New hire not on the roster</strong>: approve the new person in <strong>Time Review</strong> first; their hours then move onto the roster row.</li>
+      <li><strong>Accept all</strong> confirms the plain lines for a parish. It leaves flagged lines (much higher than usual, not an hourly employee, inactive) and anything above for you to look at.</li>
+    </ul>
+  </section>
+
+  <section class="hiw-section" id="standing">
+    <h2>Standing hours</h2>
+    <p>For people whose hours are the same every period (set <strong>Hours basis: standing</strong> and the hours on the Employees screen), <strong>Carry forward standing hours</strong> records them for the period. They are confirmed automatically when the last three periods were confirmed at the same figure; otherwise they wait for review. If an email later gives different hours, it appears as a waiting figure.</p>
+  </section>
+
+  <section class="hiw-section" id="final">
+    <h2>Final, the Excel sheet and the variance report</h2>
+    <ul>
+      <li><strong>Download Excel for Checkwriters</strong> always works. Its first sheet, <strong>Review</strong>, says whether the hours are FINAL and lists everything still unresolved. Do not key a line that is listed there.</li>
+      <li><strong>Mark hours Final</strong> is allowed only when nothing needs a decision. A new figure arriving afterwards takes the stamp away.</li>
+      <li><strong>Variance report</strong>, after payroll runs: Beacon's hours against the paid register, for employees who report hours. It lists matches, differences, people paid with no Beacon hours and Beacon hours with no pay.</li>
+    </ul>
+  </section>
+
+  <section class="hiw-section" id="profile">
+    <h2>A parish's profile</h2>
+    <p>The <strong>Profile</strong> button on each parish row sets how it usually gives its hours and lists the people who send them. New senders are added as mail arrives; you can add or remove one here. They are kept apart from the people who receive the payroll reports.</p>
+  </section>
+
+  <section class="hiw-section" id="parish">
+    <h2>What a parish sees</h2>
+    <p>A parish's Timekeeping page has an <strong>Hours the diocese received</strong> link: a read-only list of what was recorded from its emails, so the parish can see it was understood.</p>
+  </section>
+
+</div>
+{% endblock %}

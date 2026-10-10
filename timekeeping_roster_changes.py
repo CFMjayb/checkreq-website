@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import db
 import notifications
+import payroll_totals
 
 _CHANGE_TYPE_LABELS = {
     "add": "Add staff member",
@@ -203,7 +204,7 @@ def get_change_for_review(change_id: int, org_id: int) -> dict | None:
     )
 
 
-def _apply_change(change: dict) -> None:
+def _apply_change(change: dict) -> int | None:
     """Writes the approved change into the REAL portal.staff_roster —
     duplicates timekeeping_roster.create_staff()/update_staff()'s exact
     field shape rather than importing that module (see this file's own
@@ -211,17 +212,19 @@ def _apply_change(change: dict) -> None:
     propose_* calls, so importing it back here would be circular)."""
     parish_id = change["parish_id"]
     ct = change["change_type"]
+    new_staff_id = None
     with db.connect() as conn:
         with conn.cursor() as cur:
             if ct == "add":
                 cur.execute(
                     "INSERT INTO portal.staff_roster "
                     "(parish_id, first_name, last_name, position, employee_number, created_by_user_id) "
-                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
                     (parish_id, change["proposed_first_name"], change["proposed_last_name"],
                      change["proposed_position"], change["proposed_employee_number"],
                      change["created_by_user_id"]),
                 )
+                new_staff_id = cur.fetchone()["id"]
             elif ct == "edit" and change.get("proposed_captures_hours") is not None:
                 # A FIELD-LEVEL change: raised by the payroll-register reconciler
                 # (reconcile_dme_employees.py) or recorded by the diocese. These
@@ -258,6 +261,7 @@ def _apply_change(change: dict) -> None:
                     "WHERE id = %s AND parish_id = %s",
                     (ct == "reactivate", change["staff_id"], parish_id),
                 )
+    return new_staff_id
 
 
 def approve_change(change: dict, reviewer_user_id: int, review_note: str | None = None) -> None:
@@ -265,7 +269,7 @@ def approve_change(change: dict, reviewer_user_id: int, review_note: str | None 
     approved — if _apply_change() somehow raised, the row stays 'pending'
     rather than being marked approved with nothing having actually
     happened."""
-    _apply_change(change)
+    new_staff_id = _apply_change(change)
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -273,6 +277,9 @@ def approve_change(change: dict, reviewer_user_id: int, review_note: str | None 
                 "reviewed_by_user_id = %s, reviewed_at = NOW(), review_note = %s WHERE id = %s",
                 (reviewer_user_id, review_note, change["id"]),
             )
+    if change["change_type"] == "add" and new_staff_id:
+        # 26-158: hours already recorded for this pending new hire move onto the new roster row.
+        payroll_totals.on_roster_add_approved(change["id"], new_staff_id)
     _notify_outcome(change, approved=True, review_note=review_note)
 
 
@@ -287,6 +294,9 @@ def reject_change(change: dict, reviewer_user_id: int, review_note: str | None =
                 "reviewed_by_user_id = %s, reviewed_at = NOW(), review_note = %s WHERE id = %s",
                 (reviewer_user_id, review_note, change["id"]),
             )
+    if change["change_type"] == "add":
+        # 26-158: hours recorded for a rejected new hire are rejected too (the rows are kept).
+        payroll_totals.on_roster_add_rejected(change["id"], reviewer_user_id)
     _notify_outcome(change, approved=False, review_note=review_note)
 
 

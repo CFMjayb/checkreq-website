@@ -80,6 +80,8 @@ import db
 import rbac
 import registry
 import cornerstone_mode
+import payroll_export
+import payroll_screens
 import timekeeping
 import timekeeping_entries
 
@@ -194,6 +196,9 @@ def status_board(period_id: int, request: Request):
             status_code=303,
         )
     rows = list_parish_status_for_period(org["id"], period_id)
+    # 26-158: channel / pattern / emails / lines to review per parish, and the Final state.
+    payroll_screens.board_rows(org["id"], period, rows)
+    payroll_summary = payroll_screens.board_summary(org["id"], period)
     # Other periods currently 'open' in this diocese. Surfaced rather than
     # silently prevented: the parish entry grid resolves ONE period via
     # timekeeping.get_current_open_period(), which prefers the open period
@@ -208,6 +213,7 @@ def status_board(period_id: int, request: Request):
     return _render(request, "timekeeping_status.html", user, {
         "current_org": org, "period": period, "rows": rows,
         "other_open": other_open, "today": dt.date.today().isoformat(),
+        "payroll": payroll_summary,
     })
 
 
@@ -286,104 +292,12 @@ async def status_set_status(period_id: int, request: Request):
 # own TestClient verification, not just reasoned about, before this
 # placement was settled on.
 
-_SUMMARY_SQL = """
-    SELECT p.code AS parish_code, p.name AS parish_name,
-           sr.last_name, sr.first_name, sr.position, sr.employee_number,
-           c.label AS category_label,
-           SUM(te.hours) AS total_hours
-      FROM portal.time_entries te
-      JOIN portal.staff_roster sr ON sr.id = te.staff_id
-      JOIN portal.parishes p ON p.id = sr.parish_id
-      JOIN portal.timekeeping_categories c ON c.id = te.category_id
-     WHERE te.period_id = %(period_id)s AND p.org_id = %(org_id)s
-     GROUP BY p.code, p.name, sr.last_name, sr.first_name, sr.position, sr.employee_number,
-              c.label, c.sort_order
-    HAVING SUM(te.hours) > 0
-     ORDER BY p.name, sr.last_name, sr.first_name, c.sort_order
-"""
-
-_DETAIL_SQL = """
-    SELECT p.code AS parish_code, p.name AS parish_name,
-           sr.last_name, sr.first_name,
-           c.label AS category_label, te.work_date, te.hours
-      FROM portal.time_entries te
-      JOIN portal.staff_roster sr ON sr.id = te.staff_id
-      JOIN portal.parishes p ON p.id = sr.parish_id
-      JOIN portal.timekeeping_categories c ON c.id = te.category_id
-     WHERE te.period_id = %(period_id)s AND p.org_id = %(org_id)s AND te.hours > 0
-     ORDER BY p.name, sr.last_name, sr.first_name, te.work_date, c.sort_order
-"""
-
-_HEADER_FILL = "1F3D2E"  # --color-franciscan-green, this app's own brand token
-
-
-def _write_header(ws, headers: list[str]) -> None:
-    fill = PatternFill(start_color=_HEADER_FILL, end_color=_HEADER_FILL, fill_type="solid")
-    font = Font(bold=True, color="FFFFFF")
-    for i, h in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=i, value=h)
-        cell.font = font
-        cell.fill = fill
-        cell.alignment = Alignment(vertical="center")
-    ws.freeze_panes = "A2"
-
-
-def _set_widths(ws, widths: list[int]) -> None:
-    for i, w in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = w
-
-
 def build_export_workbook(org: dict, period: dict) -> bytes:
-    """Real portal.time_entries data for one period, across every parish in
-    this diocese -- see the module docstring's EXPORT COLUMN LAYOUT note.
-    Only rows with real (>0) hours are included in either sheet -- a sparse
-    "every staff x every category" grid would mostly be empty and adds
-    nothing a reviewer needs."""
-    summary_rows = db.query(_SUMMARY_SQL, {"period_id": period["id"], "org_id": org["id"]})
-    detail_rows = db.query(_DETAIL_SQL, {"period_id": period["id"], "org_id": org["id"]})
-
-    wb = Workbook()
-
-    ws = wb.active
-    ws.title = "Summary"
-    _write_header(ws, [
-        "Parish Code", "Parish Name", "Last Name", "First Name", "Position",
-        "Employee #", "Category", "Total Hours",
-    ])
-    for r_i, row in enumerate(summary_rows, start=2):
-        ws.cell(row=r_i, column=1, value=row["parish_code"])
-        ws.cell(row=r_i, column=2, value=row["parish_name"])
-        ws.cell(row=r_i, column=3, value=row["last_name"])
-        ws.cell(row=r_i, column=4, value=row["first_name"])
-        ws.cell(row=r_i, column=5, value=row["position"])
-        ws.cell(row=r_i, column=6, value=row["employee_number"])
-        ws.cell(row=r_i, column=7, value=row["category_label"])
-        ws.cell(row=r_i, column=8, value=float(row["total_hours"])).number_format = "0.00"
-    _set_widths(ws, [12, 32, 16, 14, 20, 14, 14, 12])
-    if not summary_rows:
-        ws.cell(row=2, column=1, value="No hours logged for this period yet.")
-
-    ws2 = wb.create_sheet("Detail")
-    _write_header(ws2, [
-        "Parish Code", "Parish Name", "Last Name", "First Name",
-        "Category", "Date", "Hours",
-    ])
-    for r_i, row in enumerate(detail_rows, start=2):
-        ws2.cell(row=r_i, column=1, value=row["parish_code"])
-        ws2.cell(row=r_i, column=2, value=row["parish_name"])
-        ws2.cell(row=r_i, column=3, value=row["last_name"])
-        ws2.cell(row=r_i, column=4, value=row["first_name"])
-        ws2.cell(row=r_i, column=5, value=row["category_label"])
-        d = row["work_date"]
-        ws2.cell(row=r_i, column=6, value=d.isoformat() if hasattr(d, "isoformat") else str(d))
-        ws2.cell(row=r_i, column=7, value=float(row["hours"])).number_format = "0.00"
-    _set_widths(ws2, [12, 32, 16, 14, 14, 12, 10])
-    if not detail_rows:
-        ws2.cell(row=2, column=1, value="No hours logged for this period yet.")
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+    """The period's Excel export. Since 26-158 it is built by payroll_export.py: a Review sheet
+    first (what still needs a decision, and whether the hours are FINAL), then Hours (daily-grid
+    hours and period totals merged, one row per employee and category) and Detail (the daily
+    grid). The pre-26-158 Summary+Detail builder is in timekeeping_status_pre_payroll_totals.py."""
+    return payroll_export.build_export_workbook(org, period)
 
 
 @router.get("/admin/timekeeping/status/{period_id}/export")
@@ -396,9 +310,7 @@ def export_period(period_id: int, request: Request):
         return JSONResponse({"error": "That payroll period was not found for this diocese."}, status_code=404)
 
     content = build_export_workbook(org, period)
-    label = (period.get("label") or f"{period['period_start']}_to_{period['period_end']}")
-    safe_label = "".join(c if c.isalnum() or c in " -_." else "_" for c in str(label)).strip() or "Period"
-    filename = f"{org['code']} Timekeeping {safe_label}.xlsx"
+    filename = payroll_export.filename_for(org, period)
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -438,6 +350,7 @@ def backfill_entry_page(period_id: int, parish_id: int, request: Request):
         parish, org["id"], period, can_enter=True, bypass_submission_lock=True,
     )
     ctx["diocese_mode"] = True
+    ctx["payroll_totals"] = payroll_screens.section_context(org["id"], period, parish["id"])
     ctx["back_link_url"] = f"/admin/timekeeping/status/{period_id}"
     ctx["back_link_label"] = "Back to Status Board"
     ctx["save_url"] = f"/admin/timekeeping/status/{period_id}/{parish_id}/save"
