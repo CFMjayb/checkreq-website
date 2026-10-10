@@ -222,7 +222,28 @@ def _apply_change(change: dict) -> None:
                      change["proposed_position"], change["proposed_employee_number"],
                      change["created_by_user_id"]),
                 )
+            elif ct == "edit" and change.get("proposed_captures_hours") is not None:
+                # A FIELD-LEVEL change: raised by the payroll-register reconciler
+                # (reconcile_dme_employees.py) or recorded by the diocese. These
+                # carry the hours flag, and any proposed_* column left empty means
+                # "leave this field alone". The whole-row UPDATE below would have
+                # blanked the employee number and position and never applied the
+                # hours flag (found 2026-10-10: the reconciler's queued rows
+                # could not be approved safely).
+                cur.execute(
+                    "UPDATE portal.staff_roster SET "
+                    "first_name = COALESCE(%s, first_name), last_name = COALESCE(%s, last_name), "
+                    "position = COALESCE(%s, position), employee_number = COALESCE(%s, employee_number), "
+                    "captures_hours = %s, effective_date = COALESCE(%s, effective_date), "
+                    "updated_at = NOW() WHERE id = %s AND parish_id = %s",
+                    (change["proposed_first_name"], change["proposed_last_name"],
+                     change["proposed_position"], change["proposed_employee_number"],
+                     change["proposed_captures_hours"], change.get("as_of_date"),
+                     change["staff_id"], parish_id),
+                )
             elif ct == "edit":
+                # A parish proposal: the whole row as the parish submitted it
+                # (timekeeping_roster.py's edit form always posts every field).
                 cur.execute(
                     "UPDATE portal.staff_roster SET first_name = %s, last_name = %s, "
                     "position = %s, employee_number = %s, updated_at = NOW() "

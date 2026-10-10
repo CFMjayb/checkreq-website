@@ -103,6 +103,9 @@ _STATE_CHANGING_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 
 _FORM_CONTENT_TYPES = ("application/x-www-form-urlencoded", "multipart/form-data")
 
+# See _submitted_token: the ceiling for reading the token out of a form body.
+_MAX_FORM_FIELDS = 20000
+
 EXEMPT_PREFIXES = (
     "/email-action/",
     "/vendor-w9-upload/",
@@ -161,7 +164,15 @@ async def _submitted_token(request: Request) -> str | None:
 
     shadow = Request(request.scope, receive=_replay_once)
     try:
-        form = await shadow.form()
+        # Starlette (newer releases) refuses a form with 1,000 or more fields
+        # and raises; this used to be swallowed below and answered as "Session
+        # expired" (the HR Employees screen, 2026-10-10: ~1,550 fields). The
+        # token is the only thing read here, so parse with a high ceiling and
+        # let the route enforce whatever limit it wants for itself.
+        try:
+            form = await shadow.form(max_fields=_MAX_FORM_FIELDS)
+        except TypeError:          # a Starlette without the keyword
+            form = await shadow.form()
     except Exception:
         return None
     value = form.get(CSRF_FORM_FIELD)
