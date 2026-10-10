@@ -1,17 +1,25 @@
 {#
-donor_portal_choose.html -- after a verified code, when one address reaches more than one person (spouses sharing a mailbox) or one
-person at more than one parish. The buttons send only the index of a choice the server stored itself; the server checks it again.
+donor_portal_choose.html -- after a proven sign-in (a verified code or a right password) that has more than one choice: one address that
+reaches more than one person (spouses sharing a mailbox), one person at more than one parish, or (wrong_parish) a person who opened one
+parish's link but has access only at other parishes. The buttons send only the index of a choice the server stored itself; the server
+checks it again.
 #}
 {% extends "donor_portal_base.html" %}
-{% block title %}Who is signing in?{% endblock %}
+{% block title %}{% if wrong_parish %}Welcome{% else %}Who is signing in?{% endif %}{% endblock %}
 {% block content %}
 <div class="pp-card pp-narrow">
+  {% if wrong_parish %}
+  <h1>Welcome!</h1>
+  <p>You're signed in, but you're not set up at {{ wrong_parish }}. Here is where you do have access. Pick one to continue:</p>
+  {% else %}
   <h1>Who is signing in?</h1>
-  <p>Your code worked. This address is on file for more than one choice. Pick the one that is you.</p>
+  <p>You're signed in. This address is on file for more than one choice. Pick the one that is you.</p>
+  {% endif %}
   <form method="post" action="/my/choose" class="pp-choices">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     {% for ch in choices %}<button type="submit" name="option" value="{{ loop.index0 }}" class="btn btn-secondary btn-block">{{ ch.label }}</button>{% endfor %}
   </form>
-  <p class="pp-hint">You will see only your own information, never anyone else's.</p>
+  {% if wrong_parish %}<p class="pp-hint">If you expected to have access at {{ wrong_parish }}, please contact the parish office and they will help. You will see only your own information, never anyone else's.</p>
+  {% else %}<p class="pp-hint">You will see only your own information, never anyone else's.</p>{% endif %}
 </div>
 {% endblock %}

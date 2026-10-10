@@ -142,7 +142,7 @@ def _not_giving(request: Request, ps: dict):
 
 
 # ── sign-in ─────────────────────────────────────────────────────────────────────────────────────
-PARISH_KEY = "portal_parish"          # the parish whose /my/<link> the visitor opened: its logo and name, AND the only parish a password or code may sign in to
+PARISH_KEY = "portal_parish"          # the parish whose /my/<link> the visitor opened: its logo and name, and where a PROVEN person goes (or is offered a menu of the parishes they do have)
 EMAIL_KEY = "portal_email"            # the address typed on page one, kept only to show on page two and to ask for a code (the signed cookie)
 FRESH_KEY = "portal_fresh_proof"      # when an emailed code last proved the person controls their address (lets a password be changed without the old one)
 VIA_PW_KEY = "portal_via_password"    # the pending "choose" step came from a password, not a code
@@ -233,7 +233,7 @@ async def signin_post(request: Request):
     if not email:
         return _signin_page(request, error="Enter your email address.", status=400)
     ip = L.client_ip(request)
-    res = L.request_code(email, ip, request.session.get(PARISH_KEY))        # only a login at the parish whose link was opened gets a code
+    res = L.request_code(email, ip)
     request.session[L.CHALLENGE_KEY] = res["token"]
     if res["send"]:                                  # sent NOW, before the answer (a job after the answer was not run on Cloud Run)
         await run_in_threadpool(L.send_code_email, res["send"][0], res["send"][1], ip)     # in a worker thread: the server's loop stays free
@@ -260,7 +260,7 @@ async def code_post(request: Request):
         return _redirect("/my")
     code = "".join(ch for ch in str(form.get("code") or "") if ch.isdigit())[:6]
     ip = L.client_ip(request)
-    res = L.verify_code(token, code, ip)
+    res = L.verify_code(token, code, ip, request.session.get(PARISH_KEY))          # the parish whose link was opened decides where a PROVEN person goes
     if res["status"] == "signed_in":
         _start_session(request, res["session_token"])
         return _after_code_signin(request, res)
@@ -280,7 +280,12 @@ def choose_get(request: Request):
     choices = L.pending_choices(request.session.get(L.CHALLENGE_KEY))
     if not choices:
         return _redirect("/my")
-    return _page(request, "donor_portal_choose.html", None, {"choices": choices})
+    # A proven person who opened one parish's link but has access only at other parishes is welcomed and shown where they DO have access
+    # (Jay, 2026-10-10: be kind to someone who signs in at the wrong parish); nothing opens until they pick.
+    link_id = request.session.get(PARISH_KEY)
+    card = L.parish_card(link_id) if link_id else None
+    wrong_parish = card["name"] if card and not any(c["parish_id"] == link_id for c in choices) else None
+    return _page(request, "donor_portal_choose.html", None, {"choices": choices, "wrong_parish": wrong_parish})
 
 
 @portal.post("/my/choose")
