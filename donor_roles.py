@@ -109,6 +109,27 @@ def ensure_default_status_codes(cur, parish_id: int) -> int:
     return len(DEFAULT_STATUS_CODES)
 
 
+ACTIVATION_SWITCHES = ("people_enabled", "giving_enabled", "allow_single_person_batch", "qbo_posting_enabled", "portal_enabled")
+ACTIVATION_ACCOUNTS = ("qbo_company_key", "default_cash_account", "processing_fee_account", "due_from_diocese_account",
+                       "investment_account", "in_kind_account", "default_class")
+
+
+def activation_changes(form) -> dict:
+    """The settings a 'Turn on and accounts' form posted, as settings_update wants them. One source for both places the form lives (the Portal
+    pop-up on Manage Parishes and the accounts card on Settings). A switch is only read when its hidden `has_<name>` marker came with it (an
+    unchecked box sends nothing), and a blank link name keeps the published one (a blank box must never erase a link)."""
+    changes: dict = {}
+    for k in ACTIVATION_SWITCHES:
+        if f"has_{k}" in form:
+            changes[k] = form.get(k) is not None
+    for k in ACTIVATION_ACCOUNTS:
+        if k in form:
+            changes[k] = form.get(k)
+    if (form.get("portal_slug") or "").strip():
+        changes["portal_slug"] = form.get("portal_slug")
+    return changes
+
+
 def settings_update(ctx: Ctx, changes: dict, *, cur=None) -> dict:
     """Change this parish's settings. Turning Donor Management on or off, the single-person-batch exception
     and QBO posting are diocesan decisions (capability parish.activate). The QBO account names are set by

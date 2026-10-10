@@ -1,0 +1,13 @@
+{#
+manage_parish_popup_page.html -- the same Portal or Finance form as a full page: where the button leads when scripts are off (with scripts the form opens in a
+pop-up on Manage Parishes instead). `fragment_template` names which form to show.
+#}
+{% extends "base.html" %}
+{% block title %}{{ title }} — Beacon{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/manage_parishes.css?v={{ asset_version('css/manage_parishes.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell">
+  <p class="back-link"><a href="/admin/manage-parishes">&larr; Back to Manage Parishes</a></p>
+  <div class="card mp-page-card">{% include fragment_template %}</div>
+</div>
+{% endblock %}
