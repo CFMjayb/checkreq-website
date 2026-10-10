@@ -332,3 +332,4 @@
 .dm-history > summary { cursor: pointer; padding: 6px 0; border-bottom: 1px solid var(--color-border); }
 .dm-history > summary h3 { display: inline; }
 .dm-menu-info { padding: 4px 12px; font-size: 0.8rem; color: var(--color-text-muted); white-space: nowrap; }
+.dm-menu-sep { border: 0; border-top: 1px solid var(--color-border); margin: 6px 0 4px; width: 100%; }
