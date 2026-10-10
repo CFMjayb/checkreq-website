@@ -14,7 +14,7 @@
 <p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
 <p class="sub">
   {{ parish.name }}'s time entry for the current open payroll period.
-  <a href="/timekeeping/roster">Manage staff roster</a>
+  <a href="/timekeeping/roster">Manage staff roster</a> &middot; <a href="/timekeeping/received">Hours the diocese received</a>
 </p>
 {% endif %}
 
@@ -66,6 +66,8 @@
   you need to make a correction.
 </div>
 {% endif %}
+
+{% if diocese_mode and payroll_totals is defined %}{% include "_payroll_totals_section.html" %}{% endif %}
 
 {% if not can_enter %}
 <div class="banner banner-info">You can view this parish's time entries, but you don't have permission to enter or change them.</div>

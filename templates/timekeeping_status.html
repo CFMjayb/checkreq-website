@@ -2,7 +2,8 @@
 {% block title %}Timekeeping Status — {{ current_org.name }}{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
-<h1>Timekeeping Status</h1>
+{% from "_guide_link.html" import guide_link %}
+<h1>Timekeeping Status {{ guide_link("payroll-hours", "How payroll hours from email work") }}</h1>
 <p class="back-link"><a href="/portal">&larr; Back to main menu</a></p>
 <p class="sub">
   Every active parish under {{ current_org.name }} for
@@ -53,22 +54,49 @@
   </form>
 </div>
 
-<p style="margin:12px 0">
-  <a class="btn btn-sm" href="/admin/timekeeping/status/{{ period.id }}/export">Download Excel (Summary + Detail)</a>
-</p>
+{# 26-158: the hours picture for this period -- what still needs a decision, the Final stamp,
+   the Excel export (the Checkwriters entry sheet) and the variance report. #}
+<link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
+<div class="card">
+  <div class="{{ 'ph-final' if payroll.final and not payroll.left else 'ph-notfinal' }}">
+    {% if payroll.final and not payroll.left %}
+      <strong>Hours are Final</strong>{% if payroll.final_at %} <span class="sub">(marked {{ payroll.final_at }})</span>{% endif %} &mdash; ready to key into Checkwriters.
+    {% elif payroll.left %}
+      <strong>Not final:</strong> {{ payroll.left }} line(s) still need a decision. Open a parish below to review them.
+    {% else %}
+      <strong>Not final:</strong> nothing is waiting. Mark the hours Final when you are ready.
+    {% endif %}
+  </div>
+  <div class="ph-actions" style="margin-top:8px">
+    <a class="btn btn-sm" href="/admin/timekeeping/status/{{ period.id }}/export">Download Excel for Checkwriters</a>
+    <a class="btn btn-sm" href="/admin/timekeeping/status/{{ period.id }}/variance">Variance report</a>
+    {% if payroll.final %}
+    <form class="ph-inline" method="post" action="/admin/timekeeping/status/{{ period.id }}/unfinal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Mark not final</button></form>
+    {% elif not payroll.left %}
+    <form class="ph-inline" method="post" action="/admin/timekeeping/status/{{ period.id }}/final"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Mark hours Final</button></form>
+    {% endif %}
+    {% if period.status in ('open', 'future') %}
+    <form class="ph-inline" method="post" action="/admin/timekeeping/status/{{ period.id }}/standing"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Carry forward standing hours</button></form>
+    {% endif %}
+  </div>
+</div>
 
 <div class="card">
 <div class="table-scroll">
 <table class="simple-table">
   <tr>
-    <th>Parish</th><th>Status</th><th>Total Hours</th><th>Submitted By</th><th>Submitted</th><th></th>
+    <th>Parish</th><th>Status</th><th>Channel</th><th>Expected</th><th>Emails</th><th>To review</th><th>Total Hours</th><th>Submitted By</th><th>Submitted</th><th></th>
   </tr>
   {% for r in rows %}
   <tr>
     <td>{{ r.parish_name }}{% if r.parish_code %} <span class="sub">({{ r.parish_code }})</span>{% endif %}</td>
     <td>
-      {% if not r.submission_id %}
+      {% if r.not_expected %}
+        <span class="badge badge-skipped">Not Expected</span>
+      {% elif not r.submission_id %}
         <span class="badge badge-cancelled">Not Started</span>
+      {% elif r.by_email %}
+        <span class="badge badge-submitted">Received by email</span>
       {% elif r.submission_status == 'submitted' %}
         <span class="badge badge-submitted">Submitted</span>
       {% elif r.submission_status == 'reopened' %}
@@ -77,15 +105,19 @@
         <span class="badge badge-draft">Draft</span>
       {% endif %}
     </td>
+    <td>{{ r.channel_label or "—" }}</td>
+    <td>{{ r.pattern_label or "—" }}</td>
+    <td>{% if r.emails %}{{ r.emails }}{% if r.first_received %} <span class="sub ph-small">first {{ r.first_received }}</span>{% endif %}{% else %}—{% endif %}</td>
+    <td>{% if r.needs_review or r.conflicts or r.proposals %}<span class="ph-state-attn">{{ r.needs_review + r.proposals }} to review{% if r.conflicts %}, {{ r.conflicts }} conflict{{ '' if r.conflicts == 1 else 's' }}{% endif %}</span>{% else %}—{% endif %}</td>
     <td>{{ "%.2f"|format(r.total_hours) }}</td>
     <td>{{ r.submitted_by_name or r.submitted_by_email or "—" }}</td>
     <td>{{ r.submitted_at.strftime("%Y-%m-%d %H:%M") if r.submitted_at else "—" }}</td>
     <td><a class="btn btn-sm" href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">
       {{ "Enter Missing Data" if not r.submission_id else "View / Edit" }}
-    </a></td>
+    </a> <a class="btn btn-sm" href="/admin/timekeeping/parish-profile/{{ r.parish_id }}">Profile</a></td>
   </tr>
   {% else %}
-  <tr><td colspan="6" class="sub">No active parishes found for this diocese.</td></tr>
+  <tr><td colspan="10" class="sub">No active parishes found for this diocese.</td></tr>
   {% endfor %}
 </table>
 </div>

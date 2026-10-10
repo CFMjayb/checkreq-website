@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Hours variance — {{ current_org.name }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
+<div class="page-shell-wide">
+<h1>Hours: Beacon vs. the paid register</h1>
+<p class="back-link"><a href="/admin/timekeeping/status/{{ period.id }}">&larr; Back to Time Status</a></p>
+<p class="sub">{{ period.label or (period.period_start|string ~ " to " ~ period.period_end|string) }}{% if period.pay_date %} &middot; pay date {{ period.pay_date }}{% endif %}.
+  Hours only, for employees who report hours. The register's hours are loaded after payroll runs.</p>
+{% if not report.register_loaded %}
+<div class="banner banner-info">No register hours have been loaded for this period yet, so nothing can be compared.</div>
+{% else %}
+<div class="card ph-card">
+  <strong>{{ report.counts.match }}</strong> match &middot;
+  <strong class="{{ 'ph-state-attn' if report.counts.differs else '' }}">{{ report.counts.differs }}</strong> differ &middot;
+  <strong class="{{ 'ph-state-attn' if report.counts.paid_no_beacon_hours else '' }}">{{ report.counts.paid_no_beacon_hours }}</strong> paid with no Beacon hours &middot;
+  <strong class="{{ 'ph-state-attn' if report.counts.beacon_hours_not_paid else '' }}">{{ report.counts.beacon_hours_not_paid }}</strong> Beacon hours with no pay
+</div>
+<div class="card"><div class="table-scroll">
+<table class="simple-table ph-tight">
+  <tr><th>Parish</th><th>Employee</th><th>Category</th><th>Beacon</th><th>Register</th><th>Difference</th><th>Result</th></tr>
+  {% for r in report.rows if r.kind != 'match' %}
+  <tr>
+    <td>{{ r.parish_name }}</td>
+    <td>{{ r.last_name }}, {{ r.first_name }}{% if r.employee_number %} <span class="sub ph-small">#{{ r.employee_number }}</span>{% endif %}</td>
+    <td>{{ r.category_label }}</td>
+    <td>{{ "%.2f"|format(r.beacon_hours) if r.beacon_hours is not none else "—" }}</td>
+    <td>{{ "%.2f"|format(r.register_hours) if r.register_hours is not none else "—" }}</td>
+    <td>{{ "%+.2f"|format(r.difference) if r.difference is not none else "—" }}</td>
+    <td class="ph-state-attn">{{ {'differs': 'Hours differ', 'paid_no_beacon_hours': 'Paid, no Beacon hours', 'beacon_hours_not_paid': 'Beacon hours, none paid'}[r.kind] }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="sub">Every line matches.</td></tr>
+  {% endfor %}
+</table></div></div>
+{% endif %}
+</div>
+{% endblock %}

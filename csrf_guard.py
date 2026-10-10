@@ -116,6 +116,9 @@ EXEMPT_PREFIXES = (
     # no browser session exists; each route authenticates with its own shared
     # secret header instead.
     "/webhooks/",
+    # 26-158: the payroll inbox service API. Machine-to-machine: each call carries an API key
+    # (payroll_api.py), no browser session exists.
+    "/api/payroll/",
 )
 
 

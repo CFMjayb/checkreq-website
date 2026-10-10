@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Hours received — {{ parish.name }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
+<div class="page-shell-wide">
+<h1>Hours the diocese received</h1>
+<p class="back-link"><a href="/timekeeping">&larr; Back to Timekeeping</a></p>
+<p class="sub">What the diocese recorded for {{ parish.name }} from the hours you sent by email. This is read-only: if something looks wrong, reply to the payroll office.</p>
+{% for b in blocks %}
+<div class="card ph-card">
+  <h2>{{ b.period.label or (b.period.period_start|string ~ " to " ~ b.period.period_end|string) }}
+    <span class="sub">({{ b.period.period_start }} to {{ b.period.period_end }})</span></h2>
+  {% if b.rows %}
+  <table class="simple-table ph-tight">
+    <tr><th>Employee</th><th>Category</th><th>Hours</th><th>Status</th></tr>
+    {% for r in b.rows %}
+    <tr><td>{{ r.last_name }}, {{ r.first_name }}</td><td>{{ r.category_label }}</td>
+      <td>{{ "%.2f"|format(r.line_hours) }}</td><td>{{ r.state_label }}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="sub">Nothing has been recorded from email for this period yet.</p>
+  {% endif %}
+</div>
+{% else %}
+<div class="card"><p class="sub">There is no open pay period right now.</p></div>
+{% endfor %}
+</div>
+{% endblock %}

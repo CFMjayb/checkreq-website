@@ -134,6 +134,8 @@ import timekeeping_employees
 import timekeeping_entries
 import timekeeping_review
 import timekeeping_status
+import payroll_api
+import payroll_screens
 import approval_engine
 import auth_routes
 import org_branding
@@ -9573,6 +9575,11 @@ timekeeping_review.register(app, current_user=_current_user, current_org=_curren
 # current_user/current_org/render signature as timekeeping.py/
 # timekeeping_review.py (it needs _current_org() to resolve the diocese,
 # unlike the two parish-context-only modules above).
+# 26-158 (payroll inbox hours): registered BEFORE timekeeping_status so its literal
+# /status/{period}/variance|final|standing paths match before the generic
+# /status/{period}/{parish} route. payroll_api is the API-key service API.
+payroll_screens.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+payroll_api.register(app)
 timekeeping_status.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 
 # In-App Notifications (2026-08-02, In-App Notifications Plan.md).
