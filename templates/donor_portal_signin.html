@@ -13,7 +13,7 @@ portal (never given its address).
   {% if parish.has_logo %}<img class="pp-logo" src="/my/{{ parish.slug }}/logo" alt="{{ parish.name }} logo">{% endif %}
   <h1>{{ parish.name }}</h1>
   {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
-  <form method="post" action="/my/signin" class="dm-form pp-form">
+  <form method="post" action="/my/start" class="dm-form pp-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="field"><label for="pp-email">Enter your email address</label>
       <input id="pp-email" type="email" name="email" autocomplete="email" inputmode="email" maxlength="254" autofocus required></div>

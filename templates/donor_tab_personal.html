@@ -84,7 +84,7 @@ email their sign-in code goes to, which they cannot change or remove.
       </div>
       <div class="dm-f dm-c3 dm-add"><button type="button" class="btn btn-secondary btn-sm" data-add-contact>+ Another</button></div>
     </div>
-    {% if signin_email %}<p class="pp-hint dm-edit-only">Your sign-in email (marked above) is where your sign-in code is sent, so it can't be changed or removed here: use <a href="/my/help">Get help</a> to change it.</p>{% endif %}
+    {% if signin_email and target_id == ps.person_id %}<p class="pp-hint">Your sign-in email is the one marked above. <a href="/my/email" class="pp-link">Change sign-in email</a></p>{% endif %}
     {% endif %}
   </section>
 
@@ -231,6 +231,7 @@ email their sign-in code goes to, which they cannot change or remove.
 <div class="dm-foot-note">
   {% if self_mode %}
   <span>Record added {{ d(p.created_at) }}.</span>
+  {% if target_id == ps.person_id %}<span><a href="/my/set-password" class="pp-link">{{ 'Change your password' if has_password else 'Set a password' }}</a></span>{% endif %}
   {% else %}
   <span>Shared profile: a change here also shows at {{ g.other_connections|length }} other {{ 'parish' if g.other_connections|length == 1 else 'parishes' }}{% if not g.other_connections %} if the person is connected to more{% endif %}.</span>
   <span>Added {{ d(p.created_at) }} &middot; last changed {{ d(p.updated_at) }}</span>

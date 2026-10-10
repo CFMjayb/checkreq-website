@@ -1,0 +1,26 @@
+{#
+donor_portal_setpw.html -- set or change the member's own password. Offered right after an emailed-code sign-in ("Not now" skips it) and
+from the link at the bottom of the Personal tab. A change asks for the current password unless a code was used in the last few minutes.
+#}
+{% extends "donor_portal_base.html" %}
+{% block title %}{{ 'Change your password' if has_password else 'Set a password' }}{% endblock %}
+{% block content %}
+<div class="pp-card pp-narrow">
+  <h1>{{ 'Change your password' if has_password else 'Set a password' }}</h1>
+  <p>With a password you can sign in with your email address and password next time. You can always ask for an emailed code instead.</p>
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+  <form method="post" action="/my/set-password" class="dm-form pp-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    {% if needs_current %}
+    <div class="field"><label for="pp-current">Your current password</label>
+      <input id="pp-current" type="password" name="current_password" autocomplete="current-password" maxlength="200" required></div>
+    {% endif %}
+    <div class="field"><label for="pp-new">New password (at least 10 characters)</label>
+      <input id="pp-new" type="password" name="new_password" autocomplete="new-password" minlength="10" maxlength="200" required autofocus></div>
+    <div class="field"><label for="pp-new2">Type it again</label>
+      <input id="pp-new2" type="password" name="confirm_password" autocomplete="new-password" minlength="10" maxlength="200" required></div>
+    <button type="submit" class="btn btn-primary btn-block">Save password</button>
+  </form>
+  <p class="pp-hint" style="margin-top:12px"><a href="/my/personal">{{ 'Cancel' if has_password else 'Not now' }}</a></p>
+</div>
+{% endblock %}

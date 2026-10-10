@@ -1,0 +1,19 @@
+{#
+donor_portal_email_confirm.html -- the code sent to the new address. The words are the same whether or not a code was actually sent.
+#}
+{% extends "donor_portal_base.html" %}
+{% block title %}Confirm your new email{% endblock %}
+{% block content %}
+<div class="pp-card pp-narrow">
+  <h1>Confirm your new email</h1>
+  <p>If that address can be used, we sent it a six-digit code. Enter the code to start signing in with it.</p>
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+  <form method="post" action="/my/email/confirm" class="dm-form pp-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <div class="field"><label for="pp-chg-code">Six-digit code</label>
+      <input id="pp-chg-code" class="pp-code" type="text" name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="6" autofocus required></div>
+    <button type="submit" class="btn btn-primary btn-block">Confirm</button>
+  </form>
+  <p class="pp-hint" style="margin-top:12px"><a href="/my/email">Use a different address</a> &middot; <a href="/my/personal">Cancel</a></p>
+</div>
+{% endblock %}
