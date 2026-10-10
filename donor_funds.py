@@ -197,6 +197,8 @@ def campaign_update(ctx: Ctx, campaign_id: int, changes: dict, *, cur=None) -> d
         new["goal_amount"] = to_money(changes["goal_amount"], field="goal") if str(changes["goal_amount"] or "").strip() else None
     if "is_active" in changes:
         new["is_active"] = to_bool(changes["is_active"], field="active")
+    if "online_pledging" in changes:                # Finance's switch: parishioners may ask to pledge from their own screen (migration 082)
+        new["online_pledging"] = to_bool(changes["online_pledging"], field="online pledging")
     if not new:
         return {"id": campaign_id, "changed": []}
     with tx(cur) as c:

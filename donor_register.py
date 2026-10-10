@@ -66,6 +66,9 @@ def register(app, *, current_user, render, templates=None, current_org=None) -> 
     # Order matters: the static /people/... paths must be registered before /people/{person_id}.
     import donor_routes_admin
     import donor_routes_people
+    if templates is not None:              # Parishioner Self-Service (/my/...) and the staff answers under /pledges/requests and /people/messages
+        import donor_routes_portal
+        donor_routes_portal.register(app, templates)
     donor_routes_admin.register(app)
     try:                                   # Phase 2 routes (giving, pledges), present once migration 077's screens are built
         import donor_routes_giving

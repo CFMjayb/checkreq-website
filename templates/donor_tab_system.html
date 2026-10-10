@@ -3,9 +3,10 @@
 {% from "donor_macros.html" import csrf with context %}
 {% if show_access %}
 <div class="dm-section" id="user-account">
-  <div class="dm-section-head"><h3>User account</h3>
+  <div class="dm-section-head"><h3>Beacon staff login (People &amp; Giving roles)</h3>
     <a class="btn btn-secondary btn-sm" href="/people/users">All users</a>
   </div>
+  <p class="dm-muted dm-small">The login this person uses to run Beacon as STAFF, and the People &amp; Giving roles it holds. It is a different thing from the member's own parishioner login below.</p>
   {% if access %}
   <div class="table-scroll">
   <table class="simple-table dm-table dm-compact">
@@ -25,6 +26,57 @@
   <p class="dm-muted dm-small">A login belongs to this person when its email is one of their email addresses. Roles are given and taken away on the Users screen under Setup. Parish Admin is given under User Access.</p>
   {% else %}
   <p class="doc-empty">No Beacon login matches this person's email addresses.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if portal_login %}
+{% set pl = portal_login %}
+<div class="dm-section" id="parishioner-login">
+  <div class="dm-section-head"><h3>Parishioner login (self-service)</h3></div>
+  <p class="dm-muted dm-small">The login this person uses on THEIR OWN screen to see their own details and giving and to ask for help or a pledge. It is created only here, it is kept completely separate from Beacon staff logins (it never appears under Setup &gt; Users and holds no role), and nobody can sign in by email address alone: it has to be turned on for them.</p>
+  {% if pl.reason %}
+  <p class="doc-empty">A parishioner login cannot be set up for {{ pl.reason }}.</p>
+  {% else %}
+    {% if not pl.portal_on %}<div class="banner banner-info">The diocese has not turned on the parishioner screens for this parish yet, so nobody can sign in. You can still set this up ahead of time.</div>{% endif %}
+    {% if pl.login and pl.login.is_enabled %}
+    <div class="dm-grid">
+      <div class="dm-box"><div class="dm-lbl">Status</div><div class="dm-val"><span class="dm-pill dm-pill-green">On</span></div></div>
+      <div class="dm-box"><div class="dm-lbl">Sign-in email</div><div class="dm-val">{{ pl.login.login_email }}</div></div>
+      <div class="dm-box"><div class="dm-lbl">Turned on</div><div class="dm-val">{{ d(pl.login.enabled_at) }}{% if pl.enabled_by %} by {{ pl.enabled_by }}{% endif %}</div></div>
+      <div class="dm-box"><div class="dm-lbl">Last sign-in</div><div class="dm-val">{{ when(pl.login.last_signin_at) if pl.login.last_signin_at else 'Never' }}</div></div>
+      <div class="dm-box"><div class="dm-lbl">Signed in now</div><div class="dm-val">{{ pl.live_sessions }} session{{ 's' if pl.live_sessions != 1 }}</div></div>
+    </div>
+    {% if not pl.login_email_active %}<div class="banner banner-error">That sign-in email is no longer an active email on this person's profile, so they cannot sign in. Pick one of their current emails below.</div>{% endif %}
+    <form method="post" action="/people/{{ pid }}/parishioner-login/enable" class="dm-form dm-inline">{{ csrf() }}
+      <label>Change the sign-in email <select name="login_email">{% for e in pl.emails %}<option value="{{ e.value|lower }}" {{ 'selected' if e.value|lower == pl.login.login_email }}>{{ e.value }}</option>{% endfor %}</select></label>
+      <button type="submit" class="btn btn-secondary btn-sm">Change</button>
+    </form>
+    <form method="post" action="/people/{{ pid }}/parishioner-login/signout" class="dm-form dm-inline" data-confirm="Sign this person out everywhere? Their login stays on, so they can sign in again.">{{ csrf() }}
+      <button type="submit" class="btn btn-secondary btn-sm">Sign out everywhere</button>
+    </form>
+    <form method="post" action="/people/{{ pid }}/parishioner-login/disable" class="dm-form dm-inline" data-confirm="Turn off this parishioner login? Every live session ends at once.">{{ csrf() }}
+      <label>Reason <input name="reason" maxlength="200" required placeholder="for example: asked to be removed"></label>
+      <button type="submit" class="btn btn-secondary btn-sm">Turn off</button>
+    </form>
+    {% else %}
+    {% if pl.login %}<p class="dm-muted">Turned off {{ d(pl.login.disabled_at) }}{% if pl.disabled_by %} by {{ pl.disabled_by }}{% endif %}{% if pl.login.disabled_reason %}. Reason: {{ pl.login.disabled_reason }}{% endif %}. The record is kept.</p>{% else %}<p class="dm-muted">This person has no parishioner login. They cannot sign in to the member screens.</p>{% endif %}
+    {% if pl.emails %}
+    <form method="post" action="/people/{{ pid }}/parishioner-login/enable" class="dm-form dm-inline">{{ csrf() }}
+      <label>The sign-in code goes to <select name="login_email">{% for e in pl.emails %}<option value="{{ e.value|lower }}">{{ e.value }}</option>{% endfor %}</select></label>
+      <button type="submit" class="btn btn-primary btn-sm">Turn on parishioner login</button>
+    </form>
+    {% else %}<p class="doc-empty">Add an email address on the Personal tab first: the sign-in code is sent to one of this person's email addresses.</p>{% endif %}
+    {% endif %}
+    {% if pl.events %}
+    <h4>Recent sign-ins</h4>
+    <div class="table-scroll">
+    <table class="simple-table dm-table dm-compact">
+      <thead><tr><th>When</th><th>What</th><th>From</th></tr></thead>
+      <tbody>{% for e in pl.events %}<tr><td class="nowrap">{{ when(e.created_at) }}</td><td>{{ e.words }}</td><td class="dm-muted">{{ e.ip or '' }}</td></tr>{% endfor %}</tbody>
+    </table>
+    </div>
+    {% endif %}
   {% endif %}
 </div>
 {% endif %}

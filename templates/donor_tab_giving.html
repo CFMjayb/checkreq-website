@@ -1,11 +1,33 @@
-{# donor_tab_giving.html -- Giving tab. Shown only to finance roles (RL-01). `giving` comes from donor_gifts.person_giving_summary. #}
+{#
+donor_tab_giving.html -- Giving tab. Shown only to finance roles (RL-01). `giving` comes from donor_gifts.person_giving_summary.
+
+Also the parishioner's own Giving > Contributions (self_mode, see donor_person.html): the same stat row and the same gifts table, built from
+donor_portal.giving_view, which gives `giving` the SAME keys and holds only that person's own posted gifts in closed batches. In self mode
+the staff-only parts are off (the lock line, the Batch column and link, soft credits) and three parishioner-only parts are on: the year
+picker, the summary by fund, and the notes about corrections and statements. Pledges is the other Giving sub-tab (donor_tab_pledges.html).
+#}
 {% from "donor_macros.html" import lock_note with context %}
-{{ lock_note("Finance roles only · giving to " ~ parish.name) }}
+{% if self_mode and sub == "pledges" %}
+{% include "donor_tab_pledges.html" %}
+{% else %}
+{% if not self_mode %}{{ lock_note("Finance roles only · giving to " ~ parish.name) }}{% endif %}
+{% if self_mode %}
+<h3>Your giving</h3>
+<form method="get" action="/my/giving" class="pp-filter">
+  <label>Show <select name="year" aria-label="Year">
+    {% for y in ([this_year] + giving.years + ([giving.year] if giving.year else []))|unique|sort(reverse=true) %}<option value="{{ y }}" {{ 'selected' if giving.year == y }}>{{ y }}{{ ' (so far)' if y == this_year }}</option>{% endfor %}
+    <option value="all" {{ 'selected' if giving.year is none }}>All years</option>
+  </select></label>
+  <button type="submit" class="btn btn-secondary btn-sm">Show</button>
+</form>
+{% endif %}
 {% if not giving %}
   <p class="doc-empty">Giving history will appear here once giving is turned on and the first batch is closed.</p>
+{% elif self_mode and not giving.rows %}
+  <p class="doc-empty">No gifts are recorded for you{{ ' in ' ~ giving.year if giving.year else '' }} yet.</p>
 {% else %}
 <div class="dm-stat-row">
-  <div class="dm-stat"><div class="dm-lbl">Given in {{ giving.year }}</div><div class="dm-stat-num">{{ money(giving.year_total) }}</div>
+  <div class="dm-stat"><div class="dm-lbl">Given {{ ('in ' ~ giving.year) if giving.year else 'in all years' }}</div><div class="dm-stat-num">{{ money(giving.year_total) }}</div>
     <div class="dm-sub">Deductible: {{ money(giving.deductible_total) }}</div>
     {% if giving.joint_with %}<div class="dm-sub">Joint pledge with {{ giving.joint_with }}</div>{% endif %}</div>
   {% if giving.pledge %}
@@ -13,19 +35,32 @@
     <div class="dm-bar"><span style="width: {{ [giving.pledge.percent, 100]|min }}%"></span></div>
     <div class="dm-sub">{{ giving.pledge.percent }}% given &middot; {{ money(giving.pledge.balance) }} to go &middot; {{ label(giving.pledge.status) }}</div></div>
   {% endif %}
-  <div class="dm-stat"><div class="dm-lbl">Last gift</div><div class="dm-stat-num">{{ money(giving.last.amount) if giving.last else '' }}</div>{% if giving.last %}<div class="dm-sub">{{ d(giving.last.gift_date) }} &middot; batch {{ giving.last.batch_number }}</div>{% endif %}</div>
+  <div class="dm-stat"><div class="dm-lbl">Last gift</div><div class="dm-stat-num">{{ money(giving.last.amount) if giving.last else '' }}</div>{% if giving.last %}<div class="dm-sub">{{ d(giving.last.gift_date) }}{% if not self_mode %} &middot; batch {{ giving.last.batch_number }}{% endif %}</div>{% endif %}</div>
+  {% if self_mode and giving.envelope %}<div class="dm-stat"><div class="dm-lbl">Your envelope number</div><div class="dm-stat-num">{{ giving.envelope }}</div></div>{% endif %}
 </div>
+{% if self_mode %}
+<h3>Summary{{ ' for ' ~ giving.year if giving.year else '' }}</h3>
 <div class="table-scroll">
-<table class="simple-table dm-table">
-  <thead><tr><th>Date</th><th>Batch</th><th>Fund</th><th>Type</th><th class="dm-num">Amount</th><th>Check</th><th>Status</th></tr></thead>
+<table class="simple-table dm-table pp-table">
+  <thead><tr><th>Fund</th><th class="dm-num pp-num">Given</th></tr></thead>
+  <tbody>{% for f in giving.by_fund %}<tr><td data-label="Fund">{{ f.fund_name }}</td><td data-label="Given" class="dm-num pp-num">{{ money(f.total) }}</td></tr>{% endfor %}</tbody>
+  <tfoot><tr><td data-label="Total">Total</td><td data-label="Given" class="dm-num pp-num">{{ money(giving.year_total) }}</td></tr></tfoot>
+</table>
+</div>
+<h3>Gifts{{ ' in ' ~ giving.year if giving.year else '' }}</h3>
+{% endif %}
+<div class="table-scroll">
+<table class="simple-table dm-table{{ ' pp-table' if self_mode }}">
+  <thead><tr><th>Date</th>{% if not self_mode %}<th>Batch</th>{% endif %}<th>Fund</th><th>Type</th><th class="dm-num">Amount</th><th>Check</th><th>Status</th></tr></thead>
   <tbody>
   {% for r in giving.rows %}
-    <tr class="{{ 'dm-archived' if r.status in ('reversed', 'returned') else '' }}"><td>{{ d(r.gift_date) }}</td><td><a href="/giving/batches/{{ r.batch_id }}">{{ r.batch_number }}</a></td><td>{{ r.fund_name }}</td><td>{{ label(r.gift_type) }}</td>
-        <td class="dm-num">{{ money(r.amount) }}</td><td>{{ r.check_number or 'cash' }}</td><td>{{ label(r.status) }}</td></tr>
+    <tr class="{{ 'dm-archived' if r.status in ('reversed', 'returned') else '' }}"><td data-label="Date">{{ d(r.gift_date) }}{% if r.note %} <span class="dm-sub">{{ r.note }}</span>{% endif %}</td>{% if not self_mode %}<td><a href="/giving/batches/{{ r.batch_id }}">{{ r.batch_number }}</a></td>{% endif %}<td data-label="Fund">{{ r.fund_name }}</td><td data-label="Type">{{ label(r.gift_type) }}</td>
+        <td data-label="Amount" class="dm-num {{ 'pp-num pp-neg' if self_mode and r.amount < 0 }}">{{ money(r.amount) }}</td><td data-label="Check">{{ r.check_number or ('' if self_mode else 'cash') }}</td><td data-label="Status">{{ label(r.status) }}</td></tr>
   {% else %}<tr><td colspan="7" class="doc-empty">No gifts recorded.</td></tr>{% endfor %}
   </tbody>
 </table>
 </div>
+{% if self_mode and giving.truncated %}<p class="pp-hint">Showing your 500 most recent lines. Pick one year to see fewer.</p>{% endif %}
 {% if giving.soft_credits %}
 <div class="dm-section">
   <div class="dm-section-head"><h3>Soft credits</h3></div>
@@ -35,5 +70,7 @@
     <tbody>{% for s in giving.soft_credits %}<tr><td>{{ d(s.gift_date) }}</td><td>{{ s.fund_name }}</td><td class="dm-num">{{ money(s.amount) }}</td></tr>{% endfor %}</tbody>
   </table>
 </div>
+{% endif %}
+{% if self_mode %}<p class="pp-hint">This list shows gifts the parish has recorded and closed. A gift still being counted does not appear until the parish closes that deposit. A correction shows as its own line. For a year-end statement, or if anything looks wrong, use <a href="/my/help">Get help</a>: statements are not available on this page yet.</p>{% endif %}
 {% endif %}
 {% endif %}

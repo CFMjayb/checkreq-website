@@ -18,7 +18,7 @@ donor_settings.html -- Settings: turn Donor Management on (diocese only), the QB
       {{ csrf() }}
       {% if ctx.can("parish.activate") %}
       <p class="dm-muted">These are the diocese's decisions. Donor Management is switched on one parish at a time.</p>
-      {% for key, text in (("people_enabled", "People and membership"), ("giving_enabled", "Giving (funds, batches, pledges)"), ("allow_single_person_batch", "Allow one person to enter and close a batch (small parishes)"), ("qbo_posting_enabled", "Allow posting the journal entry to QuickBooks")) %}
+      {% for key, text in (("people_enabled", "People and membership"), ("giving_enabled", "Giving (funds, batches, pledges)"), ("allow_single_person_batch", "Allow one person to enter and close a batch (small parishes)"), ("qbo_posting_enabled", "Allow posting the journal entry to QuickBooks"), ("portal_enabled", "Parishioner self-service: parishioners sign in with an emailed code to see their own giving and details, and ask to pledge (needs People turned on)")) %}
       <label class="dm-check"><input type="hidden" name="has_{{ key }}" value="1"><input type="checkbox" name="{{ key }}" value="1" {{ 'checked' if s[key] }}> {{ text }}</label>
       {% endfor %}
       <p class="dm-muted dm-small">Posting to QuickBooks stays off tonight: the entry is built and shown, never sent.</p>

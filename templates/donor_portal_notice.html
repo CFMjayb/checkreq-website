@@ -1,0 +1,13 @@
+{#
+donor_portal_notice.html -- a plain message page (nobody could be signed in, something was not found, a feature is not available yet).
+The text is always generic: it never says why a sign-in failed or whether an id exists.
+#}
+{% extends "donor_portal_base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="pp-card pp-narrow">
+  <h1>{{ title }}</h1>
+  <p>{{ text }}</p>
+  <p><a href="{{ '/my/personal' if ps else '/my' }}">{{ 'Back to your page' if ps else 'Back to sign in' }}</a></p>
+</div>
+{% endblock %}

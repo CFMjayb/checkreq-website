@@ -17,6 +17,8 @@ from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 import cornerstone_mode
+import donor_pledge_requests as PR
+import donor_portal as PP
 import donor_roles
 import parish_mode
 from donor_core import label
@@ -57,6 +59,15 @@ def acting_parish(request: Request, user: dict):
                 request.state.dm_home = "/portal"
                 return parish
     return None
+
+
+def safe(fn, default):
+    """Run a read for a side panel or a count and return `default` if it fails for any reason (for example the Parishioner
+    Self-Service tables of migration 082 are not in this database yet). A screen must open without them."""
+    try:
+        return fn()
+    except Exception:
+        return default
 
 
 def fmt_date(v) -> str:
@@ -110,8 +121,14 @@ def setup_items(ctx) -> list[dict]:
 def page(request: Request, template: str, user: dict, parish: dict, ctx, active: str, extra: dict | None = None,
          status_code: int = 200):
     flash = request.session.pop("dm_flash", None) if "dm_flash" in request.session else None
+    counts: dict = {}                    # what is waiting from parishioners (Parishioner Self-Service): pledge requests, Get Help messages
+    if ctx.settings.get("portal_enabled"):
+        if ctx.settings.get("giving_enabled") and ctx.can("pledges.manage"):
+            counts["pledges"] = safe(lambda: PR.waiting_count(ctx.parish_id), 0)
+        if ctx.settings.get("people_enabled") and ctx.can("people.edit"):
+            counts["people"] = safe(lambda: PP.messages_waiting_count(ctx.parish_id), 0)
     data = {
-        "ctx": ctx, "parish": parish, "dm_nav": nav_items(ctx), "dm_setup": setup_items(ctx), "dm_active": active,
+        "ctx": ctx, "parish": parish, "dm_nav": nav_items(ctx), "dm_setup": setup_items(ctx), "dm_active": active, "dm_counts": counts,
         "dm_home": getattr(request.state, "dm_home", "/parish-view"),
         "d": fmt_date, "money": fmt_money,
         "when": fmt_when, "label": label,

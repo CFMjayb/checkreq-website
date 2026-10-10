@@ -8,18 +8,33 @@ Parish-only tabs carry the lock line. One tab's data is loaded per page view.
 Privacy that is enforced by the service layer, not here: a minor's birth date and contacts are already blanked for roles
 that may not see them (g.redacted), only household members connected to THIS parish are listed, a spouse at another
 parish is not named, and other parishes appear by name and connection kind only.
+
+ONE SCREEN, THREE VIEWS (Jay, 2026-10-09): the parishioner's own screen (/my/...) and a regular user's view of their own record are this
+same template, never a copy. The route chooses the view with a few switches in the context, and nothing else differs:
+  layout       the page frame to extend (default base.html; the parishioner screen passes donor_portal_base.html)
+  self_mode    true on the parishioner's screen: no Beacon staff nav or search, no household and parish side column, only the tabs
+               the route lists, and the Personal tab draws every field not in self_editable as a read-only box (donor_macros.html)
+  self_editable  the field names a person may change themselves (donor_portal.SELF_EDITABLE); everything else is read only
+  ctx          the Ctx of whoever is looking: a staff Ctx, or the parishioner's own actor Ctx that holds no capability at all, so every
+               ctx.can(...) action (Actions menu, Archive, Restore) stays hidden without a single extra check here
+  g, p, tabs, tab, title_name, initials   built by donor_routes_people for staff and by donor_portal.self_context for a parishioner,
+               with the SAME keys, the self version carrying only what that person may see.
+Change this file, donor_tab_personal.html, donor_tab_giving.html, donor_macros.html or donor.css and every view changes with it.
 #}
-{% extends "base.html" %}
+{% extends layout|default("base.html") %}
 {% from "donor_macros.html" import csrf, picker with context %}
 {% block title %}{{ title_name }} — {{ parish.name }}{% endblock %}
-{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block extra_css %}{% if not self_mode %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endif %}{% endblock %}
 {% set hh = g.household %}
 {% set conn = g.connection %}
 {% set mem = g.membership %}
+{% set can_edit = (ctx.can("people.edit") and not g.archived) or self_mode %}
 {% block content %}
 <div class="page-shell-wide dm-page">
+  {% if not self_mode %}
   {% set nav_search = true %}
   {% include "donor_nav.html" %}
+  {% endif %}
 
   {% if g.archived %}
   <div class="banner banner-info dm-archived-banner">This person is archived at {{ parish.name }}. They are hidden from search and mailings, and their records are kept.
@@ -29,7 +44,8 @@ parish is not named, and other parishes appear by name and connection kind only.
   </div>
   {% endif %}
 
-  <div class="dm-record">
+  <div class="dm-record{{ ' dm-record-self' if self_mode }}">
+    {% if not self_mode %}
     <aside class="dm-aside">
       <div class="dm-aside-box">
         <h2>Household</h2>
@@ -63,6 +79,7 @@ parish is not named, and other parishes appear by name and connection kind only.
         </ul>
       </div>
     </aside>
+    {% endif %}
 
     <section class="dm-main">
       <header class="dm-id">
@@ -107,9 +124,9 @@ parish is not named, and other parishes appear by name and connection kind only.
 
       <div class="dm-tabbar">
         <div class="dm-tabs" role="tablist" aria-label="Person record">
-          {% for key, lbl in tabs %}<a role="tab" aria-selected="{{ 'true' if tab == key else 'false' }}" class="{{ 'dm-tab-on' if tab == key }}" href="/people/{{ pid }}?tab={{ key }}">{{ lbl }}</a>{% endfor %}
+          {% for key, lbl in tabs %}<a role="tab" aria-selected="{{ 'true' if tab == key else 'false' }}" class="{{ 'dm-tab-on' if tab == key }}" href="{{ ('/my/' ~ key) if self_mode else ('/people/' ~ pid ~ '?tab=' ~ key) }}">{{ lbl }}</a>{% endfor %}
         </div>
-        {% if tab == "personal" and ctx.can("people.edit") and not g.archived %}
+        {% if tab == "personal" and can_edit %}
         <div class="dm-tab-actions">
           <button type="button" class="btn btn-secondary btn-sm dm-view-only" data-dm-edit>Edit</button>
           <button type="button" class="btn btn-secondary btn-sm dm-edit-only" data-dm-cancel>Cancel</button>
@@ -119,16 +136,20 @@ parish is not named, and other parishes appear by name and connection kind only.
       </div>
 
       <div class="dm-panel">
+        {% if self_mode and tab == "giving" %}
+        <nav class="pp-subtabs" aria-label="Giving"><a href="/my/giving" class="{{ 'pp-sub-on' if sub == 'contributions' }}">Contributions</a><a href="/my/pledges" class="{{ 'pp-sub-on' if sub == 'pledges' }}">Pledges</a></nav>
+        {% endif %}
         {% if tab == "personal" %}{% include "donor_tab_personal.html" %}
         {% elif tab == "membership" %}{% include "donor_tab_membership.html" %}
         {% elif tab == "sacraments" %}{% include "donor_tab_sacraments.html" %}
         {% elif tab == "giving" %}{% include "donor_tab_giving.html" %}
         {% elif tab == "notes" %}{% include "donor_tab_notes.html" %}
         {% elif tab == "system" %}{% include "donor_tab_system.html" %}
+        {% elif tab == "help" %}{% include "donor_tab_help.html" %}
         {% endif %}
       </div>
     </section>
   </div>
 </div>
 {% endblock %}
-{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}
+{% block extra_js %}{% if not self_mode %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endif %}{% endblock %}

@@ -6,14 +6,20 @@ editable controls in place (donor_person.js flips readonly/disabled, nothing is 
 everything to POST /people/<id>/personal (donor_personal.personal_save), which applies it in one transaction. Cancel puts every
 box back as it was. Operations that are not a field (move to another household, join one, link a spouse) are separate small
 forms under the main one, shown only while editing.
+
+Also the parishioner's own Personal tab (self_mode, see donor_person.html): the same sections and fields, with the fields a parishioner
+may not change drawn read only by the macros, and the staff-only parts (deceased date, spouse, household name and directory name,
+the connection section, the household and spouse actions) switched off. `signin_email` (set only on the parishioner's screen) marks the
+email their sign-in code goes to, which they cannot change or remove.
 #}
 {% from "donor_macros.html" import csrf, picker, fld, sel, ro, chk with context %}
-{% set can_edit = ctx.can("people.edit") and not g.archived %}
+{% set can_edit = (ctx.can("people.edit") and not g.archived) or self_mode %}
 {% set is_org = p.record_type == "organization" %}
 {% set minor_locked = g.redacted %}
 {% set hv = hh if hh else {} %}
 
-<form id="dm-personal" method="post" action="/people/{{ pid }}/personal" class="dm-pf dm-ro"{% if can_edit %} data-editable{% endif %}>
+{% if self_mode %}<p class="pp-hint">You can change your contact details, work and school, and your privacy choices yourself. Your name, birth date, wedding date and address are kept by the parish office: to change those, use <a href="/my/help">Get help</a>.</p>{% endif %}
+<form id="dm-personal" method="post" action="{{ '/my/personal' if self_mode else '/people/' ~ pid ~ '/personal' }}" class="dm-pf dm-ro"{% if can_edit %} data-editable{% endif %}>
   {{ csrf() }}
 
   <section class="dm-sec">
@@ -35,8 +41,10 @@ forms under the main one, shown only while editing.
         {{ fld("Birth date" ~ (" (age " ~ g.age ~ ")" if g.age is not none else ""), "birth_date", d(p.birth_date), "dm-c3",
                "Hidden (under 18)" if minor_locked else "MM/DD/YYYY", minor_locked) }}
         {{ fld("Wedding date", "wedding_date", d(p.wedding_date), "dm-c3", "Hidden (under 18)" if minor_locked else "MM/DD/YYYY", minor_locked) }}
+        {% if not self_mode %}
         {{ fld("Deceased date", "deceased_date", d(p.deceased_date), "dm-c3", "MM/DD/YYYY") }}
         {{ ro("Spouse", (g.spouse.name if g.spouse.visible else "Not at this parish") if g.spouse else "", "dm-c3") }}
+        {% endif %}
       {% endif %}
     </div>
   </section>
@@ -48,14 +56,15 @@ forms under the main one, shown only while editing.
     {% else %}
     <div class="dm-fg">
       {% for ct in g.contacts %}
+      {% set is_login = signin_email and ct.kind == 'email' and ct.value|lower == signin_email %}
       <div class="dm-f {{ 'dm-c6' if ct.kind == 'email' else 'dm-c4' }}">
-        <span>{% if ct.kind == 'email' %}Email{% else %}{{ label(ct.subtype) }} phone{% endif %}{% if ct.is_preferred and (g.contacts|selectattr('kind', 'equalto', ct.kind)|list|length > 1) %} <em class="dm-pref">preferred</em>{% endif %}</span>
+        <span>{% if ct.kind == 'email' %}Email{% else %}{{ label(ct.subtype) }} phone{% endif %}{% if is_login %} <em class="dm-pref">sign-in email</em>{% endif %}{% if ct.is_preferred and (g.contacts|selectattr('kind', 'equalto', ct.kind)|list|length > 1) %} <em class="dm-pref">preferred</em>{% endif %}</span>
         <input type="hidden" name="contact_ids" value="{{ ct.id }}">
-        <input type="text" name="c_{{ ct.id }}_value" value="{{ ct.value }}" readonly data-ed>
+        <input type="text" name="c_{{ ct.id }}_value" value="{{ ct.value }}" readonly{% if not is_login %} data-ed{% endif %}>
         <span class="dm-edit-only dm-mini">
           {% if ct.kind == 'phone' %}<select name="c_{{ ct.id }}_subtype" aria-label="Phone kind" disabled data-ed>{% for v in ["cell", "home", "work", "other"] %}<option value="{{ v }}" {{ 'selected' if ct.subtype == v }}>{{ label(v) }}</option>{% endfor %}</select>{% endif %}
           <label><input type="radio" name="preferred_{{ ct.kind }}" value="{{ ct.id }}" {{ 'checked' if ct.is_preferred }} disabled data-ed> preferred</label>
-          <label><input type="checkbox" name="c_{{ ct.id }}_remove" value="1" disabled data-ed> remove</label>
+          {% if not is_login %}<label><input type="checkbox" name="c_{{ ct.id }}_remove" value="1" disabled data-ed> remove</label>{% endif %}
         </span>
       </div>
       {% endfor %}
@@ -69,6 +78,7 @@ forms under the main one, shown only while editing.
       </div>
       <div class="dm-f dm-c3 dm-add"><button type="button" class="btn btn-secondary btn-sm" data-add-contact>+ Another</button></div>
     </div>
+    {% if signin_email %}<p class="pp-hint dm-edit-only">Your sign-in email (marked above) is where your sign-in code is sent, so it can't be changed or removed here: use <a href="/my/help">Get help</a> to change it.</p>{% endif %}
     {% endif %}
   </section>
 
@@ -85,11 +95,18 @@ forms under the main one, shown only while editing.
   </section>
 
   <section class="dm-sec">
+    {% if self_mode %}
+    <h3>Address<span class="dm-sec-note">kept by the parish office</span></h3>
+    {% if not (hv.get("address1") or hv.get("city")) %}<p class="dm-muted dm-small">No address is on file. Use Get help to give the parish office yours.</p>{% endif %}
+    {% else %}
     <h3>Household{% if hh %}<span class="dm-sec-note">{{ hh.members|length }} at this parish</span>{% else %}<span class="dm-sec-note">none yet: fill in an address and save to start one</span>{% endif %}</h3>
+    {% endif %}
     <div class="dm-fg">
+      {% if not self_mode %}
       {{ fld("Household name", "hh_name", hv.get("name"), "dm-c4") }}
       {{ fld("Salutation (for example Pat & Sam)", "hh_salutation", hv.get("salutation"), "dm-c4") }}
       {{ fld("Directory name", "hh_directory_name", hv.get("directory_name"), "dm-c4") }}
+      {% endif %}
       {{ fld("Address", "hh_address1", hv.get("address1"), "dm-c5") }}
       {{ fld("Address line 2", "hh_address2", hv.get("address2"), "dm-c3") }}
       {{ fld("City", "hh_city", hv.get("city"), "dm-c2") }}
@@ -98,6 +115,7 @@ forms under the main one, shown only while editing.
       {{ fld("Home phone", "hh_home_phone", hv.get("home_phone"), "dm-c3") }}
     </div>
     {% set has_mail = hv.get("mail_address1") or hv.get("mail_address2") or hv.get("mail_city") or hv.get("mail_state") or hv.get("mail_postal_code") %}
+    {% if has_mail or not self_mode %}
     <div class="dm-fg dm-mailing {{ '' if has_mail else 'dm-edit-only' }}">
       {{ fld("Mailing address, if different (used on statements and labels)", "hh_mail_address1", hv.get("mail_address1"), "dm-c5") }}
       {{ fld("Mailing line 2", "hh_mail_address2", hv.get("mail_address2"), "dm-c3") }}
@@ -105,9 +123,11 @@ forms under the main one, shown only while editing.
       {{ fld("State", "hh_mail_state", hv.get("mail_state"), "dm-c1") }}
       {{ fld("Zip", "hh_mail_postal_code", hv.get("mail_postal_code"), "dm-c1") }}
     </div>
+    {% endif %}
   </section>
   {% endif %}
 
+  {% if not self_mode %}
   <section class="dm-sec">
     <h3>At {{ parish.name }}{% if conn.is_canonical %}<span class="dm-sec-note">canonical member</span>{% endif %}</h3>
     <div class="dm-fg">
@@ -124,6 +144,7 @@ forms under the main one, shown only while editing.
     </div></div>
     {% endif %}
   </section>
+  {% endif %}
 
   <section class="dm-sec">
     <h3>Privacy</h3>
@@ -145,7 +166,7 @@ forms under the main one, shown only while editing.
   </div>
 </form>
 
-{% if can_edit and not is_org %}
+{% if can_edit and not is_org and not self_mode %}
 <details class="dm-edit-only dm-more">
   <summary class="btn btn-secondary btn-sm">Household and spouse actions</summary>
   <div class="dm-stack">
@@ -200,6 +221,10 @@ forms under the main one, shown only while editing.
 {% endif %}
 
 <div class="dm-foot-note">
+  {% if self_mode %}
+  <span>Record added {{ d(p.created_at) }}.</span><span>Every change you make here is recorded.</span>
+  {% else %}
   <span>Shared profile: a change here also shows at {{ g.other_connections|length }} other {{ 'parish' if g.other_connections|length == 1 else 'parishes' }}{% if not g.other_connections %} if the person is connected to more{% endif %}.</span>
   <span>Added {{ d(p.created_at) }} &middot; last changed {{ d(p.updated_at) }}</span>
+  {% endif %}
 </div>

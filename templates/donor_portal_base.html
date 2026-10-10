@@ -1,0 +1,48 @@
+{#
+donor_portal_base.html -- the PAGE FRAME of the parishioner screens (what base.html is to staff pages): the parish name, who is signed in,
+Sign out, the flash messages and the footer. Deliberately NOT base.html: a parishioner is not a Beacon user, so there is no staff menu, no
+entity switcher, no notification bell and nothing that reads a staff identity. `ps` is the portal session (None before sign-in).
+
+It holds NO person-screen markup. Once signed in, the parishioner's pages are donor_person.html itself (layout, identity bar, tabs, fields
+and styles shared with staff) rendered with self_mode on and this file passed as its `layout`; only the pre-sign-in pages (sign-in, code,
+choose, notice) are drawn directly in this frame. Autoescape is on. No inline event handlers. Every page is sent no-store and noindex
+(donor_routes_portal).
+#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}{{ ps.parish_name if ps else 'Sign in' }}{% endblock %}</title>
+  <link rel="icon" type="image/png" href="/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version('css/tokens.css') }}">
+  <link rel="stylesheet" href="/static/css/base.css?v={{ asset_version('css/base.css') }}">
+  <link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">
+  <link rel="stylesheet" href="/static/css/donor_portal.css?v={{ asset_version('css/donor_portal.css') }}">
+  {% block extra_css %}{% endblock %}
+</head>
+<body class="{% if BEACON_ENV == 'dev' %}beacon-env-dev{% endif %}">
+  {% if BEACON_ENV == 'dev' %}<div class="dev-env-banner">DEVELOPMENT ENVIRONMENT</div>{% endif %}
+  <header class="pp-bar">
+    <div class="pp-parish">{{ ps.parish_name if ps else 'Parishioner sign-in' }}</div>
+    {% if ps %}
+    <div class="pp-who"><span>{{ ps.person_name }}</span>
+      <form method="post" action="/my/signout" class="pp-signout"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button type="submit" class="btn btn-secondary btn-sm">Sign out</button></form>
+    </div>
+    {% endif %}
+  </header>
+  <main class="pp-main" id="main">
+    {% if flash_ok %}<div class="banner banner-success">{{ flash_ok }}</div>{% endif %}
+    {% if flash_err %}<div class="banner banner-error">{{ flash_err }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="pp-foot">{% if ps %}This page shows only you. Your information is private to you and {{ ps.parish_name }}. Sign out when you are done, especially on a shared device.{% else %}Your information is private. Only a member whose parish has set up their login can sign in, with a code sent to the email address the parish set up.{% endif %}</footer>
+  <script src="/static/js/submit_loading.js?v={{ asset_version('js/submit_loading.js') }}"></script>
+  <script src="/static/js/confirm_submit.js?v={{ asset_version('js/confirm_submit.js') }}"></script>
+  <script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -271,7 +271,7 @@ async def _settings_act(request: Request, need_feature: bool, action):
 async def settings_activation(request: Request):
     def act(ctx, form):
         changes = {}
-        for k in ("people_enabled", "giving_enabled", "allow_single_person_batch", "qbo_posting_enabled"):
+        for k in ("people_enabled", "giving_enabled", "allow_single_person_batch", "qbo_posting_enabled", "portal_enabled"):
             if f"has_{k}" in form:
                 changes[k] = form.get(k) is not None
         for k in ("qbo_company_key", "default_cash_account", "processing_fee_account", "due_from_diocese_account",

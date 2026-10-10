@@ -1,0 +1,115 @@
+{#
+donor_tab_pledges.html -- the parishioner's Giving > Pledges (self_mode only; included by donor_tab_giving.html, so the same identity bar, tab bar
+and styles as every other person tab). Staff manage pledges on the /pledges screens, so the person screen has no staff counterpart to
+this tab. It is the signed-in person's pledges (their own, and a joint pledge they are part of), the campaigns open for online pledging,
+and their requests with the answers.
+
+A parishioner never creates, changes or cancels a pledge: every button here sends a REQUEST that Finance answers. Nothing changes
+until Finance approves. The only ids this page sends are a campaign id (a new pledge) or a pledge id (change, cancel); the server
+checks each against the signed-in person and parish. A joint partner is the profile's spouse and nobody else.
+#}
+{% set fvk = fv.kind if fv else '' %}
+{% set status_text = {'waiting': 'Waiting for Finance', 'approved': 'Approved', 'declined': 'Declined'} %}
+{% set status_cls = {'waiting': 'pp-pill-wait', 'approved': 'pp-pill-ok', 'declined': 'pp-pill-no'} %}
+{% set kind_text = {'new': 'New pledge', 'change': 'Change', 'cancel': 'Cancel'} %}
+<h3>Your pledges</h3>
+{% if form_error %}<div class="banner banner-error">{{ form_error }}</div>{% endif %}
+
+{% if v.pledges %}
+<div class="table-scroll">
+<table class="simple-table dm-table pp-table">
+  <thead><tr><th>Campaign</th><th class="dm-num pp-num">Pledged</th><th class="dm-num pp-num">Given</th><th class="dm-num pp-num">To go</th><th>Pace</th></tr></thead>
+  <tbody>
+  {% for p in v.pledges %}
+    <tr>
+      <td data-label="Campaign"><strong>{{ p.campaign_name }}</strong><div class="dm-sub">{{ p.fund_name }} &middot; {{ d(p.start_date) }} to {{ d(p.end_date) }}{% if p.joint_with %} &middot; joint with {{ p.joint_with }}{% endif %}</div></td>
+      <td data-label="Pledged" class="dm-num pp-num">{{ money(p.amount) }}<div class="dm-sub">{{ label(p.frequency) }}</div></td>
+      <td data-label="Given" class="dm-num pp-num">{{ money(p.given) }}</td>
+      <td data-label="To go" class="dm-num pp-num">{{ money(p.balance) }}</td>
+      <td data-label="Pace"><span class="dm-status dm-status-{{ 'done' if p.pace_status == 'paid_in_full' else ('accepted' if p.pace_status == 'on_track' else 'pending') }}">{{ label(p.pace_status) }}</span>
+        <div class="dm-bar"><span style="width: {{ [p.percent, 100]|min }}%"></span></div><div class="dm-sub">{{ p.percent }}%</div></td>
+    </tr>
+    <tr>
+      <td colspan="5" data-label="">
+        {% if p.waiting %}<span class="pp-pill pp-pill-wait">A request about this campaign is waiting for Finance</span>
+        {% elif p.open %}
+        <div class="pp-row-actions">
+          <details class="pp-form"><summary>Ask to change this pledge</summary>
+            <form method="post" action="/my/pledges/request" class="dm-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="kind" value="change"><input type="hidden" name="pledge_id" value="{{ p.id }}">
+              <div class="field"><label>New amount ($)</label><input name="amount" inputmode="decimal" value="{{ fv.amount if fvk == 'change' and fv.pledge_id == (p.id|string) else p.amount }}" required></div>
+              <div class="field"><label>How often</label><select name="frequency">{% for f in ['one_time', 'weekly', 'monthly', 'quarterly', 'annual'] %}<option value="{{ f }}" {{ 'selected' if f == p.frequency }}>{{ label(f) }}</option>{% endfor %}</select></div>
+              <div class="field"><label>A note for Finance (optional)</label><input name="note" maxlength="300"></div>
+              {% if needs_confirm and fvk == 'change' and fv.pledge_id == (p.id|string) %}<label class="dm-chk pp-confirm"><input type="checkbox" name="confirm_large" value="1"> Yes, I mean this amount.</label>{% endif %}
+              <button type="submit" class="btn btn-primary btn-sm">Send my request</button>
+            </form>
+            <p class="pp-hint">Your pledge stays as it is until Finance confirms the change.</p>
+          </details>
+          <form method="post" action="/my/pledges/request" class="dm-form" data-confirm="Ask Finance to cancel this pledge? It stays as it is until Finance confirms.">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="kind" value="cancel"><input type="hidden" name="pledge_id" value="{{ p.id }}">
+            <button type="submit" class="btn btn-secondary btn-sm">Ask to cancel</button>
+          </form>
+        </div>
+        {% else %}<span class="pp-hint">To change or cancel this pledge, use <a href="/my/help">Get help</a> and the parish office will help.</span>{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="doc-empty">You have no active pledge at {{ parish.name }}.</p>
+{% endif %}
+
+<div class="dm-section">
+  <div class="dm-section-head"><h3>Make a pledge</h3></div>
+  {% if v.open_campaigns %}
+  <p class="pp-hint">Send a pledge to Finance. It is a request: nothing is recorded as your pledge until Finance confirms it. Amounts above {{ money(v.confirm_above) }} ask you to confirm.</p>
+  {% for oc in v.open_campaigns %}
+  {% set mine = fv and fvk == 'new' and fv.campaign_id == (oc.id|string) %}
+  <details class="pp-campaign pp-form" {{ 'open' if mine }}>
+    <summary>{{ oc.name }} <span class="dm-sub">{{ oc.fund_name }} &middot; {{ d(oc.period_start) }} to {{ d(oc.period_end) }}</span></summary>
+    {% if oc.waiting %}
+    <p><span class="pp-pill pp-pill-wait">Your request for this campaign is waiting for Finance</span></p>
+    {% else %}
+    <form method="post" action="/my/pledges/request" class="dm-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="kind" value="new"><input type="hidden" name="campaign_id" value="{{ oc.id }}">
+      <div class="field"><label>Amount ($)</label><input name="amount" inputmode="decimal" placeholder="for example 50.00" value="{{ fv.amount if mine else '' }}" required></div>
+      <div class="field"><label>How often</label><select name="frequency">{% for f in ['one_time', 'weekly', 'monthly', 'quarterly', 'annual'] %}<option value="{{ f }}" {{ 'selected' if (fv.frequency if mine else 'monthly') == f }}>{{ label(f) }}</option>{% endfor %}</select></div>
+      <details><summary>Change the dates (optional: the campaign's own dates are used)</summary>
+        <div class="field"><label>Starts</label><input name="start_date" placeholder="MM/DD/YYYY" value="{{ fv.start_date if mine else '' }}"></div>
+        <div class="field"><label>Ends</label><input name="end_date" placeholder="MM/DD/YYYY" value="{{ fv.end_date if mine else '' }}"></div>
+      </details>
+      {% if v.spouse %}<label class="dm-chk"><input type="checkbox" name="joint_with_person_id" value="{{ v.spouse.id }}" {{ 'checked' if mine and fv.joint_with_person_id }}> Pledge jointly with my spouse, {{ v.spouse.name }}</label>{% endif %}
+      <div class="field"><label>A note for Finance (optional)</label><input name="note" maxlength="300" value="{{ fv.note if mine else '' }}"></div>
+      {% if needs_confirm and mine %}<label class="dm-chk pp-confirm"><input type="checkbox" name="confirm_large" value="1"> Yes, I mean this amount.</label>{% endif %}
+      <button type="submit" class="btn btn-primary">Send my pledge</button>
+    </form>
+    {% endif %}
+  </details>
+  {% endfor %}
+  {% else %}
+  <p class="doc-empty">No campaign is open for online pledges right now. To pledge, use <a href="/my/help">Get help</a>.</p>
+  {% endif %}
+</div>
+
+{% if v.requests %}
+<div class="dm-section">
+  <div class="dm-section-head"><h3>Your requests</h3></div>
+  <div class="table-scroll">
+  <table class="simple-table dm-table pp-table">
+    <thead><tr><th>Sent</th><th>Campaign</th><th>Request</th><th>Answer</th></tr></thead>
+    <tbody>
+    {% for r in v.requests %}
+      <tr>
+        <td data-label="Sent">{{ d(r.created_at) }}</td>
+        <td data-label="Campaign">{{ r.campaign_name }}</td>
+        <td data-label="Request">{{ kind_text[r.kind] }}{% if r.amount is not none %}: {{ money(r.amount) }}{% if r.frequency %} {{ label(r.frequency) | lower }}{% endif %}{% endif %}</td>
+        <td data-label="Answer"><span class="pp-pill {{ status_cls[r.status] }}">{{ status_text[r.status] }}</span>{% if r.decided_at %} <span class="dm-sub">{{ d(r.decided_at) }}</span>{% endif %}{% if r.status == 'declined' and r.decision_reason %}<div class="dm-sub">{{ r.decision_reason }}</div>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
