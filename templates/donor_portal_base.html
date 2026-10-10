@@ -27,7 +27,7 @@ choose, notice) are drawn directly in this frame. Autoescape is on. No inline ev
 <body class="{% if BEACON_ENV == 'dev' %}beacon-env-dev{% endif %}">
   {% if BEACON_ENV == 'dev' %}<div class="dev-env-banner">DEVELOPMENT ENVIRONMENT</div>{% endif %}
   <header class="pp-bar">
-    <div class="pp-parish">{{ ps.parish_name if ps else 'Parishioner sign-in' }}</div>
+    <div class="pp-parish">{{ ps.parish_name if ps else 'Portal sign in' }}</div>
     {% if ps %}
     <div class="pp-who"><span>{{ ps.person_name }}</span>
       <form method="post" action="/my/signout" class="pp-signout"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button type="submit" class="btn btn-secondary btn-sm">Sign out</button></form>
@@ -39,7 +39,6 @@ choose, notice) are drawn directly in this frame. Autoescape is on. No inline ev
     {% if flash_err %}<div class="banner banner-error">{{ flash_err }}</div>{% endif %}
     {% block content %}{% endblock %}
   </main>
-  <footer class="pp-foot">{% if ps %}This page shows only you. Your information is private to you and {{ ps.parish_name }}. Sign out when you are done, especially on a shared device.{% else %}Your information is private. Only a member whose parish has set up their login can sign in, with a code sent to the email address the parish set up.{% endif %}</footer>
   <script src="/static/js/submit_loading.js?v={{ asset_version('js/submit_loading.js') }}"></script>
   <script src="/static/js/confirm_submit.js?v={{ asset_version('js/confirm_submit.js') }}"></script>
   <script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>

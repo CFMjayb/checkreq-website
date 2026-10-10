@@ -278,6 +278,8 @@ async def settings_activation(request: Request):
                   "investment_account", "in_kind_account", "default_class"):
             if k in form:
                 changes[k] = form.get(k)
+        if (form.get("portal_slug") or "").strip():              # blank keeps the link name (a blank box must never erase a published link)
+            changes["portal_slug"] = form.get("portal_slug")
         R.settings_update(ctx, changes)
         return "Settings saved."
     return await _settings_act(request, False, act)

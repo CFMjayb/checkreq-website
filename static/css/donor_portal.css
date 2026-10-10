@@ -62,3 +62,20 @@
   .pp-table td.dm-num { text-align: right; }
   .pp-table tfoot tr { background: #faf7f0; }
 }
+
+/* Phase 1 (2026-10-10): member Giving tab. One top line (title, year, then the Contributions / Pledges pills at the right), a closed
+   gifts list, and tighter rows. */
+.pp-giving-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 8px; }
+.pp-giving-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
+.pp-giving-title h3, .pp-giving-title form { margin: 0; }
+.pp-giving-top .pp-subtabs { margin: 0; }
+.pp-gifts { margin-top: 20px; }
+.pp-gifts > summary { cursor: pointer; padding: 4px 0; }
+.pp-gifts > summary h3 { display: inline; }
+.dm-record-self .pp-table th, .dm-record-self .pp-table td { padding: 4px 8px; }
+.dm-record-self .dm-stat { padding: 8px 12px; }
+.dm-record-self .dm-stat-num { font-size: 1.25rem; }
+
+/* Phase 2 (2026-10-10): the parish's own sign-in page. */
+.pp-logo { display: block; max-height: 72px; max-width: 100%; margin: 0 auto 10px; }
+.pp-card h1 { text-align: center; }

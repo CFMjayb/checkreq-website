@@ -23,15 +23,19 @@ import datetime as dt
 import time
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
+import db
 import donor_pledge_requests as PR
 import donor_portal as PP
 import donor_portal_admin as PA
 import donor_portal_login as L
 import donor_roles
 import donor_web as W
+import gcs_client
+import org_branding
+import upload_guard
 from donor_core import DonorError, NotFound, label
 
 portal = APIRouter()
@@ -106,7 +110,7 @@ def _auth(request: Request):
 
 
 def _landing(settings: dict) -> str:
-    return "/my/giving" if settings.get("giving_enabled") else "/my/personal"
+    return "/my/personal"                        # Jay, 2026-10-10: a member always lands on Personal, never Giving
 
 
 def _start_session(request: Request, session_token: str) -> None:
@@ -123,6 +127,19 @@ def _not_giving(request: Request, ps: dict):
 
 
 # ── sign-in ─────────────────────────────────────────────────────────────────────────────────────
+PARISH_KEY = "portal_parish"          # the parish whose /my/<link> the visitor opened (its logo and name); it never decides who may sign in
+
+
+def _signin_page(request: Request, *, error: str | None = None, status: int = 200):
+    """The sign-in page: the opened parish's logo, name and email box, or (no parish link opened) a line saying to use the parish's own
+    link. A staff session is told to use the staff portal, without being given its address."""
+    pid = request.session.get(PARISH_KEY)
+    extra = {"parish": L.parish_card(pid) if pid else None, "is_staff": request.session.get("user_id") is not None}
+    if error:
+        extra["error"] = error
+    return _page(request, "donor_portal_signin.html", None, extra, status=status)
+
+
 @portal.get("/my", response_class=HTMLResponse)
 def my_home(request: Request):
     token = request.session.get(L.SESSION_KEY)
@@ -131,7 +148,7 @@ def my_home(request: Request):
         if ps:
             return _redirect(_landing(donor_roles.settings_get(ps["parish_id"])))
         request.session.pop(L.SESSION_KEY, None)
-    return _page(request, "donor_portal_signin.html", None)
+    return _signin_page(request)
 
 
 @portal.get("/my/signin")
@@ -145,7 +162,7 @@ async def signin_post(request: Request):
     form = await request.form()
     email = str(form.get("email") or "").strip()
     if not email:
-        return _page(request, "donor_portal_signin.html", None, {"error": "Enter your email address."}, status=400)
+        return _signin_page(request, error="Enter your email address.", status=400)
     ip = L.client_ip(request)
     res = L.request_code(email, ip)
     request.session[L.CHALLENGE_KEY] = res["token"]
@@ -308,12 +325,38 @@ async def help_post(request: Request):
     form = await request.form()
     try:
         PP.message_create(ps, form.get("subject"), form.get("body"))
-        _flash(request, "ok", "Sent. The parish office will see your message.")
+        _flash(request, "ok", "Message submitted.")
     except DonorError as e:
         return _person_page(request, ps, "help",
                             {"sent": PP.messages_for_person(ps), "form_error": e.message,
                              "fv": {"subject": str(form.get("subject") or "")[:120], "body": str(form.get("body") or "")[:2000]}}, status=400)
     return _redirect("/my/help")
+
+
+# ── The per-parish sign-in link: /my/<link name> (registered AFTER every fixed /my/... page, so a link can never shadow one) ─────────
+@portal.get("/my/{slug}", response_class=HTMLResponse)
+def my_parish(slug: str, request: Request):
+    parish = L.parish_for_slug(slug)
+    if parish:
+        request.session[PARISH_KEY] = parish["id"]
+    else:
+        request.session.pop(PARISH_KEY, None)                 # an unknown link looks exactly like plain /my
+    return my_home(request)
+
+
+@portal.get("/my/{slug}/logo")
+def my_parish_logo(slug: str):
+    """The parish's logo for its sign-in page. Public by nature (it is on a page anyone can open); only for a parish whose portal is on."""
+    parish = L.parish_for_slug(slug)
+    if not parish or not parish["has_logo"]:
+        return Response(status_code=404)
+    row = db.query_one("SELECT logo_gcs_path, logo_content_type FROM portal.parishes WHERE id = %s", (parish["id"],))
+    result = gcs_client.download_bytes(org_branding.LOGO_BUCKET, row["logo_gcs_path"]) if row else None
+    if not result:
+        return Response(status_code=404)
+    data, _ = result
+    media_type, extra = upload_guard.serve_logo_headers(data, row["logo_content_type"], "logo")
+    return Response(content=data, media_type=media_type, headers={**extra, "Cache-Control": "public, max-age=3600", "X-Robots-Tag": "noindex, nofollow"})
 
 
 # ── Staff: answer what a parishioner sent ───────────────────────────────────────────────────────

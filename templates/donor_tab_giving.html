@@ -7,19 +7,26 @@ the staff-only parts are off (the lock line, the Batch column and link, soft cre
 picker, the summary by fund, and the notes about corrections and statements. Pledges is the other Giving sub-tab (donor_tab_pledges.html).
 #}
 {% from "donor_macros.html" import lock_note with context %}
+{% macro pp_pills() %}<nav class="pp-subtabs" aria-label="Giving"><a href="/my/giving" class="{{ 'pp-sub-on' if sub == 'contributions' }}">Contributions</a><a href="/my/pledges" class="{{ 'pp-sub-on' if sub == 'pledges' }}">Pledges</a></nav>{% endmacro %}
 {% if self_mode and sub == "pledges" %}
+<div class="pp-giving-top"><span></span>{{ pp_pills() }}</div>
 {% include "donor_tab_pledges.html" %}
 {% else %}
 {% if not self_mode %}{{ lock_note("Finance roles only · giving to " ~ parish.name) }}{% endif %}
 {% if self_mode %}
-<h3>Your giving</h3>
-<form method="get" action="/my/giving" class="pp-filter">
-  <label>Show <select name="year" aria-label="Year">
-    {% for y in ([this_year] + giving.years + ([giving.year] if giving.year else []))|unique|sort(reverse=true) %}<option value="{{ y }}" {{ 'selected' if giving.year == y }}>{{ y }}{{ ' (so far)' if y == this_year }}</option>{% endfor %}
-    <option value="all" {{ 'selected' if giving.year is none }}>All years</option>
-  </select></label>
-  <button type="submit" class="btn btn-secondary btn-sm">Show</button>
-</form>
+<div class="pp-giving-top">
+  <div class="pp-giving-title">
+    <h3>Your giving</h3>
+    <form method="get" action="/my/giving" class="pp-filter">
+      <label>Show <select name="year" data-autosubmit aria-label="Year">
+        {% for y in ([this_year] + giving.years + ([giving.year] if giving.year else []))|unique|sort(reverse=true) %}<option value="{{ y }}" {{ 'selected' if giving.year == y }}>{{ y }}{{ ' (so far)' if y == this_year }}</option>{% endfor %}
+        <option value="all" {{ 'selected' if giving.year is none }}>All years</option>
+      </select></label>
+      <noscript><button type="submit" class="btn btn-secondary btn-sm">Show</button></noscript>
+    </form>
+  </div>
+  {{ pp_pills() }}
+</div>
 {% endif %}
 {% if not giving %}
   <p class="doc-empty">Giving history will appear here once giving is turned on and the first batch is closed.</p>
@@ -47,8 +54,8 @@ picker, the summary by fund, and the notes about corrections and statements. Ple
   <tfoot><tr><td data-label="Total">Total</td><td data-label="Given" class="dm-num pp-num">{{ money(giving.year_total) }}</td></tr></tfoot>
 </table>
 </div>
-<h3>Gifts{{ ' in ' ~ giving.year if giving.year else '' }}</h3>
 {% endif %}
+{% if self_mode %}<details class="pp-gifts"><summary><h3>Gifts{{ ' in ' ~ giving.year if giving.year else '' }} <span class="dm-sub">(expand to see detail)</span></h3></summary>{% endif %}
 <div class="table-scroll">
 <table class="simple-table dm-table{{ ' pp-table' if self_mode }}">
   <thead><tr><th>Date</th>{% if not self_mode %}<th>Batch</th>{% endif %}<th>Fund</th><th>Type</th><th class="dm-num">Amount</th><th>Check</th><th>Status</th></tr></thead>
@@ -61,6 +68,7 @@ picker, the summary by fund, and the notes about corrections and statements. Ple
 </table>
 </div>
 {% if self_mode and giving.truncated %}<p class="pp-hint">Showing your 500 most recent lines. Pick one year to see fewer.</p>{% endif %}
+{% if self_mode %}</details>{% endif %}
 {% if giving.soft_credits %}
 <div class="dm-section">
   <div class="dm-section-head"><h3>Soft credits</h3></div>
@@ -71,6 +79,5 @@ picker, the summary by fund, and the notes about corrections and statements. Ple
   </table>
 </div>
 {% endif %}
-{% if self_mode %}<p class="pp-hint">This list shows gifts the parish has recorded and closed. A gift still being counted does not appear until the parish closes that deposit. A correction shows as its own line. For a year-end statement, or if anything looks wrong, use <a href="/my/help">Get help</a>: statements are not available on this page yet.</p>{% endif %}
 {% endif %}
 {% endif %}

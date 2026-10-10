@@ -7,7 +7,7 @@ address that matched and one that did not.
 {% block content %}
 <div class="pp-card pp-narrow">
   <h1>Enter your code</h1>
-  <p>If that address is set up for a login at a parish that uses this page, we have emailed it a six-digit code. The code works for 10 minutes, and only once.</p>
+  <p>If you are registered with us, please check your email for a six-digit code.</p>
   {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
   <form method="post" action="/my/code" class="dm-form pp-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">

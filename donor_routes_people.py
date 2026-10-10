@@ -186,11 +186,10 @@ def person_record(person_id: int, request: Request, tab: str = "personal", voide
     other_names = {r["id"]: r["name"] for r in db.query("SELECT id, name FROM portal.parishes WHERE id = ANY(%s)", (other_ids,))} if other_ids else {}
     extra: dict = {"g": g, "p": g["person"], "tab": tab, "tabs": tabs, "pid": person_id,
                    "title_name": g["person"]["full_name"] or "Person", "initials": initials(g["person"]),
-                   "other_names": other_names, "access": [], "show_access": False}
-    if tab == "system" and ctx.can("roles.manage") and not g["redacted"]:
-        # The System tab's "User account" panel (like TouchPoint's): which Beacon login is this person, and what they may do here.
-        extra["access"] = donor_roles.roles_for_person(ctx, person_id)
-        extra["show_access"] = True
+                   "other_names": other_names, "merge_count": 0}
+    if ctx.can("people.edit"):
+        # Merge history, Databank link and Record number live in the Actions menu (every tab), not on the System tab.
+        extra["merge_count"] = len(W.safe(lambda: MG.merge_history_for(ctx, person_id), []))
     if tab == "membership":
         extra.update(codes=MS.status_code_list(ctx), adult=MS.adult_member_status(ctx, person_id),
                      letters=MS.transfer_letter_list(ctx, person_id))
@@ -206,7 +205,7 @@ def person_record(person_id: int, request: Request, tab: str = "personal", voide
         except ImportError:
             extra.update(giving=None)
     elif tab == "system":
-        extra.update(changes=CL.changes_for_person(ctx, person_id), merges=MG.merge_history_for(ctx, person_id))
+        extra.update(changes=CL.changes_for_person(ctx, person_id))
         if ctx.can("roles.manage") and not g["redacted"]:
             # "Parishioner login (self-service)": the member's own login, created ONLY here and separate from the Beacon staff login above.
             extra["portal_login"] = W.safe(lambda: PA.login_panel(ctx, person_id), None)

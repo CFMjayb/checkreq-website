@@ -19,6 +19,8 @@ those tables.
 """
 from __future__ import annotations
 
+import psycopg.errors
+
 import db
 import org_time
 import parish_roles
@@ -54,9 +56,11 @@ SETTING_DEFAULTS = {
     "investment_account": None, "in_kind_account": None, "default_class": None,
     # added by migration 082 (Parishioner Self-Service): the diocese's switch for the parishioner's own screen (/my). Off until turned on.
     "portal_enabled": False,
+    # added by migration 083: the parish's member sign-in link name (/my/<portal_slug>), made from its name when the portal is switched on.
+    "portal_slug": None,
 }
 # Which settings need which capability to change.
-_DIOCESAN_SETTINGS = {"people_enabled", "giving_enabled", "allow_single_person_batch", "qbo_posting_enabled", "portal_enabled"}
+_DIOCESAN_SETTINGS = {"people_enabled", "giving_enabled", "allow_single_person_batch", "qbo_posting_enabled", "portal_enabled", "portal_slug"}
 _ACCOUNT_SETTINGS = {"qbo_company_key", "default_cash_account", "processing_fee_account", "due_from_diocese_account",
                      "investment_account", "in_kind_account", "default_class"}
 _BOOL_SETTINGS = {"people_enabled", "giving_enabled", "allow_single_person_batch", "qbo_posting_enabled", "portal_enabled"}
@@ -119,6 +123,13 @@ def settings_update(ctx: Ctx, changes: dict, *, cur=None) -> dict:
         else:
             if not (ctx.can("funds.manage") or ctx.can("parish.activate")):
                 raise PermissionDenied("Only Finance or the diocese can change the QBO account settings.")
+        if k == "portal_slug":
+            import donor_portal_login as PL
+            try:
+                clean[k] = PL.normalize_slug(v)
+            except ValueError as e:
+                raise InvalidInput(str(e), "portal_slug")
+            continue
         clean[k] = to_bool(v, field=k) if k in _BOOL_SETTINGS else clean_text(v, field=k, max_len=120)
     if not clean:
         return settings_get(ctx.parish_id)
@@ -127,9 +138,12 @@ def settings_update(ctx: Ctx, changes: dict, *, cur=None) -> dict:
                   (ctx.parish_id,))
         c.execute("SELECT * FROM donor.parish_settings WHERE parish_id = %s FOR UPDATE", (ctx.parish_id,))
         old = c.fetchone()
+        if clean.get("portal_enabled") and not old.get("portal_slug") and "portal_slug" not in clean and "portal_slug" in old:
+            import donor_portal_login as PL
+            clean["portal_slug"] = PL.default_slug(ctx.parish_id)           # the link is made from the parish name when the portal goes on
         sets, params = [], []
         for k, v in clean.items():
-            if old[k] != v:
+            if old.get(k) != v:
                 sets.append(f"{k} = %s")
                 params.append(v)
                 log_change(c, ctx, "parish_settings", ctx.parish_id, k, old[k], v, scope="parish")
@@ -137,8 +151,11 @@ def settings_update(ctx: Ctx, changes: dict, *, cur=None) -> dict:
             sets.append("updated_by_user_id = %s")
             params.append(ctx.user_id)
             sets.append("updated_at = NOW()")
-            c.execute(f"UPDATE donor.parish_settings SET {', '.join(sets)} WHERE parish_id = %s",
-                      (*params, ctx.parish_id))
+            try:
+                c.execute(f"UPDATE donor.parish_settings SET {', '.join(sets)} WHERE parish_id = %s",
+                          (*params, ctx.parish_id))
+            except psycopg.errors.UniqueViolation:
+                raise InvalidInput("That link name is already used by another parish. Pick a different one.", "portal_slug")
         if clean.get("people_enabled"):
             ensure_default_status_codes(c, ctx.parish_id)
     return settings_get(ctx.parish_id)
