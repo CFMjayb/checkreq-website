@@ -11,6 +11,9 @@ What a line has to be
   * A donor connected to THIS parish, unless it is a non-gift receipt (a refund or a reimbursement has no donor).
   * One or more splits, each to an OPEN fund at this parish, each a positive amount. The gift's amount is their sum
     and a gift counts as one item however many splits it has.
+  * A NON-GIFT RECEIPT (rent, a reimbursement, event tickets) is not a gift, so its splits go to a GL ACCOUNT the parish allows
+    for non-contributions (donor_noncontrib), never to a fund. A line with one amount and no account takes the parish's default
+    account. A line cannot be saved without an account (the database refuses it as well).
   * In-kind: a description and a book value equal to the amount. Stock: shares, a symbol, and a value at receipt
     equal to the amount. Goods or services provided to the donor (a dinner, a book) are only allowed on a
     tax-deductible gift and cannot exceed it. A processor fee is only allowed on a deposit-batch gift.
@@ -29,6 +32,7 @@ from donor_core import (
     Conflict, Ctx, InvalidInput, NotFound, PermissionDenied, check_enum, clean_text, log_change, need_giving,
     parse_date, person_label, to_bool, to_money, tx,
 )
+import donor_noncontrib as NC
 from donor_people import require_connection
 
 GIFT_TYPES = ("tax_deductible", "non_deductible", "non_gift_receipt", "in_kind", "stock")
@@ -55,17 +59,21 @@ def money(v) -> str:
 
 
 # ── Validation of one entered line ──────────────────────────────────────────────────────────────
+def _blank(v) -> bool:
+    return v in (None, "")
+
+
 def _splits_from(data: dict) -> list[dict]:
     raw = data.get("splits")
     if raw is None:
-        if data.get("fund_id") in (None, "") and data.get("amount") in (None, ""):
+        if _blank(data.get("fund_id")) and _blank(data.get("gl_account_id")) and _blank(data.get("amount")):
             return []
-        raw = [{"fund_id": data.get("fund_id"), "amount": data.get("amount")}]
+        raw = [{"fund_id": data.get("fund_id"), "gl_account_id": data.get("gl_account_id"), "amount": data.get("amount")}]
     out = []
-    for s in raw:
-        if s.get("fund_id") in (None, "") and s.get("amount") in (None, ""):
+    for sp in raw:
+        if _blank(sp.get("fund_id")) and _blank(sp.get("gl_account_id")) and _blank(sp.get("amount")):
             continue                                       # a blank split row on the form
-        out.append(s)
+        out.append(sp)
     return out
 
 
@@ -99,16 +107,42 @@ def normalize_line(c, ctx: Ctx, batch: dict, data: dict) -> dict:
     check_number = clean_text(data.get("check_number"), field="check number", max_len=30)
     memo = clean_text(data.get("memo"), field="memo", max_len=200)
     # splits
+    is_nc = gift_type == "non_gift_receipt"
     raw_splits = _splits_from(data)
     default_fund = batch.get("default_fund_id")
-    if default_fund and len(raw_splits) == 1 and raw_splits[0].get("fund_id") in (None, ""):
+    if is_nc:
+        if len(raw_splits) == 1 and _blank(raw_splits[0].get("gl_account_id")):
+            d = NC.default_account(c, ctx.parish_id)          # one amount, no account picked: the parish's default account
+            if d:
+                raw_splits = [{**raw_splits[0], "gl_account_id": d["id"]}]
+    elif default_fund and len(raw_splits) == 1 and raw_splits[0].get("fund_id") in (None, ""):
         raw_splits = [{**raw_splits[0], "fund_id": default_fund}]     # one amount, no fund picked: the batch's default fund
     if not raw_splits:
-        raise InvalidInput("Enter an amount and pick a fund.", "amount")
+        raise InvalidInput("Enter an amount and pick a GL account." if is_nc else "Enter an amount and pick a fund.", "amount")
     if len(raw_splits) > MAX_SPLITS:
-        raise InvalidInput(f"A gift can be split across at most {MAX_SPLITS} funds.", "splits")
+        raise InvalidInput(f"A gift can be split across at most {MAX_SPLITS} {'GL accounts' if is_nc else 'funds'}.", "splits")
     splits, seen = [], set()
     for s in raw_splits:
+        if is_nc:
+            # A non-gift receipt is coded to a GL account. A fund that came along (the entry form always has one) is ignored.
+            if _blank(s.get("gl_account_id")):
+                raise InvalidInput("Pick the GL account for this non-gift receipt. Finance sets the accounts a parish allows under "
+                                   "Funds and campaigns, Non-contribution accounts.", "gl_account_id")
+            try:
+                gid_ = int(s.get("gl_account_id"))
+            except (TypeError, ValueError):
+                raise InvalidInput("Pick the GL account for this non-gift receipt.", "gl_account_id")
+            if gid_ in seen:
+                raise InvalidInput("List each GL account once. Add the amounts together instead.", "gl_account_id")
+            seen.add(gid_)
+            amt = to_money(s.get("amount"), field="amount")
+            if amt <= ZERO:
+                raise InvalidInput("Every amount must be more than zero.", "amount")
+            acct = NC.allowed_account(c, ctx, gid_)
+            splits.append({"fund_id": None, "gl_account_id": gid_, "amount": amt, "fund_name": None, "gl_label": NC.account_label(acct)})
+            continue
+        if not _blank(s.get("gl_account_id")) and _blank(s.get("fund_id")):
+            raise InvalidInput("Only a non-gift receipt is coded to a GL account. Pick a fund for this gift.", "fund_id")
         try:
             fid = int(s.get("fund_id"))
         except (TypeError, ValueError):
@@ -125,7 +159,7 @@ def normalize_line(c, ctx: Ctx, batch: dict, data: dict) -> dict:
             raise NotFound("That fund was not found at this parish.")
         if not f["is_open"]:
             raise InvalidInput(f"The fund '{f['name']}' is closed and takes no new gifts.", "fund_id")
-        splits.append({"fund_id": fid, "amount": amt, "fund_name": f["name"]})
+        splits.append({"fund_id": fid, "gl_account_id": None, "amount": amt, "fund_name": f["name"], "gl_label": None})
     total = sum((s["amount"] for s in splits), ZERO)
     # goods and services, fees
     goods = to_money(data.get("goods_value") or "0", field="value of goods or services")
@@ -215,8 +249,9 @@ def insert_gift_row(c, ctx: Ctx, batch_id: int, fields: dict, splits: list[dict]
         (ctx.parish_id, batch_id, ctx.user_id, reverses_gift_id, reclass_of_gift_id, replaces_gift_id, correction_reason, *[cols[k] for k in _GIFT_COLS]))
     gid = c.fetchone()["id"]
     for s in splits:
-        c.execute("INSERT INTO donor.gift_split (gift_id, fund_id, amount) VALUES (%s,%s,%s)", (gid, s["fund_id"], Decimal(s["amount"]).quantize(Decimal("0.01"))))
-    names = ", ".join(s.get("fund_name") or f"fund {s['fund_id']}" for s in splits)
+        c.execute("INSERT INTO donor.gift_split (gift_id, fund_id, gl_account_id, amount) VALUES (%s,%s,%s,%s)",
+                  (gid, s.get("fund_id"), s.get("gl_account_id"), Decimal(s["amount"]).quantize(Decimal("0.01"))))
+    names = ", ".join(s.get("fund_name") or s.get("gl_label") or (f"fund {s['fund_id']}" if s.get("fund_id") else "GL account needed") for s in splits)
     log_change(c, ctx, "gift", gid, None, None, f"${money(total)} to {names}", person_id=fields.get("person_id"), kind=kind,
                scope="parish", reason=correction_reason)
     return gid
@@ -224,13 +259,19 @@ def insert_gift_row(c, ctx: Ctx, batch_id: int, fields: dict, splits: list[dict]
 
 # ── Reads ───────────────────────────────────────────────────────────────────────────────────────
 def attach_splits(c, gifts: list[dict]) -> list[dict]:
+    """Add each gift's splits. A split goes to a fund (fund_name) or, for a non-gift receipt, to a GL account (account_number,
+    account_name, gl_label). target_name is whichever it is, for a screen that just lists where the money went."""
     if not gifts:
         return gifts
-    c.execute("SELECT gs.gift_id, gs.fund_id, gs.amount, f.name AS fund_name FROM donor.gift_split gs JOIN donor.fund f ON f.id = gs.fund_id "
+    c.execute("SELECT gs.gift_id, gs.fund_id, gs.gl_account_id, gs.amount, f.name AS fund_name, a.account_number, a.account_name "
+              "FROM donor.gift_split gs LEFT JOIN donor.fund f ON f.id = gs.fund_id "
+              "LEFT JOIN donor.noncontribution_account a ON a.id = gs.gl_account_id "
               "WHERE gs.gift_id = ANY(%s) ORDER BY gs.id", ([g["id"] for g in gifts],))
     by: dict[int, list[dict]] = {}
-    for s in c.fetchall():
-        by.setdefault(s["gift_id"], []).append(s)
+    for sp in c.fetchall():
+        sp["gl_label"] = NC.account_label(sp) if sp["gl_account_id"] else None
+        sp["target_name"] = sp["fund_name"] or sp["gl_label"] or NC.account_label(None)
+        by.setdefault(sp["gift_id"], []).append(sp)
     for g in gifts:
         g["splits"] = by.get(g["id"], [])
     return gifts
@@ -262,7 +303,7 @@ def person_giving_summary(ctx: Ctx, person_id: int, *, year: int | None = None, 
             "       b.id AS batch_id, b.number AS batch_number, f.name AS fund_name, gs.amount AS amount "
             "  FROM donor.gift g JOIN donor.batch b ON b.id = g.batch_id AND b.status IN ('closed', 'reconciled') "
             "  JOIN donor.gift_split gs ON gs.gift_id = g.id JOIN donor.fund f ON f.id = gs.fund_id "
-            " WHERE g.parish_id = %s AND g.person_id = %s AND g.status <> 'voided' "
+            " WHERE g.parish_id = %s AND g.person_id = %s AND g.status <> 'voided' AND g.gift_type <> 'non_gift_receipt' "
             " ORDER BY g.gift_date DESC, g.id DESC, gs.id LIMIT 300", (ctx.parish_id, person_id))
         rows = c.fetchall()
         # Per gift (not per split). A reversal row carries the original's goods value, so the deductible amount
@@ -310,6 +351,6 @@ def report_totals_by_fund(ctx: Ctx, start: dt.date, end: dt.date) -> list[dict]:
             "SELECT f.id AS fund_id, f.name AS fund_name, COALESCE(SUM(gs.amount), 0) AS total, COUNT(DISTINCT g.id) AS items "
             "  FROM donor.gift g JOIN donor.batch b ON b.id = g.batch_id AND b.status IN ('closed', 'reconciled') "
             "  JOIN donor.gift_split gs ON gs.gift_id = g.id JOIN donor.fund f ON f.id = gs.fund_id "
-            " WHERE g.parish_id = %s AND g.status <> 'voided' AND g.gift_date BETWEEN %s AND %s "
+            " WHERE g.parish_id = %s AND g.status <> 'voided' AND g.gift_type <> 'non_gift_receipt' AND g.gift_date BETWEEN %s AND %s "
             " GROUP BY f.id, f.name ORDER BY f.name", (ctx.parish_id, start, end))
         return c.fetchall()

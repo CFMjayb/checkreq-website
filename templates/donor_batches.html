@@ -73,6 +73,17 @@ listed here. A batch's number, date, expected and actual totals are enough for a
     </table>
   </div>
   {% endif %}
+
+  {% if nc_totals %}
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>{{ year }} so far, non-contributions</h3><a class="dm-small" href="/giving/noncontribution-accounts">Accounts</a></div>
+    <p class="dm-muted dm-small">Money that is not a gift (rent, reimbursements, event tickets), by GL account. Closed batches only. It is never in the giving totals above and never on a statement or tax receipt.</p>
+    <table class="simple-table dm-table">
+      <thead><tr><th>GL account</th><th class="dm-num">Items</th><th class="dm-num">Total</th></tr></thead>
+      <tbody>{% for t in nc_totals %}<tr><td>{% if t.account_number %}{{ t.account_number }} {{ t.account_name }}{% else %}<em>GL account needed</em>{% endif %}</td><td class="dm-num">{{ t["items"] }}</td><td class="dm-num">{{ money(t.total) }}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}
 {% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}

@@ -1,0 +1,75 @@
+{#
+donor_noncontrib.html -- the GL accounts a parish allows for NON-CONTRIBUTION receipts (rent, a reimbursement, event tickets, money
+passed through). A non-gift receipt is coded to one of these instead of a fund. Finance sets the list and may name one default; an
+account is turned off, never deleted, so lines already coded to it keep it. Also lists any receipt that still has no account.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Non-contribution accounts — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/giving/funds">&larr; Funds and campaigns</a></p>
+  <div class="dm-head"><h1>Non-contribution accounts</h1></div>
+  <p class="dm-muted">Money a parish takes in that is not a gift (rent, a reimbursement, event tickets, money passed through to someone else) goes
+    to a GL account, not to a fund. These are the accounts this parish allows for it. A line of type &ldquo;Non-gift receipt&rdquo; takes the default
+    account unless the clerk picks another, and it cannot be saved or closed without one. These receipts never appear on giving statements or tax
+    receipts and never count toward pledges or giving totals.</p>
+
+  {% if uncoded and uncoded.count %}
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Needs a GL account</h3></div>
+    <div class="banner banner-error">{{ uncoded.count }} non-gift receipt{{ '' if uncoded.count == 1 else 's' }} ({{ money(uncoded.total) }}) came from another system and still
+      {{ 'has' if uncoded.count == 1 else 'have' }} no GL account. Supply the account before sign-off.</div>
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Batch</th><th>Date</th><th>Memo</th><th class="dm-num">Amount</th></tr></thead>
+      <tbody>{% for r in uncoded.rows %}<tr><td><a href="/giving/batches/{{ r.batch_id }}">{{ r.batch_number }}</a></td><td>{{ d(r.gift_date) }}</td><td>{{ r.memo or '' }}</td><td class="dm-num">{{ money(r.amount) }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+  {% endif %}
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Accounts this parish allows</h3></div>
+    {% if not can_manage %}<p class="dm-muted dm-small">Only Finance can change this list.</p>{% endif %}
+    {% if can_manage %}
+    <form method="post" action="/giving/noncontribution-accounts/save" class="dm-form">
+      {{ csrf() }}
+      <input type="hidden" name="row_count" value="{{ accounts|length + 3 }}">
+      <div class="table-scroll"><table class="simple-table dm-table">
+        <thead><tr><th>On</th><th>Account number</th><th>Account name</th><th>QuickBooks account id (optional)</th><th>Default</th></tr></thead>
+        <tbody>
+        {% for a in accounts %}
+          <tr class="{{ '' if a.is_active else 'dm-archived' }}">
+            <td><input type="checkbox" name="acct_{{ loop.index0 }}_on" value="1" {{ 'checked' if a.is_active }} aria-label="On"></td>
+            <td><input name="acct_{{ loop.index0 }}_number" value="{{ a.account_number }}" required></td>
+            <td><input name="acct_{{ loop.index0 }}_name" value="{{ a.account_name }}" required></td>
+            <td><input name="acct_{{ loop.index0 }}_qbo" value="{{ a.qbo_account_id or '' }}"></td>
+            <td><input type="radio" name="default" value="{{ loop.index0 }}" {{ 'checked' if a.is_default }} aria-label="Default"></td>
+          </tr>
+        {% endfor %}
+        {% for i in range(accounts|length, accounts|length + 3) %}
+          <tr>
+            <td><input type="checkbox" name="acct_{{ i }}_on" value="1" checked aria-label="On"></td>
+            <td><input name="acct_{{ i }}_number" placeholder="New account number"></td>
+            <td><input name="acct_{{ i }}_name" placeholder="Name"></td>
+            <td><input name="acct_{{ i }}_qbo"></td>
+            <td><input type="radio" name="default" value="{{ i }}" aria-label="Default"></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      <p class="dm-sub">Untick a row to turn that account off (it is never deleted: receipts already coded to it keep it). Leave the three blank rows alone unless you are adding an account.
+        The default has to be on. Saving the list is logged.</p>
+      <button type="submit" class="btn btn-primary">Save the list</button>
+    </form>
+    {% else %}
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Account</th><th>Name</th><th>Status</th></tr></thead>
+      <tbody>{% for a in accounts %}<tr class="{{ '' if a.is_active else 'dm-archived' }}"><td>{{ a.account_number }}</td><td>{{ a.account_name }}{% if a.is_default %} <span class="dm-pill">Default</span>{% endif %}</td><td>{{ 'On' if a.is_active else 'Off' }}</td></tr>
+      {% else %}<tr><td colspan="3" class="doc-empty">No accounts yet.</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

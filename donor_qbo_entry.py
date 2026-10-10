@@ -14,6 +14,8 @@ Shapes (the handoff's "QBO posting" section)
                      Dr the processing-fee expense account for fees the parish pays (processor deposits)
                      Cr each fund's income account (or liability account for a pass-through fund) at gross, with the
                        fund's QuickBooks class
+                     Cr the GL account of each NON-GIFT RECEIPT line (rent, a reimbursement) at gross, instead of a fund's
+                       income account, with the parish's default QuickBooks class. The cash side is the same.
   non-deposit batch  Dr the investment account for stock at value received, Dr the in-kind account for in-kind gifts at
                      book value, Cr each fund as above
   reversal / return  the same lines with the signs flipped (a reversing gift carries negative splits)
@@ -50,11 +52,13 @@ def _line(acct, debit, credit, cls, desc) -> dict:
     return {"acct_num": acct, "debit": format(q(debit), "f"), "credit": format(q(credit), "f"), "class_name": cls, "description": desc}
 
 
-def build_entry(batch: dict, gifts: list[dict], funds: dict, settings: dict, *, today: dt.date | None = None) -> dict:
-    """Pure. `gifts` are the batch's non-voided gifts, each with `splits` [{fund_id, amount}] (negative for a reversal),
-    `gift_type`, `fee_amount`, `fee_covered_by_donor`, `reclass_of_gift_id`, `reverses_gift_id`. `funds` maps
-    fund_id -> fund row. Returns {kind, txn_date, doc_number, private_note, lines, total_debit, total_credit, problems,
-    status}. Raises DonorError if the lines do not balance (which would be a bug here, never bad data)."""
+def build_entry(batch: dict, gifts: list[dict], funds: dict, settings: dict, *, today: dt.date | None = None,
+                gl_accounts: dict | None = None) -> dict:
+    """Pure. `gifts` are the batch's non-voided gifts, each with `splits` [{fund_id, gl_account_id, amount}] (negative for a
+    reversal; a non-gift receipt's split has a gl_account_id and no fund), `gift_type`, `fee_amount`, `fee_covered_by_donor`,
+    `reclass_of_gift_id`, `reverses_gift_id`. `funds` maps fund_id -> fund row and `gl_accounts` maps gl_account_id ->
+    donor.noncontribution_account row. Returns {kind, txn_date, doc_number, private_note, lines, total_debit, total_credit,
+    problems, status}. Raises DonorError if the lines do not balance (which would be a bug here, never bad data)."""
     today = today or dt.date.today()
     problems: list[str] = []
     live = [g for g in gifts if g.get("status") != "voided"]
@@ -76,10 +80,17 @@ def build_entry(batch: dict, gifts: list[dict], funds: dict, settings: dict, *, 
         cash_desc = f"Batch {batch['number']} deposit"
     cash_total = stock_total = in_kind_total = fee_total = ZERO
     fund_totals: dict[int, Decimal] = {}
+    gl_totals: dict[int, Decimal] = {}
+    uncoded_total = ZERO
     for g in live:
         amount = sum((Decimal(s["amount"]) for s in g["splits"]), ZERO)
         for s in g["splits"]:
-            fund_totals[s["fund_id"]] = fund_totals.get(s["fund_id"], ZERO) + Decimal(s["amount"])
+            if s.get("gl_account_id"):
+                gl_totals[s["gl_account_id"]] = gl_totals.get(s["gl_account_id"], ZERO) + Decimal(s["amount"])
+            elif s.get("fund_id"):
+                fund_totals[s["fund_id"]] = fund_totals.get(s["fund_id"], ZERO) + Decimal(s["amount"])
+            else:
+                uncoded_total += Decimal(s["amount"])          # a non-gift receipt that has no GL account yet
         if g["gift_type"] == "stock":
             stock_total += amount
         elif g["gift_type"] == "in_kind":
@@ -118,6 +129,14 @@ def build_entry(batch: dict, gifts: list[dict], funds: dict, settings: dict, *, 
         if not acct:
             problems.append(f"The fund '{f.get('name', fund_id)}' has no income account.")
         add(acct, cls, f.get("name") or f"Fund {fund_id}", -total)
+    for gl_id, total in gl_totals.items():
+        a = (gl_accounts or {}).get(gl_id) or {}
+        if not a.get("account_number"):
+            problems.append(f"The GL account for a non-gift receipt (id {gl_id}) is not known.")
+        add(a.get("account_number"), settings.get("default_class"), "Non-contribution: " + (a.get("account_name") or f"GL account {gl_id}"), -total)
+    if uncoded_total != ZERO:
+        problems.append("A non-gift receipt has no GL account. Pick one before the batch closes.")
+        add(None, None, "GL account needed", -uncoded_total)
 
     lines = []
     for (acct, cls, desc), amt in sorted(signed.items(), key=lambda kv: (kv[1] < 0, str(kv[0][0] or ""), kv[0][2])):

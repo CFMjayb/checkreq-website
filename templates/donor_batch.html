@@ -40,6 +40,21 @@ totals of a closed one. The entry shown is built and stored, never sent: posting
       </div>
     {% endif %}
   </div>
+  {% set nc = bt.noncontribution %}
+  {% if nc and nc["items"] %}
+  <div class="card dm-card" id="noncontribution">
+    <div class="dm-section-head"><h3>Non-contributions in this batch</h3></div>
+    <p class="dm-muted dm-small">Money that is not a gift (rent, a reimbursement, event tickets). It is part of this deposit, so it is in the totals above, but it is
+      never giving: it stays off statements, tax receipts, pledges and giving totals.{% if nc.uncoded %} <strong class="dm-bad">{{ nc.uncoded }} line{{ '' if nc.uncoded == 1 else 's' }} still need a GL account.</strong>{% endif %}</p>
+    <table class="simple-table dm-table">
+      <thead><tr><th>GL account</th><th class="dm-num">Items</th><th class="dm-num">Amount</th></tr></thead>
+      <tbody>
+      {% for r in nc.by_account %}<tr><td>{% if r.account_number %}{{ r.account_number }} {{ r.account_name }}{% else %}<em>GL account needed</em>{% endif %}</td><td class="dm-num">{{ r["items"] }}</td><td class="dm-num">{{ money(r.total) }}</td></tr>{% endfor %}
+      <tr><td><strong>Total non-contributions</strong></td><td class="dm-num"><strong>{{ nc["items"] }}</strong></td><td class="dm-num"><strong>{{ money(nc.total) }}</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
   {% if is_open and can_open and not b.is_correction %}
   <details class="dm-edit"><summary class="btn btn-secondary btn-sm">Change the count sheet or header</summary>
     <form method="post" action="/giving/batches/{{ bid }}/header" class="dm-form dm-editform">
@@ -70,8 +85,11 @@ totals of a closed one. The entry shown is built and stored, never sent: posting
         <div class="field"><label for="dmEnvelope">Envelope number</label><input id="dmEnvelope" name="envelope" inputmode="numeric" autocomplete="off" autofocus data-envelope-url="/giving/api/envelope"><div class="dm-sub" id="dmEnvelopeMsg" aria-live="polite"></div></div>
         <div class="field"><label>Donor</label>{{ picker("person_id", "Search by name") }}</div>
         <div class="field"><label for="dmAmount">Amount ($)</label><input id="dmAmount" name="amount" inputmode="decimal" autocomplete="off" required></div>
-        <div class="field"><label for="dmFund">Fund</label>
+        <div class="field" id="dmFundField"><label for="dmFund">Fund</label>
           <select id="dmFund" name="fund_id">{% for f in funds %}<option value="{{ f.id }}" {{ 'selected' if f.id == last_fund }}>{{ f.name }}</option>{% endfor %}</select></div>
+        <div class="field" id="dmGlField" {{ 'hidden' if last_type != 'non_gift_receipt' }}><label for="dmGl">GL account (non-gift receipt)</label>
+          <select id="dmGl" name="gl_account_id" {{ 'disabled' if last_type != 'non_gift_receipt' }}>{% for a in nc_accounts %}<option value="{{ a.id }}" {{ 'selected' if a.is_default }}>{{ a.account_number }} {{ a.account_name }}</option>{% else %}<option value="">No accounts set yet</option>{% endfor %}</select>
+          {% if not nc_accounts %}<div class="dm-sub">Finance sets the accounts under <a href="/giving/noncontribution-accounts">Non-contribution accounts</a>.</div>{% endif %}</div>
         <div class="field"><label for="dmType">Type</label>
           <select id="dmType" name="gift_type">{% for v in types %}<option value="{{ v }}" {{ 'selected' if v == last_type }}>{{ label(v) }}</option>{% endfor %}</select></div>
         <div class="field"><label for="dmCheck">Check number (blank = cash)</label><input id="dmCheck" name="check_number" autocomplete="off"></div>
@@ -80,9 +98,11 @@ totals of a closed one. The entry shown is built and stored, never sent: posting
       </div>
       <details class="dm-edit"><summary class="btn btn-secondary btn-sm">More: split, postmark, goods, fees, in-kind, stock</summary>
         <div class="dm-grid dm-editform">
-          <div class="field"><label>Second fund (split)</label><select name="split2_fund"><option value="">None</option>{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+          <div class="field dm-fund-only"><label>Second fund (split)</label><select name="split2_fund"><option value="">None</option>{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+          <div class="field dm-gl-only" {{ 'hidden' if last_type != 'non_gift_receipt' }}><label>Second GL account (split)</label><select name="split2_gl" {{ 'disabled' if last_type != 'non_gift_receipt' }}><option value="">None</option>{% for a in nc_accounts %}<option value="{{ a.id }}">{{ a.account_number }} {{ a.account_name }}</option>{% endfor %}</select></div>
           <div class="field"><label>Second amount</label><input name="split2_amount" inputmode="decimal"></div>
-          <div class="field"><label>Third fund</label><select name="split3_fund"><option value="">None</option>{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+          <div class="field dm-fund-only"><label>Third fund</label><select name="split3_fund"><option value="">None</option>{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+          <div class="field dm-gl-only" {{ 'hidden' if last_type != 'non_gift_receipt' }}><label>Third GL account</label><select name="split3_gl" {{ 'disabled' if last_type != 'non_gift_receipt' }}><option value="">None</option>{% for a in nc_accounts %}<option value="{{ a.id }}">{{ a.account_number }} {{ a.account_name }}</option>{% endfor %}</select></div>
           <div class="field"><label>Third amount</label><input name="split3_amount" inputmode="decimal"></div>
           <div class="field"><label>Postmark date</label><input name="postmark_date" placeholder="MM/DD/YYYY"></div>
           <div class="field"><label>Value of goods or services given ($)</label><input name="goods_value" inputmode="decimal"></div>
@@ -97,7 +117,8 @@ totals of a closed one. The entry shown is built and stored, never sent: posting
         </div>
       </details>
       <label class="dm-check"><input type="checkbox" name="confirm_duplicate" value="1"> This is a different gift (same check number as one already recorded)</label>
-      <p class="dm-sub">Press Enter in the amount box to save the line. The fund and type stay as they are for the next one. A split's amounts replace the amount above.</p>
+      <p class="dm-sub">Press Enter in the amount box to save the line. The fund and type stay as they are for the next one. A split's amounts replace the amount above.
+        A non-gift receipt (rent, a reimbursement) goes to a GL account, not a fund, and needs no donor.</p>
       <button type="submit" class="btn btn-primary">Add line</button>
     </form>
   </div>
@@ -110,13 +131,13 @@ totals of a closed one. The entry shown is built and stored, never sent: posting
       <p class="dm-muted">The individual gifts of a closed batch are shown to finance roles only. The totals above are what you can see.</p>
     {% elif bt.lines %}
     <div class="table-scroll"><table class="simple-table dm-table">
-      <thead><tr><th>Donor</th><th>Funds</th><th>Type</th><th>Check</th><th>Memo</th><th class="dm-num">Amount</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Donor</th><th>Fund or GL account</th><th>Type</th><th>Check</th><th>Memo</th><th class="dm-num">Amount</th><th>Status</th><th></th></tr></thead>
       <tbody>
       {% for l in bt.lines %}
         <tr class="{{ 'dm-archived' if l.status in ('voided',) else '' }}">
           <td>{% if l.person_id %}<a href="/people/{{ l.person_id }}">{{ l.donor_name }}</a>{% else %}{{ l.donor_name }}{% endif %}
             {% if l.reverses_gift_id %}<span class="dm-pill">Reversal</span>{% elif l.reclass_of_gift_id %}<span class="dm-pill">Reclass</span>{% elif l.replaces_gift_id %}<span class="dm-pill">Replacement</span>{% endif %}</td>
-          <td>{% for s in l.splits %}{{ s.fund_name }} {{ money(s.amount) }}{{ '<br>'|safe if not loop.last }}{% endfor %}</td>
+          <td>{% for s in l.splits %}{{ s.target_name }} {{ money(s.amount) }}{{ '<br>'|safe if not loop.last }}{% endfor %}</td>
           <td>{{ label(l.gift_type) }}{% if l.in_kind_description %}<div class="dm-sub">{{ l.in_kind_description }}</div>{% endif %}{% if l.stock_symbol %}<div class="dm-sub">{{ l.stock_shares }} {{ l.stock_symbol }}</div>{% endif %}</td>
           <td>{{ l.check_number or 'cash' }}</td>
           <td>{{ l.memo or '' }}{% if l.correction_reason %}<div class="dm-sub">Why: {{ l.correction_reason }}</div>{% endif %}{% if l.goods_value and l.goods_value > 0 %}<div class="dm-sub">Goods or services: {{ money(l.goods_value) }}</div>{% endif %}</td>
@@ -129,7 +150,11 @@ totals of a closed one. The entry shown is built and stored, never sent: posting
                 <form method="post" action="/giving/gifts/{{ l.id }}/update" class="dm-form dm-editform">
                   {{ csrf() }}<input type="hidden" name="batch_id" value="{{ bid }}">
                   <div class="field"><label>Amount</label><input name="amount" value="{{ l.amount }}"></div>
+                  {% if l.gift_type == 'non_gift_receipt' %}
+                  <div class="field"><label>GL account</label><select name="gl_account_id">{% for a in nc_all %}{% set cur = l.splits|length == 1 and a.id == l.splits[0].gl_account_id %}<option value="{{ a.id }}" {{ 'selected' if cur }} {{ 'disabled' if not a.is_active and not cur }}>{{ a.account_number }} {{ a.account_name }}{{ '' if a.is_active else ' (off)' }}</option>{% endfor %}</select></div>
+                  {% else %}
                   <div class="field"><label>Fund</label><select name="fund_id">{% for f in funds %}<option value="{{ f.id }}" {{ 'selected' if l.splits|length == 1 and f.id == l.splits[0].fund_id }}>{{ f.name }}</option>{% endfor %}</select></div>
+                  {% endif %}
                   <div class="field"><label>Check number</label><input name="check_number" value="{{ l.check_number or '' }}"></div>
                   <div class="field"><label>Memo</label><input name="memo" value="{{ l.memo or '' }}"></div>
                   <p class="dm-sub">Changing the amount or fund replaces the line: the old one stays on the record, marked voided.</p>
@@ -153,7 +178,11 @@ totals of a closed one. The entry shown is built and stored, never sent: posting
                     <div class="field"><label>Why?</label><input name="reason" required></div>
                     <details class="dm-edit"><summary class="dm-small">Also enter the corrected gift</summary>
                       <div class="field"><label>Donor</label>{{ picker("repl_person_id", "Search by name") }}</div>
+                      {% if l.gift_type == 'non_gift_receipt' %}
+                      <div class="field"><label>GL account</label><select name="repl_gl_id">{% for a in nc_accounts %}<option value="{{ a.id }}">{{ a.account_number }} {{ a.account_name }}</option>{% endfor %}</select></div>
+                      {% else %}
                       <div class="field"><label>Fund</label><select name="repl_fund_id">{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+                      {% endif %}
                       <div class="field"><label>Amount</label><input name="repl_amount" inputmode="decimal"></div>
                     </details>
                     <button type="submit" class="btn btn-secondary btn-sm">Reverse</button>
@@ -166,10 +195,18 @@ totals of a closed one. The entry shown is built and stored, never sent: posting
                   </form>
                   <form method="post" action="/giving/gifts/{{ l.id }}/reclass" class="dm-form">
                     {{ csrf() }}<input type="hidden" name="batch_id" value="{{ bid }}">
-                    <strong>Reclass</strong> (move to other funds, no cash)
+                    <strong>Reclass</strong> ({{ 'move to other GL accounts' if l.gift_type == 'non_gift_receipt' else 'move to other funds' }}, no cash)
+                    {% if l.gift_type == 'non_gift_receipt' %}
+                    <div class="field"><label>GL account</label><select name="gl_account_id">{% for a in nc_accounts %}<option value="{{ a.id }}">{{ a.account_number }} {{ a.account_name }}</option>{% endfor %}</select></div>
+                    {% else %}
                     <div class="field"><label>Fund</label><select name="fund_id">{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+                    {% endif %}
                     <div class="field"><label>Amount</label><input name="amount" value="{{ l.amount }}"></div>
+                    {% if l.gift_type == 'non_gift_receipt' %}
+                    <div class="field"><label>Second GL account</label><select name="split2_gl"><option value="">None</option>{% for a in nc_accounts %}<option value="{{ a.id }}">{{ a.account_number }} {{ a.account_name }}</option>{% endfor %}</select></div>
+                    {% else %}
                     <div class="field"><label>Second fund</label><select name="split2_fund"><option value="">None</option>{% for f in funds %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></div>
+                    {% endif %}
                     <div class="field"><label>Second amount</label><input name="split2_amount"></div>
                     <div class="field"><label>Why?</label><input name="reason" required></div>
                     <button type="submit" class="btn btn-secondary btn-sm">Reclass</button>

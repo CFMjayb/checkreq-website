@@ -41,7 +41,7 @@ A minor's contact details never appear here for a role that may not see them (th
         <select name="status">
           <option value="">Any</option>
           <optgroup label="Diocesan category">
-            {% for c in ["active_member","inactive_member","non_member","transferred_out","removed","deceased"] %}<option value="{{ c }}" {{ 'selected' if status == c }}>{{ label(c) }}</option>{% endfor %}
+            {% for c in ["active_member","inactive_member","non_member","transferred_out","removed","deceased","organization","renter"] %}<option value="{{ c }}" {{ 'selected' if status == c }}>{{ label(c) }}</option>{% endfor %}
           </optgroup>
           <optgroup label="This parish's codes">
             {% for c in codes %}<option value="{{ c.code }}" {{ 'selected' if status == c.code }}>{{ c.label }}</option>{% endfor %}

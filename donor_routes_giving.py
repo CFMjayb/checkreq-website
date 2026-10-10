@@ -22,6 +22,7 @@ import donor_corrections as K
 import donor_funds as F
 import donor_gifts as G
 import donor_households as H
+import donor_noncontrib as NC
 import donor_pledge_requests as PR
 import donor_pledges as PL
 import donor_qbo_entry as Q
@@ -67,13 +68,14 @@ def _not_found(request, user, parish, ctx, what: str, back_href: str):
     return W.page(request, "donor_off.html", user, parish, ctx, "giving", {"reason": "notfound", "feature": "giving", "what": what, "back_href": back_href}, status_code=404)
 
 
-def _splits_from_form(form, prefix_amount="amount", prefix_fund="fund_id") -> list[dict]:
-    """The first fund and amount, then up to two more rows (split2_*, split3_*) when the clerk used them."""
-    rows = [{"fund_id": form.get(prefix_fund), "amount": form.get(prefix_amount)}]
+def _splits_from_form(form, prefix_amount="amount", prefix_fund="fund_id", prefix_gl="gl_account_id") -> list[dict]:
+    """The first fund (or GL account, for a non-gift receipt) and amount, then up to two more rows (split2_*, split3_*) when the clerk
+    used them. The service decides which of fund and GL account a line takes: it ignores the one it does not need."""
+    rows = [{"fund_id": form.get(prefix_fund), "gl_account_id": form.get(prefix_gl), "amount": form.get(prefix_amount)}]
     for i in (2, 3):
-        f, a = form.get(f"split{i}_fund"), form.get(f"split{i}_amount")
-        if f or a:
-            rows.append({"fund_id": f, "amount": a})
+        f, g, a = form.get(f"split{i}_fund"), form.get(f"split{i}_gl"), form.get(f"split{i}_amount")
+        if f or g or a:
+            rows.append({"fund_id": f, "gl_account_id": g, "amount": a})
     return rows
 
 
@@ -97,8 +99,12 @@ def giving_home(request: Request, status: str = ""):
         totals = G.report_totals_by_fund(ctx, dt.date(today.year, 1, 1), today)
     except DonorError:
         totals = []
+    try:                                       # non-contributions are their own section: never in the giving totals above
+        nc_totals = NC.report_noncontributions(ctx, dt.date(today.year, 1, 1), today)
+    except DonorError:
+        nc_totals = []
     return W.page(request, "donor_batches.html", user, parish, ctx, "giving", {
-        "batches": rows, "funds": funds, "totals": totals, "status": status, "year": today.year, "error": error,
+        "batches": rows, "funds": funds, "totals": totals, "nc_totals": nc_totals, "status": status, "year": today.year, "error": error,
         "today": today.isoformat()})
 
 
@@ -147,10 +153,16 @@ def batch_page(batch_id: int, request: Request):
         funds = F.fund_list(ctx, include_closed=False)
     except DonorError:
         pass
+    nc_all = []
+    try:
+        nc_all = NC.noncontribution_accounts_list(ctx, include_inactive=True)
+    except DonorError:
+        pass
+    nc_accounts = [a for a in nc_all if a["is_active"]]
     batch = bt["batch"]
     live = [l for l in (bt["lines"] or []) if l["status"] != "voided"]
     last = live[-1] if live else None
-    last_fund = (last["splits"][0]["fund_id"] if last and last["splits"] else None) or batch["default_fund_id"]
+    last_fund = (last["splits"][0]["fund_id"] if last and last["splits"] else None) or batch["default_fund_id"]   # None after a non-gift receipt
     last_type = (last["gift_type"] if last else None) or batch["default_gift_type"]
     types = G.DEPOSIT_TYPES if batch["kind"] == "deposit" else G.NON_DEPOSIT_TYPES
     entry = bt["entry"] or bt["preview"]
@@ -158,6 +170,7 @@ def batch_page(batch_id: int, request: Request):
     names = {r["id"]: r["name"] for r in db.query("SELECT id, COALESCE(display_name, email) AS name FROM checkreq.app_users WHERE id = ANY(%s)", (uids,))} if uids else {}
     return W.page(request, "donor_batch.html", user, parish, ctx, "giving", {
         "bt": bt, "b": batch, "bid": batch_id, "funds": funds, "last_fund": last_fund, "last_type": last_type, "types": types, "names": names,
+        "nc_accounts": nc_accounts, "nc_all": nc_all,
         "entry": entry, "entry_is_stored": bool(bt["entry"]), "live_count": len(live), "today": dt.date.today().isoformat(),
         "can_line": ctx.can("batch.line"), "can_close": ctx.can("batch.close"), "can_reopen": ctx.can("batch.reopen"),
         "can_correct": ctx.can("gift.correct"), "can_open": ctx.can("batch.open"), "see_gifts": G.can_read_gifts(ctx)})
@@ -228,7 +241,7 @@ async def gift_update(gift_id: int, request: Request):
     bid = _opt_int(form.get("batch_id"))       # only where to land afterwards. The service finds the gift's real batch itself.
     url = f"/giving/batches/{bid}#entry" if bid else "/giving"
     changes = {k: form.get(k) for k in ("check_number", "memo", "gift_date", "postmark_date", "goods_value") if k in form}
-    if form.get("amount") not in (None, "") or form.get("fund_id") not in (None, ""):
+    if any(form.get(k) not in (None, "") for k in ("amount", "fund_id", "gl_account_id")):
         changes["splits"] = _splits_from_form(form)
     changes["confirm_duplicate"] = _flag(form, "confirm_duplicate")
     try:
@@ -284,7 +297,8 @@ async def _correct(request: Request, gift_id: int, kind: str):
         if kind == "reverse":
             repl = None
             if _opt_int(form.get("repl_person_id")) or form.get("repl_amount"):
-                repl = {"person_id": _opt_int(form.get("repl_person_id")), "splits": [{"fund_id": form.get("repl_fund_id"), "amount": form.get("repl_amount")}]}
+                repl = {"person_id": _opt_int(form.get("repl_person_id")),
+                        "splits": [{"fund_id": form.get("repl_fund_id"), "gl_account_id": form.get("repl_gl_id"), "amount": form.get("repl_amount")}]}
                 repl = {k: v for k, v in repl.items() if v is not None}
             r = K.gift_reverse(ctx, gift_id, reason, repl)
         elif kind == "return":
@@ -342,6 +356,45 @@ async def fund_save(request: Request):
         return W.back(request, "/giving/funds", ok="Fund added.")
     except DonorError as e:
         return W.back(request, "/giving/funds", err=e.message)
+
+
+# ── Non-contribution GL accounts (Finance) ──────────────────────────────────────────────────────
+@router.get("/giving/noncontribution-accounts", response_class=HTMLResponse)
+def noncontribution_accounts_page(request: Request):
+    user, parish, ctx, resp = _gate(request, ("funds.manage", "batch.view", "totals.read", "giving.read"), "giving")
+    if resp:
+        return resp
+    accounts = NC.noncontribution_accounts_list(ctx, include_inactive=True)
+    uncoded = None
+    if ctx.can("giving.read"):
+        try:
+            uncoded = NC.uncoded_noncontributions(ctx)
+        except DonorError:
+            uncoded = None
+    return W.page(request, "donor_noncontrib.html", user, parish, ctx, "funds", {"accounts": accounts, "uncoded": uncoded,
+                                                                                    "can_manage": ctx.can("funds.manage")})
+
+
+@router.post("/giving/noncontribution-accounts/save")
+async def noncontribution_accounts_save(request: Request):
+    user, parish, ctx, resp = _gate(request, ("funds.manage",), "giving")
+    if resp:
+        return resp
+    form = await request.form()
+    rows = []
+    n = _opt_int(form.get("row_count")) or 0
+    for i in range(min(n, 200)):
+        if form.get(f"acct_{i}_on") is None:        # an unticked row is turned off (a blank new row is simply skipped by the service)
+            continue
+        rows.append({"account_number": form.get(f"acct_{i}_number"), "account_name": form.get(f"acct_{i}_name"), "qbo_account_id": form.get(f"acct_{i}_qbo")})
+    default_idx = _opt_int(form.get("default"))
+    default_number = form.get(f"acct_{default_idx}_number") if default_idx is not None and form.get(f"acct_{default_idx}_on") is not None else None
+    try:
+        r = NC.noncontribution_accounts_set(ctx, rows, default_number)
+        return W.back(request, "/giving/noncontribution-accounts", ok="Saved. %d account%s on%s." % (
+            r["accounts"], "" if r["accounts"] == 1 else "s", ", default " + r["default"] if r["default"] else ", no default"))
+    except DonorError as e:
+        return W.back(request, "/giving/noncontribution-accounts", err=e.message)
 
 
 @router.post("/giving/campaigns/save")
