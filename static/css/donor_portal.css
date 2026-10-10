@@ -79,3 +79,6 @@
 /* Phase 2 (2026-10-10): the parish's own sign-in page. */
 .pp-logo { display: block; max-height: 72px; max-width: 100%; margin: 0 auto 10px; }
 .pp-card h1 { text-align: center; }
+
+/* Phase 4 (2026-10-10): the Family picker on the member's Personal tab. */
+.pp-family { margin: 0 0 10px; align-items: center; flex-wrap: wrap; }

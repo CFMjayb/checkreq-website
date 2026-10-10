@@ -18,8 +18,12 @@ email their sign-in code goes to, which they cannot change or remove.
 {% set minor_locked = g.redacted %}
 {% set hv = hh if hh else {} %}
 
+{% if self_mode and family and family|length > 1 %}
+<nav class="pp-subtabs pp-family" aria-label="Family"><span class="dm-sub">Family</span>{% for m in family %}<a href="/my/personal{{ '' if m.is_self else '?person=' ~ m.id }}" class="{{ 'pp-sub-on' if m.id == target_id }}">{{ m.name }}{% if m.is_minor %} (under 18){% endif %}</a>{% endfor %}</nav>
+{% endif %}
 <form id="dm-personal" method="post" action="{{ '/my/personal' if self_mode else '/people/' ~ pid ~ '/personal' }}" class="dm-pf dm-ro"{% if can_edit %} data-editable{% endif %}>
   {{ csrf() }}
+  {% if self_mode %}<input type="hidden" name="person_id" value="{{ target_id }}">{% endif %}
 
   <section class="dm-sec">
     <h3>General</h3>
