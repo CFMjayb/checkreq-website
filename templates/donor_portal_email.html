@@ -1,0 +1,20 @@
+{#
+donor_portal_email.html -- change the email address the member signs in with. A code is emailed to the NEW address and only a right code moves
+the sign-in (donor_portal_password.email_change_*). The page answers the same whether or not the address can be used.
+#}
+{% extends "donor_portal_base.html" %}
+{% block title %}Change sign-in email{% endblock %}
+{% block content %}
+<div class="pp-card pp-narrow">
+  <h1>Change sign-in email</h1>
+  <p>You sign in with <strong>{{ current_email }}</strong>. Enter the new address and we will email it a code to confirm it is yours.</p>
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+  <form method="post" action="/my/email" class="dm-form pp-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <div class="field"><label for="pp-newemail">New email address</label>
+      <input id="pp-newemail" type="email" name="new_email" autocomplete="email" inputmode="email" maxlength="254" autofocus required></div>
+    <button type="submit" class="btn btn-primary btn-block">Send me a code</button>
+  </form>
+  <p class="pp-hint" style="margin-top:12px"><a href="/my/personal">Cancel</a></p>
+</div>
+{% endblock %}

@@ -52,7 +52,8 @@ SELF_EDITABLE = (tuple(SELF_TEXT_FIELDS) + ("grade",) + SELF_BOOL_FIELDS + SELF_
                  + tuple("hh_" + k for k in SELF_HOUSEHOLD_FIELDS))     # the field names the shared person screen leaves editable for a parishioner
 MAX_CONTACTS_PER_KIND = 6
 EMAIL_TAKEN = "That email address can't be added here. Please use Get Help and the parish office will help."
-SIGNIN_EMAIL_LOCKED = "That is the email address your sign-in code goes to, so it can't be changed or removed here. Please use Get Help and the parish office will help."
+SIGNIN_EMAIL_LOCKED = ("That is the email address used to sign in, so it can't be changed or removed here. The person it belongs to can switch it with "
+                       "Change sign-in email on their own page, or Get Help and the parish office will help.")
 
 PERSON_COLUMNS = ("title", "first_name", "middle_name", "last_name", "suffix", "goes_by", "alt_name", "former_name", "gender",
                   "marital_status", "birth_date", "wedding_date", "occupation", "employer", "school", "grade", "in_directory",

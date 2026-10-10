@@ -101,7 +101,8 @@ def parish_lookup(parish_id: int) -> dict | None:
 # ── the per-parish sign-in link /my/<slug> (2026-10-10) ─────────────────────────────────────────
 # A parish's link name is kept on its settings (donor.parish_settings.portal_slug), made from the parish name when the portal is switched
 # on, and editable by the diocese. It only chooses which parish's logo and name the sign-in page shows: it never decides who may sign in.
-RESERVED_SLUGS = {"signin", "code", "choose", "signout", "personal", "giving", "pledges", "help", "logo", "static", "my"}
+RESERVED_SLUGS = {"signin", "code", "choose", "signout", "personal", "giving", "pledges", "help", "logo", "static", "my",
+                  "start", "password", "set-password", "email"}
 
 
 def slugify(text: str) -> str:

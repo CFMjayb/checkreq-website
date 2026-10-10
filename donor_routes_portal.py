@@ -31,12 +31,13 @@ import donor_pledge_requests as PR
 import donor_portal as PP
 import donor_portal_admin as PA
 import donor_portal_login as L
+import donor_portal_password as PW
 import donor_roles
 import donor_web as W
 import gcs_client
 import org_branding
 import upload_guard
-from donor_core import DonorError, NotFound, label
+from donor_core import DonorError, InvalidInput, NotFound, label
 
 portal = APIRouter()
 staff = APIRouter(dependencies=[Depends(W.check_path_ids)])
@@ -113,6 +114,20 @@ def _landing(settings: dict) -> str:
     return "/my/personal"                        # Jay, 2026-10-10: a member always lands on Personal, never Giving
 
 
+def _after_code_signin(request: Request, res: dict):
+    """A code just proved the address: remember that for a few minutes, and offer a password to someone who has none ("Not now" skips it)."""
+    request.session[FRESH_KEY] = int(time.time())
+    request.session.pop(EMAIL_KEY, None)
+    if not PW.has_password(res["person_id"], res["parish_id"]):
+        return _redirect("/my/set-password")
+    return _redirect(_landing(donor_roles.settings_get(res["parish_id"])))
+
+
+def _fresh(request: Request) -> bool:
+    ts = request.session.get(FRESH_KEY)
+    return isinstance(ts, (int, float)) and 0 <= time.time() - ts <= PW.FRESH_PROOF_SECONDS
+
+
 def _start_session(request: Request, session_token: str) -> None:
     old = request.session.get(L.SESSION_KEY)
     if old and old != session_token:
@@ -128,6 +143,10 @@ def _not_giving(request: Request, ps: dict):
 
 # ── sign-in ─────────────────────────────────────────────────────────────────────────────────────
 PARISH_KEY = "portal_parish"          # the parish whose /my/<link> the visitor opened (its logo and name); it never decides who may sign in
+EMAIL_KEY = "portal_email"            # the address typed on page one, kept only to show on page two and to ask for a code (the signed cookie)
+FRESH_KEY = "portal_fresh_proof"      # when an emailed code last proved the person controls their address (lets a password be changed without the old one)
+VIA_PW_KEY = "portal_via_password"    # the pending "choose" step came from a password, not a code
+CHANGE_KEY = "portal_email_pending"   # a code for a new sign-in address was just sent
 
 
 def _signin_page(request: Request, *, error: str | None = None, status: int = 200):
@@ -156,11 +175,61 @@ def signin_get():
     return _redirect("/my")
 
 
+@portal.post("/my/start")
+async def start_post(request: Request):
+    """Page one: remember the typed address and go to the password page, which is the same for everyone."""
+    form = await request.form()
+    email = str(form.get("email") or "").strip()[:254]
+    if not email:
+        return _signin_page(request, error="Enter your email address.", status=400)
+    request.session[EMAIL_KEY] = email
+    return _redirect("/my/password")
+
+
+def _password_page(request: Request, *, error: str | None = None, status: int = 200):
+    """Page two. Identical for every address (an account, none, or one with no password yet)."""
+    email = request.session.get(EMAIL_KEY)
+    if not email:
+        return _redirect("/my")
+    pid = request.session.get(PARISH_KEY)
+    return _page(request, "donor_portal_password.html", None, {"email": email, "parish": L.parish_card(pid) if pid else None,
+                                                                "error": error}, status=status)
+
+
+@portal.get("/my/password", response_class=HTMLResponse)
+def password_get(request: Request):
+    return _password_page(request)
+
+
+@portal.post("/my/password")
+async def password_post(request: Request):
+    started = time.monotonic()
+    form = await request.form()
+    email = request.session.get(EMAIL_KEY)
+    if not email:
+        return _redirect("/my")
+    ip = L.client_ip(request)
+    res = await run_in_threadpool(PW.password_signin, email, str(form.get("password") or ""), ip)
+    wait = PW.MIN_PASSWORD_SECONDS - (time.monotonic() - started)       # matched or not, the answer takes the same time
+    if wait > 0:
+        await asyncio.sleep(wait)
+    if res["status"] == "signed_in":
+        _start_session(request, res["session_token"])
+        request.session.pop(EMAIL_KEY, None)
+        return _redirect(_landing(donor_roles.settings_get(res["parish_id"])))
+    if res["status"] == "choose":
+        request.session[L.CHALLENGE_KEY] = res["challenge_token"]
+        request.session[VIA_PW_KEY] = True
+        request.session.pop(EMAIL_KEY, None)
+        return _redirect("/my/choose")
+    return _password_page(request, error=PW.BAD_SIGNIN, status=400)
+
+
 @portal.post("/my/signin")
 async def signin_post(request: Request):
     started = time.monotonic()
     form = await request.form()
-    email = str(form.get("email") or "").strip()
+    email = str(form.get("email") or request.session.get(EMAIL_KEY) or "").strip()
     if not email:
         return _signin_page(request, error="Enter your email address.", status=400)
     ip = L.client_ip(request)
@@ -194,8 +263,9 @@ async def code_post(request: Request):
     res = L.verify_code(token, code, ip)
     if res["status"] == "signed_in":
         _start_session(request, res["session_token"])
-        return _redirect(_landing(donor_roles.settings_get(res["parish_id"])))
+        return _after_code_signin(request, res)
     if res["status"] == "choose":
+        request.session.pop(VIA_PW_KEY, None)
         return _redirect("/my/choose")
     if res["status"] == "blocked":
         request.session.pop(L.CHALLENGE_KEY, None)
@@ -222,7 +292,9 @@ async def choose_post(request: Request):
         request.session.pop(L.CHALLENGE_KEY, None)
         return _redirect("/my")
     _start_session(request, res["session_token"])
-    return _redirect(_landing(donor_roles.settings_get(res["parish_id"])))
+    if request.session.pop(VIA_PW_KEY, None):                 # the choice came after a password: no code proved anything just now
+        return _redirect(_landing(donor_roles.settings_get(res["parish_id"])))
+    return _after_code_signin(request, res)
 
 
 @portal.post("/my/signout")
@@ -233,6 +305,105 @@ async def signout_post(request: Request):
     return _redirect("/my")
 
 
+# ── a password of their own ─────────────────────────────────────────────────────────────────────
+def _setpw_page(request: Request, ps: dict, *, error: str | None = None, status: int = 200):
+    has = PW.has_password(ps["person_id"], ps["parish_id"])
+    return _page(request, "donor_portal_setpw.html", ps, {"has_password": has, "needs_current": has and not _fresh(request), "error": error}, status=status)
+
+
+@portal.get("/my/set-password", response_class=HTMLResponse)
+def setpw_get(request: Request):
+    ps, resp = _auth(request)
+    if resp:
+        return resp
+    return _setpw_page(request, ps)
+
+
+@portal.post("/my/set-password")
+async def setpw_post(request: Request):
+    ps, resp = _auth(request)
+    if resp:
+        return resp
+    form = await request.form()
+    new, again = str(form.get("new_password") or ""), str(form.get("confirm_password") or "")
+    if new != again:
+        return _setpw_page(request, ps, error="The two passwords are not the same. Please type them again.", status=400)
+    has = PW.has_password(ps["person_id"], ps["parish_id"])
+    if has and not _fresh(request) and not await run_in_threadpool(PW.check_current_password, ps["person_id"], ps["parish_id"],
+                                                                     str(form.get("current_password") or "")):
+        return _setpw_page(request, ps, error="That is not your current password.", status=400)
+    try:
+        await run_in_threadpool(PW.set_password, ps, new, keep_token=request.session.get(L.SESSION_KEY), ip=L.client_ip(request))
+    except PW.PasswordError as e:
+        return _setpw_page(request, ps, error=str(e), status=400)
+    _flash(request, "ok", "Your password is saved. Next time you can sign in with your email address and password.")
+    return _redirect(_landing(ps["settings"]))
+
+
+# ── changing the email they sign in with ────────────────────────────────────────────────────────
+def _sign_in_email(ps: dict) -> str:
+    row = db.query_one("SELECT login_email FROM donor.parishioner_login WHERE person_id = %s AND parish_id = %s AND is_enabled",
+                       (ps["person_id"], ps["parish_id"]))
+    return (row or {}).get("login_email") or ""
+
+
+@portal.get("/my/email", response_class=HTMLResponse)
+def email_get(request: Request):
+    ps, resp = _auth(request)
+    if resp:
+        return resp
+    return _page(request, "donor_portal_email.html", ps, {"current_email": _sign_in_email(ps)})
+
+
+@portal.post("/my/email")
+async def email_post(request: Request):
+    ps, resp = _auth(request)
+    if resp:
+        return resp
+    started = time.monotonic()
+    form = await request.form()
+    ip = L.client_ip(request)
+    try:
+        res = PW.email_change_request(ps, form.get("new_email"), ip)
+    except InvalidInput as e:
+        return _page(request, "donor_portal_email.html", ps, {"current_email": _sign_in_email(ps), "error": e.message}, status=400)
+    if res["send"]:
+        await run_in_threadpool(PW.send_change_code_email, res["send"][0], res["send"][1], ip)
+    wait = L.MIN_SIGNIN_SECONDS - (time.monotonic() - started)           # the answer takes the same time whether a code was sent or not
+    if wait > 0:
+        await asyncio.sleep(wait)
+    request.session[CHANGE_KEY] = True
+    return _redirect("/my/email/confirm")
+
+
+@portal.get("/my/email/confirm", response_class=HTMLResponse)
+def email_confirm_get(request: Request):
+    ps, resp = _auth(request)
+    if resp:
+        return resp
+    if not request.session.get(CHANGE_KEY):
+        return _redirect("/my/email")
+    return _page(request, "donor_portal_email_confirm.html", ps)
+
+
+@portal.post("/my/email/confirm")
+async def email_confirm_post(request: Request):
+    ps, resp = _auth(request)
+    if resp:
+        return resp
+    if not request.session.get(CHANGE_KEY):
+        return _redirect("/my/email")
+    form = await request.form()
+    res = await run_in_threadpool(PW.email_change_confirm, ps, str(form.get("code") or ""), L.client_ip(request),
+                                  keep_token=request.session.get(L.SESSION_KEY))
+    if res["status"] == "changed":
+        request.session.pop(CHANGE_KEY, None)
+        _flash(request, "ok", f"You now sign in with {res['new_email']}. We let your old address know.")
+        return _redirect("/my/personal")
+    return _page(request, "donor_portal_email_confirm.html", ps,
+                 {"error": "That code did not work. Check it and try again, or ask for a new one."}, status=400)
+
+
 # ── Personal ────────────────────────────────────────────────────────────────────────────────────
 @portal.get("/my/personal", response_class=HTMLResponse)
 def personal_get(request: Request):
@@ -240,7 +411,8 @@ def personal_get(request: Request):
     if resp:
         return resp
     try:                                     # ?person=<id> opens a member of the signed-in person's own household (checked on the server)
-        return _person_page(request, ps, "personal", target=request.query_params.get("person"))
+        return _person_page(request, ps, "personal", {"has_password": PW.has_password(ps["person_id"], ps["parish_id"])},
+                            target=request.query_params.get("person"))
     except NotFound:
         return _notice(request, ps, "Not found", "That person could not be found in your family.", status=404)
 
