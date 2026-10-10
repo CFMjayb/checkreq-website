@@ -85,12 +85,12 @@ def _notice(request: Request, ps: dict | None, title: str, text: str, *, status:
     return _page(request, "donor_portal_notice.html", ps, {"title": title, "text": text}, status=status)
 
 
-def _person_page(request: Request, ps: dict, tab: str, extra: dict | None = None, *, sub: str = "", status: int = 200):
+def _person_page(request: Request, ps: dict, tab: str, extra: dict | None = None, *, sub: str = "", status: int = 200, target=None):
     """A signed-in page: the SHARED person screen (templates/donor_person.html, the one staff use) in self mode. The tab picks the panel
     (donor_tab_personal / donor_tab_giving / donor_tab_help); `sub` picks Contributions or Pledges inside Giving. The person screen's own
     layout, identity bar, tab bar, fields and styles all come from the shared templates; this only supplies a restricted context."""
     tabs = [("personal", "Personal")] + ([("giving", "Giving")] if ps.get("settings", {}).get("giving_enabled") else []) + [("help", "Get help")]
-    data = {**PP.self_context(ps), "tab": tab, "tabs": tabs}
+    data = {**PP.self_context(ps, target), "tab": tab, "tabs": tabs}
     if extra:
         data.update(extra)
     return _page(request, "donor_person.html", ps, data, status=status, active=tab, sub=sub)
@@ -239,7 +239,10 @@ def personal_get(request: Request):
     ps, resp = _auth(request)
     if resp:
         return resp
-    return _person_page(request, ps, "personal")
+    try:                                     # ?person=<id> opens a member of the signed-in person's own household (checked on the server)
+        return _person_page(request, ps, "personal", target=request.query_params.get("person"))
+    except NotFound:
+        return _notice(request, ps, "Not found", "That person could not be found in your family.", status=404)
 
 
 @portal.post("/my/personal")
@@ -248,14 +251,20 @@ async def personal_post(request: Request):
     if resp:
         return resp
     form = await request.form()
+    target = form.get("person_id")
+    back = "/my/personal"
     try:
-        r = PP.personal_save(ps, form)
+        r = PP.personal_save(ps, form, target)
+        if str(target or "") not in ("", str(ps["person_id"])):
+            back = f"/my/personal?person={int(str(target))}"          # personal_save has already refused anyone outside the family
         _flash(request, "ok", ("Saved: " + ", ".join(dict.fromkeys(r["changed"])) + ".") if r["changed"] else "Nothing to change.")
     except NotFound:
         return _notice(request, ps, "Not found", "That could not be found.", status=404)
     except DonorError as e:
         _flash(request, "err", e.message)
-    return _redirect("/my/personal")
+        if str(target or "") not in ("", str(ps["person_id"])) and str(target).isdigit():
+            back = f"/my/personal?person={int(str(target))}"
+    return _redirect(back)
 
 
 # ── Giving ──────────────────────────────────────────────────────────────────────────────────────

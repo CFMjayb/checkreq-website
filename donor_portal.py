@@ -46,7 +46,7 @@ SELF_PERSON_FIELDS = ("title", "gender", "marital_status", "birth_date", "weddin
 SELF_HOUSEHOLD_FIELDS = ("address1", "address2", "city", "state", "postal_code", "home_phone", "mail_address1", "mail_address2", "mail_city",
                          "mail_state", "mail_postal_code")
 SELF_NEW_CONTACT_FIELDS = ("new_kind", "new_value", "new_subtype")
-BIRTH_MINOR_MESSAGE = "That birth date would make you under 18, and people under 18 cannot sign in. Please use Get help if it is correct."
+BIRTH_MINOR_MESSAGE = "That birth date would make this person under 18, and people under 18 cannot sign in. Please use Get help if it is correct."
 NO_HOUSEHOLD_MESSAGE = "There is no household on file to keep an address yet. Please use Get help."
 SELF_EDITABLE = (tuple(SELF_TEXT_FIELDS) + ("grade",) + SELF_BOOL_FIELDS + SELF_PERSON_FIELDS + SELF_NEW_CONTACT_FIELDS
                  + tuple("hh_" + k for k in SELF_HOUSEHOLD_FIELDS))     # the field names the shared person screen leaves editable for a parishioner
@@ -66,14 +66,55 @@ def actor(parish_id: int) -> Ctx:
     return make_ctx(0, parish_id, (), user_label=ACTOR_LABEL)
 
 
-# ── Read: the person's own details ──────────────────────────────────────────────────────────────
-def personal_view(ps: dict) -> dict:
-    pid, parish_id = ps["person_id"], ps["parish_id"]
+# ── The family (Jay, 2026-10-10): an adult sees and edits everyone in their own household who is connected to THIS parish ─────────────
+def _family(c, ps: dict) -> list[dict]:
+    """The signed-in person's household, themselves first: people in it now, connected to this parish, not archived or deceased, persons only.
+    This list is the ONLY thing a browser-sent person id is ever checked against (a forged id is "not found")."""
+    c.execute("SELECT p.id, p.first_name, p.last_name, p.goes_by, p.org_name, p.record_type, p.birth_date, hm.position "
+              "  FROM donor.household_member me "
+              "  JOIN donor.household_member hm ON hm.household_id = me.household_id AND hm.left_at IS NULL "
+              "  JOIN donor.person p ON p.id = hm.person_id "
+              "  JOIN donor.parish_connection pc ON pc.person_id = p.id AND pc.parish_id = %s AND pc.archived_at IS NULL "
+              " WHERE me.person_id = %s AND me.left_at IS NULL AND p.archived_at IS NULL AND p.record_type = 'person' "
+              "   AND NOT p.is_placeholder AND p.deceased_date IS NULL "
+              " ORDER BY (p.id = %s) DESC, (hm.position = 'child'), hm.position, p.birth_date NULLS LAST, p.id", (ps["parish_id"], ps["person_id"], ps["person_id"]))
+    out = []
+    for r in c.fetchall():
+        out.append({"id": r["id"], "name": " ".join(x for x in (r["first_name"], r["last_name"]) if x) or "Family member", "is_self": r["id"] == ps["person_id"], "position": r["position"],
+                    "is_minor": is_minor(r["birth_date"], household_position=r["position"], deceased_date=None)})
+    if not any(m["is_self"] for m in out):          # a person with no household (or not connected here) is only themselves
+        out.insert(0, {"id": ps["person_id"], "name": "You", "is_self": True, "position": None, "is_minor": False})
+    return out
+
+
+def family(ps: dict) -> list[dict]:
     with tx() as c:
+        return _family(c, ps)
+
+
+def _target(c, ps: dict, person_id) -> int:
+    """The person a page or a save is about: the signed-in person, or a member of their family. Anything else is not found."""
+    if person_id in (None, "", ps["person_id"]):
+        return ps["person_id"]
+    try:
+        want = int(str(person_id).strip())
+    except (TypeError, ValueError):
+        raise NotFound("That person was not found in your family.")
+    if want not in {m["id"] for m in _family(c, ps)}:
+        raise NotFound("That person was not found in your family.")
+    return want
+
+
+# ── Read: the person's own details ──────────────────────────────────────────────────────────────
+def personal_view(ps: dict, person_id=None) -> dict:
+    parish_id = ps["parish_id"]
+    with tx() as c:
+        pid = _target(c, ps, person_id)
         c.execute(f"SELECT {', '.join(PERSON_COLUMNS)} FROM donor.person WHERE id = %s", (pid,))
         person = c.fetchone()
         if not person:
             raise NotFound("Your record was not found.")
+        fam = _family(c, ps)
         c.execute("SELECT id, kind, subtype, value, is_preferred FROM donor.person_contact WHERE person_id = %s AND archived_at IS NULL "
                   "ORDER BY kind, is_preferred DESC, id", (pid,))
         contacts = c.fetchall()
@@ -85,16 +126,16 @@ def personal_view(ps: dict) -> dict:
         c.execute("SELECT login_email FROM donor.parishioner_login WHERE person_id = %s AND parish_id = %s AND is_enabled", (pid, parish_id))
         lg = c.fetchone()
     return {"p": person, "contacts": contacts, "household": household, "envelope": conn.get("envelope_number"), "kind": conn.get("kind"),
-            "signin_email": lg["login_email"] if lg else None}
+            "signin_email": lg["login_email"] if lg else None, "family": fam, "target_id": pid}
 
 
-def self_context(ps: dict) -> dict:
+def self_context(ps: dict, person_id=None) -> dict:
     """The context the parishioner's pages give the SHARED person screen (templates/donor_person.html and its tabs). It has the same keys
     donor_routes_people gives a staff page (g, p, title_name, initials, ...), built from personal_view's explicit column lists, so the
     shared templates draw the same layout for both; everything staff-only is simply absent (no household members, no other parishes, no
     spouse, no membership, no notes), and the parishioner's own Ctx is the actor, which holds no capability, so every staff action
     stays hidden. See the template header of donor_person.html for the switches."""
-    v = personal_view(ps)
+    v = personal_view(ps, person_id)
     person = dict(v["p"])
     person.update({"full_name": " ".join(x for x in (person.get("title"), person.get("first_name"), person.get("middle_name"),
                                                       person.get("last_name"), person.get("suffix")) if x),
@@ -106,6 +147,7 @@ def self_context(ps: dict) -> dict:
          "connection": {"kind": v["kind"] or "member", "envelope_number": v["envelope"], "is_canonical": False, "connected_at": None},
          "membership": None, "contacts": v["contacts"], "spouse": None, "other_connections": []}
     return {"g": g, "p": person, "title_name": person["full_name"] or "You", "initials": initials(person), "signin_email": v["signin_email"],
+            "family": v["family"], "target_id": v["target_id"],
             "layout": "donor_portal_base.html", "self_mode": True, "self_editable": SELF_EDITABLE, "ctx": actor(ps["parish_id"]),
             "parish": {"name": ps["parish_name"]}, "pid": None, "other_names": {}}
 
@@ -142,18 +184,22 @@ def _int(v):
         return None
 
 
-def personal_save(ps: dict, form) -> dict:
+def personal_save(ps: dict, form, person_id=None) -> dict:
     """Apply the whole Personal tab in one transaction. `form` has get(), getlist() and `in` (a Starlette FormData). Only the fields
     in SELF_TEXT_FIELDS, grade, the five privacy flags and the person's OWN contacts are read: anything else posted is ignored.
     Returns {"changed": [what changed, in words]}. Raises (and rolls everything back) if anything is refused."""
-    pid, parish_id = ps["person_id"], ps["parish_id"]
+    parish_id = ps["parish_id"]
     a = actor(parish_id)
     changed: list[str] = []
     with tx() as c:
+        pid = _target(c, ps, person_id)             # the signed-in person, or a member of their household connected to this parish
+        why = SELF_REASON if pid == ps["person_id"] else f"{SELF_REASON}: edited by household member (person #{ps['person_id']})"
         c.execute("SELECT * FROM donor.person WHERE id = %s FOR UPDATE", (pid,))
         old = c.fetchone()
         if not old:
             raise NotFound("Your record was not found.")
+        c.execute("SELECT 1 AS x FROM donor.parishioner_login WHERE person_id = %s AND parish_id = %s AND is_enabled", (pid, parish_id))
+        has_login = c.fetchone() is not None
 
         # 1. Their own profile fields.
         new: dict = {}
@@ -171,7 +217,8 @@ def personal_save(ps: dict, form) -> dict:
         if new.get("birth_date") and new["birth_date"] != old["birth_date"]:
             c.execute("SELECT position FROM donor.household_member WHERE person_id = %s AND left_at IS NULL", (pid,))
             hm = c.fetchone()
-            if is_minor(new["birth_date"], household_position=(hm or {}).get("position"), deceased_date=old["deceased_date"]):
+            # A change that would make someone with a sign-in under 18 would end that sign-in, so it is refused (a child has no sign-in).
+            if has_login and is_minor(new["birth_date"], household_position=(hm or {}).get("position"), deceased_date=old["deceased_date"]):
                 raise InvalidInput(BIRTH_MINOR_MESSAGE, "birth_date")
         diffs = diff_fields(old, new)
         touched = False
@@ -180,7 +227,7 @@ def personal_save(ps: dict, form) -> dict:
             c.execute(f"UPDATE donor.person SET {sets} WHERE id = %s", (*[v for _, _, v in diffs], pid))
             batch = new_batch_id()
             for k, o, n in diffs:
-                log_change(c, a, "person", pid, k, o, n, person_id=pid, batch_id=batch, reason=SELF_REASON)
+                log_change(c, a, "person", pid, k, o, n, person_id=pid, batch_id=batch, reason=why)
             changed += [FIELD_LABELS.get(k, k) for k, _, _ in diffs]
             touched = True
 
@@ -201,7 +248,7 @@ def personal_save(ps: dict, form) -> dict:
                     c.execute(f"UPDATE donor.household SET {', '.join(f'{k} = %s' for k, _, _ in hh_diffs)} WHERE id = %s",
                               (*[v for _, _, v in hh_diffs], hh["id"]))
                     for k, o, n in hh_diffs:
-                        log_change(c, a, "household", hh["id"], k, o, n, person_id=pid, reason=SELF_REASON)
+                        log_change(c, a, "household", hh["id"], k, o, n, person_id=pid, reason=why)
                     changed += [HOUSEHOLD_LABELS.get(k, k) for k, _, _ in hh_diffs]
                     touched = True
 
@@ -238,19 +285,19 @@ def personal_save(ps: dict, form) -> dict:
                         raise InvalidInput(EMAIL_TAKEN, "email")
                     c.execute("UPDATE donor.person_contact SET value = %s, digits = %s WHERE id = %s",
                               (nv, digits_of(nv) if row["kind"] == "phone" else "", i))
-                    log_change(c, a, "person_contact", i, "value", row["value"], nv, person_id=pid, reason=SELF_REASON)
+                    log_change(c, a, "person_contact", i, "value", row["value"], nv, person_id=pid, reason=why)
                     changed.append("Email" if row["kind"] == "email" else "Phone")
                     touched = True
             if row["kind"] == "phone" and not _blank(subtype):
                 st = check_enum(subtype, CONTACT_SUBTYPES, field="phone kind", allow_blank=False)
                 if st != row["subtype"]:
                     c.execute("UPDATE donor.person_contact SET subtype = %s WHERE id = %s", (st, i))
-                    log_change(c, a, "person_contact", i, "subtype", row["subtype"], st, person_id=pid, reason=SELF_REASON)
+                    log_change(c, a, "person_contact", i, "subtype", row["subtype"], st, person_id=pid, reason=why)
                     changed.append("Phone kind")
                     touched = True
         for i in sorted(removing):
             c.execute("UPDATE donor.person_contact SET archived_at = NOW(), archived_by_user_id = 0, is_preferred = FALSE WHERE id = %s", (i,))
-            log_change(c, a, "person_contact", i, "archived", None, "true", person_id=pid, kind="archive", reason=SELF_REASON)
+            log_change(c, a, "person_contact", i, "archived", None, "true", person_id=pid, kind="archive", reason=why)
             changed.append("Removed " + mine[i]["kind"])
             touched = True
         kinds, values, subtypes = form.getlist("new_kind"), form.getlist("new_value"), form.getlist("new_subtype")
@@ -278,7 +325,7 @@ def personal_save(ps: dict, form) -> dict:
             added[new_id] = kind
             if kind == "email" and kind_choice == "preferred":
                 new_preferred[kind] = new_id
-            log_change(c, a, "person_contact", new_id, "value", None, val, person_id=pid, kind="create", reason=SELF_REASON)
+            log_change(c, a, "person_contact", new_id, "value", None, val, person_id=pid, kind="create", reason=why)
             changed.append("Added " + kind)
             touched = True
         # Preferred: the radio they chose (when it is theirs and still live), then every kind with contacts has exactly one.
@@ -296,14 +343,14 @@ def personal_save(ps: dict, form) -> dict:
             after = next((r["id"] for r in rows if r["is_preferred"]), None)
             if after != before_pref[kind] and after is not None:
                 if before_pref[kind] is not None and before_pref[kind] not in removing:
-                    log_change(c, a, "person_contact", before_pref[kind], "preferred", "true", "false", person_id=pid, reason=SELF_REASON)
-                log_change(c, a, "person_contact", after, "preferred", "false", "true", person_id=pid, reason=SELF_REASON)
+                    log_change(c, a, "person_contact", before_pref[kind], "preferred", "true", "false", person_id=pid, reason=why)
+                log_change(c, a, "person_contact", after, "preferred", "false", "true", person_id=pid, reason=why)
                 if f"Preferred {kind}" not in changed and not any(x.startswith("Added") for x in changed):
                     changed.append(f"Preferred {kind}")
                 touched = True
         # They keep at least one email address: it is how they sign in. Taking the last one away is refused (and rolled back).
         c.execute("SELECT COUNT(*) AS n FROM donor.person_contact WHERE person_id = %s AND kind = 'email' AND archived_at IS NULL", (pid,))
-        if c.fetchone()["n"] == 0 and mine and any(r["kind"] == "email" for r in mine.values()):
+        if has_login and c.fetchone()["n"] == 0 and mine and any(r["kind"] == "email" for r in mine.values()):
             raise InvalidInput("Keep at least one email address on file: it is how you sign in. To remove your last one, use Get Help.", "email")
         if touched:
             c.execute("UPDATE donor.person SET updated_at = NOW(), updated_by_user_id = 0, updated_by_parish_id = %s WHERE id = %s", (parish_id, pid))
