@@ -100,7 +100,9 @@ def parish_lookup(parish_id: int) -> dict | None:
 
 # ── the per-parish sign-in link /my/<slug> (2026-10-10) ─────────────────────────────────────────
 # A parish's link name is kept on its settings (donor.parish_settings.portal_slug), made from the parish name when the portal is switched
-# on, and editable by the diocese. It only chooses which parish's logo and name the sign-in page shows: it never decides who may sign in.
+# on, and editable by the diocese. It chooses which parish's logo and name the sign-in page shows AND which parish the visitor may sign
+# in to (Jay, 2026-10-10: a link for one parish must never land a member in another): an address with no login at that parish gets the
+# same answer as an address with no account at all.
 RESERVED_SLUGS = {"signin", "code", "choose", "signout", "personal", "giving", "pledges", "help", "logo", "static", "my",
                   "start", "password", "set-password", "email"}
 
@@ -179,12 +181,18 @@ def _parish_ok(parish_id: int) -> bool:
     return p is None or bool(p.get("is_active", True))            # no registry row (a synthetic test parish) is not a reason to refuse
 
 
-def find_candidates(email: str) -> list[list[int]]:
+def find_candidates(email: str, parish_id: int | None = None) -> list[list[int]]:
     """[[person_id, parish_id], ...] for every person who has an ENABLED parishioner login whose sign-in email is this address and who
     may sign in: that email is still an active email on their profile, they are a person (not an organization or placeholder), not
     archived, not deceased, not under 18, connected to the parish, at a parish whose portal is on. Nobody is found by email match
-    alone: without an enabled login row nothing is found. The query runs for every request, matched or not."""
-    rows = db.query(_ELIGIBLE_SELECT + "   AND l.login_email = %s ORDER BY pc.parish_id, pc.person_id", ((email or "").strip().lower(),))
+    alone: without an enabled login row nothing is found. The query runs for every request, matched or not. With `parish_id` (the
+    parish whose own sign-in link the visitor opened) only logins AT THAT PARISH are found."""
+    sql = _ELIGIBLE_SELECT + "   AND l.login_email = %s "
+    params: list = [(email or "").strip().lower()]
+    if parish_id is not None:
+        sql += "   AND pc.parish_id = %s "
+        params.append(int(parish_id))
+    rows = db.query(sql + "ORDER BY pc.parish_id, pc.person_id", tuple(params))
     return [[r["person_id"], r["parish_id"]] for r in rows if _not_minor(r) and _parish_ok(r["parish_id"])]
 
 
@@ -223,15 +231,16 @@ def log_event(kind: str, *, email_key_value: str | None = None, person_id: int |
 
 
 # ── step 1: ask for a code ──────────────────────────────────────────────────────────────────────
-def request_code(email: str, ip: str) -> dict:
+def request_code(email: str, ip: str, parish_id: int | None = None) -> dict:
     """Store a challenge and decide whether a code goes out. Returns {"token": raw challenge token for the signed cookie,
     "send": None or (address, code) for the caller to email before it answers}. The same queries run, one challenge row
-    is written and one event is logged whether or not the address matched, so nothing about the page or the timing tells."""
+    is written and one event is logged whether or not the address matched, so nothing about the page or the timing tells.
+    `parish_id` is the parish whose sign-in link was opened: a code goes out only for a login at that parish."""
     typed = (email or "").strip().lower()[:254]
     ekey = email_key(typed)
     raw = pysecrets.token_urlsafe(32)
     code = f"{pysecrets.randbelow(1_000_000):06d}"
-    candidates = find_candidates(typed)                      # the same query for every request, however the text looks
+    candidates = find_candidates(typed, parish_id)           # the same query for every request, however the text looks
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS n FROM donor.parishioner_challenge WHERE email_key = %s AND NOT throttled "
