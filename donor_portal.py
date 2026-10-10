@@ -29,7 +29,9 @@ from donor_core import (
     Conflict, Ctx, GRADES, CONTACT_SUBTYPES, InvalidInput, NotFound, check_enum, clean_email, clean_phone, clean_text, digits_of,
     diff_fields, initials, label, log_change, make_ctx, need_people, new_batch_id, person_label, tx,
 )
-from donor_people import FIELD_LABELS
+from donor_core import is_minor
+from donor_households import HOUSEHOLD_LABELS, _clean_household
+from donor_people import FIELD_LABELS, clean_person_fields
 
 SELF_REASON = "Parishioner self-service"
 ACTOR_LABEL = "Parishioner (self-service)"
@@ -37,7 +39,17 @@ ACTOR_LABEL = "Parishioner (self-service)"
 # What a parishioner may change directly. Everything else on the screen is read only.
 SELF_TEXT_FIELDS = {"goes_by": 80, "occupation": 100, "employer": 120, "school": 120}
 SELF_BOOL_FIELDS = ("in_directory", "hide_phone_in_directory", "do_not_mail", "do_not_call", "do_not_email")
-SELF_EDITABLE = tuple(SELF_TEXT_FIELDS) + ("grade",) + SELF_BOOL_FIELDS     # the field names the shared person screen leaves editable for a parishioner
+# Jay, 2026-10-10: a member also edits title, gender, marital status, birth date and wedding date, the household's whole address (it is the
+# household's, so a change shows for everyone in it), and adds emails and phones on this screen. First, middle and last name and suffix stay
+# staff-owned. Alt name and Former name are not shown to members.
+SELF_PERSON_FIELDS = ("title", "gender", "marital_status", "birth_date", "wedding_date")
+SELF_HOUSEHOLD_FIELDS = ("address1", "address2", "city", "state", "postal_code", "home_phone", "mail_address1", "mail_address2", "mail_city",
+                         "mail_state", "mail_postal_code")
+SELF_NEW_CONTACT_FIELDS = ("new_kind", "new_value", "new_subtype")
+BIRTH_MINOR_MESSAGE = "That birth date would make you under 18, and people under 18 cannot sign in. Please use Get help if it is correct."
+NO_HOUSEHOLD_MESSAGE = "There is no household on file to keep an address yet. Please use Get help."
+SELF_EDITABLE = (tuple(SELF_TEXT_FIELDS) + ("grade",) + SELF_BOOL_FIELDS + SELF_PERSON_FIELDS + SELF_NEW_CONTACT_FIELDS
+                 + tuple("hh_" + k for k in SELF_HOUSEHOLD_FIELDS))     # the field names the shared person screen leaves editable for a parishioner
 MAX_CONTACTS_PER_KIND = 6
 EMAIL_TAKEN = "That email address can't be added here. Please use Get Help and the parish office will help."
 SIGNIN_EMAIL_LOCKED = "That is the email address your sign-in code goes to, so it can't be changed or removed here. Please use Get Help and the parish office will help."
@@ -153,6 +165,14 @@ def personal_save(ps: dict, form) -> dict:
         if "has_privacy" in form:
             for k in SELF_BOOL_FIELDS:
                 new[k] = form.get(k) is not None                      # an unticked box is simply absent from the post
+        posted = {k: form.get(k) for k in SELF_PERSON_FIELDS if k in form}
+        if posted:
+            new.update(clean_person_fields(posted, "person", creating=False))
+        if new.get("birth_date") and new["birth_date"] != old["birth_date"]:
+            c.execute("SELECT position FROM donor.household_member WHERE person_id = %s AND left_at IS NULL", (pid,))
+            hm = c.fetchone()
+            if is_minor(new["birth_date"], household_position=(hm or {}).get("position"), deceased_date=old["deceased_date"]):
+                raise InvalidInput(BIRTH_MINOR_MESSAGE, "birth_date")
         diffs = diff_fields(old, new)
         touched = False
         if diffs:
@@ -163,6 +183,27 @@ def personal_save(ps: dict, form) -> dict:
                 log_change(c, a, "person", pid, k, o, n, person_id=pid, batch_id=batch, reason=SELF_REASON)
             changed += [FIELD_LABELS.get(k, k) for k, _, _ in diffs]
             touched = True
+
+        # 1b. The household's address (shared by everyone in the household, so a change shows for them all). Only the named address fields are
+        #     read: the household's name, salutation and directory name stay staff-owned. Every change is logged against this person.
+        posted_hh = {k: form.get("hh_" + k) for k in SELF_HOUSEHOLD_FIELDS if ("hh_" + k) in form}
+        if posted_hh:
+            c.execute("SELECT h.* FROM donor.household_member hm JOIN donor.household h ON h.id = hm.household_id "
+                      "WHERE hm.person_id = %s AND hm.left_at IS NULL FOR UPDATE OF h", (pid,))
+            hh = c.fetchone()
+            cleaned_hh = _clean_household(posted_hh)
+            if not hh:
+                if any(v for v in cleaned_hh.values()):
+                    raise InvalidInput(NO_HOUSEHOLD_MESSAGE, "address1")
+            else:
+                hh_diffs = diff_fields(hh, cleaned_hh)
+                if hh_diffs:
+                    c.execute(f"UPDATE donor.household SET {', '.join(f'{k} = %s' for k, _, _ in hh_diffs)} WHERE id = %s",
+                              (*[v for _, _, v in hh_diffs], hh["id"]))
+                    for k, o, n in hh_diffs:
+                        log_change(c, a, "household", hh["id"], k, o, n, person_id=pid, reason=SELF_REASON)
+                    changed += [HOUSEHOLD_LABELS.get(k, k) for k, _, _ in hh_diffs]
+                    touched = True
 
         # 2. Their own emails and phones. Every posted id must be one of THIS person's live contacts: a crafted id never reaches anyone else.
         c.execute("SELECT id, kind, subtype, value, is_preferred FROM donor.person_contact WHERE person_id = %s AND archived_at IS NULL", (pid,))
@@ -213,12 +254,16 @@ def personal_save(ps: dict, form) -> dict:
             changed.append("Removed " + mine[i]["kind"])
             touched = True
         kinds, values, subtypes = form.getlist("new_kind"), form.getlist("new_value"), form.getlist("new_subtype")
+        added: dict[int, str] = {}           # id -> kind of each contact added in this save
+        new_preferred: dict[str, int] = {}   # kind -> id of an added contact the member marked "preferred"
         for n, value in enumerate(values):
             if _blank(value):
                 continue
             kind = check_enum(kinds[n] if n < len(kinds) else "email", ("email", "phone"), field="contact type", allow_blank=False)
             val = _clean_contact(kind, value)
-            subtype = check_enum((subtypes[n] if n < len(subtypes) else "") or "other", CONTACT_SUBTYPES, field="phone kind", allow_blank=False) if kind == "phone" else "other"
+            kind_choice = (subtypes[n] if n < len(subtypes) else "") or ""
+            # The "Kind" of a phone is cell, home, work or other; of an email it is preferred or alternate (the preferred flag, not a stored kind).
+            subtype = check_enum(kind_choice or "other", CONTACT_SUBTYPES, field="phone kind", allow_blank=False) if kind == "phone" else "other"
             c.execute("SELECT 1 AS x FROM donor.person_contact WHERE person_id = %s AND kind = %s AND LOWER(value) = LOWER(%s) AND archived_at IS NULL", (pid, kind, val))
             if c.fetchone():
                 raise Conflict(f"That {kind} is already on your record.")
@@ -229,13 +274,18 @@ def personal_save(ps: dict, form) -> dict:
                 raise InvalidInput(f"You can keep up to {MAX_CONTACTS_PER_KIND} {kind}s on file. Remove one first, or use Get Help.", "value")
             c.execute("INSERT INTO donor.person_contact (person_id, kind, subtype, value, digits, is_preferred, created_by_user_id) "
                       "VALUES (%s,%s,%s,%s,%s,FALSE,0) RETURNING id", (pid, kind, subtype, val, digits_of(val) if kind == "phone" else ""))
-            log_change(c, a, "person_contact", c.fetchone()["id"], "value", None, val, person_id=pid, kind="create", reason=SELF_REASON)
+            new_id = c.fetchone()["id"]
+            added[new_id] = kind
+            if kind == "email" and kind_choice == "preferred":
+                new_preferred[kind] = new_id
+            log_change(c, a, "person_contact", new_id, "value", None, val, person_id=pid, kind="create", reason=SELF_REASON)
             changed.append("Added " + kind)
             touched = True
         # Preferred: the radio they chose (when it is theirs and still live), then every kind with contacts has exactly one.
         for kind in ("email", "phone"):
-            want = _int(form.get(f"preferred_{kind}"))
-            if want is not None and want in mine and want not in removing and mine[want]["kind"] == kind:
+            want = new_preferred.get(kind) or _int(form.get(f"preferred_{kind}"))
+            known = {**{i: r["kind"] for i, r in mine.items()}, **added}
+            if want is not None and want in known and want not in removing and known[want] == kind:
                 c.execute("UPDATE donor.person_contact SET is_preferred = FALSE WHERE person_id = %s AND kind = %s AND is_preferred AND archived_at IS NULL", (pid, kind))
                 c.execute("UPDATE donor.person_contact SET is_preferred = TRUE WHERE id = %s", (want,))
             c.execute("SELECT id, is_preferred FROM donor.person_contact WHERE person_id = %s AND kind = %s AND archived_at IS NULL ORDER BY id", (pid, kind))
