@@ -261,10 +261,48 @@ def clean_text(value, *, field: str = "", max_len: int = 500) -> str | None:
     return s
 
 
+def _two_digit_year(y: int) -> int:
+    return y + (1900 if y > (today().year % 100) else 2000) if y < 100 else y
+
+
+def _real(y: int, mo: int, da: int) -> bool:
+    try:
+        dt.date(y, mo, da)
+        return 1850 <= y <= 2200
+    except ValueError:
+        return False
+
+
+def _date_parts(s: str, field: str) -> tuple[int, int, int]:
+    """(year, month, day) from typed text. ISO (2026-10-09); US month/day/year with slashes, hyphens, dots or spaces (10/9/2026, 10-9-26);
+    or digits alone (10092026, 100926, and 7 digits such as 0521988 for 05/2/1988) when exactly ONE reading is a real date (Jay, 2026-10-10:
+    "I entered 0521988 and it didn't understand it"). A date that could be read two ways is refused with a message asking for slashes.
+    The month always comes first: day and month order is never guessed."""
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", s)
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3))
+    m = re.fullmatch(r"(\d{1,2})[/\-. ]+(\d{1,2})[/\-. ]+(\d{2}|\d{4})", s)
+    if m:
+        return _two_digit_year(int(m.group(3))), int(m.group(1)), int(m.group(2))
+    if re.fullmatch(r"\d{6,8}", s):
+        if len(s) == 6:                                             # MMDDYY
+            cands = [(s[0:2], s[2:4], s[4:6])]
+        elif len(s) == 7:                                           # M DD YYYY, or MM D YYYY
+            cands = [(s[0:1], s[1:3], s[3:7]), (s[0:2], s[2:3], s[3:7])]
+        else:                                                       # MMDDYYYY, or YYYYMMDD
+            cands = [(s[0:2], s[2:4], s[4:8]), (s[4:6], s[6:8], s[0:4])]
+        readings = {(_two_digit_year(int(y)), int(mo), int(da)) for mo, da, y in cands if _real(_two_digit_year(int(y)), int(mo), int(da))}
+        if len(readings) == 1:
+            return next(iter(readings))
+        if len(readings) > 1:
+            raise InvalidInput(f"'{s}' could be read more than one way. Please type it with slashes, like 10/9/1953.", field)
+    raise InvalidInput(f"'{s}' is not a date. Use MM/DD/YYYY.", field)
+
+
 def parse_date(value, *, field: str = "date", allow_future: bool = True) -> dt.date | None:
-    """Real dates only. Accepts a date or datetime, ISO text (2026-10-09), or US text (10/9/2026, 10/9/26).
-    Blank is None. A two-digit year later than this year's is read as 19xx. Never guesses day/month order:
-    text with slashes is month/day/year."""
+    """Real dates only. Accepts a date or datetime, ISO text (2026-10-09), US text (10/9/2026, 10/9/26, 10-9-26), or digits alone when only one
+    reading is a real date (05021988, 0521988). Blank is None. A two-digit year later than this year's is read as 19xx. Never guesses
+    day/month order: month/day/year."""
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
     if isinstance(value, dt.datetime):
@@ -274,16 +312,7 @@ def parse_date(value, *, field: str = "date", allow_future: bool = True) -> dt.d
     else:
         s = str(value).strip()
         d = None
-        m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", s)
-        if m:
-            y, mo, da = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        else:
-            m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{2}|\d{4})", s)
-            if not m:
-                raise InvalidInput(f"'{s}' is not a date. Use MM/DD/YYYY.", field)
-            mo, da, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
-            if y < 100:
-                y += 1900 if y > (today().year % 100) else 2000
+        y, mo, da = _date_parts(s, field)
         try:
             d = dt.date(y, mo, da)
         except ValueError:
