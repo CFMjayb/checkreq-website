@@ -1,20 +1,26 @@
 {#
-donor_portal_signin.html -- step one: the email address. The answer is the same whether or not the address is on file (the next page
-says "if that address is on file"), so this page and the next cannot be used to find out who is a member.
+donor_portal_signin.html -- step one: the email address, on the parish's own page (/my/<link name>): its logo, its name, one box and one
+button. Plain /my (no parish link opened) only says to use the parish's own link. The answer after the box is the same whether or not the
+address is on file, so this page and the next cannot be used to find out who is a member. A staff session is told to use the staff
+portal (never given its address).
 #}
 {% extends "donor_portal_base.html" %}
-{% block title %}Sign in{% endblock %}
+{% block title %}Portal sign in{% endblock %}
 {% block content %}
 <div class="pp-card pp-narrow">
-  <h1>Sign in to see your giving</h1>
-  <p>Enter the email address your parish set up for your login. We will email you a six-digit code, so there is no password to remember.</p>
+  {% if is_staff %}<div class="banner banner-info">You are signed in to Beacon as staff. Please use the staff portal.</div>{% endif %}
+  {% if parish %}
+  {% if parish.has_logo %}<img class="pp-logo" src="/my/{{ parish.slug }}/logo" alt="{{ parish.name }} logo">{% endif %}
+  <h1>{{ parish.name }}</h1>
   {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
   <form method="post" action="/my/signin" class="dm-form pp-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <div class="field"><label for="pp-email">Your email address</label>
+    <div class="field"><label for="pp-email">Enter your email address</label>
       <input id="pp-email" type="email" name="email" autocomplete="email" inputmode="email" maxlength="254" autofocus required></div>
-    <button type="submit" class="btn btn-primary btn-block">Email me a code</button>
+    <button type="submit" class="btn btn-primary btn-block">Continue</button>
   </form>
-  <p class="pp-hint" style="margin-top:12px">The code arrives within a minute or two. If it does not, look in your spam folder, or call the parish office: your login is turned on by the office, and they can check which address they set it up with.</p>
+  {% else %}
+  <p>Please use the sign-in link your parish gave you.</p>
+  {% endif %}
 </div>
 {% endblock %}

@@ -115,6 +115,9 @@ Change this file, donor_tab_personal.html, donor_tab_giving.html, donor_macros.h
         <details class="dm-menu"><summary class="btn btn-secondary btn-sm">Actions</summary>
           <div class="dm-menu-pop">
             <a href="/people/duplicates">Find duplicates</a>
+            <div class="dm-menu-info">Record number: {{ pid }}</div>
+            <div class="dm-menu-info">Databank link: {% if p.databank_contact_id %}Contact {{ p.databank_contact_id }}{% else %}Not linked{% endif %}</div>
+            <div class="dm-menu-info">Merge history: {% if merge_count %}{{ merge_count }} merge{{ 's' if merge_count != 1 }}{% else %}No merges{% endif %}</div>
             <form method="post" action="/people/{{ pid }}/archive" class="dm-form" data-confirm="Archive this person at {{ parish.name }}? They will drop out of search and mailings. Their records are kept.">
               {{ csrf() }}<button type="submit" class="dm-linklike">Archive at this parish</button></form>
           </div>
@@ -136,9 +139,6 @@ Change this file, donor_tab_personal.html, donor_tab_giving.html, donor_macros.h
       </div>
 
       <div class="dm-panel">
-        {% if self_mode and tab == "giving" %}
-        <nav class="pp-subtabs" aria-label="Giving"><a href="/my/giving" class="{{ 'pp-sub-on' if sub == 'contributions' }}">Contributions</a><a href="/my/pledges" class="{{ 'pp-sub-on' if sub == 'pledges' }}">Pledges</a></nav>
-        {% endif %}
         {% if tab == "personal" %}{% include "donor_tab_personal.html" %}
         {% elif tab == "membership" %}{% include "donor_tab_membership.html" %}
         {% elif tab == "sacraments" %}{% include "donor_tab_sacraments.html" %}

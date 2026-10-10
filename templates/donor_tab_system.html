@@ -1,35 +1,6 @@
 {# donor_tab_system.html -- user account (the Beacon login and donor roles that belong to this person), change history with
    one-click undo of a single change (PF-12), merge history, links. #}
 {% from "donor_macros.html" import csrf with context %}
-{% if show_access %}
-<div class="dm-section" id="user-account">
-  <div class="dm-section-head"><h3>Beacon staff login (People &amp; Giving roles)</h3>
-    <a class="btn btn-secondary btn-sm" href="/people/users">All users</a>
-  </div>
-  <p class="dm-muted dm-small">The login this person uses to run Beacon as STAFF, and the People &amp; Giving roles it holds. It is a different thing from the member's own parishioner login below.</p>
-  {% if access %}
-  <div class="table-scroll">
-  <table class="simple-table dm-table dm-compact">
-    <thead><tr><th>Login</th><th>Donor roles here</th><th>Last sign-in</th><th></th></tr></thead>
-    <tbody>
-    {% for u in access %}
-      <tr>
-        <td>{{ u.name }}{% if u.email != u.name %} <span class="dm-sub">{{ u.email }}</span>{% endif %}{% if u.is_parish_admin %} <span class="dm-pill dm-pill-green">Parish Admin</span>{% endif %}</td>
-        <td>{% for r in u.roles %}<div><span class="dm-pill dm-pill-green">{{ r.label }}</span> <span class="dm-sub">given {{ d(r.granted_at) }}{% if r.granted_by_name %} by {{ r.granted_by_name }}{% endif %}{% if r.note %} &middot; {{ r.note }}{% endif %}</span></div>{% else %}<span class="dm-muted">No donor role</span>{% endfor %}</td>
-        <td class="nowrap">{{ u.last_sign_in or "Never" }}</td>
-        <td class="nowrap"><a class="btn btn-secondary btn-sm" href="/people/users/{{ u.user_id }}">Edit roles</a></td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  <p class="dm-muted dm-small">A login belongs to this person when its email is one of their email addresses. Roles are given and taken away on the Users screen under Setup. Parish Admin is given under User Access.</p>
-  {% else %}
-  <p class="doc-empty">No Beacon login matches this person's email addresses.</p>
-  {% endif %}
-</div>
-{% endif %}
-
 {% if portal_login %}
 {% set pl = portal_login %}
 <div class="dm-section" id="parishioner-login">
@@ -87,8 +58,8 @@
 </div>
 {% endif %}
 
-<div class="dm-section">
-  <div class="dm-section-head"><h3>Change history</h3></div>
+<details class="dm-section dm-history">
+  <summary><h3>Change history <span class="dm-sub">({{ changes|length }} change{{ "s" if changes|length != 1 }})</span></h3></summary>
   {% if changes %}
   <div class="table-scroll">
   <table class="simple-table dm-table">
@@ -111,14 +82,5 @@
     </tbody>
   </table>
   </div>
-  <p class="dm-muted dm-small">Changes to the shared profile show at every parish this person is connected to, and name the parish that made them. Changes to this parish's own records are shown here only. A change can be undone only if the value has not been changed again since.</p>
   {% else %}<p class="doc-empty">No changes recorded.</p>{% endif %}
-</div>
-
-<div class="dm-section">
-  <div class="dm-grid">
-    <div class="dm-box"><div class="dm-lbl">Merge history</div><div class="dm-val">{% if merges %}{{ merges|length }} merge{{ 's' if merges|length != 1 }} into this record{% else %}No merges{% endif %}</div></div>
-    <div class="dm-box"><div class="dm-lbl">Databank link</div><div class="dm-val">{% if p.databank_contact_id %}Contact {{ p.databank_contact_id }}{% else %}Not linked{% endif %}</div></div>
-    <div class="dm-box"><div class="dm-lbl">Record number</div><div class="dm-val">{{ pid }}</div></div>
-  </div>
-</div>
+</details>

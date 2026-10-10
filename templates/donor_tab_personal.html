@@ -222,7 +222,7 @@ email their sign-in code goes to, which they cannot change or remove.
 
 <div class="dm-foot-note">
   {% if self_mode %}
-  <span>Record added {{ d(p.created_at) }}.</span><span>Every change you make here is recorded.</span>
+  <span>Record added {{ d(p.created_at) }}.</span>
   {% else %}
   <span>Shared profile: a change here also shows at {{ g.other_connections|length }} other {{ 'parish' if g.other_connections|length == 1 else 'parishes' }}{% if not g.other_connections %} if the person is connected to more{% endif %}.</span>
   <span>Added {{ d(p.created_at) }} &middot; last changed {{ d(p.updated_at) }}</span>

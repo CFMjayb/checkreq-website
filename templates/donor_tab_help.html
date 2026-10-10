@@ -4,7 +4,7 @@ The message becomes a staff-visible record (People page, "Messages from parishio
 staff.
 #}
 <h3>Get help</h3>
-<p>Send a message to the {{ parish.name }} office. Use it to ask for a correction to your name, address or birth date, to ask about a gift or a statement, or anything else. The office will see it the next time they open their People page, so for something urgent please call.</p>
+<p>Send a message to the portal administrator.</p>
 {% if form_error %}<div class="banner banner-error">{{ form_error }}</div>{% endif %}
 <form method="post" action="/my/help" class="dm-form pp-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">

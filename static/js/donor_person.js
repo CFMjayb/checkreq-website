@@ -142,6 +142,12 @@
     }
   }
 
+  // 5. A select marked data-autosubmit reloads its own form when the choice changes (the member Giving tab's year: no Show button).
+  document.addEventListener('change', function (e) {
+    var el = e.target;
+    if (el && el.hasAttribute && el.hasAttribute('data-autosubmit') && el.form) { el.form.submit(); }
+  });
+
   // 4. The System tab's "Turn on" button for a person with no email address: it cannot be turned on, so a click says why
   //    right beside the button instead of sending anything. (Without script the form still posts and the server gives the
   //    same message.)

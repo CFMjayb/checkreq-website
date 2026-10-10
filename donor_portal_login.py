@@ -98,6 +98,58 @@ def parish_lookup(parish_id: int) -> dict | None:
     return db.query_one("SELECT id, name, is_active FROM portal.parishes WHERE id = %s", (parish_id,))
 
 
+# ── the per-parish sign-in link /my/<slug> (2026-10-10) ─────────────────────────────────────────
+# A parish's link name is kept on its settings (donor.parish_settings.portal_slug), made from the parish name when the portal is switched
+# on, and editable by the diocese. It only chooses which parish's logo and name the sign-in page shows: it never decides who may sign in.
+RESERVED_SLUGS = {"signin", "code", "choose", "signout", "personal", "giving", "pledges", "help", "logo", "static", "my"}
+
+
+def slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")[:60].strip("-")
+
+
+def normalize_slug(text) -> str | None:
+    """The link name a diocese typed, as lower-case letters, digits and single hyphens. Blank is None. A reserved or too-short name raises
+    ValueError (a link must never swallow /my/personal, /my/giving and the other fixed pages)."""
+    s = slugify(str(text or ""))
+    if not s:
+        return None
+    if s in RESERVED_SLUGS or len(s) < 3:
+        raise ValueError("That link name cannot be used. Use at least three letters or digits, and not a word the portal already uses.")
+    return s
+
+
+def default_slug(parish_id: int) -> str:
+    """A link name made from the parish name and not used by any other parish ('parish-<id>' when there is no usable name)."""
+    p = parish_lookup(parish_id)
+    base = slugify(p["name"]) if p and p.get("name") else ""
+    if len(base) < 3 or base in RESERVED_SLUGS:
+        base = f"parish-{parish_id}"
+    slug, n = base, 2
+    while db.query_one("SELECT 1 AS x FROM donor.parish_settings WHERE LOWER(portal_slug) = %s AND parish_id <> %s", (slug, parish_id)):
+        slug, n = f"{base}-{n}", n + 1
+    return slug
+
+
+def parish_card(parish_id: int, slug: str | None = None) -> dict | None:
+    """{id, name, slug, has_logo} for a parish that has its member portal on, else None. The same answer for a parish that does not
+    exist, one whose portal is off and an unknown link name, so the page cannot be used to find out which parishes use the portal."""
+    row = db.query_one("SELECT portal_slug FROM donor.parish_settings WHERE parish_id = %s AND portal_enabled AND people_enabled", (parish_id,))
+    if not row or not row.get("portal_slug") or not _parish_ok(parish_id):
+        return None
+    p = parish_lookup(parish_id)
+    has_logo = bool(p and db.query_one("SELECT 1 AS x FROM portal.parishes WHERE id = %s AND logo_gcs_path IS NOT NULL", (parish_id,)))
+    return {"id": parish_id, "name": (p or {}).get("name") or "Your parish", "slug": slug or row["portal_slug"], "has_logo": has_logo}
+
+
+def parish_for_slug(slug: str) -> dict | None:
+    s = (slug or "").strip().lower()
+    if not s or s in RESERVED_SLUGS or len(s) > 80:
+        return None
+    row = db.query_one("SELECT parish_id FROM donor.parish_settings WHERE LOWER(portal_slug) = %s", (s,))
+    return parish_card(row["parish_id"], s) if row else None
+
+
 # ── eligibility: who may sign in at all ─────────────────────────────────────────────────────────
 _ELIGIBLE_SELECT = (
     "SELECT pc.person_id, pc.parish_id, p.birth_date, p.deceased_date, hm.position, l.login_email "

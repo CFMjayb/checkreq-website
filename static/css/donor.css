@@ -326,3 +326,9 @@
 .dm-warn[hidden] { display: none; }
 .dm-login-log { margin-top: 8px; }
 .dm-login-log summary { cursor: pointer; font-size: 0.85rem; color: var(--color-text-muted); }
+
+/* Phase 1 (2026-10-10): Change history is a closed details; the Actions menu carries read-only facts. */
+.dm-history { margin-top: 14px; }
+.dm-history > summary { cursor: pointer; padding: 6px 0; border-bottom: 1px solid var(--color-border); }
+.dm-history > summary h3 { display: inline; }
+.dm-menu-info { padding: 4px 12px; font-size: 0.8rem; color: var(--color-text-muted); white-space: nowrap; }
