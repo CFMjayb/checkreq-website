@@ -141,4 +141,15 @@
       });
     }
   }
+
+  // 4. The System tab's "Turn on" button for a person with no email address: it cannot be turned on, so a click says why
+  //    right beside the button instead of sending anything. (Without script the form still posts and the server gives the
+  //    same message.)
+  document.addEventListener('click', function (e) {
+    var btn = e.target && e.target.closest ? e.target.closest('[data-needs-email]') : null;
+    if (!btn) { return; }
+    e.preventDefault();
+    var msg = btn.parentNode.querySelector('[data-needs-email-msg]');
+    if (msg) { msg.hidden = false; }
+  });
 }());

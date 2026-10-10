@@ -9,7 +9,7 @@ still be an active email on the person's profile each time they sign in.
 
   login_panel(ctx, person_id)              what the System tab's "Parishioner login (self-service)" panel shows (None without roles.manage)
   login_enable(ctx, person_id, email)      turn the login on (or change its sign-in email): a connected, eligible person and one of their
-                                           active emails are required
+                                           active emails are required (a blank email uses the person's one active email)
   login_disable(ctx, person_id, reason)    turn it off (a reason is required, the row is kept) and end every live session at once
   login_sign_out_everywhere(ctx, person_id)  end every live session of the person; the login stays enabled
 
@@ -25,6 +25,7 @@ from donor_core import Conflict, Ctx, InvalidInput, NotFound, clean_email, clean
 from donor_people import require_connection
 
 MANAGE_MESSAGE = "Only a Parish Admin, or the diocese, can manage parishioner logins."
+NO_EMAIL_MESSAGE = "Add an email address on the Personal tab first."
 EVENT_WORDS = {"signed_in": "Signed in", "signed_out": "Signed out", "session_ended": "Session ended"}
 END_WORDS = {"expired_idle": "timed out after 30 idle minutes", "expired_absolute": "reached its two-hour limit",
              "ineligible": "no longer allowed to sign in", "login_disabled": "login turned off by staff",
@@ -86,22 +87,30 @@ def login_panel(ctx: Ctx, person_id: int) -> dict | None:
         "enabled_by": names.get(login["enabled_by_user_id"]) if login else None,
         "disabled_by": names.get(login["disabled_by_user_id"]) if login and login["disabled_by_user_id"] else None,
         "portal_on": bool(ctx.settings.get("portal_enabled")),
+        "no_email_message": NO_EMAIL_MESSAGE,
     }
 
 
 def login_enable(ctx: Ctx, person_id: int, login_email, *, cur=None) -> dict:
     """Turn the parishioner login on for this person at this parish, with the sign-in email they pick (one of the person's ACTIVE emails).
+    Left blank, the person's one active email is used (nearly everyone has exactly one); with none there is nothing to send a code to, so
+    it is refused until an email is on the Personal tab, and with several a blank is refused (the caller must pick).
     Calling it again with another email changes the sign-in email. Returns {"id", "changed"}."""
     ctx.require("roles.manage", MANAGE_MESSAGE)
     email = clean_email(login_email, field="sign-in email")
-    if not email:
-        raise InvalidInput("Pick the email address the sign-in code goes to.", "login_email")
     with tx(cur) as c:
         require_connection(c, ctx, person_id, include_archived=False)
         reason = ineligible_reason(_state(c, person_id))
         if reason:
             raise InvalidInput(f"A parishioner login cannot be set up for {reason}.", "person_id")
-        if not any(e["value"].lower() == email for e in _active_emails(c, person_id)):
+        active = _active_emails(c, person_id)
+        if not email:
+            if not active:
+                raise InvalidInput(NO_EMAIL_MESSAGE, "login_email")
+            if len(active) > 1:
+                raise InvalidInput("Pick the email address the sign-in code goes to.", "login_email")
+            email = active[0]["value"].lower()
+        if not any(e["value"].lower() == email for e in active):
             raise InvalidInput("The sign-in email has to be one of this person's current email addresses. Add or fix it on the Personal tab first.", "login_email")
         c.execute("SELECT id, is_enabled, login_email FROM donor.parishioner_login WHERE person_id = %s AND parish_id = %s FOR UPDATE", (person_id, ctx.parish_id))
         old = c.fetchone()
