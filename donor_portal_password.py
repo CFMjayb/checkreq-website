@@ -144,9 +144,10 @@ def _fails_by_ip(ip: str) -> int:
     return row["n"] if row else 0
 
 
-def password_signin(email: str, password: str, ip: str) -> dict:
+def password_signin(email: str, password: str, ip: str, parish_id: int | None = None) -> dict:
     """{"status": "signed_in", "session_token", "person_id", "parish_id"}, {"status": "choose", "challenge_token"} when it matches two
-    spouses or two parishes, or {"status": "bad"} (one answer for everything that did not work)."""
+    spouses or two parishes, or {"status": "bad"} (one answer for everything that did not work). `parish_id` is the parish whose own
+    sign-in link was opened: only logins at that parish are tried, so that link can never sign anyone in at another parish."""
     typed = (email or "").strip().lower()[:254]
     ekey = L.email_key(typed)
     pw = password or ""
@@ -158,7 +159,7 @@ def password_signin(email: str, password: str, ip: str) -> dict:
         _burn()
         L.log_event("password_failed", email_key_value=ekey, ip=ip, detail="ip limit")
         return {"status": "bad"}
-    candidates = L.find_candidates(typed)                       # the same query whoever it is
+    candidates = L.find_candidates(typed, parish_id)            # the same query whoever it is
     logins = []
     for person_id, parish_id in candidates:
         row = db.query_one("SELECT id, password_hash, failed_password_attempts, password_locked_until FROM donor.parishioner_login "

@@ -142,7 +142,7 @@ def _not_giving(request: Request, ps: dict):
 
 
 # ── sign-in ─────────────────────────────────────────────────────────────────────────────────────
-PARISH_KEY = "portal_parish"          # the parish whose /my/<link> the visitor opened (its logo and name); it never decides who may sign in
+PARISH_KEY = "portal_parish"          # the parish whose /my/<link> the visitor opened: its logo and name, AND the only parish a password or code may sign in to
 EMAIL_KEY = "portal_email"            # the address typed on page one, kept only to show on page two and to ask for a code (the signed cookie)
 FRESH_KEY = "portal_fresh_proof"      # when an emailed code last proved the person controls their address (lets a password be changed without the old one)
 VIA_PW_KEY = "portal_via_password"    # the pending "choose" step came from a password, not a code
@@ -209,7 +209,7 @@ async def password_post(request: Request):
     if not email:
         return _redirect("/my")
     ip = L.client_ip(request)
-    res = await run_in_threadpool(PW.password_signin, email, str(form.get("password") or ""), ip)
+    res = await run_in_threadpool(PW.password_signin, email, str(form.get("password") or ""), ip, request.session.get(PARISH_KEY))
     wait = PW.MIN_PASSWORD_SECONDS - (time.monotonic() - started)       # matched or not, the answer takes the same time
     if wait > 0:
         await asyncio.sleep(wait)
@@ -233,7 +233,7 @@ async def signin_post(request: Request):
     if not email:
         return _signin_page(request, error="Enter your email address.", status=400)
     ip = L.client_ip(request)
-    res = L.request_code(email, ip)
+    res = L.request_code(email, ip, request.session.get(PARISH_KEY))        # only a login at the parish whose link was opened gets a code
     request.session[L.CHALLENGE_KEY] = res["token"]
     if res["send"]:                                  # sent NOW, before the answer (a job after the answer was not run on Cloud Run)
         await run_in_threadpool(L.send_code_email, res["send"][0], res["send"][1], ip)     # in a worker thread: the server's loop stays free
@@ -520,6 +520,10 @@ def my_parish(slug: str, request: Request):
     parish = L.parish_for_slug(slug)
     if parish:
         request.session[PARISH_KEY] = parish["id"]
+        token = request.session.get(L.SESSION_KEY)
+        live = L.current(token, L.client_ip(request)) if token else None
+        if live and live["parish_id"] != parish["id"]:        # signed in at ANOTHER parish: this link is for this parish, so offer ITS sign-in
+            return _signin_page(request)                      # (the other session stays as it is until a sign-in here replaces it)
     else:
         request.session.pop(PARISH_KEY, None)                 # an unknown link looks exactly like plain /my
     return my_home(request)
