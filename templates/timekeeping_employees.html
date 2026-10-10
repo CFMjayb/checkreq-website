@@ -1,180 +1,135 @@
 {% extends "base.html" %}
 {% block title %}Employees — HR{% endblock %}
 {#
-  admin_setup.css is loaded for .setup-section / .setup-toolbar / tr.row-dirty,
-  all already proven on the GL Mapping and Global Approvers screens. base.html
-  does not load it by default, and reusing it is strictly better than copying
-  those rules into a second place where they could drift.
+  Employees (HR). A fixed frame: title and filters stay at the top, the column
+  headers stay under them, the Save bar stays at the bottom, and ONLY the
+  employee rows scroll between them (static/js/timekeeping_employees.js fits the
+  frame to the window; static/css/timekeeping_employees.css lays it out).
+
+  Save posts ONLY the rows that were changed -- the script disables the
+  controls of untouched rows just before submit. That is not an optimisation:
+  Starlette refuses a form with 1,000 or more fields, and one field set per
+  row across the whole roster is well over that (see timekeeping_employees.py,
+  _read_form, and csrf_guard.py).
 #}
 {% block extra_css %}
-<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
-<style>
-  /* Page-specific: a pending DEACTIVATION deserves to look different from an
-     ordinary pending edit, since it is the consequential one. Kept here rather
-     than added to the shared stylesheet because no other screen has this
-     state. Struck-through name cells mirror how GL Mapping shows a row marked
-     for deletion. */
-  tr.row-deactivating { background: #fdecea !important; box-shadow: inset 3px 0 0 #b3261e; }
-  tr.row-deactivating input[type=text] { text-decoration: line-through; }
-</style>
+<link rel="stylesheet" href="/static/css/timekeeping_employees.css?v={{ asset_version('css/timekeeping_employees.css') }}">
 {% endblock %}
 {% block content %}
 <div class="page-shell-wide">
-<h1>Employees</h1>
-<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
-<p class="sub">{{ current_org.name }} staff roster across every parish. Every add, change and
-inactivation takes an <strong>as-of date</strong> and is recorded in the roster's change history.
-{{ totals.active }} active of {{ totals.total }} total; {{ totals.hourly }} of the active ones
-report hours.</p>
+<div class="emp-shell" id="empShell">
 
-{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
-{% if request.query_params.get('saved') %}<div class="banner banner-success">{{ request.query_params.get('saved') }}</div>{% endif %}
+  <div class="emp-title-row">
+    <h1>Employees</h1>
+    <a class="emp-back" href="/admin">&larr; Administrative Tasks</a>
+    <button type="button" class="btn btn-sm emp-add" id="empAddBtn">Add employee</button>
+  </div>
 
-{# --- Add panel: its own form, outside the table, so no nesting problem --- #}
-<div class="card">
-<details class="setup-section">
-  <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ Add an employee</summary>
-  <form method="post" action="/admin/timekeeping/employees/add" style="margin-top:12px">
+  {% if request.query_params.get('error') %}<div class="banner banner-error emp-banner">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% if request.query_params.get('saved') %}<div class="banner banner-success emp-banner">{{ request.query_params.get('saved') }}</div>{% endif %}
+
+  <form method="get" action="/admin/timekeeping/employees" class="emp-filters" id="empFilters">
+    <label>Parish
+      <select name="parish_id" data-autosubmit>
+        <option value="">All parishes</option>
+        {% for p in parishes %}
+        <option value="{{ p.id }}"{% if p.id == f_parish_id %} selected{% endif %}>{{ p.label }}</option>
+        {% endfor %}
+      </select></label>
+    <label>Status
+      <select name="show" data-autosubmit>
+        <option value="active"{% if f_show == 'active' %} selected{% endif %}>Active</option>
+        <option value="inactive"{% if f_show == 'inactive' %} selected{% endif %}>Inactive</option>
+        <option value="all"{% if f_show == 'all' %} selected{% endif %}>All</option>
+      </select></label>
+    <label>Hours
+      <select name="hours" data-autosubmit>
+        <option value="all"{% if f_hours == 'all' %} selected{% endif %}>Any</option>
+        <option value="yes"{% if f_hours == 'yes' %} selected{% endif %}>Reports hours</option>
+        <option value="no"{% if f_hours == 'no' %} selected{% endif %}>Does not report hours</option>
+      </select></label>
+    <label>Search <input type="text" name="q" value="{{ f_q }}" placeholder="name or employee #"></label>
+    <button type="submit" class="btn btn-sm">Filter</button>
+  </form>
+
+  <form method="post" action="/admin/timekeeping/employees/save{% if filter_qs %}?{{ filter_qs }}{% endif %}" class="emp-form" id="empForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <div class="field"><label>Parish / department *</label>
+    <div class="emp-scroll">
+      <table class="emp-table">
+        <colgroup>
+          <col style="width:170px"><col style="width:20%"><col style="width:17%"><col style="width:100px">
+          <col style="width:66px"><col style="width:96px"><col style="width:44px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th data-sort="parish">Parish<span class="arrow"></span></th>
+            <th data-sort="last" data-dir="asc">Last<span class="arrow">&#9650;</span></th>
+            <th data-sort="first">First<span class="arrow"></span></th>
+            <th data-sort="emp">Emp #<span class="arrow"></span></th>
+            <th data-sort="hours" class="c-center">Hours<span class="arrow"></span></th>
+            <th data-sort="eff">Effective<span class="arrow"></span></th>
+            <th class="c-menu" aria-label="Actions"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in employees %}
+          <tr class="emp-row {{ 'is-active' if e.is_active else 'is-inactive' }}" data-id="{{ e.id }}" data-active="{{ 1 if e.is_active else 0 }}">
+            <td class="c-parish" title="{{ e.parish_label }}" data-v="{{ e.parish_label|lower }}">{{ e.parish_label }}
+              <input type="hidden" name="present_{{ e.id }}" value="1">
+              <input type="hidden" name="action_{{ e.id }}" value="" class="emp-action"></td>
+            <td><input type="text" class="emp-in" name="last_name_{{ e.id }}" value="{{ e.last_name }}" aria-label="Last name"></td>
+            <td><input type="text" class="emp-in" name="first_name_{{ e.id }}" value="{{ e.first_name }}" aria-label="First name"></td>
+            <td><input type="text" class="emp-in" name="employee_number_{{ e.id }}" value="{{ e.employee_number or '' }}" aria-label="Employee number"></td>
+            <td class="c-center"><input type="checkbox" name="captures_hours_{{ e.id }}" value="1"{% if e.captures_hours %} checked{% endif %} aria-label="Reports hours"></td>
+            <td class="c-date" data-v="{{ e.effective_date.isoformat() if e.effective_date else '' }}">{{ e.effective_date.strftime('%m/%d/%y') if e.effective_date else '' }}</td>
+            <td class="c-menu"><button type="button" class="emp-menu-btn" aria-label="Row actions" aria-haspopup="menu">&#8942;</button></td>
+          </tr>
+          {% endfor %}
+          {% if not employees %}
+          <tr class="emp-empty"><td colspan="7">No employees match these filters.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+    <div class="emp-foot">
+      <span class="emp-count">{{ employees|length }} shown</span>
+      <span class="emp-changed" id="empChanged" hidden></span>
+      <button type="submit" class="btn btn-sm emp-save" id="empSave" disabled>Save Changes</button>
+    </div>
+  </form>
+
+  <div class="emp-menu" id="empMenu" role="menu" hidden>
+    <button type="button" role="menuitem" id="empMenuToggle"></button>
+  </div>
+</div>
+</div>
+
+{# Add employee: a pop-up, its own form outside the save form (no nesting). #}
+<dialog class="emp-dialog" id="empAddDialog">
+  <form method="post" action="/admin/timekeeping/employees/add{% if filter_qs %}?{{ filter_qs }}{% endif %}" id="empAddForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <h2>Add employee</h2>
+    <div class="field"><label>Parish *</label>
       <select name="parish_id" required>
         <option value="">Choose&hellip;</option>
         {% for p in parishes %}
-        <option value="{{ p.id }}"{% if p.id == f_parish_id %} selected{% endif %}>{{ p.code or '—' }} — {{ p.label }}</option>
+        <option value="{{ p.id }}"{% if p.id == f_parish_id %} selected{% endif %}>{{ p.label }}</option>
         {% endfor %}
       </select></div>
     <div class="field"><label>Last name *</label><input type="text" name="last_name" required></div>
     <div class="field"><label>First name *</label><input type="text" name="first_name" required></div>
-    <div class="field"><label>Position</label><input type="text" name="position"></div>
     <div class="field"><label>Employee number</label><input type="text" name="employee_number"
       placeholder="must be unique — the payroll register keys on it"></div>
-    <div class="field"><label><input type="checkbox" name="captures_hours" value="1" checked>
-      Reports hours (leave unchecked for salaried / housing-only clergy)</label></div>
-    <div class="field"><label>As of *</label><input type="date" name="as_of_date" value="{{ today }}" required></div>
-    <button type="submit" class="btn btn-sm">Add Employee</button>
+    <div class="field"><label>Effective date *</label><input type="date" name="as_of_date" value="{{ today }}" required></div>
+    <div class="field"><label class="emp-check"><input type="checkbox" name="captures_hours" value="1" checked>
+      Reports hours (uncheck for salaried or housing-only clergy)</label></div>
+    <div class="emp-dialog-actions">
+      <button type="button" class="btn btn-sm btn-secondary" id="empAddCancel">Cancel</button>
+      <button type="submit" class="btn btn-sm">Add employee</button>
+    </div>
   </form>
-</details>
-</div>
-
-{# --- Filters: a GET form, also outside the edit form --- #}
-<div class="card">
-<form method="get" action="/admin/timekeeping/employees" class="setup-toolbar">
-  <label>Parish
-    <select name="parish_id" onchange="this.form.submit()">
-      <option value="">All parishes</option>
-      {% for p in parishes %}
-      <option value="{{ p.id }}"{% if p.id == f_parish_id %} selected{% endif %}>{{ p.code or '—' }} — {{ p.label }}</option>
-      {% endfor %}
-    </select></label>
-  <label>Status
-    <select name="show" onchange="this.form.submit()">
-      <option value="active"{% if f_show == 'active' %} selected{% endif %}>Active</option>
-      <option value="inactive"{% if f_show == 'inactive' %} selected{% endif %}>Inactive</option>
-      <option value="all"{% if f_show == 'all' %} selected{% endif %}>All</option>
-    </select></label>
-  <label>Hours
-    <select name="hours" onchange="this.form.submit()">
-      <option value="all"{% if f_hours == 'all' %} selected{% endif %}>Any</option>
-      <option value="yes"{% if f_hours == 'yes' %} selected{% endif %}>Reports hours</option>
-      <option value="no"{% if f_hours == 'no' %} selected{% endif %}>Does not report hours</option>
-    </select></label>
-  <label>Search <input type="text" name="q" value="{{ f_q }}" placeholder="name or employee #"></label>
-  <button type="submit" class="btn btn-sm">Filter</button>
-</form>
-</div>
-
-{#
-  ONE form wrapping the whole table -- deliberately not a form per row, which
-  is invalid HTML (a <form> may not be a child of <tr>) and gets mangled by
-  the browser. Batched save also matches the pattern Jay asked for on
-  2026-08-02 after an accidental GL-mapping delete: a destructive action marks
-  the row and waits for Save Changes.
-#}
-<form method="post" action="/admin/timekeeping/employees/save">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-<div class="card">
-<div class="table-scroll">
-<table class="simple-table">
-  <tr>
-    <th style="min-width:60px">Dept</th>
-    <th style="min-width:140px">Parish</th>
-    <th style="min-width:130px">Last</th>
-    <th style="min-width:110px">First</th>
-    <th style="min-width:120px">Position</th>
-    <th style="min-width:90px">Emp #</th>
-    <th style="min-width:60px">Hours</th>
-    <th style="min-width:95px">Effective</th>
-    <th style="min-width:95px">Inactive</th>
-    <th style="min-width:120px">As of</th>
-    <th style="min-width:150px">Then</th>
-  </tr>
-  {% for e in employees %}
-  <tr data-row="{{ e.id }}">
-    <td>{{ e.parish_code or '—' }}
-        <input type="hidden" name="present_{{ e.id }}" value="1"></td>
-    <td>{{ e.parish_label }}</td>
-    <td><input type="text" name="last_name_{{ e.id }}" value="{{ e.last_name }}"></td>
-    <td><input type="text" name="first_name_{{ e.id }}" value="{{ e.first_name }}"></td>
-    <td><input type="text" name="position_{{ e.id }}" value="{{ e.position or '' }}"></td>
-    <td><input type="text" name="employee_number_{{ e.id }}" value="{{ e.employee_number or '' }}"></td>
-    <td style="text-align:center"><input type="checkbox" name="captures_hours_{{ e.id }}" value="1"
-           {% if e.captures_hours %}checked{% endif %} aria-label="Reports hours"></td>
-    <td>{{ e.effective_date or '—' }}</td>
-    <td>{% if e.is_active %}<span class="sub">active</span>{% else %}{{ e.inactive_as_of or '—' }}{% endif %}</td>
-    <td><input type="date" name="as_of_{{ e.id }}" value="{{ today }}"
-               aria-label="As-of date for this row's change"></td>
-    <td>
-      <select name="action_{{ e.id }}" aria-label="Status change">
-        <option value="">— no status change —</option>
-        {% if e.is_active %}
-        <option value="deactivate">Deactivate</option>
-        {% else %}
-        <option value="reactivate">Reactivate</option>
-        {% endif %}
-      </select>
-    </td>
-  </tr>
-  {% endfor %}
-  {% if not employees %}
-  <tr><td colspan="11" class="sub">No employees match these filters.</td></tr>
-  {% endif %}
-</table>
-</div>
-{% if employees %}
-<div style="margin-top:12px"><button type="submit" class="btn btn-sm">Save Changes</button></div>
-{% endif %}
-</div>
-</form>
-
-<p class="sub">An employee who does not report hours still belongs on this roster — they simply get
-no row on the time entry grid. Deactivating never deletes anyone: the row stays, with the as-of date
-recorded, so history and past periods keep making sense. Nothing is written until you click
-<strong>Save Changes</strong>; only rows you actually altered are touched.</p>
-</div>
-
-<script>
-// Visually mark a row the moment anything in it changes, so a batch of edits
-// is reviewable before Save Changes -- same dirty-row affordance the GL
-// Mapping and Global Approvers screens use.
-document.querySelectorAll('tr[data-row]').forEach(function (tr) {
-  tr.addEventListener('input', function () { tr.classList.add('row-dirty'); });
-  tr.addEventListener('change', function () {
-    tr.classList.add('row-dirty');
-    var sel = tr.querySelector('select[name^=action_]');
-    // A pending deactivation is worth showing differently from an ordinary
-    // edit, since it is the consequential one.
-    if (sel) { tr.classList.toggle('row-deactivating', sel.value === 'deactivate'); }
-  });
-});
-</script>
+</dialog>
 {% endblock %}
 {% block extra_js %}
-<script>
-document.querySelectorAll('form[method="post" i]').forEach(function (form) {
-  form.addEventListener('submit', function (e) {
-    if (e.defaultPrevented) return;
-    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
-  });
-});
-</script>
+<script src="/static/js/timekeeping_employees.js?v={{ asset_version('js/timekeeping_employees.js') }}"></script>
 {% endblock %}

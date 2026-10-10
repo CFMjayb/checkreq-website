@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-shell-wide">
 <h1>Timekeeping Review</h1>
-<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+<p class="back-link"><a href="/portal">&larr; Back to main menu</a></p>
 <p class="sub">Submitted hours and pending staff roster changes across every Cornerstone-served parish
 under {{ current_org.name }}.</p>
 
@@ -36,6 +36,7 @@ reason — the parish sees it and can correct and resubmit.</p>
       {% if c.change_type == 'edit' %}
         {{ c.proposed_first_name }} {{ c.proposed_last_name }}{% if c.proposed_position %}, {{ c.proposed_position }}{% endif %}
         {% if c.proposed_employee_number %} (#{{ c.proposed_employee_number }}){% endif %}
+        {% if c.proposed_captures_hours is not none %}<span class="sub"> &middot; {{ 'reports hours' if c.proposed_captures_hours else 'does not report hours' }}</span>{% endif %}
       {% elif c.change_type == 'add' %}
         {{ c.proposed_position or "—" }}{% if c.proposed_employee_number %} (#{{ c.proposed_employee_number }}){% endif %}
       {% else %}

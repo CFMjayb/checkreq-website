@@ -46,10 +46,28 @@ screen as much as to the loader: the editable set below is deliberately
 name / position / employee number / captures_hours / active only.
 captures_hours is a boolean about WHETHER hours are collected -- not a pay
 basis, not a rate.
+
+SCREEN LAYOUT (redesigned 2026-10-10, Jay's comments): title + filters locked at
+the top, sortable column headers locked under them, the Save bar locked at the
+bottom, only the rows scroll. Columns: Parish (short), Last, First, Emp #, Hours,
+Effective, and a three-dot menu (Inactivate / Activate). Active rows are green
+and editable; inactive rows are faded red and read-only until activated. Default
+order is last name, then first. There is NO position or as-of column any more:
+a row's position is never touched by this screen, and the as-of date for an edit,
+inactivation or activation is TODAY (the add pop-up asks for an Effective date,
+default today).
+
+SAVE POSTS ONLY THE CHANGED ROWS. Starlette (newer releases; the Docker image
+installs the newest) refuses any form with 1,000 or more fields, and the old
+"every row, every field" form was ~1,550 fields -- csrf_guard swallowed the
+parse error and the screen answered 403 "Session expired". The page script now
+disables the controls of untouched rows before submit, and _read_form below
+raises the limit so a larger post still works.
 """
 from __future__ import annotations
 
 import datetime as dt
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -59,6 +77,19 @@ import db
 import rbac
 
 router = APIRouter()
+
+# See the module docstring. Far above anything this screen can post, far below
+# anything abusive.
+_MAX_FORM_FIELDS = 20000
+
+
+async def _read_form(request: Request):
+    """request.form() with a field limit that fits this screen. Older Starlette
+    has no max_fields keyword, hence the fallback."""
+    try:
+        return await request.form(max_fields=_MAX_FORM_FIELDS)
+    except TypeError:
+        return await request.form()
 
 _current_user = None
 _current_org = None
@@ -181,7 +212,7 @@ def list_employees(org_id: int, *, parish_id: int | None = None,
         "       coalesce(p.short_name, p.name) AS parish_label "
         "FROM portal.staff_roster s JOIN portal.parishes p ON p.id = s.parish_id "
         "WHERE " + " AND ".join(where)
-        + " ORDER BY p.code NULLS LAST, s.last_name, s.first_name",
+        + " ORDER BY lower(s.last_name), lower(s.first_name), s.id",
         tuple(params),
     )
 
@@ -203,24 +234,33 @@ def employees_page(request: Request):
     parishes = db.query(
         "SELECT id, code, coalesce(short_name, name) AS label "
         "FROM portal.parishes WHERE org_id = %s AND is_active "
-        "ORDER BY code NULLS LAST, label", (org["id"],))
+        "ORDER BY lower(coalesce(short_name, name)), code", (org["id"],))
     totals = db.query_one(
         "SELECT count(*) AS total, "
         "       count(*) FILTER (WHERE s.is_active) AS active, "
         "       count(*) FILTER (WHERE s.is_active AND s.captures_hours) AS hourly "
         "FROM portal.staff_roster s JOIN portal.parishes p ON p.id = s.parish_id "
         "WHERE p.org_id = %s", (org["id"],))
+    # The filters, carried on the Save / Add form actions so they survive a save.
+    filter_qs = urlencode({k: v for k, v in (
+        ("parish_id", parish_id or ""), ("show", show), ("hours", hours), ("q", q))
+        if v not in ("", None)})
     return _render(request, "timekeeping_employees.html", user, {
         "employees": employees, "parishes": parishes, "current_org": org,
         "f_parish_id": parish_id, "f_q": q, "f_show": show, "f_hours": hours,
         "totals": totals, "today": dt.date.today().isoformat(),
+        "filter_qs": filter_qs,
     })
 
 
 def _redirect_back(request: Request, **extra) -> RedirectResponse:
-    qp = dict(request.query_params)
+    """Back to the screen with the filters kept. The one-shot messages from the
+    previous round (saved / error) are dropped so a stale error cannot outlive a
+    good save; values are URL-encoded (a name with an & or = would otherwise
+    break the query string)."""
+    qp = {k: v for k, v in request.query_params.items() if k not in ("saved", "error")}
     qp.update({k: v for k, v in extra.items() if v is not None})
-    tail = "&".join(f"{k}={v}" for k, v in qp.items() if v != "")
+    tail = urlencode({k: v for k, v in qp.items() if v != ""})
     return RedirectResponse(
         "/admin/timekeeping/employees" + (f"?{tail}" if tail else ""),
         status_code=303)
@@ -231,15 +271,15 @@ async def employees_add(request: Request):
     user, org, err = _require_hr_admin(request)
     if err:
         return err
-    form = await request.form()
-    as_of = _as_of(form)
+    form = await _read_form(request)
+    as_of = _as_of(form) or dt.date.today()
     first = (form.get("first_name") or "").strip()
     last = (form.get("last_name") or "").strip()
     parish_raw = (form.get("parish_id") or "").strip()
-    if not (first and last and parish_raw.isdigit() and as_of):
+    if not (first and last and parish_raw.isdigit()):
         return _redirect_back(request,
-                              error="First name, last name, parish and a valid "
-                                    "as-of date are all required.")
+                              error="Parish, last name and first name are all "
+                                    "required.")
     parish = db.query_one(
         "SELECT id FROM portal.parishes WHERE id = %s AND org_id = %s",
         (int(parish_raw), org["id"]))
@@ -277,7 +317,8 @@ async def employees_add(request: Request):
                         first=first, last=last, position=position,
                         employee_number=emp_no, captures_hours=captures)
         conn.commit()
-    return _redirect_back(request, saved=f"Added {last}, {first} as of {as_of}.")
+    return _redirect_back(request, saved=f"Added {last}, {first} (effective "
+                                         f"{as_of.strftime('%m/%d/%y')}).")
 
 
 @router.post("/admin/timekeeping/employees/save")
@@ -300,7 +341,7 @@ async def employees_save(request: Request):
     user, org, err = _require_hr_admin(request)
     if err:
         return err
-    form = await request.form()
+    form = await _read_form(request)
 
     posted = [k[len("present_"):] for k in form.keys() if k.startswith("present_")]
     owned = {str(e["id"]): e for e in list_employees(org["id"], show="all")}
@@ -314,11 +355,22 @@ async def employees_save(request: Request):
                     continue
                 sid = int(raw_id)
                 who = f"{row['last_name']}, {row['first_name']}"
-                as_of = _as_of(form, f"as_of_{raw_id}")
+                # The screen has no as-of column any more: today, unless a
+                # caller still posts one.
+                as_of = _as_of(form, f"as_of_{raw_id}") or dt.date.today()
                 action = (form.get(f"action_{raw_id}") or "").strip()
+                # An inactive row is read-only on the screen; enforce it here too:
+                # the only thing allowed on one is activating it.
+                if not row["is_active"] and action != "reactivate":
+                    continue
                 first = (form.get(f"first_name_{raw_id}") or "").strip()
                 last = (form.get(f"last_name_{raw_id}") or "").strip()
-                position = (form.get(f"position_{raw_id}") or "").strip() or None
+                # Position is not on the screen: leave the stored value alone
+                # unless a caller posts one (then the old behaviour applies).
+                if f"position_{raw_id}" in form:
+                    position = (form.get(f"position_{raw_id}") or "").strip() or None
+                else:
+                    position = row["position"]
                 emp_no = (form.get(f"employee_number_{raw_id}") or "").strip() or None
                 captures = form.get(f"captures_hours_{raw_id}") is not None
 
@@ -388,9 +440,9 @@ async def employees_save(request: Request):
     if edited:
         bits.append(f"{edited} updated")
     if deactivated:
-        bits.append(f"{deactivated} deactivated")
+        bits.append(f"{deactivated} inactivated")
     if activated:
-        bits.append(f"{activated} reactivated")
+        bits.append(f"{activated} activated")
     saved = ", ".join(bits) + "." if bits else "No changes to save."
     return _redirect_back(request, saved=saved,
                           error=" ".join(problems) if problems else None)
