@@ -10,7 +10,8 @@ checks it again.
 <div class="pp-card pp-narrow">
   {% if wrong_parish %}
   <h1>Welcome!</h1>
-  <p>You're signed in, but you're not set up at {{ wrong_parish }}. Here is where you do have access. Pick one to continue:</p>
+  <p>You're signed in, but you're not set up at {{ wrong_parish }}.</p>
+  <p>Here is where you do have access. Pick one to continue:</p>
   {% else %}
   <h1>Who is signing in?</h1>
   <p>You're signed in. This address is on file for more than one choice. Pick the one that is you.</p>
@@ -19,7 +20,6 @@ checks it again.
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     {% for ch in choices %}<button type="submit" name="option" value="{{ loop.index0 }}" class="btn btn-secondary btn-block">{{ ch.label }}</button>{% endfor %}
   </form>
-  {% if wrong_parish %}<p class="pp-hint">If you expected to have access at {{ wrong_parish }}, please contact the parish office and they will help. You will see only your own information, never anyone else's.</p>
-  {% else %}<p class="pp-hint">You will see only your own information, never anyone else's.</p>{% endif %}
+  {% if wrong_parish %}<p class="pp-hint">If you expected to have access at {{ wrong_parish }}, please contact the parish office.</p>{% endif %}
 </div>
 {% endblock %}

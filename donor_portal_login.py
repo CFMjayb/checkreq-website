@@ -424,11 +424,17 @@ def pending_choices(raw_token: str) -> list[dict] | None:
     if not row:
         return None
     out = []
-    for o in row["options"] or []:
+    options = row["options"] or []
+    per_parish: dict = {}
+    for o in options:
+        per_parish[o["parish_id"]] = per_parish.get(o["parish_id"], 0) + 1
+    for o in options:
         person = db.query_one("SELECT first_name, last_name, goes_by FROM donor.person WHERE id = %s", (o["person_id"],)) or {}
         parish = parish_lookup(o["parish_id"]) or {}
-        out.append({"label": f"{_person_name(person) or 'Person'} at {parish.get('name') or 'this parish'}", "parish_id": o["parish_id"],
-                    "parish_name": parish.get("name") or "this parish"})
+        parish_name = parish.get("name") or "this parish"
+        # Jay, 2026-10-10: a button names the CHURCH; the person's name is added only when two people (spouses) are offered at the same church
+        label = parish_name if per_parish[o["parish_id"]] == 1 else f"{_person_name(person) or 'Person'} at {parish_name}"
+        out.append({"label": label, "parish_id": o["parish_id"], "parish_name": parish_name})
     return out
 
 
