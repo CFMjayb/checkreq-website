@@ -21,6 +21,6 @@
     <input id="dm-q" type="search" name="q" placeholder="Search by name, envelope, email, or phone">
   </form>
   {% endif %}
-</nav>
+</nav><script src="/static/js/date_helper.js?v={{ asset_version('js/date_helper.js') }}" defer></script>
 {% if flash_ok %}<div class="banner banner-success">{{ flash_ok }}</div>{% endif %}
 {% if flash_err %}<div class="banner banner-error">{{ flash_err }}</div>{% endif %}
