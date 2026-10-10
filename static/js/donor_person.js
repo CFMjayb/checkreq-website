@@ -142,6 +142,25 @@
     }
   }
 
+  // 6. The member's add-a-contact row: its "Kind" fits the type. An email is preferred or alternate; a phone is cell, home, work or other.
+  //    (Members only: the staff screen keeps its own "Phone kind".)
+  var KIND_CHOICES = { email: [['alternate', 'Alternate'], ['preferred', 'Preferred']],
+                       phone: [['cell', 'Cell'], ['home', 'Home'], ['work', 'Work'], ['other', 'Other']] };
+  document.addEventListener('change', function (e) {
+    var el = e.target;
+    if (!el || el.name !== 'new_kind' || !document.querySelector('.dm-record-self')) { return; }
+    var row = el.closest('.dm-newrow');
+    var kind = row && row.querySelector('select[name="new_subtype"]');
+    if (!kind) { return; }
+    kind.textContent = '';
+    (KIND_CHOICES[el.value] || KIND_CHOICES.email).forEach(function (o) {
+      var opt = document.createElement('option');
+      opt.value = o[0];
+      opt.textContent = o[1];
+      kind.appendChild(opt);
+    });
+  });
+
   // 5. A select marked data-autosubmit reloads its own form when the choice changes (the member Giving tab's year: no Show button).
   document.addEventListener('change', function (e) {
     var el = e.target;

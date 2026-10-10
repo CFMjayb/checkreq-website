@@ -18,7 +18,6 @@ email their sign-in code goes to, which they cannot change or remove.
 {% set minor_locked = g.redacted %}
 {% set hv = hh if hh else {} %}
 
-{% if self_mode %}<p class="pp-hint">You can change your contact details, work and school, and your privacy choices yourself. Your name, birth date, wedding date and address are kept by the parish office: to change those, use <a href="/my/help">Get help</a>.</p>{% endif %}
 <form id="dm-personal" method="post" action="{{ '/my/personal' if self_mode else '/people/' ~ pid ~ '/personal' }}" class="dm-pf dm-ro"{% if can_edit %} data-editable{% endif %}>
   {{ csrf() }}
 
@@ -34,8 +33,10 @@ email their sign-in code goes to, which they cannot change or remove.
         {{ fld("Suffix", "suffix", p.suffix, "dm-c1") }}
         {{ fld("Last name", "last_name", p.last_name, "dm-c4") }}
         {{ fld("Goes by", "goes_by", p.goes_by, "dm-c3") }}
+        {% if not self_mode %}
         {{ fld("Alt name", "alt_name", p.alt_name, "dm-c3") }}
         {{ fld("Former name", "former_name", p.former_name, "dm-c3") }}
+        {% endif %}
         {{ sel("Gender", "gender", p.gender, ["female", "male", "nonbinary", "unknown"], "dm-c3") }}
         {{ sel("Marital status", "marital_status", p.marital_status, ["single", "married", "widowed", "divorced", "separated", "unknown"], "dm-c3") }}
         {{ fld("Birth date" ~ (" (age " ~ g.age ~ ")" if g.age is not none else ""), "birth_date", d(p.birth_date), "dm-c3",
@@ -63,7 +64,7 @@ email their sign-in code goes to, which they cannot change or remove.
         <input type="text" name="c_{{ ct.id }}_value" value="{{ ct.value }}" readonly{% if not is_login %} data-ed{% endif %}>
         <span class="dm-edit-only dm-mini">
           {% if ct.kind == 'phone' %}<select name="c_{{ ct.id }}_subtype" aria-label="Phone kind" disabled data-ed>{% for v in ["cell", "home", "work", "other"] %}<option value="{{ v }}" {{ 'selected' if ct.subtype == v }}>{{ label(v) }}</option>{% endfor %}</select>{% endif %}
-          <label><input type="radio" name="preferred_{{ ct.kind }}" value="{{ ct.id }}" {{ 'checked' if ct.is_preferred }} disabled data-ed> preferred</label>
+          {% if (g.contacts|selectattr('kind', 'equalto', ct.kind)|list|length) > 1 %}<label><input type="radio" name="preferred_{{ ct.kind }}" value="{{ ct.id }}" {{ 'checked' if ct.is_preferred }} disabled data-ed> preferred</label>{% endif %}
           {% if not is_login %}<label><input type="checkbox" name="c_{{ ct.id }}_remove" value="1" disabled data-ed> remove</label>{% endif %}
         </span>
       </div>
@@ -74,7 +75,8 @@ email their sign-in code goes to, which they cannot change or remove.
       <div class="dm-newrow">
         {{ sel("Add", "new_kind", "email", ["email", "phone"], "dm-c2", None) }}
         {{ fld("Email or phone number", "new_value", "", "dm-c5") }}
-        {{ sel("Phone kind", "new_subtype", "cell", ["cell", "home", "work", "other"], "dm-c2", None) }}
+        {% if self_mode %}{{ sel("Kind", "new_subtype", "alternate", ["alternate", "preferred"], "dm-c2", None) }}
+        {% else %}{{ sel("Phone kind", "new_subtype", "cell", ["cell", "home", "work", "other"], "dm-c2", None) }}{% endif %}
       </div>
       <div class="dm-f dm-c3 dm-add"><button type="button" class="btn btn-secondary btn-sm" data-add-contact>+ Another</button></div>
     </div>
@@ -83,21 +85,10 @@ email their sign-in code goes to, which they cannot change or remove.
   </section>
 
   {% if not is_org %}
-  <section class="dm-sec">
-    <h3>Employment / School</h3>
-    <div class="dm-fg">
-      {{ fld("Occupation", "occupation", p.occupation, "dm-c3", "Hidden (under 18)" if minor_locked else "", minor_locked) }}
-      {{ fld("Employer", "employer", p.employer, "dm-c3", "Hidden (under 18)" if minor_locked else "", minor_locked) }}
-      {{ fld("School", "school", p.school, "dm-c4", "Hidden (under 18)" if minor_locked else "", minor_locked) }}
-      {{ sel("Grade", "grade", p.grade, ["pre_k", "k", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "college", "graduate"], "dm-c2",
-             "Hidden (under 18)" if minor_locked else "Not recorded", minor_locked) }}
-    </div>
-  </section>
 
   <section class="dm-sec">
     {% if self_mode %}
-    <h3>Address<span class="dm-sec-note">kept by the parish office</span></h3>
-    {% if not (hv.get("address1") or hv.get("city")) %}<p class="dm-muted dm-small">No address is on file. Use Get help to give the parish office yours.</p>{% endif %}
+    <h3>Address</h3>
     {% else %}
     <h3>Household{% if hh %}<span class="dm-sec-note">{{ hh.members|length }} at this parish</span>{% else %}<span class="dm-sec-note">none yet: fill in an address and save to start one</span>{% endif %}</h3>
     {% endif %}
@@ -115,7 +106,7 @@ email their sign-in code goes to, which they cannot change or remove.
       {{ fld("Home phone", "hh_home_phone", hv.get("home_phone"), "dm-c3") }}
     </div>
     {% set has_mail = hv.get("mail_address1") or hv.get("mail_address2") or hv.get("mail_city") or hv.get("mail_state") or hv.get("mail_postal_code") %}
-    {% if has_mail or not self_mode %}
+    {% if has_mail or can_edit %}
     <div class="dm-fg dm-mailing {{ '' if has_mail else 'dm-edit-only' }}">
       {{ fld("Mailing address, if different (used on statements and labels)", "hh_mail_address1", hv.get("mail_address1"), "dm-c5") }}
       {{ fld("Mailing line 2", "hh_mail_address2", hv.get("mail_address2"), "dm-c3") }}
@@ -159,6 +150,19 @@ email their sign-in code goes to, which they cannot change or remove.
       </div>
     </div>
   </section>
+
+  {% if not is_org %}
+  <section class="dm-sec">
+    <h3>Employment / School</h3>
+    <div class="dm-fg">
+      {{ fld("Occupation", "occupation", p.occupation, "dm-c3", "Hidden (under 18)" if minor_locked else "", minor_locked) }}
+      {{ fld("Employer", "employer", p.employer, "dm-c3", "Hidden (under 18)" if minor_locked else "", minor_locked) }}
+      {{ fld("School", "school", p.school, "dm-c4", "Hidden (under 18)" if minor_locked else "", minor_locked) }}
+      {{ sel("Grade", "grade", p.grade, ["pre_k", "k", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "college", "graduate"], "dm-c2",
+             "Hidden (under 18)" if minor_locked else "Not recorded", minor_locked) }}
+    </div>
+  </section>
+  {% endif %}
 
   <div class="dm-pf-foot dm-edit-only">
     <button type="button" class="btn btn-secondary btn-sm" data-dm-cancel>Cancel</button>
