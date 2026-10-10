@@ -950,7 +950,8 @@ def board_extras(org_id: int, period_id: int) -> dict[int, dict]:
 
     def slot(pid):
         return out.setdefault(pid, {"pattern": None, "channel": None, "emails": 0, "first_received_at": None,
-                                    "needs_review": 0, "conflicts": 0, "proposals": 0, "pending_hires": 0})
+                                    "needs_review": 0, "conflicts": 0, "proposals": 0, "pending_hires": 0,
+                                    "hours": Decimal(0), "recorded": 0, "sources": set()})
 
     for r in db.query("SELECT p.id, pr.pattern FROM portal.parishes p JOIN portal.parish_payroll_profile pr "
                       "ON pr.parish_id = p.id WHERE p.org_id = %s", (org_id,)):
@@ -967,6 +968,10 @@ def board_extras(org_id: int, period_id: int) -> dict[int, dict]:
         d["emails"], d["first_received_at"] = r["n"], r["first"] or d["first_received_at"]
     for r in _period_rows(org_id, period_id):
         d = slot(r["parish_id"])
+        # what the parish's period holds: counted hours, plus the grid's hours where a conflict holds them back
+        d["hours"] += (r["counted_hours"] if r["counted_hours"] is not None else (r["grid_hours"] or Decimal(0)))
+        d["recorded"] += 1
+        d["sources"].add(r["source"])
         if r["state"] == "needs_review":
             d["needs_review"] += 1
         elif r["state"] == "conflict":

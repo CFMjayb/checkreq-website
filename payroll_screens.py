@@ -47,7 +47,8 @@ PATTERN_LABELS = {
     "none": "No hours expected",
 }
 NOT_EXPECTED_PATTERNS = ("standing_hours", "none")
-CHANNEL_LABELS = {"email": "Email", "parish": "Parish (in Beacon)", "diocese": "Diocese", "standing": "Standing hours"}
+CHANNEL_LABELS = {"email": "Email", "parish": "Parish (in Beacon)", "diocese": "Diocese", "standing": "Standing hours",
+                  "register": "Paid register"}
 STATE_LABELS = {
     "ok": "OK", "needs_review": "Needs review", "proposal": "Different figure waiting",
     "conflict": "Conflict with the daily grid", "pending_hire": "New hire not on the roster yet",
@@ -119,8 +120,14 @@ def board_rows(org_id: int, period: dict, rows: list[dict]) -> list[dict]:
         e = extras.get(r["parish_id"], {})
         r["pattern"] = e.get("pattern")
         r["pattern_label"] = PATTERN_LABELS.get(e.get("pattern"))
-        r["channel"] = e.get("channel")
-        r["channel_label"] = CHANNEL_LABELS.get(e.get("channel"), "")
+        srcs = sorted(e.get("sources") or ())
+        r["channel"] = e.get("channel") or (srcs[0] if len(srcs) == 1 else None)
+        r["channel_label"] = CHANNEL_LABELS.get(r["channel"], "Mixed" if len(srcs) > 1 else "")
+        # Period totals count too: the board used to show only daily-grid hours, so a period holding
+        # emailed or loaded hours read "Not Started" and 0.00.
+        r["recorded"] = e.get("recorded", 0) > 0
+        if r["recorded"]:
+            r["total_hours"] = float(e["hours"])
         r["emails"] = e.get("emails", 0)
         r["first_received"] = org_time.format_local(e.get("first_received_at"), zone) if e.get("first_received_at") else None
         r["needs_review"] = e.get("needs_review", 0) + e.get("pending_hires", 0)

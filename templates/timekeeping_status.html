@@ -93,6 +93,8 @@
     <td>
       {% if r.not_expected %}
         <span class="badge badge-skipped">Not Expected</span>
+      {% elif not r.submission_id and r.recorded %}
+        <span class="badge badge-submitted">Hours recorded</span>
       {% elif not r.submission_id %}
         <span class="badge badge-cancelled">Not Started</span>
       {% elif r.by_email %}
@@ -113,7 +115,7 @@
     <td>{{ r.submitted_by_name or r.submitted_by_email or "—" }}</td>
     <td>{{ r.submitted_at.strftime("%Y-%m-%d %H:%M") if r.submitted_at else "—" }}</td>
     <td><a class="btn btn-sm" href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">
-      {{ "Enter Missing Data" if not r.submission_id else "View / Edit" }}
+      {{ "Enter Missing Data" if not r.submission_id and not r.recorded else "View / Edit" }}
     </a> <a class="btn btn-sm" href="/admin/timekeeping/parish-profile/{{ r.parish_id }}">Profile</a></td>
   </tr>
   {% else %}
