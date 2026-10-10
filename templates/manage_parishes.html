@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Manage Parishes — Beacon{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/manage_parishes.css?v={{ asset_version('css/manage_parishes.css') }}">{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
 <h1>Manage Parishes</h1>
@@ -18,6 +19,8 @@ Parish Portal presence, which is unaffected either way.</p>
 </div>
 
 {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+{% if flash_ok %}<div class="banner banner-success">{{ flash_ok }}</div>{% endif %}
+{% if flash_err %}<div class="banner banner-error">{{ flash_err }}</div>{% endif %}
 {% if request.query_params.get('added') %}<div class="banner banner-success">Parish added.</div>{% endif %}
 {% if request.query_params.get('folder_warning') %}
 <div class="banner banner-error">
@@ -59,7 +62,7 @@ Parish Portal presence, which is unaffected either way.</p>
 <div class="table-scroll">
   <table class="simple-table">
     <tr>
-      <th>Parish</th><th>Parish Code</th><th>Status</th><th>City</th><th>External CRM ID</th><th>Logo</th><th>Cornerstone Served</th><th>Code</th><th>QBO Realm ID</th><th></th><th>Finance Settings</th>
+      <th>Parish</th><th>Parish Code</th><th>Status</th><th>City</th><th>External CRM ID</th><th>Logo</th><th>Cornerstone Served</th><th>Code</th><th>QBO Realm ID</th><th></th><th>Settings</th>
     </tr>
     {% for p in parishes %}
     <tr{% if p.status != 'active' %} style="opacity:0.7"{% endif %}>
@@ -162,25 +165,11 @@ Parish Portal presence, which is unaffected either way.</p>
         {% endif %}
       </td>
       <td>
-        <details>
-          <summary class="btn btn-secondary btn-sm" style="display:inline-block;cursor:pointer">Edit&hellip;</summary>
-          <form method="post" action="/admin/manage-parishes/{{ p.id }}/finance-settings" style="margin-top:8px">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-            <div class="field"><label>Middendorf Loan GL Account</label>
-              <input type="text" name="middendorf_gl_account" value="{{ p.middendorf_gl_account or '' }}"
-                     placeholder="e.g. 1210.01 — blank if none">
-              <p class="sub" style="margin-top:2px">Leave blank if this parish has no Middendorf loan.</p>
-            </div>
-            <div class="field"><label>SMA Direct Debit Status</label>
-              <select name="sma_direct_debit_status">
-                <option value="not_enrolled" {% if p.sma_direct_debit_status == 'not_enrolled' or not p.sma_direct_debit_status %}selected{% endif %}>Not enrolled</option>
-                <option value="requested" {% if p.sma_direct_debit_status == 'requested' %}selected{% endif %}>Requested</option>
-                <option value="enrolled" {% if p.sma_direct_debit_status == 'enrolled' %}selected{% endif %}>Enrolled</option>
-              </select>
-            </div>
-            <button type="submit" class="btn btn-sm">Save</button>
-          </form>
-        </details>
+        {# 2026-10-10, Jay: Portal (the turn-on switches, member link and QuickBooks accounts) and Finance open as pop-ups, not as forms in the grid #}
+        <div class="mp-buttons">
+          {% if donor_ok %}<a class="btn btn-secondary btn-sm" data-popup href="/admin/manage-parishes/{{ p.id }}/portal">Portal</a>{% set st = states.get(p.id) %}{% if st and st.portal %}<span class="mp-pill" title="Parishioner self-service is on: /my/{{ st.slug }}">On</span>{% else %}<span class="mp-pill mp-pill-off" title="Parishioner self-service is off">Off</span>{% endif %}{% endif %}
+          <a class="btn btn-secondary btn-sm" data-popup href="/admin/manage-parishes/{{ p.id }}/finance">Finance</a>
+        </div>
       </td>
     </tr>
     {% else %}
@@ -192,6 +181,8 @@ Parish Portal presence, which is unaffected either way.</p>
 </div>
 {% endblock %}
 {% block extra_js %}
+<dialog id="mp-dialog" class="mp-dialog" aria-label="Parish settings"><div class="mp-dialog-body"></div></dialog>
+<script src="/static/js/manage_parishes.js?v={{ asset_version('js/manage_parishes.js') }}"></script>
 <script>
 document.querySelectorAll('form[method="post" i]').forEach(function (form) {
   form.addEventListener('submit', function (e) {

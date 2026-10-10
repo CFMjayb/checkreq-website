@@ -121,9 +121,13 @@ def normalize_slug(text) -> str | None:
 
 
 def default_slug(parish_id: int) -> str:
-    """A link name made from the parish name and not used by any other parish ('parish-<id>' when there is no usable name)."""
-    p = parish_lookup(parish_id)
-    base = slugify(p["name"]) if p and p.get("name") else ""
+    """A link name for a parish that has none yet, not used by any other parish. Jay (2026-10-10): the short name, the code of the parish's
+    linked Cornerstone organisation (CTK, SMOTH, SJE ...). A parish with no linked code uses its name, or 'parish-<id>' when there is no usable name."""
+    code = db.query_one("SELECT o.code FROM portal.parishes p JOIN checkreq.organizations o ON o.id = p.linked_org_id WHERE p.id = %s", (parish_id,))
+    base = slugify(code["code"]) if code and code.get("code") else ""
+    if len(base) < 3 or base in RESERVED_SLUGS:
+        p = parish_lookup(parish_id)
+        base = slugify(p["name"]) if p and p.get("name") else ""
     if len(base) < 3 or base in RESERVED_SLUGS:
         base = f"parish-{parish_id}"
     slug, n = base, 2

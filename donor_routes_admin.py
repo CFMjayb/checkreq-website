@@ -270,17 +270,7 @@ async def _settings_act(request: Request, need_feature: bool, action):
 @router.post("/people/settings/activation")
 async def settings_activation(request: Request):
     def act(ctx, form):
-        changes = {}
-        for k in ("people_enabled", "giving_enabled", "allow_single_person_batch", "qbo_posting_enabled", "portal_enabled"):
-            if f"has_{k}" in form:
-                changes[k] = form.get(k) is not None
-        for k in ("qbo_company_key", "default_cash_account", "processing_fee_account", "due_from_diocese_account",
-                  "investment_account", "in_kind_account", "default_class"):
-            if k in form:
-                changes[k] = form.get(k)
-        if (form.get("portal_slug") or "").strip():              # blank keeps the link name (a blank box must never erase a published link)
-            changes["portal_slug"] = form.get("portal_slug")
-        R.settings_update(ctx, changes)
+        R.settings_update(ctx, R.activation_changes(form))
         return "Settings saved."
     return await _settings_act(request, False, act)
 

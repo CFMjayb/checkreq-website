@@ -1,0 +1,21 @@
+{#
+manage_parish_finance.html -- the Finance pop-up on Manage Parishes: the two diocese-side finance fields a parish cannot set for itself. Just the form (no page
+frame). It posts to the existing /finance-settings route in parish_finance.py. Moved out of the grid, where an inline form on every row was unusable.
+#}
+<h2>Finance: {{ parish.name }}</h2>
+<form method="post" action="/admin/manage-parishes/{{ parish.id }}/finance-settings" class="mp-popup-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+  <div class="field"><label for="mp-middendorf">Middendorf loan GL account</label>
+    <input id="mp-middendorf" type="text" name="middendorf_gl_account" value="{{ parish.middendorf_gl_account or '' }}" placeholder="e.g. 1210.01 (leave blank if none)">
+    <span class="sub">Leave blank if this parish has no Middendorf loan.</span></div>
+  <div class="field"><label for="mp-sma">SMA direct debit status</label>
+    <select id="mp-sma" name="sma_direct_debit_status">
+      <option value="not_enrolled" {% if parish.sma_direct_debit_status == 'not_enrolled' or not parish.sma_direct_debit_status %}selected{% endif %}>Not enrolled</option>
+      <option value="requested" {% if parish.sma_direct_debit_status == 'requested' %}selected{% endif %}>Requested</option>
+      <option value="enrolled" {% if parish.sma_direct_debit_status == 'enrolled' %}selected{% endif %}>Enrolled</option>
+    </select></div>
+  <div class="mp-actions">
+    <button type="button" class="btn btn-secondary btn-sm" data-popup-close>Cancel</button>
+    <button type="submit" class="btn btn-primary btn-sm">Save</button>
+  </div>
+</form>

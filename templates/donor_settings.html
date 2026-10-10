@@ -13,18 +13,11 @@ donor_settings.html -- Settings: turn Donor Management on (diocese only), the QB
 
   {% if ctx.can("parish.activate") or ctx.can("funds.manage") %}
   <details class="dm-section card dm-card" open>
-    <summary><h2>Turn on and accounts</h2></summary>
+    <summary><h2>QuickBooks accounts</h2></summary>
     <form method="post" action="/people/settings/activation" class="dm-form dm-editform">
       {{ csrf() }}
       {% if ctx.can("parish.activate") %}
-      <p class="dm-muted">These are the diocese's decisions. Donor Management is switched on one parish at a time.</p>
-      {% for key, text in (("people_enabled", "People and membership"), ("giving_enabled", "Giving (funds, batches, pledges)"), ("allow_single_person_batch", "Allow one person to enter and close a batch (small parishes)"), ("qbo_posting_enabled", "Allow posting the journal entry to QuickBooks"), ("portal_enabled", "Parishioner self-service: parishioners sign in with an emailed code to see their own giving and details, and ask to pledge (needs People turned on)")) %}
-      <label class="dm-check"><input type="hidden" name="has_{{ key }}" value="1"><input type="checkbox" name="{{ key }}" value="1" {{ 'checked' if s[key] }}> {{ text }}</label>
-      {% endfor %}
-      <div class="field"><label for="portal_slug">Member sign-in link name</label>
-        <input id="portal_slug" name="portal_slug" value="{{ s.portal_slug or '' }}" maxlength="60" placeholder="made from the parish name when self-service is switched on">
-        {% if s.portal_slug %}<span class="dm-sub">Link: https://{{ request.url.netloc }}/my/{{ s.portal_slug }}</span>{% endif %}</div>
-      <p class="dm-muted dm-small">Posting to QuickBooks stays off tonight: the entry is built and shown, never sent.</p>
+      <p class="dm-muted">Turning People, Giving and Parishioner self-service on, and the member sign-in link, are the diocese's decisions, made in Administrative Tasks &gt; Manage Parishes &gt; <b>Portal</b>. The QuickBooks accounts below can also be set there.</p>
       {% endif %}
       <div class="dm-grid">
         <div class="field"><label>QuickBooks company</label><input name="qbo_company_key" value="{{ s.qbo_company_key or '' }}"></div>

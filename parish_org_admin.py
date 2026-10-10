@@ -41,6 +41,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 import db
 import gcs_client
 import org_branding
+import parish_portal_admin
 import rbac
 import registry
 import sharepoint_client
@@ -57,6 +58,8 @@ def register(app, *, current_user, current_org, render) -> None:
     global _current_user, _current_org, _render
     _current_user, _current_org, _render = current_user, current_org, render
     app.include_router(router)
+    # the Portal and Finance pop-ups (2026-10-10): their own module, behind this screen's gate
+    parish_portal_admin.register(app, current_user=current_user, current_org=current_org, render=render, gate=_require_setup_admin)
 
 
 def _require_setup_admin(request: Request):
@@ -168,8 +171,13 @@ def manage_parishes_page(request: Request, error: str = ""):
     for p in parishes:
         p["linked_org"] = linked_orgs.get(p.get("linked_org_id"))
 
+    # the Portal button's small status pills (empty, and no Portal button, when Donor Management is not in this database)
+    donor_ok = parish_portal_admin.donor_available()
+    states = parish_portal_admin.states_for([p["id"] for p in parishes]) if donor_ok else {}
+    flash = request.session.pop(parish_portal_admin.FLASH_KEY, None) if parish_portal_admin.FLASH_KEY in request.session else None
     return _render(request, "manage_parishes.html", user, {
-        "parishes": parishes, "current_org": org, "error": error,
+        "parishes": parishes, "current_org": org, "error": error, "donor_ok": donor_ok, "states": states,
+        "flash_ok": flash[1] if flash and flash[0] == "ok" else None, "flash_err": flash[1] if flash and flash[0] == "err" else None,
     })
 
 

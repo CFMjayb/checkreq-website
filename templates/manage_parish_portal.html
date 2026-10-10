@@ -1,0 +1,32 @@
+{#
+manage_parish_portal.html -- the Portal pop-up on Manage Parishes: turn Donor Management on for a parish, the Parishioner self-service switch, the member
+sign-in link name and the QuickBooks accounts. Just the form (no page frame), so it can sit in a pop-up or inside manage_parish_popup_page.html. The switches
+and the link are the diocese's decision (a Beacon Admin); a Setup Admin sees the same values and cannot change them. Saving posts to the same route, which
+calls donor_roles.settings_update, the only place that decides who may change what.
+#}
+<h2>Portal: {{ parish.name }}</h2>
+<form method="post" action="/admin/manage-parishes/{{ parish.id }}/portal" class="mp-popup-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+  {% if can_activate %}
+  <p class="sub">These are the diocese's decisions. Donor Management is switched on one parish at a time.</p>
+  {% for key, text in (("people_enabled", "People and membership"), ("giving_enabled", "Giving (funds, batches, pledges)"), ("allow_single_person_batch", "Allow one person to enter and close a batch (small parishes)"), ("qbo_posting_enabled", "Allow posting the journal entry to QuickBooks"), ("portal_enabled", "Parishioner self-service: parishioners sign in with an emailed code to see their own giving and details, and ask to pledge (needs People turned on)")) %}
+  <label class="mp-check"><input type="hidden" name="has_{{ key }}" value="1"><input type="checkbox" name="{{ key }}" value="1" {{ 'checked' if s[key] }}> <span>{{ text }}</span></label>
+  {% endfor %}
+  <div class="field"><label for="mp-slug">Member sign-in link name</label>
+    <input id="mp-slug" name="portal_slug" value="{{ s.portal_slug or '' }}" maxlength="60" placeholder="{{ suggested }}">
+    <span class="sub">Link: https://{{ host }}/my/{{ suggested }}</span></div>
+  <p class="sub">Posting to QuickBooks stays off for now: the entry is built and shown, never sent.</p>
+  {% else %}
+  <p class="sub">Only a Beacon Admin can turn these on or off. People and membership: <b>{{ 'on' if s.people_enabled else 'off' }}</b>. Giving: <b>{{ 'on' if s.giving_enabled else 'off' }}</b>. Parishioner self-service: <b>{{ 'on' if s.portal_enabled else 'off' }}</b>.{% if s.portal_slug %} Member link: https://{{ host }}/my/{{ s.portal_slug }}{% endif %}</p>
+  {% endif %}
+  <h3 class="mp-sub">QuickBooks accounts</h3>
+  <div class="mp-grid">
+    {% for key, text in (("qbo_company_key", "QuickBooks company"), ("default_cash_account", "Default cash account"), ("processing_fee_account", "Processing fee account"), ("due_from_diocese_account", "Due from diocese account"), ("investment_account", "Investment account (for stock gifts)"), ("in_kind_account", "In-kind gifts account"), ("default_class", "Default QuickBooks class")) %}
+    <div class="field"><label for="mp-{{ key }}">{{ text }}</label><input id="mp-{{ key }}" name="{{ key }}" value="{{ s[key] or '' }}"{% if not can_accounts %} disabled{% endif %}></div>
+    {% endfor %}
+  </div>
+  <div class="mp-actions">
+    <button type="button" class="btn btn-secondary btn-sm" data-popup-close>{{ 'Cancel' if can_accounts else 'Close' }}</button>
+    {% if can_accounts %}<button type="submit" class="btn btn-primary btn-sm">Save</button>{% endif %}
+  </div>
+</form>

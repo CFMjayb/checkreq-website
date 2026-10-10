@@ -1,0 +1,20 @@
+/* manage_parishes.css -- the Portal and Finance pop-ups on Manage Parishes, and the small buttons that open them. */
+.mp-buttons { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.mp-pill { display: inline-block; padding: 0 7px; margin-left: 4px; border-radius: 999px; font-size: 0.7rem; font-weight: 600; background: #e0f0e6; color: var(--color-success); }
+.mp-pill-off { background: #ece7da; color: var(--color-text-muted); }
+
+.mp-dialog { border: 0; border-radius: var(--radius-lg); padding: 0; width: min(640px, 94vw); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3); }
+.mp-dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
+.mp-dialog-body { padding: 16px 20px 18px; max-height: 82vh; overflow: auto; }
+.mp-dialog-body h2, .mp-page-card h2 { font-size: 1.25rem; margin: 0 0 8px; }
+.mp-popup-form .field { margin-bottom: 10px; }
+.mp-popup-form .field label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 2px; }
+.mp-popup-form .field input, .mp-popup-form .field select { width: 100%; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: #fff; font-size: 0.95rem; }
+.mp-popup-form .field input:disabled { background: #f2efe6; color: var(--color-text-muted); }
+.mp-popup-form .sub { display: block; font-size: 0.82rem; color: var(--color-text-muted); margin: 3px 0 8px; }
+.mp-check { display: flex; gap: 8px; align-items: flex-start; margin: 7px 0; font-size: 0.92rem; }
+.mp-check input[type="checkbox"] { margin-top: 3px; flex: none; }
+.mp-sub { font-size: 1rem; margin: 14px 0 6px; padding-top: 10px; border-top: 1px solid var(--color-border); }
+.mp-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
+.mp-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+@media (max-width: 560px) { .mp-grid { grid-template-columns: minmax(0, 1fr); } }
