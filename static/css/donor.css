@@ -316,3 +316,13 @@
 
 /* A button that cannot be pressed has to look that way (the global .btn rules do not dim it). */
 .dm-page .btn:disabled, .dm-page .btn[disabled] { opacity: .45; cursor: not-allowed; filter: grayscale(.4); }
+
+/* The System tab's parishioner-login switch: one compact row. */
+.dm-login-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 4px 0 6px; }
+.dm-login-row.dm-form select { width: auto; min-width: 16rem; }
+.dm-login-row .dm-inline { margin: 0; }
+.dm-page .btn.dm-btn-inactive { opacity: .55; cursor: not-allowed; }
+.dm-warn { color: var(--color-danger, #9c0006); font-size: 0.9rem; }
+.dm-warn[hidden] { display: none; }
+.dm-login-log { margin-top: 8px; }
+.dm-login-log summary { cursor: pointer; font-size: 0.85rem; color: var(--color-text-muted); }

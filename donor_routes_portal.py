@@ -380,7 +380,9 @@ async def staff_login_disable(person_id: int, request: Request):
     form = await request.form()
     url = f"/people/{person_id}?tab=system"
     try:
-        r = PA.login_disable(ctx, person_id, form.get("reason"))
+        # The System tab's Turn off button asks for no reason (a switch should not need a form); the service still requires one and the
+        # change log still records it, so a click with none typed is logged as "Turned off by staff".
+        r = PA.login_disable(ctx, person_id, (form.get("reason") or "").strip() or "Turned off by staff")
         return W.back(request, url, ok="Parishioner login turned off." + (f" {r['sessions_ended']} live session(s) ended." if r["sessions_ended"] else ""))
     except DonorError as e:
         return W.back(request, url, err=e.message)
