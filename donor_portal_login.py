@@ -9,8 +9,9 @@ one parish and nothing else. See "Donor Management - Parishioner Self-Service Pl
 
   request_code(email, ip)     the first step. ALWAYS does the same work and gives the same answer, whether the typed address
                               matched anyone or not (no enumeration): the same queries run, a challenge row is stored either way,
-                              and the code is emailed (by the caller, after the response) only when the address is the sign-in email
-                              of an ENABLED parishioner login at a parish that has turned the portal on.
+                              and the code is emailed (by the caller) only when the address is the sign-in email
+                              of an ENABLED parishioner login at a parish that has turned the portal on. (2026-10-10: the email is
+                              sent DURING the request by send_code_email, and every answer is padded to MIN_SIGNIN_SECONDS.)
   verify_code(token, code)    the second step. Attempts are counted BEFORE the code is compared, in one atomic statement, so a code
                               can be tried at most five times even when requests arrive together.
   pending_choices / choose    when one address reaches several people (spouses sharing a mailbox) or one person at two parishes
@@ -33,6 +34,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets as pysecrets
 from datetime import timedelta
 
@@ -48,6 +50,11 @@ MAX_REQUESTS_PER_IP = 10
 IP_WINDOW_MINUTES = 15
 MAX_FAILED_CODES_PER_IP = 20
 CHOICE_TTL_MINUTES = 10
+# The "ask for a code" request takes AT LEAST this long, matched or not, throttled or not. The code email is sent during the request
+# (a background job after the answer is not run reliably on Cloud Run: 2026-10-10 the code never left), which takes about a second
+# for an address that has a login and nothing for one that has not. Padding every answer up to this floor keeps the time from telling
+# anyone which addresses are members. The tests set it to 0 except the one that proves the padding.
+MIN_SIGNIN_SECONDS = 2.5
 SESSION_IDLE_MINUTES = 30
 SESSION_ABSOLUTE_MINUTES = 120
 
@@ -161,7 +168,7 @@ def log_event(kind: str, *, email_key_value: str | None = None, person_id: int |
 # ── step 1: ask for a code ──────────────────────────────────────────────────────────────────────
 def request_code(email: str, ip: str) -> dict:
     """Store a challenge and decide whether a code goes out. Returns {"token": raw challenge token for the signed cookie,
-    "send": None or (address, code) for the caller to email AFTER the response is sent}. The same queries run, one challenge row
+    "send": None or (address, code) for the caller to email before it answers}. The same queries run, one challenge row
     is written and one event is logged whether or not the address matched, so nothing about the page or the timing tells."""
     typed = (email or "").strip().lower()[:254]
     ekey = email_key(typed)
@@ -188,10 +195,21 @@ def request_code(email: str, ip: str) -> dict:
     return {"token": raw, "send": (typed, code) if send else None}
 
 
-def send_code_email(to: str, code: str) -> None:
-    """Email the code. Called as a background task after the response. Fails soft: the page already answered."""
+_ADDRESS_IN_TEXT = re.compile(r"\S+@\S+")
+
+
+def _safe_reason(text) -> str:
+    """A short reason for the log with every address masked: the log never holds an address or a code."""
+    return _ADDRESS_IN_TEXT.sub("<address>", str(text or "no reason given"))[:160]
+
+
+def send_code_email(to: str, code: str, ip: str | None = None) -> bool:
+    """Email the code NOW: the caller waits for it, so it is sent before the page answers (the same way every other Beacon email is
+    sent). Returns True when the email service took it. Never raises and never changes what the page says: on a failure the person
+    sees the same page, and the failure is recorded (a sign-in event 'code_email_failed' and a log line) with the reason but never
+    the address or the code, so staff can see that codes are not leaving."""
     try:
-        email_client.send_email(
+        resp = email_client.send_email(
             to=to, subject=f"Your sign-in code: {code}",
             body_text=(f"Your sign-in code is {code}\n\nThis code expires in {CODE_TTL_MINUTES} minutes and can only be used once.\n\n"
                        "If you did not ask for it you can safely ignore this email. Nobody can see your giving without this code."),
@@ -200,8 +218,15 @@ def send_code_email(to: str, code: str) -> None:
                        "<p style=\"color:#666;font-size:13px;\">If you did not ask for it you can safely ignore this email. "
                        "Nobody can see your giving without this code.</p>"),
             sender=_SENDER_EMAIL)
-    except Exception:
-        pass
+        ok = isinstance(resp, dict) and not resp.get("error") and resp.get("status") == "sent"
+        reason = None if ok else (resp.get("error") if isinstance(resp, dict) else "the email service gave no answer")
+    except Exception as exc:                                  # never raise into the sign-in page
+        ok, reason = False, f"{type(exc).__name__}: {exc}"
+    if not ok:
+        reason = _safe_reason(reason)
+        print(f"[portal-signin] sign-in code email not sent: {reason}")
+        log_event("code_email_failed", email_key_value=email_key(to), ip=ip, detail=reason)
+    return ok
 
 
 # ── step 2: check the code ──────────────────────────────────────────────────────────────────────
