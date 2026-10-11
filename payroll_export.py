@@ -36,14 +36,14 @@ _EMAIL_CHECK = {
     "email_none": "no email found",
 }
 _DETAIL_SQL = """
-    SELECT p.code AS parish_code, p.name AS parish_name, sr.last_name, sr.first_name,
+    SELECT p.code AS parish_code, p.name AS parish_name, COALESCE(p.short_name, p.name) AS dept_name, sr.last_name, sr.first_name,
            c.label AS category_label, te.work_date, te.hours
       FROM portal.time_entries te
       JOIN portal.staff_roster sr ON sr.id = te.staff_id
       JOIN portal.parishes p ON p.id = sr.parish_id
       JOIN portal.timekeeping_categories c ON c.id = te.category_id
      WHERE te.period_id = %(period_id)s AND p.org_id = %(org_id)s AND te.hours > 0
-     ORDER BY p.name, sr.last_name, sr.first_name, te.work_date, c.sort_order
+     ORDER BY p.code, sr.last_name, sr.first_name, te.work_date, c.sort_order
 """
 
 
@@ -92,11 +92,11 @@ def build_export_workbook(org: dict, period: dict) -> bytes:
     label = period.get("label") or f"{period['period_start']} to {period['period_end']}"
     pay = f"  Pay date {period['pay_date']}" if period.get("pay_date") else ""
     ws.cell(row=2, column=1, value=f"{org['code']} {label}{pay}")
-    _header(ws, 4, ["Parish Code", "Parish", "Employee #", "Name", "Category", "Hours in force",
+    _header(ws, 4, ["Parish Code", "Department", "Employee #", "Name", "Category", "Hours in force",
                     "Figure waiting", "Why it is listed", "Email"])
     for i, r in enumerate(left, start=5):
         ws.cell(row=i, column=1, value=r["parish_code"])
-        ws.cell(row=i, column=2, value=r["parish_name"])
+        ws.cell(row=i, column=2, value=r.get("dept_name") or r["parish_name"])
         ws.cell(row=i, column=3, value=r["employee_number"])
         ws.cell(row=i, column=4, value=_name(r))
         ws.cell(row=i, column=5, value=r["category_label"])
@@ -109,12 +109,12 @@ def build_export_workbook(org: dict, period: dict) -> bytes:
     _widths(ws, [12, 32, 14, 28, 14, 14, 14, 46, 14])
 
     wh = wb.create_sheet("Hours")
-    _header(wh, 1, ["Parish Code", "Parish", "Employee #", "Last Name", "First Name", "Category",
+    _header(wh, 1, ["Parish Code", "Department", "Employee #", "Last Name", "First Name", "Category",
                     "Counted hours", "Source", "Review status", "Email", "Daily grid hours", "Period total",
                     "Email check"])
     for i, r in enumerate(rows, start=2):
         wh.cell(row=i, column=1, value=r["parish_code"])
-        wh.cell(row=i, column=2, value=r["parish_name"])
+        wh.cell(row=i, column=2, value=r.get("dept_name") or r["parish_name"])
         wh.cell(row=i, column=3, value=r["employee_number"])
         wh.cell(row=i, column=4, value=r["last_name"])
         wh.cell(row=i, column=5, value=r["first_name"])
@@ -132,11 +132,11 @@ def build_export_workbook(org: dict, period: dict) -> bytes:
     _widths(wh, [12, 32, 14, 18, 14, 14, 14, 10, 40, 14, 16, 14, 34])
 
     wd = wb.create_sheet("Detail")
-    _header(wd, 1, ["Parish Code", "Parish", "Last Name", "First Name", "Category", "Date", "Hours"])
+    _header(wd, 1, ["Parish Code", "Department", "Last Name", "First Name", "Category", "Date", "Hours"])
     detail = db.query(_DETAIL_SQL, {"period_id": period["id"], "org_id": org["id"]})
     for i, r in enumerate(detail, start=2):
         wd.cell(row=i, column=1, value=r["parish_code"])
-        wd.cell(row=i, column=2, value=r["parish_name"])
+        wd.cell(row=i, column=2, value=r.get("dept_name") or r["parish_name"])
         wd.cell(row=i, column=3, value=r["last_name"])
         wd.cell(row=i, column=4, value=r["first_name"])
         wd.cell(row=i, column=5, value=r["category_label"])

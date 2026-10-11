@@ -13,22 +13,23 @@
   _read_form, and csrf_guard.py).
 #}
 {% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
 <link rel="stylesheet" href="/static/css/timekeeping_employees.css?v={{ asset_version('css/timekeeping_employees.css') }}">
 {% endblock %}
 {% block content %}
 <div class="page-shell-wide">
-<div class="emp-shell" id="empShell">
+<div class="ff-shell" id="empShell">
 
-  <div class="emp-title-row">
+  <div class="ff-title-row">
     <h1>Employees</h1>
-    <a class="emp-back" href="/admin">&larr; Administrative Tasks</a>
-    <button type="button" class="btn btn-sm emp-add" id="empAddBtn">Add employee</button>
+    <a class="ff-back" href="/admin">&larr; Administrative Tasks</a>
+    <div class="ff-actions"><button type="button" class="btn btn-sm btn-primary" id="empAddBtn">Add employee</button></div>
   </div>
 
-  {% if request.query_params.get('error') %}<div class="banner banner-error emp-banner">{{ request.query_params.get('error') }}</div>{% endif %}
-  {% if request.query_params.get('saved') %}<div class="banner banner-success emp-banner">{{ request.query_params.get('saved') }}</div>{% endif %}
+  {% if request.query_params.get('error') %}<div class="banner banner-error ff-banner">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% if request.query_params.get('saved') %}<div class="banner banner-success ff-banner">{{ request.query_params.get('saved') }}</div>{% endif %}
 
-  <form method="get" action="/admin/timekeeping/employees" class="emp-filters" id="empFilters">
+  <form method="get" action="/admin/timekeeping/employees" class="ff-filters" id="empFilters">
     <label>Parish
       <select name="parish_id" data-autosubmit>
         <option value="">All parishes</option>
@@ -52,10 +53,10 @@
     <button type="submit" class="btn btn-sm">Filter</button>
   </form>
 
-  <form method="post" action="/admin/timekeeping/employees/save{% if filter_qs %}?{{ filter_qs }}{% endif %}" class="emp-form" id="empForm">
+  <form method="post" action="/admin/timekeeping/employees/save{% if filter_qs %}?{{ filter_qs }}{% endif %}" class="ff-frame" id="empForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <div class="emp-scroll">
-      <table class="emp-table">
+    <div class="ff-scroll emp-scroll">
+      <table class="ff-table emp-table">
         <colgroup>
           <col style="width:170px"><col style="width:20%"><col style="width:17%"><col style="width:100px">
           <col style="width:66px"><col style="width:96px"><col style="width:44px">
@@ -91,10 +92,10 @@
         </tbody>
       </table>
     </div>
-    <div class="emp-foot">
-      <span class="emp-count">{{ employees|length }} shown</span>
+    <div class="ff-foot">
+      <span class="ff-count">{{ employees|length }} shown</span>
       <span class="emp-changed" id="empChanged" hidden></span>
-      <button type="submit" class="btn btn-sm emp-save" id="empSave" disabled>Save Changes</button>
+      <button type="submit" class="btn btn-sm btn-primary emp-save" id="empSave" disabled>Save Changes</button>
     </div>
   </form>
 

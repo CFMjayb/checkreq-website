@@ -1,38 +1,78 @@
 {% extends "base.html" %}
 {% block title %}Hours variance — {{ current_org.name }}{% endblock %}
-{% block content %}
+{#
+  Hours: Beacon vs. the paid register -- on the shared fixed frame (static/css/fixed_frame.css + js/fixed_frame.js).
+  Only the lines that do not match are listed. Each department shows as its code and short name (002 Wilton),
+  the full church name on hover.
+#}
+{% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
 <link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
+{% endblock %}
+{% block content %}
+{% set bad = report.rows|rejectattr('kind', 'equalto', 'match')|list %}
 <div class="page-shell-wide">
-<h1>Hours: Beacon vs. the paid register</h1>
-<p class="back-link"><a href="/admin/timekeeping/status/{{ period.id }}">&larr; Back to Time Status</a></p>
-<p class="sub">{{ period.label or (period.period_start|string ~ " to " ~ period.period_end|string) }}{% if period.pay_date %} &middot; pay date {{ period.pay_date }}{% endif %}.
-  Hours only, for employees who report hours. The register's hours are loaded after payroll runs.</p>
-{% if not report.register_loaded %}
-<div class="banner banner-info">No register hours have been loaded for this period yet, so nothing can be compared.</div>
-{% else %}
-<div class="card ph-card">
-  <strong>{{ report.counts.match }}</strong> match &middot;
-  <strong class="{{ 'ph-state-attn' if report.counts.differs else '' }}">{{ report.counts.differs }}</strong> differ &middot;
-  <strong class="{{ 'ph-state-attn' if report.counts.paid_no_beacon_hours else '' }}">{{ report.counts.paid_no_beacon_hours }}</strong> paid with no Beacon hours &middot;
-  <strong class="{{ 'ph-state-attn' if report.counts.beacon_hours_not_paid else '' }}">{{ report.counts.beacon_hours_not_paid }}</strong> Beacon hours with no pay
-</div>
-<div class="card"><div class="table-scroll">
-<table class="simple-table ph-tight">
-  <tr><th>Parish</th><th>Employee</th><th>Category</th><th>Beacon</th><th>Register</th><th>Difference</th><th>Result</th></tr>
-  {% for r in report.rows if r.kind != 'match' %}
-  <tr>
-    <td>{{ r.parish_name }}</td>
-    <td>{{ r.last_name }}, {{ r.first_name }}{% if r.employee_number %} <span class="sub ph-small">#{{ r.employee_number }}</span>{% endif %}</td>
-    <td>{{ r.category_label }}</td>
-    <td>{{ "%.2f"|format(r.beacon_hours) if r.beacon_hours is not none else "—" }}</td>
-    <td>{{ "%.2f"|format(r.register_hours) if r.register_hours is not none else "—" }}</td>
-    <td>{{ "%+.2f"|format(r.difference) if r.difference is not none else "—" }}</td>
-    <td class="ph-state-attn">{{ {'differs': 'Hours differ', 'paid_no_beacon_hours': 'Paid, no Beacon hours', 'beacon_hours_not_paid': 'Beacon hours, none paid'}[r.kind] }}</td>
-  </tr>
+<div class="ff-shell">
+  <div class="ff-title-row">
+    <h1>Hours: Beacon vs. the paid register</h1>
+    <a class="ff-back" href="/admin/timekeeping/status/{{ period.id }}">&larr; Back to Time Status</a>
+  </div>
+  <div class="ff-info">
+    <strong>{{ period.label or (dt(period.period_start) ~ " to " ~ dt(period.period_end)) }}</strong>
+    {% if period.pay_date %}<span>pay date {{ dt(period.pay_date) }}</span>{% endif %}
+    <span>Hours only, for employees who report hours. The register's hours are loaded after payroll runs.</span>
+  </div>
+  {% if not report.register_loaded %}
+  <div class="banner banner-info ff-banner">No register hours have been loaded for this period yet, so nothing can be compared.</div>
   {% else %}
-  <tr><td colspan="7" class="sub">Every line matches.</td></tr>
-  {% endfor %}
-</table></div></div>
-{% endif %}
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      <table class="ff-table">
+        <colgroup>
+          <col style="width:20%"><col style="width:22%"><col style="width:12%"><col style="width:9%"><col style="width:9%"><col style="width:10%"><col style="width:18%">
+        </colgroup>
+        <thead>
+          <tr>
+            <th data-sort="1" data-dir="asc">Department<span class="arrow">&#9650;</span></th>
+            <th data-sort="1">Employee<span class="arrow"></span></th>
+            <th data-sort="1">Category<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num">Beacon<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num">Register<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num">Difference<span class="arrow"></span></th>
+            <th data-sort="1">Result<span class="arrow"></span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in bad %}
+          <tr class="ff-row is-attn">
+            <td data-v="{{ r.parish_code or '~' }}" data-tip="{{ r.parish_name }}">{% if r.parish_code %}{{ r.parish_code }} {% endif %}{{ r.dept_name or r.parish_name }}</td>
+            <td data-v="{{ (r.last_name ~ ' ' ~ r.first_name)|lower }}">{{ r.last_name }}, {{ r.first_name }}{% if r.employee_number %} <span class="c-muted">#{{ r.employee_number }}</span>{% endif %}</td>
+            <td>{{ r.category_label }}</td>
+            <td class="c-num" data-v="{{ r.beacon_hours if r.beacon_hours is not none else '' }}">{{ "%.2f"|format(r.beacon_hours) if r.beacon_hours is not none else "—" }}</td>
+            <td class="c-num" data-v="{{ r.register_hours if r.register_hours is not none else '' }}">{{ "%.2f"|format(r.register_hours) if r.register_hours is not none else "—" }}</td>
+            <td class="c-num" data-v="{{ r.difference if r.difference is not none else '' }}">{{ "%+.2f"|format(r.difference) if r.difference is not none else "—" }}</td>
+            <td><span class="ph-state-attn">{{ {'differs': 'Hours differ', 'paid_no_beacon_hours': 'Paid, no Beacon hours', 'beacon_hours_not_paid': 'Beacon hours, none paid'}[r.kind] }}</span></td>
+          </tr>
+          {% else %}
+          <tr class="ff-empty"><td colspan="7">Every line matches.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count">
+        <strong>{{ report.counts.match }}</strong> match &middot;
+        <strong class="{{ 'ph-state-attn' if report.counts.differs else '' }}">{{ report.counts.differs }}</strong> differ &middot;
+        <strong class="{{ 'ph-state-attn' if report.counts.paid_no_beacon_hours else '' }}">{{ report.counts.paid_no_beacon_hours }}</strong> paid with no Beacon hours &middot;
+        <strong class="{{ 'ph-state-attn' if report.counts.beacon_hours_not_paid else '' }}">{{ report.counts.beacon_hours_not_paid }}</strong> Beacon hours with no pay
+      </span>
+    </div>
+  </div>
+  {% endif %}
 </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
 {% endblock %}
