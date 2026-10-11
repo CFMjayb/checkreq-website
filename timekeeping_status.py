@@ -131,7 +131,8 @@ def _get_period(period_id: int, org_id: int) -> dict | None:
 # ── Status board ─────────────────────────────────────────────────────────────
 
 def list_parish_status_for_period(org_id: int, period_id: int) -> list[dict]:
-    """Every ACTIVE parish under this diocese (registry.list_parishes(),
+    """Every ACTIVE parish under this diocese that has timekeeping turned on
+    (HR Activation; a parish the diocese runs no payroll for is not listed),
     not just ones with a submission row) with its submission status for
     this one period ("Not Started" is represented as submission_id IS
     NULL, rendered by the template, not a magic string here) and total
@@ -157,6 +158,7 @@ def list_parish_status_for_period(org_id: int, period_id: int) -> list[dict]:
                  GROUP BY sr.parish_id
           ) th ON th.parish_id = p.id
          WHERE p.org_id = %(org_id)s AND p.is_active
+           AND (p.modules->>'timekeeping') = 'true'   -- only parishes with timekeeping turned on (HR Activation)
          ORDER BY p.name
         """,
         {"period_id": period_id, "org_id": org_id},
