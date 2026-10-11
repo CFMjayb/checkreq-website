@@ -12,10 +12,10 @@ against a pledge. Soft credits count toward a pledge but never toward the person
   {% include "donor_nav.html" %}
   <div class="dm-head"><h1>Pledges</h1>
     <div class="dm-head-actions">
-      <form method="get" action="/pledges" class="dm-form-plain dm-row">
+      <form method="get" action="/pledges" class="dm-form-plain dm-row" data-live>
         <label class="dm-sr" for="dmCampaign">Campaign</label>
         <select id="dmCampaign" name="campaign">{% for c in campaigns %}<option value="{{ c.id }}" {{ 'selected' if c.id == cid }}>{{ c.name }}</option>{% endfor %}</select>
-        <button type="submit" class="btn btn-secondary btn-sm">Show</button>
+        <button type="submit" class="btn btn-secondary btn-sm" data-live-hide>Show</button>
       </form>
     </div>
   </div>

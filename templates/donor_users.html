@@ -22,7 +22,7 @@ TouchPoint's Users list: a filter row, a count, one dense sortable table with th
     <a class="btn btn-secondary btn-sm" href="/people/users/{{ ctx.user_id }}">Your roles</a></div>
   {% endif %}
 
-  <form method="get" action="/people/users" class="dm-search dm-form-plain dm-userfilter" role="search">
+  <form method="get" action="/people/users" class="dm-search dm-form-plain dm-userfilter" role="search" data-live>
     <div class="dm-filters">
       <label>Name / email <input type="search" name="q" value="{{ f.q }}" placeholder="Name or email" autofocus></label>
       <label>Role
@@ -43,7 +43,7 @@ TouchPoint's Users list: a filter row, a count, one dense sortable table with th
       </label>
       <input type="hidden" name="sort" value="{{ f.sort }}"><input type="hidden" name="dir" value="{{ f.dir }}">
       <a class="btn btn-secondary btn-sm" href="/people/users">Clear</a>
-      <button type="submit" class="btn btn-primary btn-sm">Search</button>
+      <button type="submit" class="btn btn-primary btn-sm" data-live-hide>Search</button>
     </div>
   </form>
 
@@ -96,3 +96,4 @@ TouchPoint's Users list: a filter row, a count, one dense sortable table with th
   <p class="dm-foot dm-muted dm-small">Donor roles are given per parish. Someone must already have a Beacon login at this parish. No one can give themselves a finance role or the Clergy role, except a Beacon Admin or Setup Admin at the diocese.</p>
 </div>
 {% endblock %}
+{% block extra_js %}<script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>{% endblock %}
