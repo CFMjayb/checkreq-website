@@ -141,7 +141,7 @@ def list_parish_status_for_period(org_id: int, period_id: int) -> list[dict]:
     screen (surfacing who HASN'T started, not just who has)."""
     return db.query(
         """
-        SELECT p.id AS parish_id, p.name AS parish_name, p.code AS parish_code,
+        SELECT p.id AS parish_id, p.name AS parish_name, p.short_name AS short_name, p.code AS parish_code,
                tes.id AS submission_id, tes.status AS submission_status,
                tes.submitted_by_user_id, tes.submitted_at,
                u.display_name AS submitted_by_name, u.email AS submitted_by_email,
@@ -159,7 +159,7 @@ def list_parish_status_for_period(org_id: int, period_id: int) -> list[dict]:
           ) th ON th.parish_id = p.id
          WHERE p.org_id = %(org_id)s AND p.is_active
            AND (p.modules->>'timekeeping') = 'true'   -- only parishes with timekeeping turned on (HR Activation)
-         ORDER BY p.name
+         ORDER BY p.code NULLS LAST, COALESCE(p.short_name, p.name)
         """,
         {"period_id": period_id, "org_id": org_id},
     )
