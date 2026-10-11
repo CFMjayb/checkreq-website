@@ -137,3 +137,11 @@ dialog.ff-dialog.wide { width: min(600px, 94vw); }
 .ff-dropdown-menu form { display: block; margin: 0; }
 .ff-dropdown-menu a, .ff-dropdown-menu button { display: block; width: 100%; box-sizing: border-box; text-align: left; background: none; border: 0; cursor: pointer; padding: 7px 10px; border-radius: 4px; font: inherit; font-size: 0.9rem; color: var(--color-ink, #2b2b2b); text-decoration: none; }
 .ff-dropdown-menu a:hover, .ff-dropdown-menu button:hover { background: #f1ede2; }
+
+/* A "Show" filter with a checkbox per kind of row (button opens a panel; ticked kinds are shown). */
+.ff-multi { position: relative; display: inline-block; }
+.ff-multi-btn { height: 26px; padding: 2px 10px; font-size: 0.85rem; background: #fff; border: 1px solid #cdc4ae; border-radius: 4px; cursor: pointer; color: var(--color-ink, #2b2b2b); }
+.ff-multi-btn:hover, .ff-multi-btn[aria-expanded=true] { border-color: var(--color-franciscan-green, #1f3d2e); }
+.ff-multi-panel { position: absolute; left: 0; top: calc(100% + 4px); z-index: 60; min-width: 230px; background: #fff; border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; padding: 6px 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); display: flex; flex-direction: column; gap: 4px; }
+.ff-multi-panel[hidden] { display: none; }
+.ff-multi-panel label { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; color: var(--color-ink, #2b2b2b); cursor: pointer; margin: 0; }
