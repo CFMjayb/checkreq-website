@@ -72,7 +72,7 @@
   {% endif %}
 
   <div class="ff-filters">
-    <label>Search <input type="text" data-ff-search placeholder="parish name or code"></label>
+    <label>Search <input type="text" data-ff-search placeholder="code or name"></label>
     <div class="ff-multi" data-ff-multi="state">
       <button type="button" class="ff-multi-btn" aria-haspopup="true" aria-expanded="false">Show: <span data-ff-multi-label>All</span> &#9662;</button>
       <div class="ff-multi-panel" hidden>
@@ -94,7 +94,7 @@
         </colgroup>
         <thead>
           <tr>
-            <th data-sort="1" data-dir="asc">Parish<span class="arrow">&#9650;</span></th>
+            <th data-sort="1" data-dir="asc">Department<span class="arrow">&#9650;</span></th>
             <th data-sort="1">Status<span class="arrow"></span></th>
             <th data-sort="1">Channel<span class="arrow"></span></th>
             <th data-sort="1">Expected<span class="arrow"></span></th>
@@ -110,7 +110,7 @@
           {% for r in rows %}
           {% set st = row_state(r)|trim %}
           <tr class="ff-row {{ 'is-attn' if st == 'attn' else 'is-miss' if st == 'miss' else 'is-ok' if st == 'ok' else 'is-idle' if st == 'idle' else '' }}" data-state="{{ st }}">
-            <td data-v="{{ r.parish_name|lower }}" title="{{ r.parish_name }}"><a href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{{ r.parish_name }}</a>{% if r.parish_code %} <span class="c-muted">({{ r.parish_code }})</span>{% endif %}</td>
+            <td data-v="{{ r.parish_code or '~' }}" title="{{ r.parish_name }}"><a href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{% if r.parish_code %}{{ r.parish_code }} {% endif %}{{ r.short_name or r.parish_name }}</a><span hidden>{{ r.parish_name }}</span></td>
             <td>
               {% if r.not_expected %}<span class="badge badge-skipped">Not Expected</span>
               {% elif not r.submission_id and r.recorded %}<span class="badge badge-submitted">Hours recorded</span>
