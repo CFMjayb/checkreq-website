@@ -842,7 +842,7 @@ def _period_rows(org_id: int, period_id: int) -> list[dict]:
     cats = {c["id"]: c for c in db.query(
         "SELECT id, key, label, sort_order FROM portal.timekeeping_categories WHERE org_id = %s", (org_id,))}
     parishes = {p["id"]: p for p in db.query(
-        "SELECT id, code, name FROM portal.parishes WHERE org_id = %s", (org_id,))}
+        "SELECT id, code, name, short_name FROM portal.parishes WHERE org_id = %s", (org_id,))}
     people = {s["id"]: s for s in db.query(
         "SELECT s.id, s.parish_id, s.employee_number, s.first_name, s.last_name, s.captures_hours "
         "FROM portal.staff_roster s JOIN portal.parishes p ON p.id = s.parish_id WHERE p.org_id = %s", (org_id,))}
@@ -874,6 +874,7 @@ def _period_rows(org_id: int, period_id: int) -> list[dict]:
         out.append({
             "line_id": t["id"], "staff_id": t["staff_id"], "pending_change_id": t["pending_change_id"],
             "parish_id": parish_id, "parish_code": parishes[parish_id]["code"], "parish_name": parishes[parish_id]["name"],
+            "dept_name": parishes[parish_id]["short_name"] or parishes[parish_id]["name"],
             "employee_number": t["employee_number"] if t["staff_id"] else t["pend_emp"],
             "last_name": t["last_name"] if t["staff_id"] else t["pend_last"],
             "first_name": t["first_name"] if t["staff_id"] else t["pend_first"],
@@ -895,7 +896,8 @@ def _period_rows(org_id: int, period_id: int) -> list[dict]:
         par = parishes[s["parish_id"]]
         out.append({
             "line_id": None, "staff_id": staff_id, "pending_change_id": None, "parish_id": par["id"],
-            "parish_code": par["code"], "parish_name": par["name"], "employee_number": s["employee_number"],
+            "parish_code": par["code"], "parish_name": par["name"], "dept_name": par["short_name"] or par["name"],
+            "employee_number": s["employee_number"],
             "last_name": s["last_name"], "first_name": s["first_name"], "category_id": cat_id,
             "category_key": cats[cat_id]["key"], "category_label": cats[cat_id]["label"],
             "category_sort": cats[cat_id]["sort_order"], "line_hours": None, "grid_hours": g,
@@ -903,7 +905,7 @@ def _period_rows(org_id: int, period_id: int) -> list[dict]:
             "review_status": "entered", "flags": [], "proposed_hours": None, "proposed_ref": None,
             "proposed_quote": None, "state": "ok", "captures_hours": bool(s["captures_hours"]),
         })
-    out.sort(key=lambda r: (r["parish_name"] or "", r["last_name"] or "", r["first_name"] or "",
+    out.sort(key=lambda r: (r["parish_code"] or "~", r["parish_name"] or "", r["last_name"] or "", r["first_name"] or "",
                             r["category_sort"] or 0))
     return out
 
@@ -1009,14 +1011,15 @@ def variance(org_id: int, period_id: int) -> dict:
             beacon[(r["staff_id"], r["category_id"])] = r
     reg = db.query(
         "SELECT rh.staff_id, rh.category_id, rh.hours, c.label, c.sort_order, sr.employee_number, sr.first_name, "
-        "sr.last_name, sr.captures_hours, p.code AS parish_code, p.name AS parish_name "
+        "sr.last_name, sr.captures_hours, p.code AS parish_code, p.name AS parish_name, "
+        "COALESCE(p.short_name, p.name) AS dept_name "
         "FROM portal.time_register_hours rh JOIN portal.staff_roster sr ON sr.id = rh.staff_id "
         "JOIN portal.parishes p ON p.id = sr.parish_id JOIN portal.timekeeping_categories c ON c.id = rh.category_id "
         "WHERE rh.period_id = %s AND p.org_id = %s", (period_id, org_id))
     rmap = {(x["staff_id"], x["category_id"]): x for x in reg if x["captures_hours"]}
     rows = []
     for key in sorted(set(beacon) | set(rmap), key=lambda k: (
-            (beacon.get(k) or {}).get("parish_name") or (rmap.get(k) or {}).get("parish_name") or "",
+            (beacon.get(k) or {}).get("parish_code") or (rmap.get(k) or {}).get("parish_code") or "~",
             (beacon.get(k) or {}).get("last_name") or (rmap.get(k) or {}).get("last_name") or "")):
         b, g = beacon.get(key), rmap.get(key)
         bh = None if b is None else b["counted_hours"]
@@ -1029,6 +1032,7 @@ def variance(org_id: int, period_id: int) -> dict:
             kind = "beacon_hours_not_paid"
         src = b or g
         rows.append({"kind": kind, "parish_code": src["parish_code"], "parish_name": src["parish_name"],
+                     "dept_name": src.get("dept_name") or src["parish_name"],
                      "employee_number": src["employee_number"], "last_name": src["last_name"],
                      "first_name": src["first_name"],
                      "category_label": src["category_label"] if b else src["label"],

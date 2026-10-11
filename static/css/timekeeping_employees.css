@@ -1,55 +1,12 @@
-/* Employees (HR) -- a fixed frame. The title row and filters stay at the top, the
-   column headers stay under them, the Save bar stays at the bottom, and only the
-   employee rows scroll between. timekeeping_employees.js sets the frame's height
-   to fit the window; the calc() below is only the fallback before it runs. */
+/* Employees (HR). The fixed-frame layout (title row, filters, sticky headers, only the rows scroll, locked
+   bottom bar) comes from fixed_frame.css, the shared standard; this file holds only what is specific to
+   this screen: the editable cells, the green / faded-red row colours, the three-dot menu and the Add pop-up.
+   timekeeping_employees.js still fits the frame to the window and runs the row logic. */
 
-.emp-shell {
-  display: flex; flex-direction: column; gap: 6px;
-  height: calc(100vh - 190px); min-height: 320px;
-}
-
-/* This screen fills the window between the site header and the site footer, so
-   trim the page padding and the footer's top margin (the footer is shared; only
-   pages that contain this frame are affected). */
-.page-shell-wide:has(.emp-shell) { padding-top: 10px; padding-bottom: 6px; }
-body:has(.emp-shell) > footer { margin-top: 6px !important; padding-top: 8px !important; padding-bottom: 8px !important; }
-
-/* Title row: heading on the left, Add employee on the right. */
-.emp-title-row { display: flex; align-items: baseline; gap: 14px; flex: 0 0 auto; }
-.emp-title-row h1 { margin: 0; font-size: 1.45rem; line-height: 1.2; }
-.emp-back { font-size: 0.85rem; }
-.emp-add { margin-left: auto; align-self: center; }
-
-.emp-banner { margin: 0; padding: 6px 10px; flex: 0 0 auto; }
-
-/* Filters: a plain row, no box around it. */
-.emp-filters {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
-  flex: 0 0 auto; margin: 0; padding: 0;
-}
-.emp-filters label { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--color-muted, #6b645a); margin: 0; }
-.emp-filters select, .emp-filters input[type=text] { height: 26px; padding: 2px 6px; font-size: 0.85rem; margin: 0; width: auto; }
-
-/* The frame around the table and the Save bar. */
-.emp-form {
-  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; margin: 0;
-  border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; background: #fff; overflow: hidden;
-}
-.emp-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
-
-table.emp-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 0.85rem; }
-.emp-table thead th {
-  position: sticky; top: 0; z-index: 3; background: #f1ede2; text-align: left;
-  padding: 5px 8px; border-bottom: 1px solid var(--color-border, #ddd4c0);
-  font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap;
-}
-.emp-table thead th.c-menu { cursor: default; }
-.emp-table thead th .arrow { display: inline-block; width: 14px; font-size: 0.65rem; color: var(--color-muted, #6b645a); margin-left: 3px; }
-.emp-table td { padding: 1px 6px; height: 28px; border-bottom: 1px solid rgba(0, 0, 0, 0.06); vertical-align: middle; }
+.emp-table td { padding: 1px 6px; }
 .emp-table td.c-parish { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.emp-table .c-center { text-align: center; }
 .emp-table .c-date { white-space: nowrap; color: var(--color-muted, #6b645a); }
-.emp-table .c-menu { text-align: center; padding: 0; }
+.emp-table thead th.c-menu { cursor: default; }
 .emp-empty td { text-align: center; color: var(--color-muted, #6b645a); padding: 18px; }
 
 /* Row colour: green = active and editable, faded red = inactive and read-only. */
@@ -72,8 +29,7 @@ tr.is-inactive input[type=checkbox] { pointer-events: none; opacity: 0.55; }
 }
 .emp-menu-btn:hover, .emp-menu-btn[aria-expanded=true] { background: rgba(0, 0, 0, 0.08); }
 
-/* The one shared actions menu, positioned by the script (fixed, so the scrolling
-   table cannot clip it). */
+/* The one shared actions menu, positioned by the script (fixed, so the scrolling table cannot clip it). */
 .emp-menu {
   position: fixed; z-index: 50; min-width: 150px; background: #fff;
   border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; padding: 4px;
@@ -83,12 +39,7 @@ tr.is-inactive input[type=checkbox] { pointer-events: none; opacity: 0.55; }
 .emp-menu button { display: block; width: 100%; text-align: left; background: none; border: 0; cursor: pointer; padding: 6px 10px; border-radius: 4px; font-size: 0.9rem; }
 .emp-menu button:hover { background: #f1ede2; }
 
-/* The Save bar, locked at the bottom of the frame. */
-.emp-foot {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 12px; padding: 6px 10px;
-  border-top: 1px solid var(--color-border, #ddd4c0); background: #f7f3ea;
-}
-.emp-count { font-size: 0.8rem; color: var(--color-muted, #6b645a); }
+/* The Save bar's pending-changes note and button (the bar itself is .ff-foot). */
 .emp-changed { font-size: 0.85rem; font-weight: 600; margin-left: auto; }
 .emp-save { margin-left: auto; }
 .emp-changed:not([hidden]) + .emp-save { margin-left: 0; }
