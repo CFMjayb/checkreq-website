@@ -31,17 +31,23 @@
     {% if payroll.final and not payroll.left %}<span class="ff-state final" title="Hours were marked Final{% if payroll.final_at %} {{ payroll.final_at }}{% endif %}">Final</span>{% endif %}
     <a class="ff-back" href="/portal">&larr; Back to main menu</a>
     <div class="ff-actions">
-      <button type="button" class="btn btn-sm btn-primary" data-ff-dialog="setPeriodDialog">Set period</button>
-      <a class="btn btn-sm btn-primary" href="/admin/timekeeping/status/{{ period.id }}/export">Excel for Checkwriters</a>
-      <a class="btn btn-sm btn-primary" href="/admin/timekeeping/status/{{ period.id }}/variance">Variance report</a>
-      {% if payroll.final %}
-      <form method="post" action="/admin/timekeeping/status/{{ period.id }}/unfinal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm btn-primary" type="submit">Mark not final</button></form>
-      {% elif not payroll.left %}
-      <form method="post" action="/admin/timekeeping/status/{{ period.id }}/final"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm btn-primary" type="submit">Mark hours Final</button></form>
-      {% endif %}
-      {% if period.status in ('open', 'future') %}
-      <form method="post" action="/admin/timekeeping/status/{{ period.id }}/standing"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm btn-primary" type="submit">Carry forward standing hours</button></form>
-      {% endif %}
+      <button type="button" class="btn btn-sm btn-primary" data-ff-dialog="changePeriodDialog">Change period</button>
+      <div class="ff-dropdown">
+        <button type="button" class="btn btn-sm btn-primary" data-ff-dropdown aria-haspopup="menu" aria-expanded="false">Actions &#9662;</button>
+        <div class="ff-dropdown-menu" role="menu" hidden>
+          <button type="button" role="menuitem" data-ff-dialog="setPeriodDialog">Set status (open / close)</button>
+          <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/export">Excel for Checkwriters</a>
+          {% if payroll.final %}
+          <form method="post" action="/admin/timekeeping/status/{{ period.id }}/unfinal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit">Mark hours not final</button></form>
+          {% elif not payroll.left %}
+          <form method="post" action="/admin/timekeeping/status/{{ period.id }}/final"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit">Mark hours Final</button></form>
+          {% endif %}
+          <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/variance">Variance report</a>
+          {% if period.status in ('open', 'future') %}
+          <form method="post" action="/admin/timekeeping/status/{{ period.id }}/standing"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit">Carry forward standing hours</button></form>
+          {% endif %}
+        </div>
+      </div>
     </div>
   </div>
 
@@ -139,10 +145,24 @@
 </div>
 </div>
 
+<dialog class="ff-dialog wide" id="changePeriodDialog">
+  <h2>Change period</h2>
+  <ul class="ff-list">
+    {% for p in all_periods %}
+    <li><a href="/admin/timekeeping/status/{{ p.id }}"{% if p.id == period.id %} class="on" aria-current="page"{% endif %}>
+      <span>{{ p.label or (dt(p.period_start) ~ " to " ~ dt(p.period_end)) }}</span>
+      <span class="c-muted">{{ dt(p.period_start) }} &ndash; {{ dt(p.period_end) }}{% if p.pay_date %} &middot; pay {{ dt(p.pay_date) }}{% endif %}</span>
+      <span class="ff-state {{ p.status }}">{{ p.status|capitalize }}</span>
+    </a></li>
+    {% endfor %}
+  </ul>
+  <div class="ff-dialog-actions"><button type="button" class="btn btn-sm btn-secondary" data-ff-close>Close</button></div>
+</dialog>
+
 <dialog class="ff-dialog" id="setPeriodDialog">
   <form method="post" action="/admin/timekeeping/status/{{ period.id }}/set-status">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <h2>Set this period</h2>
+    <h2>Set this period's status</h2>
     <select name="status" aria-label="Period state">
       <option value="open"{% if period.status == 'open' %} selected{% endif %}>Open — accepting hours</option>
       <option value="closed"{% if period.status == 'closed' %} selected{% endif %}>Closed — read-only</option>

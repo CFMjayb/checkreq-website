@@ -118,3 +118,21 @@ dialog.ff-dialog .sub { font-size: 0.82rem; margin: 8px 0 0; }
 .ff-menu { position: fixed; z-index: 50; min-width: 170px; background: #fff; border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; padding: 4px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); }
 .ff-menu a { display: block; padding: 6px 10px; border-radius: 4px; font-size: 0.9rem; color: var(--color-ink, #2b2b2b); text-decoration: none; white-space: nowrap; }
 .ff-menu a:hover { background: #f1ede2; }
+
+/* A list of links inside a pop-up (e.g. Change period): one row per item, the current one highlighted. */
+dialog.ff-dialog.wide { width: min(600px, 94vw); }
+.ff-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow: auto; border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; }
+.ff-list li + li { border-top: 1px solid rgba(0, 0, 0, 0.06); }
+.ff-list a { display: flex; align-items: center; gap: 12px; padding: 7px 10px; text-decoration: none; color: var(--color-ink, #2b2b2b); font-size: 0.9rem; }
+.ff-list a:hover { background: #f1ede2; }
+.ff-list a.on { background: #e8f3e6; font-weight: 600; }
+.ff-list .c-muted { font-size: 0.8rem; }
+.ff-list .ff-state { margin-left: auto; font-size: 0.72rem; padding: 1px 10px; }
+
+/* The gold Actions drop-down in the title row: one button holds every action of the screen. */
+.ff-dropdown { position: relative; display: inline-block; }
+.ff-dropdown-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 60; min-width: 240px; background: #fff; border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; padding: 4px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); display: flex; flex-direction: column; }
+.ff-dropdown-menu[hidden] { display: none; }
+.ff-dropdown-menu form { display: block; margin: 0; }
+.ff-dropdown-menu a, .ff-dropdown-menu button { display: block; width: 100%; box-sizing: border-box; text-align: left; background: none; border: 0; cursor: pointer; padding: 7px 10px; border-radius: 4px; font: inherit; font-size: 0.9rem; color: var(--color-ink, #2b2b2b); text-decoration: none; }
+.ff-dropdown-menu a:hover, .ff-dropdown-menu button:hover { background: #f1ede2; }
