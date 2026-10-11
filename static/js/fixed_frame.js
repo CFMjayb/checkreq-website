@@ -2,6 +2,7 @@
  *
  *  - fits the frame to the window, so only the rows scroll;
  *  - sorts on a click of any column heading that has data-sort (the cell's data-v, else its text);
+ *  - a multi-check filter [data-ff-multi="<attr>"] (a checkbox per kind of row; remembered on this PC);
  *  - a search box [data-ff-search] and any number of selects [data-ff-filter="<attr>"] hide rows
  *    (a row's tr.dataset.<attr> must equal the select's value; "" shows all);
  *  - [data-ff-count] shows how many rows are showing;
@@ -138,6 +139,43 @@
   var search = shell.querySelector('[data-ff-search]');
   var filters = Array.prototype.slice.call(shell.querySelectorAll('[data-ff-filter]'));
   var counter = shell.querySelector('[data-ff-count]');
+  // a multi-check filter: [data-ff-multi="<attr>"] holds a button, a panel and one checkbox per kind of row;
+  // a row shows when the checkbox whose value equals its data-<attr> is ticked. The choice is remembered.
+  var multis = Array.prototype.slice.call(shell.querySelectorAll('[data-ff-multi]')).map(function (box) {
+    var attr = box.dataset.ffMulti;
+    var key = 'ff-multi:' + location.pathname.replace(/\d+/g, 'N') + ':' + attr;
+    var checks = Array.prototype.slice.call(box.querySelectorAll('input[type=checkbox]'));
+    var btn = box.querySelector('.ff-multi-btn');
+    var panel = box.querySelector('.ff-multi-panel');
+    var label = box.querySelector('[data-ff-multi-label]');
+    try {
+      var saved = JSON.parse(localStorage.getItem(key) || 'null');
+      if (Array.isArray(saved)) checks.forEach(function (cb) { cb.checked = saved.indexOf(cb.value) === -1; });
+    } catch (e) { /* storage may be unavailable: the filter simply starts with everything ticked */ }
+    function text(cb) { return cb.parentNode.textContent.replace(/\(.*\)/, '').trim(); }
+    function paintLabel() {
+      var off = checks.filter(function (cb) { return !cb.checked; });
+      label.textContent = off.length === 0 ? 'All' : (off.length === 1 ? 'All except ' + text(off[0]) : (checks.length - off.length) + ' of ' + checks.length);
+    }
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var open = !panel.hidden;
+      panel.hidden = open;
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+    });
+    panel.addEventListener('click', function (e) { e.stopPropagation(); });
+    document.addEventListener('click', function () { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); } });
+    checks.forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        paintLabel();
+        try { localStorage.setItem(key, JSON.stringify(checks.filter(function (x) { return !x.checked; }).map(function (x) { return x.value; }))); } catch (e) { /* not remembered */ }
+        apply();
+      });
+    });
+    paintLabel();
+    return { attr: attr, checks: checks };
+  });
   function apply() {
     var q = search ? search.value.trim().toLowerCase() : '';
     var shown = 0, all = rows();
@@ -145,6 +183,11 @@
       var ok = !q || tr.textContent.toLowerCase().indexOf(q) !== -1;
       filters.forEach(function (sel) {
         if (ok && sel.value && tr.dataset[sel.dataset.ffFilter] !== sel.value) ok = false;
+      });
+      multis.forEach(function (m) {
+        if (!ok) return;
+        var kind = tr.dataset[m.attr];
+        m.checks.forEach(function (cb) { if (cb.value === kind && !cb.checked) ok = false; });
       });
       tr.hidden = !ok;
       if (ok) shown++;

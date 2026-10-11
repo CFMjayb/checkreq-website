@@ -23,8 +23,8 @@
 <link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
 {% endblock %}
 {% block content %}
-{% set ns = namespace(attn=0, miss=0) %}
-{% for r in rows %}{% set st = row_state(r)|trim %}{% if st == 'attn' %}{% set ns.attn = ns.attn + 1 %}{% elif st == 'miss' %}{% set ns.miss = ns.miss + 1 %}{% endif %}{% endfor %}
+{% set ns = namespace(attn=0, miss=0, wait=0, ok=0, idle=0) %}
+{% for r in rows %}{% set st = row_state(r)|trim %}{% if st == 'attn' %}{% set ns.attn = ns.attn + 1 %}{% elif st == 'miss' %}{% set ns.miss = ns.miss + 1 %}{% elif st == 'wait' %}{% set ns.wait = ns.wait + 1 %}{% elif st == 'ok' %}{% set ns.ok = ns.ok + 1 %}{% elif st == 'idle' %}{% set ns.idle = ns.idle + 1 %}{% endif %}{% endfor %}
 <div class="page-shell-wide">
 <div class="ff-shell">
 
@@ -73,14 +73,16 @@
 
   <div class="ff-filters">
     <label>Search <input type="text" data-ff-search placeholder="parish name or code"></label>
-    <label>Show
-      <select data-ff-filter="state">
-        <option value="">All parishes</option>
-        <option value="attn">Needs review</option>
-        <option value="miss">Missing hours</option>
-        <option value="ok">Complete</option>
-        <option value="idle">Not expected</option>
-      </select></label>
+    <div class="ff-multi" data-ff-multi="state">
+      <button type="button" class="ff-multi-btn" aria-haspopup="true" aria-expanded="false">Show: <span data-ff-multi-label>All</span> &#9662;</button>
+      <div class="ff-multi-panel" hidden>
+        <label><input type="checkbox" value="attn" checked> Needs review <span class="c-muted">({{ ns.attn }})</span></label>
+        <label><input type="checkbox" value="miss" checked> Missing hours <span class="c-muted">({{ ns.miss }})</span></label>
+        <label><input type="checkbox" value="ok" checked> Complete <span class="c-muted">({{ ns.ok }})</span></label>
+        <label><input type="checkbox" value="wait" checked> Not started <span class="c-muted">({{ ns.wait }})</span></label>
+        <label><input type="checkbox" value="idle" checked> Not expected <span class="c-muted">({{ ns.idle }})</span></label>
+      </div>
+    </div>
   </div>
 
   <div class="ff-frame">
