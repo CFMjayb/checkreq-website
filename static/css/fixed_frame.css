@@ -79,9 +79,10 @@ table.ff-table { width: 100%; border-collapse: separate; border-spacing: 0; tabl
 .ff-table .ff-link { margin-right: 10px; }
 .ff-empty td { text-align: center; color: var(--color-muted, #6b645a); padding: 18px; }
 
-/* Row colour: green = fine, faded red = needs a person, grey = nothing expected. */
+/* Row colour = what is left: green complete, faded red needs a person, amber missing, grey not expected. */
 .ff-table tr.ff-row.is-ok { background: #e8f3e6; }
 .ff-table tr.ff-row.is-attn { background: #f6e0e0; }
+.ff-table tr.ff-row.is-miss { background: #fbf0d2; }
 .ff-table tr.ff-row.is-idle { background: #f4f1ea; color: #8a847a; }
 
 /* The bottom bar, locked at the bottom of the frame. */
