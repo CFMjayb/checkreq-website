@@ -144,7 +144,8 @@
   }
 
   function enhance(root) {
-    Array.prototype.forEach.call((root || document).querySelectorAll('input[type="text"]'), function (el) {
+    // Every <input>, not only input[type="text"]: many boxes (the batch and gift dates) carry no type attribute, which means text. isDateInput checks el.type.
+    Array.prototype.forEach.call((root || document).querySelectorAll('input'), function (el) {
       if (el.hasAttribute('data-dh') || !isDateInput(el) || !el.parentNode) { return; }
       el.setAttribute('data-dh', '1');
       el.setAttribute('autocomplete', 'off');
@@ -298,6 +299,10 @@
     calY = base.getFullYear(); calM = base.getMonth() + 1; calFocus = null;
     var bubble = say(input);
     if (bubble) { bubble.hidden = true; }
+    // A box inside a modal <dialog> sits in the browser's top layer, so a calendar left on <body> would open BEHIND it: live inside the dialog then.
+    var host = input.closest('dialog') || document.body;
+    if (cal.parentNode !== host) { host.appendChild(cal); }
+    cal.style.position = host === document.body ? 'absolute' : 'fixed';
     cal.hidden = false;
     cal.style.visibility = 'hidden';
     renderGrid();
@@ -307,7 +312,8 @@
   }
 
   function placeCal(input) {
-    var rect = input.getBoundingClientRect(), sx = window.pageXOffset, sy = window.pageYOffset;
+    var fixed = cal.style.position === 'fixed';           // inside a dialog: viewport coordinates, no page scroll to add
+    var rect = input.getBoundingClientRect(), sx = fixed ? 0 : window.pageXOffset, sy = fixed ? 0 : window.pageYOffset;
     var vw = document.documentElement.clientWidth, w = cal.offsetWidth, h = cal.offsetHeight;
     var left = Math.min(Math.max(rect.left, 8), Math.max(8, vw - w - 8));
     var top = rect.bottom + 4;
