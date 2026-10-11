@@ -391,3 +391,39 @@ dialog.ff-dialog .field { margin: 0; }
 dialog.ff-dialog .field label { display: block; font-size: 0.78rem; color: var(--color-text-muted); margin-bottom: 2px; }
 dialog.ff-dialog .field input, dialog.ff-dialog .field select { width: 100%; box-sizing: border-box; }
 dialog.ff-dialog table.dm-table { width: 100%; }
+/* ── The batch maintenance screen on the fixed frame (donor_batch.html) ── */
+.dm-ffbal { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 22px; padding: 5px 12px; background: #fff; border: 1px solid var(--color-border);
+  border-left: 5px solid var(--color-gold); border-radius: 6px; font-size: 0.88rem; }
+.dm-ffbal.dm-ffbal-ok { border-left-color: var(--color-success, #1f6b3a); }
+.dm-ffbal strong { font-size: 1.05rem; }
+.dm-ffbal .dm-lbl { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-muted); margin-right: 4px; }
+.dm-ffbal .dm-sub { font-size: 0.78rem; }
+.dm-ffnc { margin-left: auto; font-size: 0.82rem; }
+.dm-ffentry { flex: 0 0 auto; background: #faf7f0; border: 1px solid var(--color-border); border-radius: 6px; padding: 4px 10px 6px; }
+.dm-ffentry-head { display: flex; align-items: baseline; gap: 14px; font-size: 0.85rem; margin-bottom: 2px; }
+.dm-ffentry-head a { margin-left: auto; }
+.dm-ffentry-head .dm-sub { text-decoration: underline dotted; cursor: help; }
+.dm-ffentry-form { margin: 0; }
+.dm-ffentry-form > .dm-grid { display: grid; gap: 2px 8px; align-items: end; margin-bottom: 4px;
+  grid-template-columns: 92px minmax(170px, 1.4fr) 92px minmax(130px, 1fr) minmax(125px, 1fr) 100px minmax(110px, 1fr) 125px auto; }
+.dm-ffentry-form .field { margin: 0; min-width: 0; }
+.dm-ffentry-form .field label { font-size: 0.7rem; margin: 0; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.dm-ffentry-form .field input, .dm-ffentry-form .field select { height: 28px; padding: 2px 8px; font-size: 0.88rem; }
+.dm-ffentry-form .dm-picker-input { height: 28px; padding: 2px 8px; font-size: 0.88rem; }
+.dm-ffentry-form #dmEnvelopeMsg { font-size: 0.72rem; line-height: 1.2; min-height: 0; }
+.dm-ffentry-form .dm-ffadd { align-self: end; }
+.dm-ffentry-form .dm-ffmore { display: inline-block; margin-right: 14px; vertical-align: middle; }
+.dm-ffentry-form .dm-ffmore > .dm-grid { margin-top: 6px; }
+.dm-ffentry-form label.dm-check { display: inline-flex; vertical-align: middle; font-size: 0.82rem; margin: 0; }
+.dm-fflines td { height: 28px; }
+.dm-fflines .dm-pill { margin-left: 3px; padding: 0 7px; font-size: 0.66rem; }
+.dm-fflines .dm-archived td { text-decoration: line-through; }
+.dm-fflines td.dm-ffrowbtns { overflow: visible; text-align: right; padding-right: 6px; }
+.dm-ffrowbtns .btn { padding: 1px 9px; font-size: 0.78rem; margin-left: 4px; }
+dialog.ff-dialog.xwide { width: min(1000px, 96vw); }
+dialog.ff-dialog.xwide .dm-stack { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
+dialog.ff-dialog.xwide .dm-stack form { border: 1px solid var(--color-border); border-radius: 6px; padding: 8px 10px; background: #faf7f0; }
+@media (max-width: 1100px) { .dm-ffentry-form > .dm-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); } }
+
+/* Live filters (donor_person.js section 7): the Search / Show button is only for Enter and for scripts off. */
+.dm-live-on [data-live-hide] { display: none; }

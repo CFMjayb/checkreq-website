@@ -161,6 +161,42 @@
     });
   });
 
+  // 7. Live filters (Jay, 2026-10-11): a form marked data-live applies its filters as they are changed. A select, checkbox or radio reloads the list at
+  //    once; typing in a text or search box does after a short pause. The Search button stays for Enter and with scripts off (it is hidden while this
+  //    runs), and the box you were in gets the focus back, caret at the end, when the list reloads. Changing a filter always starts at page 1.
+  (function () {
+    var KEY = 'dm-live-focus', timer = null;
+    function submit(form, el) {
+      try { sessionStorage.setItem(KEY, JSON.stringify({ p: location.pathname, n: el.name || '' })); } catch (e) { /* storage may be unavailable: the list still reloads */ }
+      form.submit();
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('form[data-live]'), function (f) { f.classList.add('dm-live-on'); });
+    document.addEventListener('change', function (e) {
+      var el = e.target, form = el && el.form;
+      if (!form || !form.hasAttribute || !form.hasAttribute('data-live')) { return; }
+      if (el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio') { clearTimeout(timer); submit(form, el); }
+    });
+    document.addEventListener('input', function (e) {
+      var el = e.target, form = el && el.form;
+      if (!form || !form.hasAttribute || !form.hasAttribute('data-live') || e.isComposing) { return; }
+      if (el.tagName !== 'INPUT' || ['search', 'text', 'number', 'tel'].indexOf(el.type) === -1) { return; }
+      clearTimeout(timer);
+      timer = setTimeout(function () { submit(form, el); }, 450);
+    });
+    try {
+      var s = JSON.parse(sessionStorage.getItem(KEY) || 'null');
+      sessionStorage.removeItem(KEY);
+      if (s && s.p === location.pathname && s.n) {
+        var box = null;
+        Array.prototype.forEach.call(document.querySelectorAll('form[data-live] [name]'), function (x) { if (x.name === s.n && x.type !== 'hidden') { box = x; } });
+        if (box) {
+          box.focus();
+          if (box.setSelectionRange && ['search', 'text', 'tel'].indexOf(box.type) !== -1) { var n = box.value.length; box.setSelectionRange(n, n); }
+        }
+      }
+    } catch (e3) { /* no focus to give back */ }
+  }());
+
   // 5. A select marked data-autosubmit reloads its own form when the choice changes (the member Giving tab's year: no Show button).
   document.addEventListener('change', function (e) {
     var el = e.target;

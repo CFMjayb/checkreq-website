@@ -49,7 +49,7 @@ just the page on screen), so they are a plain form here and the pager keeps its 
 
   {% if search_error %}<div class="banner banner-error ff-banner">{{ search_error }}</div>{% endif %}
 
-  <form method="get" action="/people" class="ff-filters dm-ffsearch" role="search">
+  <form method="get" action="/people" class="ff-filters dm-ffsearch" role="search" data-live>
     <label class="dm-ffsearch-box"><span class="dm-sr">Search people</span>
       <input type="search" name="q" value="{{ q }}" placeholder="Search by name, envelope, email, phone, or address" autofocus></label>
     {% if codes %}
@@ -75,7 +75,7 @@ just the page on screen), so they are a plain form here and the pager keeps its 
       <select name="rtype"><option value="">People and organizations</option><option value="person" {{ 'selected' if rtype == 'person' }}>People</option><option value="organization" {{ 'selected' if rtype == 'organization' }}>Organizations</option></select>
     </label>
     <label class="dm-check"><input type="checkbox" name="archived" value="1" {{ 'checked' if archived }}> Include archived</label>
-    <button type="submit" class="btn btn-sm btn-secondary">Search</button>
+    <button type="submit" class="btn btn-sm btn-secondary" data-live-hide>Search</button>
   </form>
 
   <div class="ff-frame">
