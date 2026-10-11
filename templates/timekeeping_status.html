@@ -6,6 +6,9 @@
   the counts stay at the bottom, and ONLY the parish rows scroll between them. This is how every Beacon
   screen with scrolling rows is built (Jay, 2026-10-10).
 
+  Row colour = what is left: red needs a decision, amber is missing (a parish that normally sends hours has sent
+  none), green is complete, grey is not expected.
+
   Pills: the Open / Closed / Future pill by the heading is the period's state. Gold buttons at the top
   right are the actions. In the table only the Status column is a pill; everything else is plain text,
   and a row's actions are in its three-dot menu.
@@ -13,15 +16,15 @@
 {% from "_guide_link.html" import guide_link %}
 {% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
 {% macro row_state(r) -%}
-{%- if r.not_expected -%}idle{%- elif r.needs_review or r.conflicts or r.proposals -%}attn{%- elif not r.submission_id and not r.recorded -%}wait{%- else -%}ok{%- endif -%}
+{%- if r.not_expected -%}idle{%- elif r.needs_review or r.conflicts or r.proposals -%}attn{%- elif not r.submission_id and not r.recorded -%}{{ 'miss' if r.pattern in ('every_period', 'most_periods') else 'wait' }}{%- else -%}ok{%- endif -%}
 {%- endmacro %}
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
 <link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
 {% endblock %}
 {% block content %}
-{% set ns = namespace(attn=0, wait=0) %}
-{% for r in rows %}{% set st = row_state(r)|trim %}{% if st == 'attn' %}{% set ns.attn = ns.attn + 1 %}{% elif st == 'wait' %}{% set ns.wait = ns.wait + 1 %}{% endif %}{% endfor %}
+{% set ns = namespace(attn=0, miss=0) %}
+{% for r in rows %}{% set st = row_state(r)|trim %}{% if st == 'attn' %}{% set ns.attn = ns.attn + 1 %}{% elif st == 'miss' %}{% set ns.miss = ns.miss + 1 %}{% endif %}{% endfor %}
 <div class="page-shell-wide">
 <div class="ff-shell">
 
@@ -74,8 +77,8 @@
       <select data-ff-filter="state">
         <option value="">All parishes</option>
         <option value="attn">Needs review</option>
-        <option value="wait">Not started</option>
-        <option value="ok">Hours in</option>
+        <option value="miss">Missing hours</option>
+        <option value="ok">Complete</option>
         <option value="idle">Not expected</option>
       </select></label>
   </div>
@@ -104,7 +107,7 @@
         <tbody>
           {% for r in rows %}
           {% set st = row_state(r)|trim %}
-          <tr class="ff-row {{ 'is-attn' if st == 'attn' else 'is-ok' if st == 'ok' else 'is-idle' if st == 'idle' else '' }}" data-state="{{ st }}">
+          <tr class="ff-row {{ 'is-attn' if st == 'attn' else 'is-miss' if st == 'miss' else 'is-ok' if st == 'ok' else 'is-idle' if st == 'idle' else '' }}" data-state="{{ st }}">
             <td data-v="{{ r.parish_name|lower }}" title="{{ r.parish_name }}"><a href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{{ r.parish_name }}</a>{% if r.parish_code %} <span class="c-muted">({{ r.parish_code }})</span>{% endif %}</td>
             <td>
               {% if r.not_expected %}<span class="badge badge-skipped">Not Expected</span>
@@ -138,7 +141,7 @@
     </div>
     <div class="ff-foot">
       <span class="ff-count" data-ff-count>{{ rows|length }} shown</span>
-      <span class="ff-count">{{ rows|length }} parishes &middot; {{ ns.attn }} to review &middot; {{ ns.wait }} not started</span>
+      <span class="ff-count">{{ rows|length }} parishes &middot; {{ ns.attn }} to review &middot; {{ ns.miss }} missing hours</span>
     </div>
   </div>
 
