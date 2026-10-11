@@ -6,6 +6,7 @@
  *  - a search box [data-ff-search] and any number of selects [data-ff-filter="<attr>"] hide rows
  *    (a row's tr.dataset.<attr> must equal the select's value; "" shows all);
  *  - [data-ff-count] shows how many rows are showing;
+ *  - a styled tip on any element with data-tip (use it instead of title);
  *  - a gold Actions drop-down (button[data-ff-dropdown] + .ff-dropdown-menu) holds a screen's actions;
  *  - a button with data-ff-dialog="<id>" opens a <dialog>; a three-dot row menu lists the links in the row's .ff-menu-src.
  */
@@ -48,6 +49,41 @@
   });
   document.addEventListener('click', function () { setTimeout(closeDropdowns, 0); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDropdowns(); });
+
+  // ---- a styled tip on any element with data-tip (the browser's own title tooltip is plain black and white) ----
+  var tipEl = null, tipTimer = null, tipOwner = null;
+  function hideTip() {
+    clearTimeout(tipTimer);
+    if (tipEl) { tipEl.remove(); tipEl = null; }
+    tipOwner = null;
+  }
+  document.addEventListener('mouseover', function (e) {
+    var el = e.target.closest ? e.target.closest('[data-tip]') : null;
+    if (!el || el === tipOwner) return;
+    hideTip();
+    tipOwner = el;
+    tipTimer = setTimeout(function () {
+      var text = el.getAttribute('data-tip');
+      if (!text) return;
+      tipEl = document.createElement('div');
+      tipEl.className = 'ff-tip';
+      tipEl.setAttribute('role', 'tooltip');
+      tipEl.textContent = text;
+      document.body.appendChild(tipEl);
+      var r = el.getBoundingClientRect();
+      var w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+      var left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+      var top = r.bottom + 6;
+      if (top + h > window.innerHeight - 8) top = r.top - h - 6;
+      tipEl.style.left = left + 'px';
+      tipEl.style.top = top + 'px';
+    }, 180);
+  });
+  document.addEventListener('mouseout', function (e) {
+    if (tipOwner && (!e.relatedTarget || !tipOwner.contains(e.relatedTarget))) hideTip();
+  });
+  document.addEventListener('scroll', hideTip, true);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideTip(); });
 
   // ---- pop-ups: a button with data-ff-dialog="<id>" opens that <dialog>; data-ff-close closes it ----
   document.querySelectorAll('[data-ff-dialog]').forEach(function (btn) {
