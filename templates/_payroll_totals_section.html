@@ -36,6 +36,7 @@ Email check: no email found.{% endif %}{% endset %}
       </td>
       <td><span class="te-src"{% if tip|trim %} data-tip="{{ tip|trim }}"{% endif %}>{{ r.source|capitalize }}</span>{% if r.pdf_url %}<button type="button" class="te-pdf" data-pdf-pop data-pdf-src="{{ r.pdf_url }}" aria-label="Open the email PDF">PDF</button>{% endif %}</td>
       <td><span class="{{ 'ph-state-ok' if r.state == 'ok' else 'ph-state-attn' }}">{{ r.state_label }}</span>
+        {% if 'auto_accepted' in r.flags %}<span class="te-flag sub">Accepted automatically</span>{% endif %}
         {% if 'jump' in r.flags %}<span class="te-flag ph-state-attn">Much higher than usual</span>{% endif %}
         {% if 'inactive_employee' in r.flags %}<span class="te-flag ph-state-attn">Inactive employee</span>{% endif %}
         {% if 'not_hourly' in r.flags %}<span class="te-flag sub">Not an hourly employee (information only)</span>{% endif %}

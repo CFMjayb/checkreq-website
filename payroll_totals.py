@@ -178,6 +178,42 @@ def _flags_for(cur, staff: dict | None, category_id: int, hours: Decimal, period
     return sorted(set(flags))
 
 
+AUTO_ACCEPT_SETTING = "payroll_auto_accept_confidence"   # checkreq.app_settings; "0", "off" or blank turns it off
+AUTO_ACCEPT_DEFAULT = Decimal("0.80")
+AUTO_ACCEPT_TOLERANCE = Decimal("0.25")                  # within 25% of the person's recent confirmed average
+
+
+def auto_accept_threshold() -> Decimal | None:
+    """The confidence needed to confirm an emailed line on arrival, or None when the feature is off."""
+    try:
+        import app_settings
+        raw = (app_settings.get_setting(AUTO_ACCEPT_SETTING, str(AUTO_ACCEPT_DEFAULT)) or "").strip().lower()
+    except Exception:
+        raw = str(AUTO_ACCEPT_DEFAULT)
+    if raw in ("", "0", "off", "false", "no"):
+        return None
+    try:
+        t = Decimal(raw)
+    except (InvalidOperation, ValueError):
+        return AUTO_ACCEPT_DEFAULT
+    return t if Decimal(0) < t <= Decimal(1) else AUTO_ACCEPT_DEFAULT
+
+
+def _auto_accept(cur, staff, category_id: int, hours: Decimal, period: dict, conf, flags: list[str]) -> str | None:
+    """A short reason (for the edit log) when this NEW emailed line may be confirmed on arrival, else None.
+    All of: confidence at the setting or above; a roster person; no attention flag; a recent confirmed average
+    exists (so there is something to compare with); the hours are within 25% of it."""
+    if staff is None or conf is None or set(flags) & set(ATTENTION_FLAGS) or "pending_hire" in flags:
+        return None
+    need = auto_accept_threshold()
+    if need is None or Decimal(conf) < need:
+        return None
+    avg = _recent_average(cur, staff["id"], category_id, period["period_start"])
+    if avg is None or avg <= 0 or abs(hours - avg) > avg * AUTO_ACCEPT_TOLERANCE:
+        return None
+    return f"Accepted automatically: confidence {Decimal(conf):.2f}, within 25% of the usual {avg:.2f}"
+
+
 # ------------------------------------------------------------------- B2: reads
 
 def list_periods(org_id: int) -> list[dict]:
@@ -323,6 +359,11 @@ def record_period_hours(org_id: int, *, period_id: int, parish_code: str, catego
             if cur_line is None:
                 flags = _flags_for(cur, staff, cat["id"], h, period,
                                    extra=(["pending_hire"] if staff is None else []))
+                auto_note = None
+                if new_status == "needs_review" and status is None and source == "email":
+                    auto_note = _auto_accept(cur, staff, cat["id"], h, period, conf, flags)
+                    if auto_note:
+                        new_status, flags = "confirmed", sorted(set(flags) | {"auto_accepted"})
                 cur.execute(
                     "INSERT INTO portal.time_period_totals (period_id, staff_id, pending_change_id, category_id, "
                     "hours, source, source_ref, source_quote, confidence, review_status, flags, "
@@ -336,7 +377,7 @@ def record_period_hours(org_id: int, *, period_id: int, parish_code: str, catego
                 ins = cur.fetchone()
                 if ins:
                     _log_edit(cur, ins["id"], None, h, None, new_status, actor, source,
-                              "Recorded" + (f" ({ref})" if ref else ""))
+                              "Recorded" + (f" ({ref})" if ref else "") + (f". {auto_note}" if auto_note else ""))
                     _unfinalize(cur, period_id)
                     conn.commit()
                     return {"action": "created", "line_id": ins["id"], "review_status": new_status,
@@ -374,6 +415,11 @@ def record_period_hours(org_id: int, *, period_id: int, parish_code: str, catego
             # needs_review or rejected: take the new figure, back to needs_review
             flags = _flags_for(cur, staff, cat["id"], h, period,
                                extra=(["pending_hire"] if staff is None else []))
+            auto_note = None
+            if new_status == "needs_review" and status is None and source == "email":
+                auto_note = _auto_accept(cur, staff, cat["id"], h, period, conf, flags)
+                if auto_note:
+                    new_status, flags = "confirmed", sorted(set(flags) | {"auto_accepted"})
             cur.execute(
                 "UPDATE portal.time_period_totals SET hours = %s, source = %s, source_ref = %s, source_quote = %s, "
                 "confidence = %s, review_status = %s, flags = %s, proposed_hours = NULL, proposed_source_ref = NULL, "
@@ -382,7 +428,7 @@ def record_period_hours(org_id: int, *, period_id: int, parish_code: str, catego
                  actor if new_status == "confirmed" else None,
                  dt.datetime.now(dt.timezone.utc) if new_status == "confirmed" else None, line["id"]))
             _log_edit(cur, line["id"], old, h, line["review_status"], new_status, actor, source,
-                      "Updated by a later source" + (f" ({ref})" if ref else ""))
+                      "Updated by a later source" + (f" ({ref})" if ref else "") + (f". {auto_note}" if auto_note else ""))
             _unfinalize(cur, period_id)
             conn.commit()
             return {"action": "updated", "line_id": line["id"], "review_status": new_status, "flags": flags,
