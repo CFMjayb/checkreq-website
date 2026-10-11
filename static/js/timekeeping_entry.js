@@ -83,7 +83,11 @@
       cell.total.classList.add('is-sum');
       cell.total.setAttribute('data-tip', 'Entered by day. Clear the days to type a period total instead.');
     } else {
-      if (wasDays) cell.total.value = cell.initialMode === 'days' ? cell.initialTotal : '';
+      if (wasDays) {
+        // leaving days: normally back to the stored total (or blank); after 'Clear days, keep totals', the sum that was there
+        cell.total.value = cell.keep != null ? fmt(cell.keep) : (cell.initialMode === 'days' ? cell.initialTotal : '');
+        cell.keep = null;
+      }
       cell.total.classList.remove('is-sum');
       cell.total.removeAttribute('data-tip');
       cell.total.readOnly = locked || !cell.editable;
@@ -100,6 +104,35 @@
     });
   }
 
+  // 'Clear days, keep totals': empty the day boxes, keep each type's sum as its (now editable) total.
+  function clearDays(cell) {
+    if (!cell.editable || cell.total.dataset.locked === '1' || !anyDay(cell)) return false;
+    var sum = daySum(cell);
+    cell.days.forEach(function (el) { if (!el.disabled) el.value = ''; });
+    cell.keep = sum;
+    applyMode(cell);
+    return true;
+  }
+  function clearAfter(changed) {
+    recalc();
+    if (!changed && msgEl) { msgEl.textContent = 'Nothing to clear here, or these totals are locked.'; msgEl.className = 'ff-msg'; }
+  }
+  table.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('[data-te-cleardays]');
+    if (!b) return;
+    var any = false;
+    cellList.forEach(function (cell) { if (cell.s === b.dataset.s && clearDays(cell)) any = true; });
+    clearAfter(any);
+  });
+  table.addEventListener('contextmenu', function (e) {
+    var td = e.target.closest && e.target.closest('td.te-catlabel[data-c]');
+    if (!td) return;
+    e.preventDefault();
+    var any = false;
+    cellList.forEach(function (cell) { if (cell.s === td.dataset.s && cell.c === td.dataset.c && clearDays(cell)) any = true; });
+    clearAfter(any);
+  });
+
   // ---- live totals ---------------------------------------------------------------------------------------
   function recalc() {
     var grand = 0;
@@ -110,6 +143,10 @@
         if (cell.s !== s) return;
         var v = cell.mode === 'days' ? daySum(cell) : num(cell.total.value);
         if (cell.ctot) cell.ctot.textContent = fmt(v);
+        tb.querySelectorAll('[data-te-sumtype][data-c="' + cell.c + '"]').forEach(function (el) {
+          el.textContent = fmt(v);
+          if (el.parentNode) el.parentNode.hidden = v <= 0;   // a type with nothing in it is not listed
+        });
         etot += v;
         cell.days.forEach(function (el) { var i = el.dataset.i; perDay[i] = (perDay[i] || 0) + num(el.value); });
       });

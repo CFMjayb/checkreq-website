@@ -67,6 +67,10 @@ table.te-table { table-layout: fixed; }
 .te-name { font-weight: 600; }
 .te-pos { font-size: 0.78rem; margin-left: 4px; }
 .te-when-open { display: none; }
+.te-sumtype { display: inline-flex; align-items: baseline; gap: 4px; margin: 0 14px 0 0; font-size: 0.8rem; color: var(--color-muted, #6b645a); white-space: nowrap; }
+.te-sumtype strong { color: var(--color-ink, #2b2b2b); font-variant-numeric: tabular-nums; }
+.te-sumtype[hidden] { display: none; }
+.te-clear { margin-left: 6px; height: 22px; padding: 0 10px; font-size: 0.75rem; }
 .te-emp.is-open .te-when-closed { display: none; }
 .te-emp.is-open .te-when-open { display: inline; }
 .te-emp:not(.is-open) .te-detail { display: none; }

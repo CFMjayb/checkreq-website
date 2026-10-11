@@ -57,7 +57,7 @@
   {% else %}
 
   <div class="ff-info">
-    <strong>{{ parish.name }}</strong>
+    <strong data-tip="{{ parish.name }}">{% if parish.code %}{{ parish.code }} {% endif %}{{ parish.short_name or parish.name }}</strong>
     <span>&middot; Period <strong>{{ period.label or (period.period_start.strftime('%m/%d/%y') ~ " to " ~ period.period_end.strftime('%m/%d/%y')) }}</strong></span>
     {% if period.submission_deadline %}<span>&middot; Submit by {{ period.submission_deadline.strftime('%m/%d/%y') }}</span>{% endif %}
     <span>&middot;
@@ -142,14 +142,17 @@
                   {% endfor %}
                   <span class="te-note">{{ 'Entered by day. Expand to change.' if any_days.v else 'Expand to enter by day.' }}</span>
                 </span>
-                <span class="te-when-open te-note">Entering by day. Collapse to type a period total instead.</span>
+                <span class="te-when-open">
+                  {% for c in categories %}{% set cs = cells[(s.id, c.id)].sum %}<span class="te-sumtype"{% if cs <= 0 %} hidden{% endif %}>{{ c.label }} <strong data-te-sumtype data-s="{{ s.id }}" data-c="{{ c.id }}">{{ '%.2f'|format(cs) }}</strong></span>{% endfor %}
+                  {% if editable %}<button type="button" class="btn btn-sm te-clear" data-te-cleardays data-s="{{ s.id }}" data-tip="Empties the day boxes and keeps each type's total, which you can then edit.">Clear days, keep totals</button>{% endif %}
+                </span>
               </td>
               <td class="te-r"><strong data-te-etotal data-s="{{ s.id }}">{{ '%.2f'|format(es.sum) }}</strong></td>
             </tr>
             {% for c in categories %}
             {% set cell = cells[(s.id, c.id)] %}
             <tr class="te-detail te-cat-row">
-              <td class="te-l te-catlabel">{{ c.label }}{% if cell.conflict %}<span class="te-conflict" data-tip="A period total of {{ '%.2f'|format(cell.total) }} also exists. The reviewer decides which to use.">conflict</span>{% endif %}</td>
+              <td class="te-l te-catlabel" data-s="{{ s.id }}" data-c="{{ c.id }}"{% if editable %} data-tip="Right-click to clear this type's days and keep its total."{% endif %}>{{ c.label }}{% if cell.conflict %}<span class="te-conflict" data-tip="A period total of {{ '%.2f'|format(cell.total) }} also exists. The reviewer decides which to use.">conflict</span>{% endif %}</td>
               {% for d in dates %}
               {% set val = entries.get((s.id, c.id, d)) %}
               <td class="te-dc{{ ' te-we' if d.weekday() >= 5 }}"><input type="text" inputmode="decimal" autocomplete="off" maxlength="5" class="te-day"
