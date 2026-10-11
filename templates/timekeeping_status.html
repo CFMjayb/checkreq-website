@@ -59,7 +59,7 @@
     <span>{{ dt(period.period_start) }} &ndash; {{ dt(period.period_end) }}</span>
     {% if period.submission_deadline %}<span>submit by {{ dt(period.submission_deadline) }}</span>{% endif %}
     {% if period.pay_date %}<span>pay date {{ dt(period.pay_date) }}</span>{% endif %}
-    <span>Every active parish under {{ current_org.name }}</span>
+    <span>Parishes under {{ current_org.name }} with timekeeping turned on</span>
   </div>
 
   {% if request.query_params.get('error') %}<div class="banner banner-error ff-banner">{{ request.query_params.get('error') }}</div>{% endif %}
