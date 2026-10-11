@@ -214,6 +214,8 @@ def status_board(period_id: int, request: Request):
         "current_org": org, "period": period, "rows": rows,
         "other_open": other_open, "today": dt.date.today().isoformat(),
         "payroll": payroll_summary,
+        # every period of the diocese, newest first, for the Change period pop-up
+        "all_periods": timekeeping.list_periods(org["id"]),
     })
 
 

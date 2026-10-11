@@ -5,6 +5,7 @@
  *  - a search box [data-ff-search] and any number of selects [data-ff-filter="<attr>"] hide rows
  *    (a row's tr.dataset.<attr> must equal the select's value; "" shows all);
  *  - [data-ff-count] shows how many rows are showing;
+ *  - a gold Actions drop-down (button[data-ff-dropdown] + .ff-dropdown-menu) holds a screen's actions;
  *  - a button with data-ff-dialog="<id>" opens a <dialog>; a three-dot row menu lists the links in the row's .ff-menu-src.
  */
 (function () {
@@ -29,6 +30,23 @@
   window.addEventListener('resize', fit);
   fit();
   window.addEventListener('load', fit);   // the sticky header / banners can shift the offset after first paint
+
+  // ---- an Actions drop-down: a button with data-ff-dropdown toggles the .ff-dropdown-menu right after it ----
+  function closeDropdowns() {
+    document.querySelectorAll('.ff-dropdown-menu').forEach(function (m) { m.hidden = true; });
+    document.querySelectorAll('[data-ff-dropdown]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
+  }
+  document.querySelectorAll('[data-ff-dropdown]').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var menu = btn.nextElementSibling;
+      var wasOpen = menu && !menu.hidden;
+      closeDropdowns();
+      if (menu && !wasOpen) { menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); }
+    });
+  });
+  document.addEventListener('click', function () { setTimeout(closeDropdowns, 0); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDropdowns(); });
 
   // ---- pop-ups: a button with data-ff-dialog="<id>" opens that <dialog>; data-ff-close closes it ----
   document.querySelectorAll('[data-ff-dialog]').forEach(function (btn) {
