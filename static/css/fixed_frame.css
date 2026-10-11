@@ -1,0 +1,120 @@
+/* The fixed frame: THE standard for any Beacon screen whose rows run longer than a page.
+   (Jay, 2026-10-10: "the way this screen was built [Employees] is how we build all screens
+   that have scrolling rows more than a page long.")
+
+   Locked at the top: a one-line title row (heading, back link, buttons on the right), an
+   optional info line, the filters (a plain row, no box), then the column headers.
+   Only the rows scroll. Locked at the bottom: a bar with the counts and the page's actions.
+   static/js/fixed_frame.js fits the frame to the window, sorts on a header click and runs the
+   search / filter boxes. The calc() below is only the fallback before the script runs.
+
+   Markup (see templates/timekeeping_status.html for a full example):
+     <div class="page-shell-wide"><div class="ff-shell">
+       <div class="ff-title-row"><h1>..</h1><a class="ff-back">..</a><div class="ff-actions">..</div></div>
+       <div class="ff-info">..</div>                       (optional)
+       <div class="ff-filters">..</div>                    (optional)
+       <div class="ff-frame">
+         <div class="ff-scroll"><table class="ff-table"><colgroup/><thead/><tbody><tr class="ff-row">..</table></div>
+         <div class="ff-foot">..</div>
+       </div>
+     </div></div>
+   Employees (timekeeping_employees.css) was built first and still carries its own copy of this
+   layout under the emp- names; new screens use these ff- names. */
+
+.ff-shell {
+  display: flex; flex-direction: column; gap: 6px;
+  height: calc(100vh - 190px); min-height: 320px;
+}
+
+/* The frame fills the window between the site header and footer, so trim the page padding and
+   the footer's top margin (the footer is shared; only pages that contain this frame change). */
+.page-shell-wide:has(.ff-shell) { padding-top: 10px; padding-bottom: 6px; }
+body:has(.ff-shell) > footer { margin-top: 6px !important; padding-top: 8px !important; padding-bottom: 8px !important; }
+
+/* Title row: heading and back link on the left, the page's buttons on the right. */
+.ff-title-row { display: flex; align-items: baseline; gap: 14px; flex: 0 0 auto; }
+.ff-title-row h1 { margin: 0; font-size: 1.45rem; line-height: 1.2; }
+.ff-back { font-size: 0.85rem; }
+.ff-actions { margin-left: auto; align-self: center; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ff-actions form, .ff-foot form { display: inline-flex; margin: 0; }
+
+.ff-banner { margin: 0; padding: 6px 10px; flex: 0 0 auto; }
+
+/* One plain info line (e.g. the period) with an optional compact control on the right. */
+.ff-info { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex: 0 0 auto; font-size: 0.85rem; color: var(--color-muted, #6b645a); }
+.ff-info strong { color: var(--color-ink, #2b2b2b); }
+.ff-info .ff-right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.ff-info form { display: flex; gap: 6px; align-items: center; margin: 0; }
+.ff-info select { height: 26px; padding: 2px 6px; font-size: 0.85rem; margin: 0; width: auto; }
+
+/* Filters: a plain row, no box around it. */
+.ff-filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
+  flex: 0 0 auto; margin: 0; padding: 0;
+}
+.ff-filters label { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--color-muted, #6b645a); margin: 0; }
+.ff-filters select, .ff-filters input[type=text] { height: 26px; padding: 2px 6px; font-size: 0.85rem; margin: 0; width: auto; }
+
+/* The frame around the table and the bottom bar. */
+.ff-frame {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; margin: 0;
+  border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; background: #fff; overflow: hidden;
+}
+.ff-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+
+table.ff-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 0.85rem; }
+.ff-table thead th {
+  position: sticky; top: 0; z-index: 3; background: #f1ede2; text-align: left;
+  padding: 5px 8px; border-bottom: 1px solid var(--color-border, #ddd4c0);
+  font-weight: 600; user-select: none; white-space: nowrap;
+}
+.ff-table thead th[data-sort] { cursor: pointer; }
+.ff-table thead th .arrow { display: inline-block; width: 14px; font-size: 0.65rem; color: var(--color-muted, #6b645a); margin-left: 3px; }
+.ff-table td { padding: 1px 8px; height: 28px; border-bottom: 1px solid rgba(0, 0, 0, 0.06); vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ff-table tr[hidden] { display: none; }
+.ff-table .c-center { text-align: center; }
+.ff-table .c-num { text-align: right; font-variant-numeric: tabular-nums; }
+.ff-table .c-muted { color: var(--color-muted, #6b645a); }
+.ff-table .badge { padding: 1px 8px; font-size: 0.75rem; white-space: nowrap; }
+.ff-table .ff-link { margin-right: 10px; }
+.ff-empty td { text-align: center; color: var(--color-muted, #6b645a); padding: 18px; }
+
+/* Row colour: green = fine, faded red = needs a person, grey = nothing expected. */
+.ff-table tr.ff-row.is-ok { background: #e8f3e6; }
+.ff-table tr.ff-row.is-attn { background: #f6e0e0; }
+.ff-table tr.ff-row.is-idle { background: #f4f1ea; color: #8a847a; }
+
+/* The bottom bar, locked at the bottom of the frame. */
+.ff-foot {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 12px; padding: 6px 10px;
+  border-top: 1px solid var(--color-border, #ddd4c0); background: #f7f3ea; flex-wrap: wrap;
+}
+.ff-foot .ff-count { font-size: 0.8rem; color: var(--color-muted, #6b645a); }
+.ff-foot .ff-msg { font-size: 0.85rem; font-weight: 600; margin-left: auto; }
+.ff-foot .ff-msg.ok { color: #1f6b3a; }
+.ff-foot .ff-msg.attn { color: #9c0006; }
+.ff-foot .ff-buttons { display: flex; gap: 6px; align-items: center; }
+
+/* The state pill beside the heading: Open, Closed or Future, very clearly designated. */
+.ff-state { display: inline-block; align-self: center; padding: 3px 14px; border-radius: 999px; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.03em; }
+.ff-state.open { background: #e0f0e6; color: var(--color-success); }
+.ff-state.closed { background: #ece7da; color: var(--color-text-muted); }
+.ff-state.future { background: #fdf0d6; color: #8a5a00; }
+.ff-state.final { background: #dfe9e2; color: var(--color-franciscan-green); }
+
+/* A small pop-up for an action that needs one choice (opened by a button with data-ff-dialog). */
+dialog.ff-dialog { border: 1px solid var(--color-border, #ddd4c0); border-radius: 8px; padding: 14px 18px; width: min(420px, 92vw); }
+dialog.ff-dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+dialog.ff-dialog h2 { margin: 0 0 10px; font-size: 1.15rem; }
+dialog.ff-dialog select { width: 100%; box-sizing: border-box; }
+dialog.ff-dialog .sub { font-size: 0.82rem; margin: 8px 0 0; }
+.ff-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+/* The three-dot row menu: one shared popup, positioned by the script (fixed, so the scrolling
+   table cannot clip it). Each row carries its links in a hidden .ff-menu-src. */
+.ff-menu-btn { background: none; border: 0; cursor: pointer; font-size: 1.15rem; line-height: 1; padding: 2px 8px; border-radius: 4px; color: var(--color-ink, #2b2b2b); }
+.ff-menu-btn:hover, .ff-menu-btn[aria-expanded=true] { background: rgba(0, 0, 0, 0.08); }
+.ff-table .c-menu { text-align: center; padding: 0; overflow: visible; }
+.ff-menu { position: fixed; z-index: 50; min-width: 170px; background: #fff; border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; padding: 4px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); }
+.ff-menu a { display: block; padding: 6px 10px; border-radius: 4px; font-size: 0.9rem; color: var(--color-ink, #2b2b2b); text-decoration: none; white-space: nowrap; }
+.ff-menu a:hover { background: #f1ede2; }

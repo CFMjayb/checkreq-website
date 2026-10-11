@@ -1,132 +1,166 @@
 {% extends "base.html" %}
 {% block title %}Timekeeping Status — {{ current_org.name }}{% endblock %}
-{% block content %}
-<div class="page-shell-wide">
+{#
+  Timekeeping Status -- built on the shared fixed frame (static/css/fixed_frame.css + js/fixed_frame.js):
+  the title row, the period line and the filters stay at the top, the column headers stay under them,
+  the counts stay at the bottom, and ONLY the parish rows scroll between them. This is how every Beacon
+  screen with scrolling rows is built (Jay, 2026-10-10).
+
+  Pills: the Open / Closed / Future pill by the heading is the period's state. Gold buttons at the top
+  right are the actions. In the table only the Status column is a pill; everything else is plain text,
+  and a row's actions are in its three-dot menu.
+#}
 {% from "_guide_link.html" import guide_link %}
-<h1>Timekeeping Status {{ guide_link("payroll-hours", "How payroll hours from email work") }}</h1>
-<p class="back-link"><a href="/portal">&larr; Back to main menu</a></p>
-<p class="sub">
-  Every active parish under {{ current_org.name }} for
-  <strong>{{ period.label or (period.period_start|string ~ " to " ~ period.period_end|string) }}</strong>
-  ({{ period.period_start }} to {{ period.period_end }}{% if period.submission_deadline %}, submit by
-  {{ period.submission_deadline }}{% endif %}) &middot;
-  {# Status vocabulary is open/closed/future since migration 048 -- 'processed'
-     was retired, so the old three-way check on it could never match. #}
-  <span class="badge {{ 'badge-draft' if period.status == 'open' else 'badge-submitted' if period.status == 'closed' else 'badge-skipped' }}">{{ period.status|capitalize }}</span>
-  {% if period.pay_date %}&middot; pay date {{ period.pay_date }}{% endif %}
-</p>
+{% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
+{% macro row_state(r) -%}
+{%- if r.not_expected -%}idle{%- elif r.needs_review or r.conflicts or r.proposals -%}attn{%- elif not r.submission_id and not r.recorded -%}wait{%- else -%}ok{%- endif -%}
+{%- endmacro %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+<link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
+{% endblock %}
+{% block content %}
+{% set ns = namespace(attn=0, wait=0) %}
+{% for r in rows %}{% set st = row_state(r)|trim %}{% if st == 'attn' %}{% set ns.attn = ns.attn + 1 %}{% elif st == 'wait' %}{% set ns.wait = ns.wait + 1 %}{% endif %}{% endfor %}
+<div class="page-shell-wide">
+<div class="ff-shell">
 
-{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
-{# Renders the message as-is. The old wording ("Saved N cell(s).") assumed a
-   cell count, but the backfill save redirects to the per-parish screen, not
-   here -- so it was never reachable, and this banner now carries real text. #}
-{% if request.query_params.get('saved') %}<div class="banner banner-success">{{ request.query_params.get('saved') }}</div>{% endif %}
+  <div class="ff-title-row">
+    <h1>Timekeeping Status {{ guide_link("payroll-hours", "How payroll hours from email work") }}</h1>
+    <span class="ff-state {{ period.status }}" title="This period is {{ period.status }}. Only an Open period accepts hours.">{{ period.status|capitalize }}</span>
+    {% if payroll.final and not payroll.left %}<span class="ff-state final" title="Hours were marked Final{% if payroll.final_at %} {{ payroll.final_at }}{% endif %}">Final</span>{% endif %}
+    <a class="ff-back" href="/portal">&larr; Back to main menu</a>
+    <div class="ff-actions">
+      <button type="button" class="btn btn-sm btn-primary" data-ff-dialog="setPeriodDialog">Set period</button>
+      <a class="btn btn-sm btn-primary" href="/admin/timekeeping/status/{{ period.id }}/export">Excel for Checkwriters</a>
+      <a class="btn btn-sm btn-primary" href="/admin/timekeeping/status/{{ period.id }}/variance">Variance report</a>
+      {% if payroll.final %}
+      <form method="post" action="/admin/timekeeping/status/{{ period.id }}/unfinal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm btn-primary" type="submit">Mark not final</button></form>
+      {% elif not payroll.left %}
+      <form method="post" action="/admin/timekeeping/status/{{ period.id }}/final"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm btn-primary" type="submit">Mark hours Final</button></form>
+      {% endif %}
+      {% if period.status in ('open', 'future') %}
+      <form method="post" action="/admin/timekeeping/status/{{ period.id }}/standing"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm btn-primary" type="submit">Carry forward standing hours</button></form>
+      {% endif %}
+    </div>
+  </div>
 
-{# Open / close control (2026-08-17, Jay: "The Time Status will also have the
-   ability to close and open a period"). Placed here because this is the screen
-   that shows whether every parish has actually submitted, which is the
-   information you need to decide a period is finished. #}
-<div class="card">
-  <p class="sub" style="margin-top:0">Only an <strong>Open</strong> period accepts hours entry or
-  submission — from a parish or from this screen. <strong>Closed</strong> and <strong>Future</strong>
-  are both read-only.</p>
+  <div class="ff-info">
+    <strong>{{ period.label or (dt(period.period_start) ~ " to " ~ dt(period.period_end)) }}</strong>
+    <span>{{ dt(period.period_start) }} &ndash; {{ dt(period.period_end) }}</span>
+    {% if period.submission_deadline %}<span>submit by {{ dt(period.submission_deadline) }}</span>{% endif %}
+    {% if period.pay_date %}<span>pay date {{ dt(period.pay_date) }}</span>{% endif %}
+    <span>Every active parish under {{ current_org.name }}</span>
+  </div>
+
+  {% if request.query_params.get('error') %}<div class="banner banner-error ff-banner">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% if request.query_params.get('saved') %}<div class="banner banner-success ff-banner">{{ request.query_params.get('saved') }}</div>{% endif %}
   {% if other_open %}
-  <div class="banner banner-info">
-    {% for o in other_open %}<strong>{{ o.label }}</strong> ({{ o.period_start }} to {{ o.period_end }}){% if not loop.last %}, {% endif %}{% endfor %}
-    {{ 'is' if other_open|length == 1 else 'are' }} also open. A parish's entry grid only ever targets
-    one period — the open one containing today — so any other open period is reachable by nobody.
-    Consider closing {{ 'it' if other_open|length == 1 else 'them' }}.
+  <div class="banner banner-info ff-banner">
+    {% for o in other_open %}<strong>{{ o.label }}</strong> ({{ dt(o.period_start) }} to {{ dt(o.period_end) }}){% if not loop.last %}, {% endif %}{% endfor %}
+    {{ 'is' if other_open|length == 1 else 'are' }} also open. A parish's entry grid only ever targets the open period containing today, so another open period is reachable by nobody. Consider closing {{ 'it' if other_open|length == 1 else 'them' }}.
   </div>
   {% endif %}
-  <form method="post" action="/admin/timekeeping/status/{{ period.id }}/set-status"
-        style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <label>Set this period to
-      <select name="status">
-        <option value="open"{% if period.status == 'open' %} selected{% endif %}>Open — accepting hours</option>
-        <option value="closed"{% if period.status == 'closed' %} selected{% endif %}>Closed — read-only</option>
-        <option value="future"{% if period.status == 'future' %} selected{% endif %}
-                {% if period.period_start and period.period_start|string <= today %}disabled{% endif %}>
-          Future — not started yet{% if period.period_start and period.period_start|string <= today %} (unavailable: already started){% endif %}
-        </option>
+
+  <div class="ff-filters">
+    <label>Search <input type="text" data-ff-search placeholder="parish name or code"></label>
+    <label>Show
+      <select data-ff-filter="state">
+        <option value="">All parishes</option>
+        <option value="attn">Needs review</option>
+        <option value="wait">Not started</option>
+        <option value="ok">Hours in</option>
+        <option value="idle">Not expected</option>
       </select></label>
-    <button type="submit" class="btn btn-sm">Apply</button>
+  </div>
+
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      <table class="ff-table">
+        <colgroup>
+          <col style="width:22%"><col style="width:11%"><col style="width:9%"><col style="width:11%"><col style="width:7%">
+          <col style="width:12%"><col style="width:7%"><col style="width:12%"><col style="width:11%"><col style="width:44px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th data-sort="1" data-dir="asc">Parish<span class="arrow">&#9650;</span></th>
+            <th data-sort="1">Status<span class="arrow"></span></th>
+            <th data-sort="1">Channel<span class="arrow"></span></th>
+            <th data-sort="1">Expected<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num">Emails<span class="arrow"></span></th>
+            <th data-sort="1">To review<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num">Hours<span class="arrow"></span></th>
+            <th data-sort="1">Submitted by<span class="arrow"></span></th>
+            <th data-sort="1">Submitted<span class="arrow"></span></th>
+            <th class="c-menu" aria-label="Actions"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          {% set st = row_state(r)|trim %}
+          <tr class="ff-row {{ 'is-attn' if st == 'attn' else 'is-ok' if st == 'ok' else 'is-idle' if st == 'idle' else '' }}" data-state="{{ st }}">
+            <td data-v="{{ r.parish_name|lower }}" title="{{ r.parish_name }}"><a href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{{ r.parish_name }}</a>{% if r.parish_code %} <span class="c-muted">({{ r.parish_code }})</span>{% endif %}</td>
+            <td>
+              {% if r.not_expected %}<span class="badge badge-skipped">Not Expected</span>
+              {% elif not r.submission_id and r.recorded %}<span class="badge badge-submitted">Hours recorded</span>
+              {% elif not r.submission_id %}<span class="badge badge-cancelled">Not Started</span>
+              {% elif r.by_email %}<span class="badge badge-submitted">Received by email</span>
+              {% elif r.submission_status == 'submitted' %}<span class="badge badge-submitted">Submitted</span>
+              {% elif r.submission_status == 'reopened' %}<span class="badge badge-pending">Reopened</span>
+              {% else %}<span class="badge badge-draft">Draft</span>{% endif %}
+            </td>
+            <td>{{ r.channel_label or "—" }}</td>
+            <td>{{ r.pattern_label or "—" }}</td>
+            <td class="c-num" data-v="{{ r.emails or 0 }}"{% if r.first_received %} title="First received {{ r.first_received }}"{% endif %}>{{ r.emails or "—" }}</td>
+            <td data-v="{{ r.needs_review + r.proposals + r.conflicts }}">{% if r.needs_review or r.conflicts or r.proposals %}<span class="ph-state-attn">{{ r.needs_review + r.proposals }} to review{% if r.conflicts %}, {{ r.conflicts }} conflict{{ '' if r.conflicts == 1 else 's' }}{% endif %}</span>{% else %}—{% endif %}</td>
+            <td class="c-num" data-v="{{ r.total_hours or 0 }}">{{ "%.2f"|format(r.total_hours) if r.total_hours else "—" }}</td>
+            <td title="{{ r.submitted_by_email or '' }}">{{ r.submitted_by_name or r.submitted_by_email or "—" }}</td>
+            <td data-v="{{ r.submitted_at.isoformat() if r.submitted_at else '' }}">{{ r.submitted_at.strftime("%m/%d/%y %H:%M") if r.submitted_at else "—" }}</td>
+            <td class="c-menu">
+              <button type="button" class="ff-menu-btn" aria-label="Row actions" aria-haspopup="menu">&#8942;</button>
+              <div class="ff-menu-src" hidden>
+                <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{{ "Enter missing data" if not r.submission_id and not r.recorded else "View / edit hours" }}</a>
+                <a role="menuitem" href="/admin/timekeeping/parish-profile/{{ r.parish_id }}">Parish profile</a>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr class="ff-empty"><td colspan="10">No active parishes found for this diocese.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count" data-ff-count>{{ rows|length }} shown</span>
+      <span class="ff-count">{{ rows|length }} parishes &middot; {{ ns.attn }} to review &middot; {{ ns.wait }} not started</span>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<dialog class="ff-dialog" id="setPeriodDialog">
+  <form method="post" action="/admin/timekeeping/status/{{ period.id }}/set-status">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <h2>Set this period</h2>
+    <select name="status" aria-label="Period state">
+      <option value="open"{% if period.status == 'open' %} selected{% endif %}>Open — accepting hours</option>
+      <option value="closed"{% if period.status == 'closed' %} selected{% endif %}>Closed — read-only</option>
+      <option value="future"{% if period.status == 'future' %} selected{% endif %}
+              {% if period.period_start and period.period_start|string <= today %}disabled{% endif %}>
+        Future — not started yet{% if period.period_start and period.period_start|string <= today %} (unavailable: already started){% endif %}
+      </option>
+    </select>
+    <p class="sub">Only an Open period accepts hours, from a parish or from this screen. Closed and Future are read-only.</p>
+    <div class="ff-dialog-actions">
+      <button type="button" class="btn btn-sm btn-secondary" data-ff-close>Cancel</button>
+      <button type="submit" class="btn btn-sm btn-primary">Apply</button>
+    </div>
   </form>
-</div>
-
-{# 26-158: the hours picture for this period -- what still needs a decision, the Final stamp,
-   the Excel export (the Checkwriters entry sheet) and the variance report. #}
-<link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
-<div class="card">
-  <div class="{{ 'ph-final' if payroll.final and not payroll.left else 'ph-notfinal' }}">
-    {% if payroll.final and not payroll.left %}
-      <strong>Hours are Final</strong>{% if payroll.final_at %} <span class="sub">(marked {{ payroll.final_at }})</span>{% endif %} &mdash; ready to key into Checkwriters.
-    {% elif payroll.left %}
-      <strong>Not final:</strong> {{ payroll.left }} line(s) still need a decision. Open a parish below to review them.
-    {% else %}
-      <strong>Not final:</strong> nothing is waiting. Mark the hours Final when you are ready.
-    {% endif %}
-  </div>
-  <div class="ph-actions" style="margin-top:8px">
-    <a class="btn btn-sm" href="/admin/timekeeping/status/{{ period.id }}/export">Download Excel for Checkwriters</a>
-    <a class="btn btn-sm" href="/admin/timekeeping/status/{{ period.id }}/variance">Variance report</a>
-    {% if payroll.final %}
-    <form class="ph-inline" method="post" action="/admin/timekeeping/status/{{ period.id }}/unfinal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Mark not final</button></form>
-    {% elif not payroll.left %}
-    <form class="ph-inline" method="post" action="/admin/timekeeping/status/{{ period.id }}/final"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Mark hours Final</button></form>
-    {% endif %}
-    {% if period.status in ('open', 'future') %}
-    <form class="ph-inline" method="post" action="/admin/timekeeping/status/{{ period.id }}/standing"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Carry forward standing hours</button></form>
-    {% endif %}
-  </div>
-</div>
-
-<div class="card">
-<div class="table-scroll">
-<table class="simple-table">
-  <tr>
-    <th>Parish</th><th>Status</th><th>Channel</th><th>Expected</th><th>Emails</th><th>To review</th><th>Total Hours</th><th>Submitted By</th><th>Submitted</th><th></th>
-  </tr>
-  {% for r in rows %}
-  <tr>
-    <td>{{ r.parish_name }}{% if r.parish_code %} <span class="sub">({{ r.parish_code }})</span>{% endif %}</td>
-    <td>
-      {% if r.not_expected %}
-        <span class="badge badge-skipped">Not Expected</span>
-      {% elif not r.submission_id and r.recorded %}
-        <span class="badge badge-submitted">Hours recorded</span>
-      {% elif not r.submission_id %}
-        <span class="badge badge-cancelled">Not Started</span>
-      {% elif r.by_email %}
-        <span class="badge badge-submitted">Received by email</span>
-      {% elif r.submission_status == 'submitted' %}
-        <span class="badge badge-submitted">Submitted</span>
-      {% elif r.submission_status == 'reopened' %}
-        <span class="badge badge-pending">Reopened</span>
-      {% else %}
-        <span class="badge badge-draft">Draft</span>
-      {% endif %}
-    </td>
-    <td>{{ r.channel_label or "—" }}</td>
-    <td>{{ r.pattern_label or "—" }}</td>
-    <td>{% if r.emails %}{{ r.emails }}{% if r.first_received %} <span class="sub ph-small">first {{ r.first_received }}</span>{% endif %}{% else %}—{% endif %}</td>
-    <td>{% if r.needs_review or r.conflicts or r.proposals %}<span class="ph-state-attn">{{ r.needs_review + r.proposals }} to review{% if r.conflicts %}, {{ r.conflicts }} conflict{{ '' if r.conflicts == 1 else 's' }}{% endif %}</span>{% else %}—{% endif %}</td>
-    <td>{{ "%.2f"|format(r.total_hours) }}</td>
-    <td>{{ r.submitted_by_name or r.submitted_by_email or "—" }}</td>
-    <td>{{ r.submitted_at.strftime("%Y-%m-%d %H:%M") if r.submitted_at else "—" }}</td>
-    <td><a class="btn btn-sm" href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">
-      {{ "Enter Missing Data" if not r.submission_id and not r.recorded else "View / Edit" }}
-    </a> <a class="btn btn-sm" href="/admin/timekeeping/parish-profile/{{ r.parish_id }}">Profile</a></td>
-  </tr>
-  {% else %}
-  <tr><td colspan="10" class="sub">No active parishes found for this diocese.</td></tr>
-  {% endfor %}
-</table>
-</div>
-</div>
-</div>
+</dialog>
 {% endblock %}
 {% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
 <script>
 document.querySelectorAll('form[method="post" i]').forEach(function (form) {
   form.addEventListener('submit', function (e) {
