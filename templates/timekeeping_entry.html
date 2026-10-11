@@ -1,143 +1,194 @@
 {% extends "base.html" %}
 {% block title %}Timekeeping — {{ parish.name }}{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+<link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
+<link rel="stylesheet" href="/static/css/timekeeping_entry.css?v={{ asset_version('css/timekeeping_entry.css') }}">
+{% endblock %}
 {% block content %}
-<div class="page-shell-wide">
-<h1>Timekeeping{% if diocese_mode %} <span class="sub">— {{ parish.name }} (diocese view)</span>{% endif %}</h1>
-{% if diocese_mode %}
-<p class="back-link"><a href="{{ back_link_url or '/admin/timekeeping/periods' }}">&larr; {{ back_link_label or "Back to Status Board" }}</a></p>
-<p class="sub">
-  Entering or correcting {{ parish.name }}'s hours on the diocese's behalf. This is the same grid the
-  parish itself uses -- every cell you save here is recorded with edit source "diocese" in the audit
-  trail, distinct from the parish's own entries.
-</p>
-{% else %}
-<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
-<p class="sub">
-  {{ parish.name }}'s time entry for the current open payroll period.
-  <a href="/timekeeping/roster">Manage staff roster</a> &middot; <a href="/timekeeping/received">Hours the diocese received</a>
-</p>
-{% endif %}
+{% set editable = can_enter and not locked %}
+{% set have_grid = period and staff and categories %}
+<div class="page-shell-wide"><div class="ff-shell te-shell">
 
-{% if request.query_params.get('saved') %}<div class="banner banner-success">Saved.</div>{% endif %}
-{% if request.query_params.get('submitted') %}
-<div class="banner banner-success">
-  Submitted to the diocese for review.
-  {% set rc = request.query_params.get('roster_changes', '0')|int %}
-  {% if rc > 0 %}Also included {{ rc }} pending roster change{{ '' if rc == 1 else 's' }} — see
-  <a href="/timekeeping/roster">Staff Roster</a> for status.{% endif %}
-</div>
-{% endif %}
-{% if request.query_params.get('error') == 'noperiod' %}<div class="banner banner-error">No open payroll period right now.</div>{% endif %}
-{% if request.query_params.get('error') == 'locked' %}<div class="banner banner-error">This period has already been submitted. Ask your diocese to reopen it before making further changes.</div>{% endif %}
-{% if request.query_params.get('error') == 'already_submitted' %}<div class="banner banner-error">This period has already been submitted. Ask your diocese to reopen it if you need to make changes.</div>{% endif %}
-{% if request.query_params.get('error') == 'processed' %}<div class="banner banner-error">This period has been processed by the diocese and is now read-only.</div>{% endif %}
-
-{% if not period %}
-<div class="banner banner-info">
-  There is no open payroll period right now — ask your diocese to open one (Administrative Tasks
-  &rarr; Payroll Periods) before entering time.
-</div>
-{% else %}
-
-<p class="sub">
-  Period: <strong>{{ period.label or (period.period_start|string ~ " to " ~ period.period_end|string) }}</strong>
-  {% if period.submission_deadline %} &middot; Submit by {{ period.submission_deadline }}{% endif %}
-  &middot;
-  {% if submission and submission.status == 'submitted' %}
-    <span class="badge badge-submitted">Submitted</span>
-    {% if submission.submitted_at %} on {{ submission.submitted_at.strftime("%Y-%m-%d") }}{% endif %}
-  {% elif submission and submission.status == 'reopened' %}
-    <span class="badge badge-pending">Reopened — resubmit when ready</span>
-  {% else %}
-    <span class="badge badge-draft">Draft — not yet submitted</span>
-  {% endif %}
-  {% if period.status == 'processed' %} &middot; <span class="badge badge-cancelled">Processed — read-only</span>{% endif %}
-</p>
-
-{% if diocese_mode and submission and submission.status == 'submitted' and not locked %}
-<div class="banner banner-info">
-  This parish already submitted this period. You're editing on their behalf as the diocese --
-  their submission status is unaffected.
-</div>
-{% endif %}
-{% if locked and period.status != 'processed' %}
-<div class="banner banner-info">
-  This period has been submitted to the diocese and is now locked. Ask your diocese to reopen it if
-  you need to make a correction.
-</div>
-{% endif %}
-
-{% if diocese_mode and payroll_totals is defined %}{% include "_payroll_totals_section.html" %}{% endif %}
-
-{% if not can_enter %}
-<div class="banner banner-info">You can view this parish's time entries, but you don't have permission to enter or change them.</div>
-{% endif %}
-
-{% if not staff %}
-<div class="card"><p class="sub">No staff on the roster yet. <a href="/timekeeping/roster">Add staff to the roster</a> before entering time.</p></div>
-{% elif not categories %}
-<div class="card"><p class="sub">No active time categories are configured for this diocese yet.</p></div>
-{% else %}
-
-<form method="post" action="{{ save_url or '/timekeeping/save' }}">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-  {% for s in staff %}
-  <div class="card">
-    <h2 style="margin-bottom:4px">{{ s.first_name }} {{ s.last_name }}{% if s.position %} <span class="sub">— {{ s.position }}</span>{% endif %}</h2>
-    <div class="table-scroll">
-    <table class="simple-table">
-      <tr>
-        <th>Category</th>
-        {% for d in dates %}<th>{{ d.month }}/{{ d.day }}</th>{% endfor %}
-      </tr>
-      {% for c in categories %}
-      <tr>
-        <td>{{ c.label }}</td>
-        {% for d in dates %}
-        {% set val = entries.get((s.id, c.id, d)) %}
-        <td>
-          <input type="number" step="0.25" min="0" max="24" style="width:4.2em"
-                 name="hours_{{ s.id }}_{{ c.id }}_{{ d.isoformat() }}"
-                 value="{{ '%.2f'|format(val) if val is not none and val > 0 else '' }}"
-                 {% if not can_enter or locked %}disabled{% endif %}>
-        </td>
-        {% endfor %}
-      </tr>
-      {% endfor %}
-    </table>
+  <div class="ff-title-row">
+    <h1>Timekeeping</h1>
+    {% if period %}<span class="ff-state {{ period.status }}">{{ period.status|capitalize }}</span>{% endif %}
+    {% if diocese_mode %}
+    <a class="ff-back" href="{{ back_link_url or '/admin/timekeeping/periods' }}">&larr; {{ back_link_label or "Back to Status Board" }}</a>
+    {% else %}
+    <a class="ff-back" href="/parish-view">&larr; Back to {{ parish.name }}</a>
+    {% endif %}
+    <div class="ff-actions">
+      {% if have_grid %}<span class="te-grand">Total <strong data-te-grand>{{ '%.2f'|format(grand_total) }}</strong> hours</span>{% endif %}
+      {% if have_grid and editable %}
+      <button type="submit" form="teForm" class="btn btn-sm btn-primary" data-te-save data-tip="{{ 'Saves now. The parish\'s own submission status is not changed.' if diocese_mode else 'Saves without submitting. You can keep editing.' }}">Save</button>
+      {% endif %}
+      {% if not diocese_mode and have_grid and editable %}
+      <form method="post" action="/timekeeping/submit" data-confirm="Submit this period to the diocese? You will not be able to make further changes unless the diocese reopens it.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" class="btn btn-sm" data-tip="Locks this period's hours and sends along any staff roster changes you proposed since your last submission.">Submit Period to Diocese</button>
+      </form>
+      {% endif %}
     </div>
   </div>
-  {% endfor %}
-  {% if can_enter and not locked %}
-  <button type="submit" class="btn">{{ "Save Changes" if diocese_mode else "Save Draft" }}</button>
-  <p class="sub" style="margin-top:8px">
-    {% if diocese_mode %}Saves immediately -- this doesn't change the parish's own submission status.
-    {% else %}Saves without submitting — you can keep editing.{% endif %}
-  </p>
-  {% endif %}
-</form>
 
-{% if not diocese_mode and can_enter and not locked %}
-<form method="post" action="/timekeeping/submit" data-confirm="Submit this period to the diocese? You will not be able to make further changes unless the diocese reopens it." style="margin-top:8px">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-  <button type="submit" class="btn btn-primary">Submit Period to Diocese</button>
-  <p class="sub" style="margin-top:8px">
-    Submitting locks this period's hours and also sends along any staff roster changes you've
-    proposed since your last submission — see <a href="/timekeeping/roster">Staff Roster</a>.
-  </p>
-</form>
-{% endif %}
-{% endif %}
-{% endif %}
-</div>
+  {% set sv = request.query_params.get('saved') %}
+  {% if sv is not none %}<div class="banner banner-success ff-banner">{% if sv|int > 0 %}Saved {{ sv|int }} change{{ '' if sv|int == 1 else 's' }}.{% else %}Nothing needed saving.{% endif %}</div>{% endif %}
+  {% if request.query_params.get('terr') %}<div class="banner banner-error ff-banner">{{ request.query_params.get('terr') }}</div>{% endif %}
+  {% if request.query_params.get('pmsg') %}<div class="banner banner-success ff-banner">{{ request.query_params.get('pmsg') }}</div>{% endif %}
+  {% if request.query_params.get('perr') %}<div class="banner banner-error ff-banner">{{ request.query_params.get('perr') }}</div>{% endif %}
+  {% if request.query_params.get('submitted') %}
+  <div class="banner banner-success ff-banner">
+    Submitted to the diocese for review.
+    {% set rc = request.query_params.get('roster_changes', '0')|int %}
+    {% if rc > 0 %}Also included {{ rc }} pending roster change{{ '' if rc == 1 else 's' }} — see
+    <a href="/timekeeping/roster">Staff Roster</a> for status.{% endif %}
+  </div>
+  {% endif %}
+  {% if request.query_params.get('error') == 'noperiod' %}<div class="banner banner-error ff-banner">No open payroll period right now.</div>{% endif %}
+  {% if request.query_params.get('error') in ('locked', 'already_submitted') %}<div class="banner banner-error ff-banner">This period has already been submitted. Ask your diocese to reopen it before making further changes.</div>{% endif %}
+  {% if request.query_params.get('error') in ('processed', 'notopen') %}<div class="banner banner-error ff-banner">This period is not open, so it is read-only.</div>{% endif %}
+
+  {% if not period %}
+  <div class="banner banner-info ff-banner">
+    There is no open payroll period right now — ask your diocese to open one (Administrative Tasks
+    &rarr; Payroll Periods) before entering time.
+  </div>
+  {% else %}
+
+  <div class="ff-info">
+    <strong>{{ parish.name }}</strong>
+    <span>&middot; Period <strong>{{ period.label or (period.period_start.strftime('%m/%d/%y') ~ " to " ~ period.period_end.strftime('%m/%d/%y')) }}</strong></span>
+    {% if period.submission_deadline %}<span>&middot; Submit by {{ period.submission_deadline.strftime('%m/%d/%y') }}</span>{% endif %}
+    <span>&middot;
+      {% if submission and submission.status == 'submitted' %}
+        <span class="badge badge-submitted">Submitted</span>{% if submission.submitted_at %} {{ submission.submitted_at.strftime("%m/%d/%y") }}{% endif %}
+      {% elif submission and submission.status == 'reopened' %}
+        <span class="badge badge-pending">Reopened — resubmit when ready</span>
+      {% else %}
+        <span class="badge badge-draft">Draft — not yet submitted</span>
+      {% endif %}
+    </span>
+    {% if not diocese_mode %}
+    <span class="ff-right"><a href="/timekeeping/roster">Staff roster</a> <a href="/timekeeping/received">Hours the diocese received</a></span>
+    {% endif %}
+  </div>
+
+  {% if locked and period.status == 'open' %}
+  <div class="banner banner-info ff-banner">This period has been submitted to the diocese and is locked. Ask your diocese to reopen it if you need a correction.</div>
+  {% elif locked %}
+  <div class="banner banner-info ff-banner">This period is {{ period.status }}, so it is read-only.</div>
+  {% endif %}
+  {% if diocese_mode and submission and submission.status == 'submitted' and not locked %}
+  <div class="banner banner-info ff-banner">This parish already submitted this period. You are editing on their behalf; their submission status is not changed.</div>
+  {% endif %}
+  {% if not can_enter %}
+  <div class="banner banner-info ff-banner">You can view this parish's time entries, but you don't have permission to enter or change them.</div>
+  {% endif %}
+
+  {% if diocese_mode and payroll_totals is defined %}{% include "_payroll_totals_section.html" %}{% endif %}
+
+  {% if not staff %}
+  <div class="card"><p class="sub">No staff who record hours are on the roster yet. <a href="/timekeeping/roster">Add staff to the roster</a> before entering time.</p></div>
+  {% elif not categories %}
+  <div class="card"><p class="sub">No active time categories are configured for this diocese yet.</p></div>
+  {% else %}
+
+  <form id="teForm" class="te-form" method="post" action="{{ save_url or '/timekeeping/save' }}" data-te-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <div class="ff-frame">
+      <div class="ff-scroll">
+        <table class="ff-table te-table" style="min-width: {{ 200 + dates|length * 50 + 84 }}px">
+          <colgroup>
+            <col style="width:200px">
+            {% for d in dates %}<col style="width:50px">{% endfor %}
+            <col style="width:84px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="te-l">Employee / Category</th>
+              {% for d in dates %}
+              <th class="te-dh{{ ' te-we' if d.weekday() >= 5 }}"><span class="te-dow">{{ d.strftime('%a') }}</span><span class="te-md">{{ d.month }}/{{ d.day }}</span></th>
+              {% endfor %}
+              <th class="te-r">Total</th>
+            </tr>
+          </thead>
+          {% for s in staff %}
+          {% set es = emp[s.id] %}
+          {% set any_days = namespace(v=false) %}
+          {% for c in categories %}{% if cells[(s.id, c.id)].mode == 'days' %}{% set any_days.v = true %}{% endif %}{% endfor %}
+          <tbody class="te-emp" data-staff="{{ s.id }}">
+            <tr class="te-sum">
+              <td class="te-l">
+                <button type="button" class="te-toggle" aria-expanded="false" data-te-toggle aria-label="Show or hide the days for {{ s.first_name }} {{ s.last_name }}">&#9656;</button><span class="te-name">{{ s.last_name }}, {{ s.first_name }}</span>{% if s.position %}<span class="te-pos c-muted">{{ s.position }}</span>{% endif %}
+                {% for u in es.pdfs %}<button type="button" class="te-pdf" data-pdf-pop data-pdf-src="{{ u }}" aria-label="Open the email PDF">PDF</button>{% endfor %}
+              </td>
+              <td class="te-collapsed" colspan="{{ dates|length }}">
+                <span class="te-when-closed">
+                  {% for c in categories %}
+                  {% set cell = cells[(s.id, c.id)] %}
+                  <label class="te-cat">{{ c.label }}
+                    <input type="text" inputmode="decimal" autocomplete="off" maxlength="6" class="te-total{{ ' is-sum' if cell.mode == 'days' }}"
+                           data-s="{{ s.id }}" data-c="{{ c.id }}"
+                           data-editable="{{ '1' if cell.editable_total else '0' }}"
+                           data-locked="{{ '0' if editable and cell.editable_total else '1' }}"
+                           data-initial-mode="{{ cell.mode }}"
+                           data-initial-total="{{ '%.2f'|format(cell.total) if cell.total is not none else '' }}"
+                           {% if not cell.editable_total %}data-lock-tip="Recorded by the diocese ({{ cell.line.source if cell.line else '' }}). Ask the diocese to change it."{% endif %}
+                           aria-label="{{ c.label }} total for {{ s.first_name }} {{ s.last_name }}"
+                           value="{% if cell.mode == 'days' %}{{ '%.2f'|format(cell.days) }}{% elif cell.total is not none %}{{ '%.2f'|format(cell.total) }}{% endif %}"
+                           {% if cell.mode == 'days' or not editable or not cell.editable_total %}readonly{% endif %}>
+                  </label>
+                  {% endfor %}
+                  <span class="te-note">{{ 'Entered by day. Expand to change.' if any_days.v else 'Expand to enter by day.' }}</span>
+                </span>
+                <span class="te-when-open te-note">Entering by day. Collapse to type a period total instead.</span>
+              </td>
+              <td class="te-r"><strong data-te-etotal data-s="{{ s.id }}">{{ '%.2f'|format(es.sum) }}</strong></td>
+            </tr>
+            {% for c in categories %}
+            {% set cell = cells[(s.id, c.id)] %}
+            <tr class="te-detail te-cat-row">
+              <td class="te-l te-catlabel">{{ c.label }}{% if cell.conflict %}<span class="te-conflict" data-tip="A period total of {{ '%.2f'|format(cell.total) }} also exists. The reviewer decides which to use.">conflict</span>{% endif %}</td>
+              {% for d in dates %}
+              {% set val = entries.get((s.id, c.id, d)) %}
+              <td class="te-dc{{ ' te-we' if d.weekday() >= 5 }}"><input type="text" inputmode="decimal" autocomplete="off" maxlength="5" class="te-day"
+                     data-s="{{ s.id }}" data-c="{{ c.id }}" data-i="{{ loop.index0 }}"
+                     name="hours_{{ s.id }}_{{ c.id }}_{{ d.isoformat() }}"
+                     aria-label="{{ c.label }} hours for {{ s.first_name }} {{ s.last_name }} on {{ d.strftime('%m/%d/%y') }}"
+                     value="{{ '%.2f'|format(val) if val is not none and val > 0 else '' }}"
+                     {% if not editable %}disabled{% endif %}></td>
+              {% endfor %}
+              <td class="te-r"><span data-te-ctotal data-s="{{ s.id }}" data-c="{{ c.id }}">{{ '%.2f'|format(cell.sum) }}</span></td>
+            </tr>
+            {% endfor %}
+            <tr class="te-detail te-emp-total">
+              <td class="te-l te-catlabel">{{ s.first_name }}'s total</td>
+              {% for d in dates %}
+              {% set dsum = namespace(v=0.0) %}
+              {% for c in categories %}{% set v = entries.get((s.id, c.id, d)) %}{% if v %}{% set dsum.v = dsum.v + v %}{% endif %}{% endfor %}
+              <td class="c-num" data-te-daytotal data-s="{{ s.id }}" data-i="{{ loop.index0 }}">{{ '%.2f'|format(dsum.v) if dsum.v > 0 }}</td>
+              {% endfor %}
+              <td class="te-r"><strong data-te-etotal data-s="{{ s.id }}">{{ '%.2f'|format(es.sum) }}</strong></td>
+            </tr>
+          </tbody>
+          {% endfor %}
+        </table>
+      </div>
+      <div class="ff-foot">
+        <span class="te-foot-grand">Grand total <strong data-te-grand>{{ '%.2f'|format(grand_total) }}</strong> hours</span>
+        <span class="te-foot-links"><a role="button" tabindex="0" data-te-expand>Expand all</a><a role="button" tabindex="0" data-te-collapse>Collapse all</a></span>
+        <span class="ff-msg" data-te-msg aria-live="polite"></span>
+        {% if editable %}<span class="ff-buttons"><button type="submit" class="btn btn-sm btn-primary">Save</button></span>{% endif %}
+      </div>
+    </div>
+  </form>
+  {% endif %}
+  {% endif %}
+</div></div>
 {% endblock %}
 {% block extra_js %}
-<script>
-document.querySelectorAll('form[method="post" i]').forEach(function (form) {
-  form.addEventListener('submit', function (e) {
-    if (e.defaultPrevented) return;
-    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
-  });
-});
-</script>
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
+<script src="/static/js/email_pdf_pop.js?v={{ asset_version('js/email_pdf_pop.js') }}"></script>
+<script src="/static/js/timekeeping_entry.js?v={{ asset_version('js/timekeeping_entry.js') }}"></script>
 {% endblock %}

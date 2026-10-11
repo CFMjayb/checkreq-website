@@ -21,6 +21,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 import db
+import email_pdf
 import payroll_totals as pt
 
 _HEADER_FILL = "1F3D2E"
@@ -66,15 +67,18 @@ def _name(r: dict) -> str:
     return ", ".join(x for x in (r.get("last_name"), r.get("first_name")) if x)
 
 
-def _link(ws, row: int, col: int, ref: str | None) -> None:
-    url = pt.message_link(ref)
+def _link(ws, row: int, col: int, ref: str | None, org_id: int | None = None, base_url: str | None = None) -> None:
+    """A "Open email PDF" hyperlink, only when the email's PDF is stored and the caller knows Beacon's
+    address (an Excel link has to be absolute). No link at all otherwise: the old Gmail search link
+    never worked."""
+    url = email_pdf.abs_url_for(org_id, ref, base_url) if (org_id is not None and base_url) else None
     if url:
-        c = ws.cell(row=row, column=col, value="Open email")
+        c = ws.cell(row=row, column=col, value="Open email PDF")
         c.hyperlink = url
         c.font = Font(color="0563C1", underline="single")
 
 
-def build_export_workbook(org: dict, period: dict) -> bytes:
+def build_export_workbook(org: dict, period: dict, base_url: str | None = None) -> bytes:
     rows = pt.period_rows(org["id"], period["id"])
     left = pt.unresolved(rows)
     final = bool(period.get("hours_finalized_at"))
@@ -103,7 +107,7 @@ def build_export_workbook(org: dict, period: dict) -> bytes:
         ws.cell(row=i, column=6, value=None if r["counted_hours"] is None else float(r["counted_hours"]))
         ws.cell(row=i, column=7, value=None if r["proposed_hours"] is None else float(r["proposed_hours"]))
         ws.cell(row=i, column=8, value=_ISSUE.get(r["state"], r["state"]))
-        _link(ws, i, 9, r["proposed_ref"] if r["state"] == "proposal" else r["source_ref"])
+        _link(ws, i, 9, r["proposed_ref"] if r["state"] == "proposal" else r["source_ref"], org["id"], base_url)
     if not left:
         ws.cell(row=5, column=1, value="Nothing needs review.")
     _widths(ws, [12, 32, 14, 28, 14, 14, 14, 46, 14])
@@ -123,7 +127,7 @@ def build_export_workbook(org: dict, period: dict) -> bytes:
         c.number_format = "0.00"
         wh.cell(row=i, column=8, value=r["source"])
         wh.cell(row=i, column=9, value=_ISSUE.get(r["state"], "OK" if r["review_status"] != "entered" else "Entered by the parish"))
-        _link(wh, i, 10, r["source_ref"])
+        _link(wh, i, 10, r["source_ref"], org["id"], base_url)
         wh.cell(row=i, column=11, value=None if r["grid_hours"] is None else float(r["grid_hours"])).number_format = "0.00"
         wh.cell(row=i, column=12, value=None if r["line_hours"] is None else float(r["line_hours"])).number_format = "0.00"
         wh.cell(row=i, column=13, value=", ".join(_EMAIL_CHECK[f] for f in r["flags"] if f in _EMAIL_CHECK) or None)

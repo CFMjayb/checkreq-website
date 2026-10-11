@@ -22,10 +22,11 @@ from __future__ import annotations
 from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 import cornerstone_mode
 import db
+import email_pdf
 import org_time
 import payroll_totals as pt
 import rbac
@@ -105,8 +106,9 @@ def section_context(org_id: int, period: dict, parish_id: int) -> dict:
     """What _payroll_totals_section.html shows on the diocese's backfill grid for one parish."""
     rows = [r for r in pt.period_rows(org_id, period["id"]) if r["parish_id"] == parish_id and r["line_id"] is not None]
     for r in rows:
-        r["message_url"] = pt.message_link(r["source_ref"])
-        r["proposed_url"] = pt.message_link(r["proposed_ref"])
+        # The email's stored PDF (a masked copy the reader drew), or None when none is stored yet.
+        r["pdf_url"] = email_pdf.url_for(org_id, r["source_ref"])
+        r["proposed_pdf_url"] = email_pdf.url_for(org_id, r["proposed_ref"])
         r["state_label"] = STATE_LABELS.get(r["state"], r["state"])
     return {"rows": rows, "writable": period["status"] in pt.WRITABLE_PERIOD_STATUSES,
             "parish_id": parish_id, "period_id": period["id"]}
@@ -143,6 +145,26 @@ def board_summary(org_id: int, period: dict) -> dict:
     return {"left": len(pt.unresolved(rows)), "final": bool(period.get("hours_finalized_at")),
             "final_at": org_time.format_local(period.get("hours_finalized_at"), org_time.zone_name_for_org(org_id))
             if period.get("hours_finalized_at") else None}
+
+
+# ------------------------------------------------------------------ the stored email PDF
+
+@router.get("/admin/timekeeping/email/{token}.pdf")
+def email_pdf_view(token: str, request: Request):
+    """The masked PDF copy of one payroll email. HR Admin or Beacon Admin of THIS diocese only; the
+    diocese comes from the signed-in session, so a token for another diocese's email finds nothing."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    data = email_pdf.fetch(org["id"], token)
+    if data is None:
+        return Response("That email copy was not found.", status_code=404, media_type="text/plain",
+                        headers={"Cache-Control": "private, no-store"})
+    return Response(content=data, media_type="application/pdf", headers={
+        "Content-Disposition": 'inline; filename="payroll-email.pdf"',
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+    })
 
 
 # ------------------------------------------------------------------ review actions
