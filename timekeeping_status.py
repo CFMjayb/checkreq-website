@@ -296,12 +296,12 @@ async def status_set_status(period_id: int, request: Request):
 # own TestClient verification, not just reasoned about, before this
 # placement was settled on.
 
-def build_export_workbook(org: dict, period: dict) -> bytes:
+def build_export_workbook(org: dict, period: dict, base_url: str | None = None) -> bytes:
     """The period's Excel export. Since 26-158 it is built by payroll_export.py: a Review sheet
     first (what still needs a decision, and whether the hours are FINAL), then Hours (daily-grid
     hours and period totals merged, one row per employee and category) and Detail (the daily
     grid). The pre-26-158 Summary+Detail builder is in timekeeping_status_pre_payroll_totals.py."""
-    return payroll_export.build_export_workbook(org, period)
+    return payroll_export.build_export_workbook(org, period, base_url)
 
 
 @router.get("/admin/timekeeping/status/{period_id}/export")
@@ -313,7 +313,7 @@ def export_period(period_id: int, request: Request):
     if not period:
         return JSONResponse({"error": "That payroll period was not found for this diocese."}, status_code=404)
 
-    content = build_export_workbook(org, period)
+    content = build_export_workbook(org, period, str(request.base_url).rstrip("/"))
     filename = payroll_export.filename_for(org, period)
     return Response(
         content=content,
@@ -351,7 +351,7 @@ def backfill_entry_page(period_id: int, parish_id: int, request: Request):
     # (Jay's own explicit ask) -- only a genuinely 'processed' period does,
     # which build_grid_context() enforces regardless of this flag.
     ctx = timekeeping_entries.build_grid_context(
-        parish, org["id"], period, can_enter=True, bypass_submission_lock=True,
+        parish, org["id"], period, can_enter=True, bypass_submission_lock=True, diocese_mode=True,
     )
     ctx["diocese_mode"] = True
     ctx["payroll_totals"] = payroll_screens.section_context(org["id"], period, parish["id"])
@@ -397,10 +397,13 @@ async def backfill_entry_save(period_id: int, parish_id: int, request: Request):
     # status board always has something to show the moment ANY hours are
     # logged, diocese-entered or not).
     timekeeping_entries.get_or_create_submission(period["id"], parish["id"])
-    form = await request.form()
+    form = await timekeeping_entries.read_form(request)
     saved = timekeeping_entries.apply_hours_from_form(
         period, parish, org["id"], user, form, edit_source="diocese",
     )
-    return RedirectResponse(
-        f"/admin/timekeeping/status/{period_id}/{parish_id}?saved={saved}", status_code=303
+    tsaved, problems = timekeeping_entries.apply_totals_from_form(
+        period, parish, org["id"], user, form, diocese_mode=True,
+    )
+    return timekeeping_entries.saved_redirect(
+        f"/admin/timekeeping/status/{period_id}/{parish_id}", saved + tsaved, problems
     )

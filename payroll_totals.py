@@ -756,6 +756,27 @@ def review_line(org_id: int, line_id: int, action: str, user_id: int, hours=None
     return {"line_id": line_id, "review_status": new_s, "hours": float(new_h)}
 
 
+def retract_line(org_id: int, line_id: int, user_id: int, source: str, note: str | None = None) -> dict:
+    """A parish takes back a period total IT typed itself, before the diocese has looked at it (the entry
+    screen uses this when a typed total is replaced by daily hours). Only a line from the same source that is
+    still waiting for review; anything else is refused. The line becomes rejected, never deleted."""
+    if source not in SOURCES:
+        raise PayrollError("invalid", f"Unknown source {source!r}.")
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            line, _ = _line_for_review(cur, org_id, line_id)
+            if line["source"] != source or line["review_status"] != "needs_review":
+                raise PayrollError("refused", "Only a total you entered yourself, before the diocese reviews it, "
+                                              "can be taken back.")
+            h = Decimal(line["hours"])
+            cur.execute("UPDATE portal.time_period_totals SET review_status = 'rejected', reviewed_by_user_id = %s, "
+                        "reviewed_at = now(), updated_at = now() WHERE id = %s", (user_id, line_id))
+            _log_edit(cur, line_id, h, h, "needs_review", "rejected", user_id, source, (note or "Taken back")[:300])
+            _unfinalize(cur, line["period_id"])
+            conn.commit()
+    return {"line_id": line_id, "review_status": "rejected"}
+
+
 def accept_all(org_id: int, period_id: int, parish_id: int, user_id: int) -> dict:
     """Confirms every plain needs_review line of one parish. Skips lines that need a person to look
     at them: a waiting proposal, a conflict with the daily grid, a pending new hire, or a flag
@@ -983,15 +1004,6 @@ def board_extras(org_id: int, period_id: int) -> dict[int, dict]:
         elif r["state"] == "pending_hire":
             d["pending_hires"] += 1
     return out
-
-
-def message_link(source_ref: str | None) -> str | None:
-    """Where to read the email: a Gmail search for the message id (the mailbox is signed in by staff)."""
-    if not source_ref:
-        return None
-    from urllib.parse import quote
-    ref = source_ref.strip().strip("<>")
-    return "https://mail.google.com/mail/u/0/#search/rfc822msgid:" + quote(ref, safe="")
 
 
 def parish_view(org_id: int, parish_id: int, period_id: int) -> list[dict]:

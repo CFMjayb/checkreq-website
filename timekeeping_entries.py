@@ -58,12 +58,16 @@ already-'submitted' submission, but still never a period that is not 'open').
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date, timedelta
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import db
+import email_pdf
+import payroll_totals as pt
 import timekeeping
 import timekeeping_roster
 import timekeeping_roster_changes
@@ -77,6 +81,16 @@ def register(app, *, render) -> None:
     global _render
     _render = render
     app.include_router(router)
+
+
+async def read_form(request: Request):
+    """request.form() with a field limit that fits this screen (the grid has one field per cell, and a
+    period of 14 days over several people can pass Starlette's default of 1,000). The page itself posts
+    only what changed; this keeps a bigger post working. Older Starlette has no max_fields keyword."""
+    try:
+        return await request.form(max_fields=20000)
+    except TypeError:
+        return await request.form()
 
 
 # ── Data access ──────────────────────────────────────────────────────────────
@@ -158,8 +172,49 @@ def list_submitted_periods_for_org(org_id: int) -> list[dict]:
     )
 
 
+def entry_model(parish: dict, org_id: int, period: dict, staff: list[dict], categories: list[dict],
+                entries: dict, diocese_mode: bool) -> tuple[dict, dict, float]:
+    """What the entry screen needs beyond the raw cells (26-158 rework, 2026-10-11). For every
+    (employee, category): the daily-hours sum, the period-total line if one exists (and is not
+    rejected), whether the screen starts in 'days' or 'total' mode, whether the total may be edited
+    here, the stored email PDF address and a conflict flag. Per employee: the combined hours and the
+    PDFs. Plus the grand total. The page recomputes all of it live in the browser; this is the first
+    paint and what a browser without scripts shows."""
+    day_sum: dict = defaultdict(float)
+    for (sid, cid, _d), h in entries.items():
+        day_sum[(sid, cid)] += h
+    lines = {}
+    for r in pt.period_rows(org_id, period["id"]):
+        if r["parish_id"] == parish["id"] and r["staff_id"] is not None and r["line_id"] is not None                 and r["review_status"] != "rejected":
+            lines[(r["staff_id"], r["category_id"])] = r
+    cells: dict = {}
+    emp: dict = {}
+    grand = 0.0
+    for s in staff:
+        tot, pdfs = 0.0, []
+        for c in categories:
+            key = (s["id"], c["id"])
+            ds = round(day_sum.get(key, 0.0), 2)
+            ln = lines.get(key)
+            lh = float(ln["line_hours"]) if ln else None
+            pdf = email_pdf.url_for(org_id, ln["source_ref"]) if ln else None
+            shown = ds if ds > 0 else (lh or 0.0)
+            cells[key] = {
+                "mode": "days" if ds > 0 else "total", "days": ds, "line": ln, "total": lh, "sum": shown,
+                "conflict": bool(ds > 0 and ln), "pdf": pdf,
+                "editable_total": bool(diocese_mode or ln is None or ln["source"] == "parish"),
+            }
+            tot += shown
+            if pdf and pdf not in pdfs:
+                pdfs.append(pdf)
+        emp[s["id"]] = {"sum": round(tot, 2), "pdfs": pdfs}
+        grand += tot
+    return cells, emp, round(grand, 2)
+
+
 def build_grid_context(parish: dict, diocese_org_id: int, period: dict | None,
-                        can_enter: bool, bypass_submission_lock: bool = False) -> dict:
+                        can_enter: bool, bypass_submission_lock: bool = False,
+                        diocese_mode: bool = False) -> dict:
     """The shared "grid data for one parish/period" builder (extracted
     2026-08-16 so timekeeping_status.py's diocese-side backfill screen can
     reuse it -- see the module docstring's "DIOCESE-SIDE STATUS BOARD +
@@ -184,7 +239,7 @@ def build_grid_context(parish: dict, diocese_org_id: int, period: dict | None,
         return {
             "parish": parish, "period": None, "staff": [], "categories": [],
             "dates": [], "entries": {}, "can_enter": can_enter, "submission": None,
-            "locked": False,
+            "locked": False, "cells": {}, "emp": {}, "grand_total": 0.0,
         }
     # only_hours_capturing: salaried / housing-only people are real roster
     # members but have no hours to enter, so they get no grid row (see
@@ -205,10 +260,12 @@ def build_grid_context(parish: dict, diocese_org_id: int, period: dict | None,
     locked = period["status"] != "open"
     if not locked and not bypass_submission_lock and submission and submission["status"] == "submitted":
         locked = True
+    cells, emp, grand_total = entry_model(parish, diocese_org_id, period, staff, categories, entries, diocese_mode)
     return {
         "parish": parish, "period": period, "staff": staff, "categories": categories,
         "dates": dates, "entries": entries, "can_enter": can_enter,
         "submission": submission, "locked": locked,
+        "cells": cells, "emp": emp, "grand_total": grand_total,
     }
 
 
@@ -303,6 +360,104 @@ def apply_hours_from_form(period: dict, parish: dict, diocese_org_id: int, user:
     return saved
 
 
+def apply_totals_from_form(period: dict, parish: dict, org_id: int, user: dict, form,
+                           *, diocese_mode: bool) -> tuple[int, list[str]]:
+    """Writes the total_<staff>_<category> fields a submitted entry form carries as PERIOD TOTALS
+    (26-158 rework, 2026-10-11). Call it AFTER apply_hours_from_form so the daily-hours check below sees
+    what is stored now. Returns (changes made, messages for anything refused).
+
+    The page posts only the fields that changed, so a field present here means "this one was edited":
+      a number  -> that is the employee's total for the category. The diocese's edit goes through
+                   review_line 'edit' (confirmed, source diocese) or a new confirmed line; the parish's
+                   through record_period_hours (source parish, waiting for the diocese).
+      blank     -> the total is taken off: rejected by the diocese, or taken back by the parish when it
+                   is the parish's own line and not yet reviewed.
+    One rule is never relaxed: an employee-and-category with daily hours cannot also get a typed total
+    (the screen blanks one when the other is typed; this refuses a crafted post). A conflict that already
+    exists is left for the reviewer, exactly as before. Caller has already done authorization and the
+    open-period check."""
+    staff_by_id = {s["id"]: s for s in timekeeping_roster.list_staff(parish["id"], only_hours_capturing=True)}
+    cat_by_id = {c["id"]: c for c in timekeeping.list_categories(org_id)}
+    posted = []
+    for key, value in form.multi_items():
+        if not key.startswith("total_"):
+            continue
+        parts = key.split("_", 2)
+        if len(parts) != 3:
+            continue
+        try:
+            sid, cid = int(parts[1]), int(parts[2])
+        except ValueError:
+            continue
+        if sid in staff_by_id and cid in cat_by_id:
+            posted.append((sid, cid, (value or "").strip()))
+    if not posted:
+        return 0, []
+    day_sum: dict = defaultdict(float)
+    for (sid, cid, _d), h in get_entries_map(period["id"], parish["id"]).items():
+        day_sum[(sid, cid)] += h
+    lines = {}
+    for r in pt.period_rows(org_id, period["id"]):
+        if r["parish_id"] == parish["id"] and r["staff_id"] is not None and r["line_id"] is not None \
+                and r["review_status"] != "rejected":
+            lines[(r["staff_id"], r["category_id"])] = r
+    changed, problems = 0, []
+    for sid, cid, raw in posted:
+        s, c = staff_by_id[sid], cat_by_id[cid]
+        who = f"{s['first_name']} {s['last_name']} ({c['label']})"
+        ln = lines.get((sid, cid))
+        try:
+            if raw:
+                h = pt.parse_hours(raw)
+                if day_sum.get((sid, cid), 0.0) > 0:
+                    problems.append(f"{who}: has daily hours, so a period total was not saved. Clear the days first.")
+                    continue
+                if h == 0 and ln is None:
+                    continue
+                if not parish.get("code"):
+                    problems.append(f"{who}: this parish has no payroll code yet, so a period total cannot be recorded.")
+                    continue
+                if diocese_mode:
+                    if ln is not None:
+                        if ln["line_hours"] == h and ln["proposed_hours"] is None:
+                            continue
+                        pt.review_line(org_id, ln["line_id"], "edit", user["id"], hours=str(h))
+                    else:
+                        pt.record_period_hours(org_id, period_id=period["id"], parish_code=parish["code"],
+                                               category_key=c["key"], hours=str(h), source="diocese",
+                                               employee_number=s["employee_number"], actor_user_id=user["id"],
+                                               status="confirmed")
+                else:
+                    if ln is not None and ln["source"] != "parish":
+                        problems.append(f"{who}: the diocese already recorded this total, so it was not changed.")
+                        continue
+                    if ln is not None and ln["line_hours"] == h:
+                        continue
+                    pt.record_period_hours(org_id, period_id=period["id"], parish_code=parish["code"],
+                                           category_key=c["key"], hours=str(h), source="parish",
+                                           employee_number=s["employee_number"], actor_user_id=user["id"])
+                changed += 1
+            elif ln is not None:
+                if diocese_mode:
+                    pt.review_line(org_id, ln["line_id"], "reject", user["id"],
+                                   note="Taken off on the Timekeeping screen")
+                else:
+                    pt.retract_line(org_id, ln["line_id"], user["id"], "parish",
+                                    "Taken back on the Timekeeping screen")
+                changed += 1
+        except pt.PayrollError as e:
+            problems.append(f"{who}: {e.message}")
+    return changed, problems
+
+
+def saved_redirect(base: str, saved: int, problems: list[str]) -> RedirectResponse:
+    """Back to the entry screen with the count and, when something was refused, the reasons (short, plain)."""
+    url = f"{base}?saved={saved}"
+    if problems:
+        url += "&terr=" + quote_plus(" ".join(problems)[:600])
+    return RedirectResponse(url, status_code=303)
+
+
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @router.get("/timekeeping", response_class=HTMLResponse)
@@ -343,9 +498,10 @@ async def entry_save(request: Request):
         # enforce, not just the paths this pass happens to expose.
         return RedirectResponse("/timekeeping?error=locked", status_code=303)
 
-    form = await request.form()
+    form = await read_form(request)
     saved = apply_hours_from_form(period, parish, diocese_org["id"], user, form, edit_source="parish")
-    return RedirectResponse(f"/timekeeping?saved={saved}", status_code=303)
+    tsaved, problems = apply_totals_from_form(period, parish, diocese_org["id"], user, form, diocese_mode=False)
+    return saved_redirect("/timekeeping", saved + tsaved, problems)
 
 
 @router.post("/timekeeping/submit")

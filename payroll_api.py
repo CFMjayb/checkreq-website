@@ -25,10 +25,12 @@ import os
 import time
 
 from fastapi import APIRouter, Body, Request, Response
+from starlette.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 import db
+import email_pdf
 import org_features
 import payroll_totals as pt
 
@@ -268,3 +270,43 @@ def beacon_add_learned_sender(request: Request, body: dict = Body(...)):
             source=str(body.get("source") or "payroll inbox (learned)")))
     except pt.PayrollError as e:
         return _pe(e)
+
+
+# ------------------------------------------------------------ email PDFs (26-158, 2026-10-11)
+
+@router.put("/api/payroll/email-pdf")
+async def beacon_put_email_pdf(request: Request, source_ref: str = ""):
+    """Stores the PDF copy of one email (the Message-ID is the key). The body is the PDF itself. Beacon
+    keeps it in its own private bucket; only HR Admins can open it. The reader masks personal numbers
+    before drawing, and the bytes must be a real PDF."""
+    org, bad = await run_in_threadpool(_auth, request)
+    if bad:
+        return bad
+    if not email_pdf.clean_ref(source_ref):
+        return _err(422, "invalid", "source_ref is required.")
+    try:
+        if int(request.headers.get("content-length") or 0) > email_pdf.MAX_BYTES:
+            return _err(413, "too_large", "That PDF is too large.")
+    except ValueError:
+        return _err(422, "invalid", "Content-Length must be a number.")
+    data = await request.body()
+    if len(data) > email_pdf.MAX_BYTES:
+        return _err(413, "too_large", "That PDF is too large.")
+    try:
+        return _ok(await run_in_threadpool(email_pdf.store, org["id"], source_ref, data))
+    except ValueError as e:
+        return _err(422, "invalid", str(e))
+    except Exception:
+        return _err(503, "storage_unavailable", "The PDF could not be stored right now.")
+
+
+@router.post("/api/payroll/email-pdf/exists")
+def beacon_email_pdfs_present(request: Request, body: dict = Body(...)):
+    """Which of these Message-IDs already have a stored PDF."""
+    org, bad = _auth(request)
+    if bad:
+        return bad
+    refs = body.get("source_refs")
+    if not isinstance(refs, list) or len(refs) > 2000 or not all(isinstance(r, str) for r in refs):
+        return _err(422, "invalid", "source_refs must be a list of up to 2000 text values.")
+    return _ok({"present": email_pdf.present_refs(org["id"], refs)})

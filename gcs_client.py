@@ -49,3 +49,9 @@ def delete_blob(bucket_name: str, blob_path: str) -> None:
     bucket = _get_client().bucket(bucket_name)
     blob = bucket.blob(blob_path)
     blob.delete()
+
+
+def list_names(bucket_name: str, prefix: str) -> list[str]:
+    """Every blob name under `prefix` (one listing call). Used by email_pdf.py to learn which payroll
+    email PDFs exist without a request per email."""
+    return [b.name for b in _get_client().list_blobs(bucket_name, prefix=prefix)]
