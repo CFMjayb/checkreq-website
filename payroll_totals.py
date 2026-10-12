@@ -1794,6 +1794,38 @@ def undo_approval(org_id: int, period_id: int, parish_id: int) -> dict:
     return {"removed": n}
 
 
+def approve_all(org_id: int, period_id: int, user_id: int) -> dict:
+    """Actions > Approve all. Approves every department that is ready: hours recorded and nothing waiting for a decision
+    (a department that only has standing hours gets them confirmed first). It NEVER approves over something that needs a
+    decision, and it never decides 'no hours' for anyone (that stays Confirm no hours). Returns counts."""
+    _open_period(org_id, period_id)
+    appr = approvals_for_period(org_id, period_id)
+    approved = already = waiting = no_hours = 0
+    for pid, ex in board_extras(org_id, period_id).items():
+        c = classify_parish(ex, ex.get("sub_id"), ex.get("sub_status"), appr.get(pid))
+        if c["state"] in ("ok", "idle"):
+            already += 1
+        elif c["open_items"]:
+            waiting += 1
+        elif c["only_std"]:
+            approved += confirm_standing(org_id, period_id, user_id, pid).get("approved", 0)
+        elif ex.get("recorded"):
+            _store_approval(period_id, pid, "approved", user_id, ex)
+            approved += 1
+        else:
+            no_hours += 1
+    return {"approved": approved, "already": already, "waiting": waiting, "no_hours": no_hours}
+
+
+def parish_approval_state(org_id: int, period_id: int, parish_id: int) -> dict:
+    """What the parish's own page needs to draw its Approve button: the board's one rule for this parish."""
+    ex = _parish_extras(org_id, period_id, parish_id)
+    c = classify_parish(ex, ex.get("sub_id"), ex.get("sub_status"), approvals_for_period(org_id, period_id).get(parish_id))
+    return {"state": c["state"], "pill": c["pill"], "kind": c["approval_kind"], "only_std": c["only_std"],
+            "open_items": c["open_items"], "stale": c["stale"], "recorded": bool(ex.get("recorded")),
+            "emails": ex.get("emails", 0)}
+
+
 def parish_view(org_id: int, parish_id: int, period_id: int) -> list[dict]:
     """What the diocese recorded for one parish and period (the parish's own read-only view).
     Only confirmed or waiting figures and who they are: no quotes from other parishes, no pay."""

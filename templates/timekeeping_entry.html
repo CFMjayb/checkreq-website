@@ -20,6 +20,22 @@
     {% endif %}
     <div class="ff-actions">
       {% if have_grid %}<span class="te-grand">Total <strong data-te-grand>{{ '%.2f'|format(grand_total) }}</strong> hours</span>{% endif %}
+      {% if diocese_mode and parish_approval %}
+      {% set pa = parish_approval %}
+      {% set pbase = '/admin/timekeeping/status/' ~ period.id ~ '/' ~ parish.id %}
+      {% if pa.state in ('ok', 'idle') %}
+      <span class="badge badge-approved" data-tip="{{ 'This department is approved for the period.' if pa.kind == 'approved' else 'Confirmed for the period.' if pa.kind else 'Nothing is expected from this department.' }}">{{ 'Approved' if pa.kind == 'approved' else 'Confirmed no hours' if pa.kind == 'no_hours' else 'Only Std Hrs' if pa.kind == 'standing' else 'Not Expected' }}</span>
+      {% if pa.kind %}<form method="post" action="{{ pbase }}/undo-approval"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="back" value="parish"><button type="submit" class="btn btn-sm" data-tip="Takes the approval off so this department can be changed.">Undo</button></form>{% endif %}
+      {% elif pa.open_items %}
+      <button type="button" class="btn btn-sm btn-primary" disabled data-tip="{{ pa.open_items }} item{{ '' if pa.open_items == 1 else 's' }} still need a decision (a line to accept or reject, a person to choose or a new figure). Decide those first, then approve.">Approve department</button>
+      {% elif pa.only_std %}
+      <form method="post" action="{{ pbase }}/standing"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="back" value="parish"><button type="submit" class="btn btn-sm btn-primary" data-tip="Records the standing hours for this period and approves the department.">Confirm standing hours</button></form>
+      {% elif pa.recorded %}
+      <form method="post" action="{{ pbase }}/approve"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="back" value="parish"><button type="submit" class="btn btn-sm btn-primary" data-tip="{{ 'The hours changed after the last approval. Look again, then approve again.' if pa.stale else 'Marks this department reviewed and approved for the period.' }}">Approve department</button></form>
+      {% else %}
+      <form method="post" action="{{ pbase }}/no-hours"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="back" value="parish"><button type="submit" class="btn btn-sm btn-primary" data-tip="No hours are expected from this department this period.">Confirm no hours this week</button></form>
+      {% endif %}
+      {% endif %}
       {% if have_grid and editable %}
       <button type="submit" form="teForm" class="btn btn-sm btn-primary" data-te-save data-tip="{{ 'Saves now. The parish\'s own submission status is not changed.' if diocese_mode else 'Saves without submitting. You can keep editing.' }}">Save</button>
       {% endif %}
