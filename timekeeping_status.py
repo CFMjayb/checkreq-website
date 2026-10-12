@@ -200,7 +200,7 @@ def status_board(period_id: int, request: Request):
     rows = list_parish_status_for_period(org["id"], period_id)
     # 26-158: channel / pattern / emails / lines to review per parish, and the Final state.
     payroll_screens.board_rows(org["id"], period, rows)
-    payroll_summary = payroll_screens.board_summary(org["id"], period)
+    payroll_summary = payroll_screens.board_summary(org["id"], period, rows)
     # Other periods currently 'open' in this diocese. Surfaced rather than
     # silently prevented: the parish entry grid resolves ONE period via
     # timekeeping.get_current_open_period(), which prefers the open period

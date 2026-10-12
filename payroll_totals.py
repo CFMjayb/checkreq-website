@@ -26,6 +26,7 @@ THE RULES (plan A5) in one place:
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -1276,11 +1277,11 @@ def parish_email_choices(org_id: int, period_id: int, parish_id: int) -> list[di
         "ORDER BY 2 NULLS LAST", (period_id, parish_id, period_id, parish_id, period_id, parish_id))
 
 
-def carry_forward_standing(org_id: int, period_id: int, user_id: int) -> dict:
+def carry_forward_standing(org_id: int, period_id: int, user_id: int, parish_id: int | None = None) -> dict:
     """For every active employee whose hours_basis is standing, records their standing_hours as a
     source=standing line in the Regular category. The line is confirmed on the spot when the
     employee's last three periods' Regular totals were confirmed at the same figure, otherwise it
-    waits for review."""
+    waits for review. With parish_id, only that parish's people."""
     period = get_period(org_id, period_id)
     if period["status"] not in WRITABLE_PERIOD_STATUSES:
         raise PayrollError("refused", f"This pay period is {period['status']}.")
@@ -1288,7 +1289,9 @@ def carry_forward_standing(org_id: int, period_id: int, user_id: int) -> dict:
     people = db.query(
         "SELECT s.id, s.employee_number, s.standing_hours, p.code FROM portal.staff_roster s "
         "JOIN portal.parishes p ON p.id = s.parish_id WHERE p.org_id = %s AND s.is_active "
-        "AND s.hours_basis = 'standing' AND s.standing_hours IS NOT NULL AND s.employee_number IS NOT NULL", (org_id,))
+        "AND s.hours_basis = 'standing' AND s.standing_hours IS NOT NULL AND s.employee_number IS NOT NULL"
+        + (" AND s.parish_id = %s" if parish_id is not None else ""),
+        (org_id, parish_id) if parish_id is not None else (org_id,))
     created = unchanged = confirmed = 0
     cat = _category(org_id, "regular")
     for s in people:
@@ -1417,8 +1420,10 @@ def unresolved(rows: list[dict]) -> list[dict]:
     return [r for r in rows if r["state"] in UNRESOLVED_STATES]
 
 
-def finalize_period(org_id: int, period_id: int, user_id: int) -> dict:
-    """Marks the hours Final for Checkwriters. Refused while any line still needs a decision."""
+def finalize_period(org_id: int, period_id: int, user_id: int, require_all_done: bool = True) -> dict:
+    """Marks the hours Final for Checkwriters. Refused while any line still needs a decision and, unless
+    require_all_done is False, while any parish row is not green (approved, confirmed no hours, confirmed
+    standing hours or not expected)."""
     get_period(org_id, period_id)
     left = unresolved(_period_rows(org_id, period_id))
     unentered = sum(count_unentered(org_id, period_id).values())
@@ -1429,6 +1434,12 @@ def finalize_period(org_id: int, period_id: int, user_id: int) -> dict:
         if unentered:
             parts.append(f"{unentered} person(s) named in emails were not entered")
         raise PayrollError("refused", " and ".join(parts).capitalize() + ", so the hours cannot be marked Final.")
+    if require_all_done:
+        notdone = parishes_not_done(org_id, period_id)
+        if notdone:
+            codes = ", ".join(p["code"] or p["name"] for p in notdone[:8]) + (" and more" if len(notdone) > 8 else "")
+            raise PayrollError("refused", f"{len(notdone)} parish row(s) are not green yet ({codes}), so the hours cannot "
+                                          "be marked Final. Approve each one, confirm no hours, or confirm its standing hours.")
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE portal.payroll_periods SET hours_finalized_at = now(), hours_finalized_by_user_id = %s, "
@@ -1454,21 +1465,28 @@ def board_extras(org_id: int, period_id: int) -> dict[int, dict]:
     def slot(pid):
         return out.setdefault(pid, {"pattern": None, "channel": None, "emails": 0, "first_received_at": None,
                                     "needs_review": 0, "conflicts": 0, "proposals": 0, "pending_hires": 0,
-                                    "hours": Decimal(0), "recorded": 0, "sources": set()})
+                                    "hours": Decimal(0), "recorded": 0, "sources": set(),
+                                    # standing hours (source = standing) and everything else, for the Std / Entered columns
+                                    "std": Decimal(0), "entered": Decimal(0), "entered_lines": 0,
+                                    "standing_expected": Decimal(0), "standing_people": 0,
+                                    "sub_id": None, "sub_status": None, "unentered": 0, "_fp": []})
 
     for r in db.query("SELECT p.id, pr.pattern FROM portal.parishes p JOIN portal.parish_payroll_profile pr "
                       "ON pr.parish_id = p.id WHERE p.org_id = %s", (org_id,)):
         slot(r["id"])["pattern"] = r["pattern"]
-    for r in db.query("SELECT s.parish_id, s.channel, s.first_received_at FROM portal.time_entry_submissions s "
+    for r in db.query("SELECT s.id, s.status, s.parish_id, s.channel, s.first_received_at FROM portal.time_entry_submissions s "
                       "JOIN portal.parishes p ON p.id = s.parish_id WHERE s.period_id = %s AND p.org_id = %s",
                       (period_id, org_id)):
         d = slot(r["parish_id"])
         d["channel"], d["first_received_at"] = r["channel"], r["first_received_at"]
+        d["sub_id"], d["sub_status"] = r["id"], r["status"]
+        d["_fp"].append(("sub", str(r["id"]), str(r["status"])))
     for r in db.query("SELECT e.parish_id, count(*) AS n, min(e.received_at) AS first FROM portal.time_email_receipts e "
                       "JOIN portal.parishes p ON p.id = e.parish_id WHERE e.period_id = %s AND p.org_id = %s "
                       "GROUP BY e.parish_id", (period_id, org_id)):
         d = slot(r["parish_id"])
         d["emails"], d["first_received_at"] = r["n"], r["first"] or d["first_received_at"]
+        d["_fp"].append(("rcpt", str(r["n"])))
     # An email that only produced "named, not entered" people recorded no hours, so it has no receipt row, but it DID arrive.
     # Count it (once per email) so the board does not say "Not Started" for a parish that has emailed.
     for r in db.query("SELECT u.parish_id, count(DISTINCT u.source_ref) AS n, min(coalesce(nt.received_at, u.created_at)) AS first "
@@ -1479,14 +1497,23 @@ def board_extras(org_id: int, period_id: int) -> dict[int, dict]:
                       "GROUP BY u.parish_id", (period_id, org_id)):
         d = slot(r["parish_id"])
         d["emails"] += r["n"]
+        d["_fp"].append(("named", str(r["n"])))
         if r["first"] and (d["first_received_at"] is None or r["first"] < d["first_received_at"]):
             d["first_received_at"] = r["first"]
     for r in _period_rows(org_id, period_id):
         d = slot(r["parish_id"])
         # what the parish's period holds: counted hours, plus the grid's hours where a conflict holds them back
-        d["hours"] += (r["counted_hours"] if r["counted_hours"] is not None else (r["grid_hours"] or Decimal(0)))
+        hrs = (r["counted_hours"] if r["counted_hours"] is not None else (r["grid_hours"] or Decimal(0)))
+        d["hours"] += hrs
         d["recorded"] += 1
         d["sources"].add(r["source"])
+        if r["source"] == "standing":
+            d["std"] += hrs
+        else:
+            d["entered"] += hrs
+            d["entered_lines"] += 1
+        d["_fp"].append(("line", str(r["line_id"]), str(r["staff_id"]), str(r["category_id"]), str(r["counted_hours"]),
+                         str(r["review_status"]), str(r["state"]), str(r["proposed_hours"]), str(r["source"])))
         if r["state"] == "needs_review":
             d["needs_review"] += 1
         elif r["state"] == "conflict":
@@ -1495,7 +1522,183 @@ def board_extras(org_id: int, period_id: int) -> dict[int, dict]:
             d["proposals"] += 1
         elif r["state"] == "pending_hire":
             d["pending_hires"] += 1
+    # people an email named that nobody entered
+    for pid, n in count_unentered(org_id, period_id).items():
+        d = slot(pid)
+        d["unentered"] = n
+        d["_fp"].append(("unentered", str(n)))
+    # what the roster says the parish's standing hours are (shown before anyone confirms them)
+    for r in db.query("SELECT s.parish_id, count(*) AS n, COALESCE(sum(s.standing_hours), 0) AS h FROM portal.staff_roster s "
+                      "JOIN portal.parishes p ON p.id = s.parish_id WHERE p.org_id = %s AND s.is_active AND s.captures_hours "
+                      "AND s.hours_basis = 'standing' AND s.standing_hours IS NOT NULL AND s.employee_number IS NOT NULL "
+                      "GROUP BY s.parish_id", (org_id,)):
+        d = slot(r["parish_id"])
+        d["standing_people"], d["standing_expected"] = r["n"], Decimal(r["h"])
+    for d in out.values():
+        d["fingerprint"] = _fingerprint(d.pop("_fp"))
     return out
+
+
+def _fingerprint(parts: list) -> str:
+    """A short code for everything a parish holds in a period. An approval stores it; if it changes later, the approval is stale."""
+    return hashlib.md5(repr(sorted(parts)).encode("utf-8")).hexdigest()
+
+
+EMPTY_FINGERPRINT = _fingerprint([])
+
+
+# ------------------------------------------------------------- Time Review: reviewed and approved
+# One approval per parish and period (migration 093). Green on the board means DONE: approved, confirmed no hours,
+# confirmed standing hours, or a parish set to "No hours expected". An approval stores a fingerprint of what the parish
+# held at that moment, so anything that changes afterwards shows the row as "changed after approval".
+
+APPROVAL_KINDS = ("approved", "no_hours", "standing")
+
+
+def approvals_for_period(org_id: int, period_id: int) -> dict[int, dict]:
+    """Per parish id: the approval record (kind, fingerprint, who, when). {} when the table does not exist yet
+    (migration 093 not applied), so the board still works."""
+    from psycopg import errors as pgerr
+    try:
+        rows = db.query(
+            "SELECT a.parish_id, a.kind, a.fingerprint, a.approved_at, a.approved_by_user_id, u.display_name, u.email "
+            "FROM portal.time_parish_approval a JOIN portal.parishes p ON p.id = a.parish_id "
+            "LEFT JOIN checkreq.app_users u ON u.id = a.approved_by_user_id "
+            "WHERE a.period_id = %s AND p.org_id = %s", (period_id, org_id))
+    except pgerr.UndefinedTable:
+        return {}
+    return {r["parish_id"]: r for r in rows}
+
+
+def classify_parish(ex: dict, sub_id, sub_status, approval: dict | None) -> dict:
+    """The ONE rule for a board row. state: attn (red) | ready (blue) | miss (amber) | wait (no colour) | ok (green)
+    | idle (green, a parish set to No hours expected). pill names the status pill the board draws."""
+    pattern = ex.get("pattern")
+    open_items = (ex.get("needs_review", 0) + ex.get("pending_hires", 0) + ex.get("unentered", 0)
+                  + ex.get("conflicts", 0) + ex.get("proposals", 0))
+    recorded = ex.get("recorded", 0) > 0
+    emails = ex.get("emails", 0)
+    valid = bool(approval) and approval["fingerprint"] == ex.get("fingerprint", EMPTY_FINGERPRINT)
+    stale = bool(approval) and not valid
+    only_std = pattern == "standing_hours" and not ex.get("entered_lines") and not emails and not sub_id
+    out = {"approval_kind": approval["kind"] if valid else None, "stale": stale, "only_std": only_std,
+           "open_items": open_items}
+    if valid and not open_items:
+        out["state"] = "ok"
+        out["pill"] = {"approved": "approved", "no_hours": "no_hours", "standing": "only_std_done"}[approval["kind"]]
+    elif stale:
+        out["state"], out["pill"] = "attn", "changed"
+    elif open_items:
+        out["state"], out["pill"] = "attn", "legacy"
+    elif pattern == "none" and not sub_id and not recorded and not emails:
+        out["state"], out["pill"] = "idle", "not_expected"
+    elif only_std:
+        out["state"], out["pill"] = "ready", "only_std"
+    elif not recorded and not sub_id:
+        out["state"] = "miss" if pattern in ("every_period", "most_periods") else "wait"
+        out["pill"] = "legacy"
+    elif sub_status == "draft" and not recorded:
+        out["state"], out["pill"] = "wait", "legacy"
+    else:
+        out["state"], out["pill"] = "ready", "ready"
+    out["done"] = out["state"] in ("ok", "idle")
+    return out
+
+
+def parishes_not_done(org_id: int, period_id: int) -> list[dict]:
+    """Parish rows of the Time Review board that are not green yet (code, name, state)."""
+    ex_all = board_extras(org_id, period_id)
+    appr = approvals_for_period(org_id, period_id)
+    out = []
+    for p in db.query("SELECT id, code, name FROM portal.parishes WHERE org_id = %s AND is_active "
+                      "AND (modules->>'timekeeping') = 'true' ORDER BY code NULLS LAST", (org_id,)):
+        ex = ex_all.get(p["id"], {})
+        c = classify_parish(ex, ex.get("sub_id"), ex.get("sub_status"), appr.get(p["id"]))
+        if not c["done"]:
+            out.append({"parish_id": p["id"], "code": p["code"], "name": p["name"], "state": c["state"]})
+    return out
+
+
+def _open_period(org_id: int, period_id: int) -> dict:
+    period = get_period(org_id, period_id)
+    if period["status"] != "open":
+        raise PayrollError("refused", f"This pay period is {period['status']}. Approvals are made while it is Open.")
+    return period
+
+
+def _parish_extras(org_id: int, period_id: int, parish_id: int) -> dict:
+    if not db.query_one("SELECT id FROM portal.parishes WHERE id = %s AND org_id = %s", (parish_id, org_id)):
+        raise PayrollError("not_found", "That parish was not found for this diocese.")
+    return board_extras(org_id, period_id).get(parish_id) or {"fingerprint": EMPTY_FINGERPRINT}
+
+
+def _store_approval(period_id: int, parish_id: int, kind: str, user_id: int, ex: dict) -> None:
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO portal.time_parish_approval (period_id, parish_id, kind, fingerprint, approved_by_user_id) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (period_id, parish_id) DO UPDATE SET kind = EXCLUDED.kind, "
+                "fingerprint = EXCLUDED.fingerprint, approved_by_user_id = EXCLUDED.approved_by_user_id, approved_at = now()",
+                (period_id, parish_id, kind, ex.get("fingerprint", EMPTY_FINGERPRINT), user_id))
+            conn.commit()
+
+
+def approve_parish(org_id: int, period_id: int, parish_id: int, user_id: int) -> dict:
+    """Mark reviewed and approved. Refused while anything in the parish still needs a decision, or when no hours are
+    recorded (that is Confirm no hours)."""
+    _open_period(org_id, period_id)
+    ex = _parish_extras(org_id, period_id, parish_id)
+    c = classify_parish(ex, ex.get("sub_id"), ex.get("sub_status"), None)
+    if c["open_items"]:
+        raise PayrollError("refused", f"{c['open_items']} item(s) in this parish still need a decision, so it cannot be approved yet.")
+    if not ex.get("recorded"):
+        raise PayrollError("refused", "No hours are recorded for this parish. If none are expected, use Confirm no hours this week.")
+    _store_approval(period_id, parish_id, "approved", user_id, ex)
+    return {"kind": "approved"}
+
+
+def confirm_no_hours(org_id: int, period_id: int, parish_id: int, user_id: int) -> dict:
+    """HR confirms this parish has no hours this period. Refused when it has hours, an email or anything waiting."""
+    _open_period(org_id, period_id)
+    ex = _parish_extras(org_id, period_id, parish_id)
+    c = classify_parish(ex, ex.get("sub_id"), ex.get("sub_status"), None)
+    if c["open_items"] or ex.get("recorded") or ex.get("emails"):
+        raise PayrollError("refused", "This parish has hours, an email or people waiting for this period. Review those instead.")
+    _store_approval(period_id, parish_id, "no_hours", user_id, ex)
+    return {"kind": "no_hours"}
+
+
+def confirm_standing(org_id: int, period_id: int, user_id: int, parish_id: int | None = None) -> dict:
+    """Records the standing hours (carry_forward_standing) and approves every parish that holds ONLY standing hours.
+    A parish that also has other hours keeps its normal approval. parish_id limits it to one parish."""
+    _open_period(org_id, period_id)
+    if parish_id is not None:
+        _parish_extras(org_id, period_id, parish_id)  # not_found when it is another diocese's
+    res = carry_forward_standing(org_id, period_id, user_id, parish_id)
+    approved = 0
+    appr = approvals_for_period(org_id, period_id)
+    for pid, ex in board_extras(org_id, period_id).items():
+        if parish_id is not None and pid != parish_id:
+            continue
+        if not ex.get("standing_people") or not ex.get("std"):
+            continue
+        c = classify_parish(ex, ex.get("sub_id"), ex.get("sub_status"), appr.get(pid))
+        if c["only_std"] and not c["open_items"] and c["state"] != "ok":
+            _store_approval(period_id, pid, "standing", user_id, ex)
+            approved += 1
+    res["approved"] = approved
+    return res
+
+
+def undo_approval(org_id: int, period_id: int, parish_id: int) -> dict:
+    _open_period(org_id, period_id)
+    _parish_extras(org_id, period_id, parish_id)
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM portal.time_parish_approval WHERE period_id = %s AND parish_id = %s", (period_id, parish_id))
+            n = cur.rowcount
+            conn.commit()
+    return {"removed": n}
 
 
 def parish_view(org_id: int, parish_id: int, period_id: int) -> list[dict]:
@@ -1540,6 +1743,9 @@ def variance(org_id: int, period_id: int) -> dict:
                      "employee_number": src["employee_number"], "last_name": src["last_name"],
                      "first_name": src["first_name"],
                      "category_label": src["category_label"] if b else src["label"],
+                     # standing hours (source = standing) and everything else Beacon counted, side by side
+                     "std_hours": float(bh) if (b is not None and bh is not None and b["source"] == "standing") else None,
+                     "entered_hours": float(bh) if (b is not None and bh is not None and b["source"] != "standing") else None,
                      "beacon_hours": None if bh is None else float(bh),
                      "register_hours": None if gh is None else float(gh),
                      "difference": None if (bh is None or gh is None) else float(bh - gh)})

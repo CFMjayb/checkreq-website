@@ -214,7 +214,7 @@ def section_context(org_id: int, period: dict, parish_id: int) -> dict:
 def board_rows(org_id: int, period: dict, rows: list[dict]) -> list[dict]:
     """Adds the payroll columns to the status-board rows (in place, and returned)."""
     extras = pt.board_extras(org_id, period["id"])
-    unentered = pt.count_unentered(org_id, period["id"])
+    approvals = pt.approvals_for_period(org_id, period["id"])
     zone = org_time.zone_name_for_org(org_id)
     for r in rows:
         e = extras.get(r["parish_id"], {})
@@ -231,19 +231,33 @@ def board_rows(org_id: int, period: dict, rows: list[dict]) -> list[dict]:
         r["emails"] = e.get("emails", 0)
         r["first_received"] = org_time.format_local(e.get("first_received_at"), zone) if e.get("first_received_at") else None
         # a person an email named that nobody entered counts as something to review, so the row turns red
-        r["needs_review"] = e.get("needs_review", 0) + e.get("pending_hires", 0) + unentered.get(r["parish_id"], 0)
+        r["needs_review"] = e.get("needs_review", 0) + e.get("pending_hires", 0) + e.get("unentered", 0)
         r["conflicts"] = e.get("conflicts", 0)
         r["proposals"] = e.get("proposals", 0)
-        r["not_expected"] = (e.get("pattern") in NOT_EXPECTED_PATTERNS and not r.get("submission_id"))
         r["by_email"] = (e.get("channel") == "email" and r.get("submission_status") != "submitted")
         # emailed, but nothing could be recorded from it yet: a person has to look (the row is red for the same reason)
         r["named_only"] = bool(r["emails"] and not r["recorded"] and not r.get("submission_id"))
+        # standing hours and everything else, side by side (Std, Entered, Total)
+        r["std_hours"] = float(e["std"]) if e.get("std") else None
+        r["entered_hours"] = float(e["entered"]) if e.get("entered") else None
+        r["std_expected"] = float(e["standing_expected"]) if e.get("standing_people") else None
+        # the ONE rule for the row's colour and pill, shared with Mark hours Final (pt.classify_parish)
+        a = approvals.get(r["parish_id"])
+        c = pt.classify_parish(e, r.get("submission_id"), r.get("submission_status"), a)
+        r["state"], r["pill"], r["done"] = c["state"], c["pill"], c["done"]
+        r["only_std"], r["stale"], r["approval_kind"] = c["only_std"], c["stale"], c["approval_kind"]
+        r["not_expected"] = c["pill"] == "not_expected"
+        if r["approval_kind"] == "no_hours" and not r["recorded"]:
+            r["total_hours"] = 0
+        r["approval_tip"] = ("by " + (a["display_name"] or a["email"] or "someone") + " on "
+                             + org_time.format_local(a["approved_at"], zone)) if a else None
     return rows
 
 
-def board_summary(org_id: int, period: dict) -> dict:
-    rows = pt.period_rows(org_id, period["id"])
-    return {"left": len(pt.unresolved(rows)) + sum(pt.count_unentered(org_id, period["id"]).values()),
+def board_summary(org_id: int, period: dict, rows: list[dict] | None = None) -> dict:
+    prows = pt.period_rows(org_id, period["id"])
+    return {"left": len(pt.unresolved(prows)) + sum(pt.count_unentered(org_id, period["id"]).values()),
+            "not_done": sum(1 for r in (rows or []) if not r.get("done")),
             "final": bool(period.get("hours_finalized_at")),
             "final_at": org_time.format_local(period.get("hours_finalized_at"), org_time.zone_name_for_org(org_id))
             if period.get("hours_finalized_at") else None,
@@ -457,18 +471,74 @@ async def totals_line_action(period_id: int, parish_id: int, line_id: int, actio
     return _back(period_id, parish_id, msg="Saved.")
 
 
+def _standing_msg(res: dict) -> str:
+    return (f"Standing hours: {res['recorded']} line(s) recorded, {res['confirmed_automatically']} confirmed "
+            f"automatically, {res['unchanged']} already there. {res['approved']} parish row(s) approved.")
+
+
 @router.post("/admin/timekeeping/status/{period_id}/standing")
 async def standing_carry_forward(period_id: int, request: Request):
+    """Actions > Confirm all standing hours."""
     user, org, err = _require_hr_admin(request)
     if err:
         return err
     try:
-        res = pt.carry_forward_standing(org["id"], period_id, user["id"])
+        res = pt.confirm_standing(org["id"], period_id, user["id"])
     except pt.PayrollError as e:
         return _status_back(period_id, err=e.message)
-    return _status_back(period_id, msg=(
-        f"Standing hours: {res['recorded']} line(s) recorded, {res['confirmed_automatically']} confirmed "
-        f"automatically, {res['unchanged']} already there."))
+    return _status_back(period_id, msg=_standing_msg(res))
+
+
+@router.post("/admin/timekeeping/status/{period_id}/{parish_id}/standing")
+async def standing_one(period_id: int, parish_id: int, request: Request):
+    """A parish row's menu: Confirm standing hours."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    try:
+        res = pt.confirm_standing(org["id"], period_id, user["id"], parish_id)
+    except pt.PayrollError as e:
+        return _status_back(period_id, err=e.message)
+    return _status_back(period_id, msg=_standing_msg(res))
+
+
+@router.post("/admin/timekeeping/status/{period_id}/{parish_id}/approve")
+async def parish_approve(period_id: int, parish_id: int, request: Request):
+    """A parish row's menu: Mark reviewed and approved."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    try:
+        pt.approve_parish(org["id"], period_id, parish_id, user["id"])
+    except pt.PayrollError as e:
+        return _status_back(period_id, err=e.message)
+    return _status_back(period_id, msg="Reviewed and approved.")
+
+
+@router.post("/admin/timekeeping/status/{period_id}/{parish_id}/no-hours")
+async def parish_no_hours(period_id: int, parish_id: int, request: Request):
+    """A parish row's menu: Confirm no hours this week."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    try:
+        pt.confirm_no_hours(org["id"], period_id, parish_id, user["id"])
+    except pt.PayrollError as e:
+        return _status_back(period_id, err=e.message)
+    return _status_back(period_id, msg="Confirmed: no hours this period.")
+
+
+@router.post("/admin/timekeeping/status/{period_id}/{parish_id}/undo-approval")
+async def parish_undo(period_id: int, parish_id: int, request: Request):
+    """A parish row's menu: Undo (approval, confirmed no hours or confirmed standing hours)."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    try:
+        pt.undo_approval(org["id"], period_id, parish_id)
+    except pt.PayrollError as e:
+        return _status_back(period_id, err=e.message)
+    return _status_back(period_id, msg="The approval was removed.")
 
 
 @router.post("/admin/timekeeping/status/{period_id}/final")

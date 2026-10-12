@@ -30,14 +30,16 @@
     <div class="ff-scroll">
       <table class="ff-table">
         <colgroup>
-          <col style="width:20%"><col style="width:22%"><col style="width:12%"><col style="width:9%"><col style="width:9%"><col style="width:10%"><col style="width:18%">
+          <col style="width:17%"><col style="width:19%"><col style="width:10%"><col style="width:7%"><col style="width:7%"><col style="width:8%"><col style="width:8%"><col style="width:9%"><col style="width:15%">
         </colgroup>
         <thead>
           <tr>
             <th data-sort="1" data-dir="asc">Department<span class="arrow">&#9650;</span></th>
             <th data-sort="1">Employee<span class="arrow"></span></th>
             <th data-sort="1">Category<span class="arrow"></span></th>
-            <th data-sort="1" class="c-num">Beacon<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num" data-tip="Standing hours Beacon counted">Std<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num" data-tip="Entered or emailed hours Beacon counted">Entered<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num" data-tip="Std plus Entered">Beacon<span class="arrow"></span></th>
             <th data-sort="1" class="c-num">Register<span class="arrow"></span></th>
             <th data-sort="1" class="c-num">Difference<span class="arrow"></span></th>
             <th data-sort="1">Result<span class="arrow"></span></th>
@@ -49,6 +51,8 @@
             <td data-v="{{ r.parish_code or '~' }}" data-tip="{{ r.parish_name }}">{% if r.parish_code %}{{ r.parish_code }} {% endif %}{{ r.dept_name or r.parish_name }}</td>
             <td data-v="{{ (r.last_name ~ ' ' ~ r.first_name)|lower }}">{{ r.last_name }}, {{ r.first_name }}{% if r.employee_number %} <span class="c-muted">#{{ r.employee_number }}</span>{% endif %}</td>
             <td>{{ r.category_label }}</td>
+            <td class="c-num" data-v="{{ r.std_hours if r.std_hours is not none else '' }}">{{ "%.2f"|format(r.std_hours) if r.std_hours is not none else "—" }}</td>
+            <td class="c-num" data-v="{{ r.entered_hours if r.entered_hours is not none else '' }}">{{ "%.2f"|format(r.entered_hours) if r.entered_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.beacon_hours if r.beacon_hours is not none else '' }}">{{ "%.2f"|format(r.beacon_hours) if r.beacon_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.register_hours if r.register_hours is not none else '' }}">{{ "%.2f"|format(r.register_hours) if r.register_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.difference if r.difference is not none else '' }}">{{ "%+.2f"|format(r.difference) if r.difference is not none else "—" }}</td>

@@ -7,7 +7,9 @@
   screen with scrolling rows is built (Jay, 2026-10-10).
 
   Row colour = what is left: red needs a decision, amber is missing (a parish that normally sends hours has sent
-  none), green is complete, grey is not expected.
+  none), blue is ready for you to approve, GREEN IS DONE (approved, confirmed no hours, confirmed standing hours,
+  or a parish set to No hours expected). The colour and the pill come from payroll_totals.classify_parish,
+  the same rule Mark hours Final uses.
 
   Pills: the Open / Closed / Future pill by the heading is the period's state. Gold buttons at the top
   right are the actions. In the table only the Status column is a pill; everything else is plain text,
@@ -15,16 +17,18 @@
 #}
 {% from "_guide_link.html" import guide_link %}
 {% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
-{% macro row_state(r) -%}
-{%- if r.not_expected -%}idle{%- elif r.needs_review or r.conflicts or r.proposals -%}attn{%- elif not r.submission_id and not r.recorded -%}{{ 'miss' if r.pattern in ('every_period', 'most_periods') else 'wait' }}{%- else -%}ok{%- endif -%}
+{# one form button for a row's menu (the token is passed in: a macro does not see the request) #}
+{% macro act(label, url, tok) -%}
+<form method="post" action="{{ url }}"><input type="hidden" name="csrf_token" value="{{ tok }}"><button role="menuitem" type="submit">{{ label }}</button></form>
 {%- endmacro %}
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
 <link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
 {% endblock %}
 {% block content %}
-{% set ns = namespace(attn=0, miss=0, wait=0, ok=0, idle=0) %}
-{% for r in rows %}{% set st = row_state(r)|trim %}{% if st == 'attn' %}{% set ns.attn = ns.attn + 1 %}{% elif st == 'miss' %}{% set ns.miss = ns.miss + 1 %}{% elif st == 'wait' %}{% set ns.wait = ns.wait + 1 %}{% elif st == 'ok' %}{% set ns.ok = ns.ok + 1 %}{% elif st == 'idle' %}{% set ns.idle = ns.idle + 1 %}{% endif %}{% endfor %}
+{% set ns = namespace(attn=0, miss=0, wait=0, ok=0, idle=0, ready=0) %}
+{% set tok = csrf_token(request) %}
+{% for r in rows %}{% set st = r.state %}{% if st == 'attn' %}{% set ns.attn = ns.attn + 1 %}{% elif st == 'miss' %}{% set ns.miss = ns.miss + 1 %}{% elif st == 'wait' %}{% set ns.wait = ns.wait + 1 %}{% elif st == 'ok' %}{% set ns.ok = ns.ok + 1 %}{% elif st == 'idle' %}{% set ns.idle = ns.idle + 1 %}{% elif st == 'ready' %}{% set ns.ready = ns.ready + 1 %}{% endif %}{% endfor %}
 <div class="page-shell-wide">
 <div class="ff-shell">
 
@@ -49,13 +53,13 @@
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/export">Excel for Checkwriters</a>
           {% if payroll.final %}
           <form method="post" action="/admin/timekeeping/status/{{ period.id }}/unfinal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit">Mark hours not final</button></form>
-          {% elif not payroll.left %}
-          <form method="post" action="/admin/timekeeping/status/{{ period.id }}/final"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit">Mark hours Final</button></form>
+          {% else %}
+          <form method="post" action="/admin/timekeeping/status/{{ period.id }}/final"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit" data-tip="Needs every row green{% if payroll.not_done %}. {{ payroll.not_done }} not green yet{% endif %}">Mark hours Final</button></form>
           {% endif %}
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/variance">Variance report</a>
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/notes">Payroll notes (print or export)</a>
           {% if period.status in ('open', 'future') %}
-          <form method="post" action="/admin/timekeeping/status/{{ period.id }}/standing"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit">Carry forward standing hours</button></form>
+          <form method="post" action="/admin/timekeeping/status/{{ period.id }}/standing"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit" data-tip="Records every standing person's hours for this period. A parish with only standing hours turns green; a parish with other hours still needs its approval.">Confirm all standing hours</button></form>
           {% endif %}
         </div>
       </div>
@@ -86,7 +90,8 @@
       <div class="ff-multi-panel" hidden>
         <label><input type="checkbox" value="attn" checked> Needs review <span class="c-muted">({{ ns.attn }})</span></label>
         <label><input type="checkbox" value="miss" checked> Missing hours <span class="c-muted">({{ ns.miss }})</span></label>
-        <label><input type="checkbox" value="ok" checked> Complete <span class="c-muted">({{ ns.ok }})</span></label>
+        <label><input type="checkbox" value="ready" checked> Ready to approve <span class="c-muted">({{ ns.ready }})</span></label>
+        <label><input type="checkbox" value="ok" checked> Approved or done <span class="c-muted">({{ ns.ok }})</span></label>
         <label><input type="checkbox" value="wait" checked> Not started <span class="c-muted">({{ ns.wait }})</span></label>
         <label><input type="checkbox" value="idle" checked> Not expected <span class="c-muted">({{ ns.idle }})</span></label>
       </div>
@@ -97,8 +102,8 @@
     <div class="ff-scroll">
       <table class="ff-table">
         <colgroup>
-          <col style="width:19%"><col style="width:12%"><col style="width:8%"><col style="width:12%"><col style="width:7%">
-          <col style="width:12%"><col style="width:7%"><col style="width:12%"><col style="width:11%"><col style="width:44px">
+          <col style="width:15%"><col style="width:14%"><col style="width:8%"><col style="width:10%"><col style="width:5%">
+          <col style="width:10%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:10%"><col style="width:10%"><col style="width:44px">
         </colgroup>
         <thead>
           <tr>
@@ -108,7 +113,9 @@
             <th data-sort="1">Expected<span class="arrow"></span></th>
             <th data-sort="1" class="c-num">Emails<span class="arrow"></span></th>
             <th data-sort="1">To review<span class="arrow"></span></th>
-            <th data-sort="1" class="c-num">Hours<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num" data-tip="Standing hours (the same every period)">Std<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num" data-tip="Hours entered or emailed this period">Entered<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num" data-tip="Std plus Entered">Total<span class="arrow"></span></th>
             <th data-sort="1">Submitted by<span class="arrow"></span></th>
             <th data-sort="1">Submitted<span class="arrow"></span></th>
             <th class="c-menu" aria-label="Actions"></th>
@@ -116,11 +123,17 @@
         </thead>
         <tbody>
           {% for r in rows %}
-          {% set st = row_state(r)|trim %}
-          <tr class="ff-row {{ 'is-attn' if st == 'attn' else 'is-miss' if st == 'miss' else 'is-ok' if st == 'ok' else 'is-idle' if st == 'idle' else '' }}" data-state="{{ st }}">
+          {% set st = r.state %}
+          <tr class="ff-row {{ 'is-attn' if st == 'attn' else 'is-miss' if st == 'miss' else 'is-ready' if st == 'ready' else 'is-ok' if (st == 'ok' or st == 'idle') else '' }}" data-state="{{ st }}">
             <td data-v="{{ r.parish_code or '~' }}" data-tip="{{ r.parish_name }}"><a href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{% if r.parish_code %}{{ r.parish_code }} {% endif %}{{ r.short_name or r.parish_name }}</a><span hidden>{{ r.parish_name }}</span></td>
             <td>
-              {% if r.not_expected %}<span class="badge badge-skipped">Not Expected</span>
+              {% if r.pill == 'approved' %}<span class="badge badge-approved" data-tip="Reviewed and approved {{ r.approval_tip or '' }}">Approved</span>
+              {% elif r.pill == 'no_hours' %}<span class="badge badge-approved" data-tip="Confirmed no hours {{ r.approval_tip or '' }}">Confirmed no hours</span>
+              {% elif r.pill == 'only_std_done' %}<span class="badge badge-approved" data-tip="Standing hours confirmed {{ r.approval_tip or '' }}">Only Std Hrs</span>
+              {% elif r.pill == 'only_std' %}<span class="badge badge-submitted" data-tip="Only standing hours this period. Confirm them from the row menu or Actions.">Only Std Hrs</span>
+              {% elif r.pill == 'changed' %}<span class="badge badge-rejected" data-tip="The hours changed after this row was approved {{ r.approval_tip or '' }}. Look again, then approve it again.">Changed after approval</span>
+              {% elif r.pill == 'not_expected' %}<span class="badge badge-approved" data-tip="This parish is set to No hours expected.">Not Expected</span>
+              {% elif r.pill == 'ready' %}<span class="badge badge-submitted" data-tip="Hours are in and nothing is waiting. Approve it from the row menu.">Ready to approve</span>
               {% elif not r.submission_id and r.recorded %}<span class="badge badge-submitted">Hours recorded</span>
               {% elif r.named_only %}<span class="badge badge-pending">Emailed, needs a person</span>
               {% elif not r.submission_id %}<span class="badge badge-cancelled">Not Started</span>
@@ -133,26 +146,38 @@
             <td>{{ r.pattern_label or "—" }}</td>
             <td class="c-num" data-v="{{ r.emails or 0 }}"{% if r.first_received %} data-tip="First received {{ r.first_received }}"{% endif %}>{{ r.emails or "—" }}</td>
             <td data-v="{{ r.needs_review + r.proposals + r.conflicts }}">{% if r.needs_review or r.conflicts or r.proposals %}<span class="ph-state-attn">{{ r.needs_review + r.proposals }} to review{% if r.conflicts %}, {{ r.conflicts }} conflict{{ '' if r.conflicts == 1 else 's' }}{% endif %}</span>{% else %}—{% endif %}</td>
-            <td class="c-num" data-v="{{ r.total_hours or 0 }}">{{ "%.2f"|format(r.total_hours) if r.total_hours else "—" }}</td>
+            <td class="c-num" data-v="{{ r.std_hours or r.std_expected or 0 }}">{% if r.std_hours %}{{ "%.2f"|format(r.std_hours) }}{% elif r.std_expected %}<span class="c-muted" data-tip="Standing hours from the roster. Not confirmed for this period yet.">({{ "%.2f"|format(r.std_expected) }})</span>{% else %}—{% endif %}</td>
+            <td class="c-num" data-v="{{ r.entered_hours or 0 }}">{{ "%.2f"|format(r.entered_hours) if r.entered_hours else "—" }}</td>
+            <td class="c-num" data-v="{{ r.total_hours or 0 }}">{{ "%.2f"|format(r.total_hours) if (r.total_hours or r.approval_kind == 'no_hours') else "—" }}</td>
             <td data-tip="{{ r.submitted_by_email or '' }}">{{ r.submitted_by_name or r.submitted_by_email or "—" }}</td>
             <td data-v="{{ r.submitted_at.isoformat() if r.submitted_at else '' }}">{{ r.submitted_at.strftime("%m/%d/%y %H:%M") if r.submitted_at else "—" }}</td>
             <td class="c-menu">
               <button type="button" class="ff-menu-btn" aria-label="Row actions" aria-haspopup="menu">&#8942;</button>
               <div class="ff-menu-src" hidden>
+                {% if period.status == 'open' %}
+                {% set base = '/admin/timekeeping/status/' ~ period.id ~ '/' ~ r.parish_id %}
+                {% if r.approval_kind == 'no_hours' %}{{ act("Undo no hours", base ~ '/undo-approval', tok) }}
+                {% elif r.approval_kind == 'standing' %}{{ act("Undo standing hours", base ~ '/undo-approval', tok) }}
+                {% elif r.approval_kind == 'approved' %}{{ act("Undo approval", base ~ '/undo-approval', tok) }}
+                {% elif r.state == 'ready' and r.only_std %}{{ act("Confirm standing hours", base ~ '/standing', tok) }}
+                {% elif r.state == 'ready' or r.stale %}{{ act("Mark reviewed and approved", base ~ '/approve', tok) }}
+                {% elif r.state == 'miss' or r.state == 'wait' %}{{ act("Confirm no hours this week", base ~ '/no-hours', tok) }}
+                {% endif %}
+                {% endif %}
                 <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{{ "Enter missing data" if not r.submission_id and not r.recorded else "View / edit hours" }}</a>
                 <a role="menuitem" href="/admin/timekeeping/parish-profile/{{ r.parish_id }}">Parish profile</a>
               </div>
             </td>
           </tr>
           {% else %}
-          <tr class="ff-empty"><td colspan="10">No active parishes found for this diocese.</td></tr>
+          <tr class="ff-empty"><td colspan="12">No active parishes found for this diocese.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
     <div class="ff-foot">
       <span class="ff-count" data-ff-count>{{ rows|length }} shown</span>
-      <span class="ff-count">{{ rows|length }} parishes &middot; {{ ns.attn }} to review &middot; {{ ns.miss }} missing hours</span>
+      <span class="ff-count">{{ rows|length }} parishes &middot; {{ ns.ok + ns.idle }} green &middot; {{ ns.ready }} ready to approve &middot; {{ ns.attn }} to review &middot; {{ ns.miss }} missing hours</span>
       <span class="ff-count ff-updated" data-ff-updated{% if payroll.reader.detail %} data-tip="{{ payroll.reader.detail }}"{% endif %}>
         {% if payroll.reader.running %}<span class="ph-state-attn">Review running since {{ payroll.reader.running_since }}</span> &middot; {% endif %}
         {% if payroll.reader.failed %}<span class="ph-state-attn" data-tip="The last review failed {{ payroll.reader.failed_at }}. Nothing was lost; it will try again.">Last review failed {{ payroll.reader.failed_at }}</span> &middot; {% endif %}

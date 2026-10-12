@@ -84,6 +84,7 @@ table.ff-table { width: 100%; border-collapse: separate; border-spacing: 0; tabl
 .ff-table tr.ff-row.is-attn { background: #f6e0e0; }
 .ff-table tr.ff-row.is-miss { background: #fbf0d2; }
 .ff-table tr.ff-row.is-idle { background: #f4f1ea; color: #8a847a; }
+.ff-table tr.ff-row.is-ready { background: #e3edf8; }
 
 /* The bottom bar, locked at the bottom of the frame. */
 .ff-foot {
@@ -121,6 +122,10 @@ dialog.ff-dialog .sub { font-size: 0.82rem; margin: 8px 0 0; }
 .ff-menu { position: fixed; z-index: 50; min-width: 170px; background: #fff; border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; padding: 4px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); }
 .ff-menu a { display: block; padding: 6px 10px; border-radius: 4px; font-size: 0.9rem; color: var(--color-ink, #2b2b2b); text-decoration: none; white-space: nowrap; }
 .ff-menu a:hover { background: #f1ede2; }
+/* a row action that posts (Approve, Confirm no hours ...) sits in the menu as a form with one button that reads like a link */
+.ff-menu form { display: block; margin: 0; }
+.ff-menu button { display: block; width: 100%; box-sizing: border-box; text-align: left; background: none; border: 0; cursor: pointer; padding: 6px 10px; border-radius: 4px; font: inherit; font-size: 0.9rem; color: var(--color-ink, #2b2b2b); white-space: nowrap; }
+.ff-menu button:hover { background: #f1ede2; }
 
 /* A list of links inside a pop-up (e.g. Change period): one row per item, the current one highlighted. */
 dialog.ff-dialog.wide { width: min(600px, 94vw); }
