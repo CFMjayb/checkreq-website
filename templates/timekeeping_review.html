@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Timekeeping Review — {{ current_org.name }}{% endblock %}
+{% block title %}Roster Review — {{ current_org.name }}{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
-<h1>Timekeeping Review</h1>
+<h1>Roster Review</h1>
 <p class="back-link"><a href="/portal">&larr; Back to main menu</a></p>
 <p class="sub">Submitted hours and pending staff roster changes across every Cornerstone-served parish
 under {{ current_org.name }}.</p>
@@ -65,26 +65,6 @@ reason — the parish sees it and can correct and resubmit.</p>
 </div>
 </div>
 
-<h2>Submitted Time Entry Periods</h2>
-<p class="sub">Read-only for now — adjusting or finalizing individual hours isn't built yet in this pass.</p>
-<div class="card">
-<div class="table-scroll">
-<table class="simple-table">
-  <tr><th>Parish</th><th>Period</th><th>Submitted By</th><th>Submitted</th><th>Total Hours</th></tr>
-  {% for s in submitted_periods %}
-  <tr>
-    <td>{{ s.parish_name }}</td>
-    <td>{{ s.period_label or (s.period_start|string ~ " to " ~ s.period_end|string) }}</td>
-    <td>{{ s.submitted_by_name or s.submitted_by_email or "—" }}</td>
-    <td>{{ s.submitted_at.strftime("%Y-%m-%d %H:%M") if s.submitted_at else "—" }}</td>
-    <td>{{ "%.2f"|format(s.total_hours) }}</td>
-  </tr>
-  {% else %}
-  <tr><td colspan="5" class="sub">No submitted periods awaiting review.</td></tr>
-  {% endfor %}
-</table>
-</div>
-</div>
 </div>
 <script>
 function promptRejectReason(form) {

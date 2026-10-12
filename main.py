@@ -484,8 +484,13 @@ def how_it_works_parish_mode_page(request: Request):
     parish, _is_preview = parish_mode.effective_parish_mode(request, user)
     if not parish:
         return RedirectResponse("/how-it-works")
+    # Jay, 2026-10-11: a parish with Timekeeping turned on (the diocese's feature flag AND the parish's own switch,
+    # the same two checks the Timekeeping screens use) also gets a section explaining how Timekeeping works for it.
+    timekeeping_on = bool(org_features.is_enabled(parish["org_id"], "timekeeping")
+                          and timekeeping_activation.parish_hr_enabled(parish))
     return _render(request, "how_it_works_parish_mode.html", user, {
         "beacon_address": beacon_address.beacon_address(parish.get("org_id")),
+        "timekeeping_enabled": timekeeping_on,
     })
 
 
@@ -583,8 +588,8 @@ MODULES = [
     # review screens and their routes reject a Cornerstone-Mode-selected entity
     # outright. This is also NOT the Parish Mode timekeeping grid -- Jay:
     # "This is different from Parish Mode Timekeeping."
-    {"key": "time_review", "title": "Time Review", "desc": "Approve roster changes and see submitted hours awaiting review.", "url": "/admin/timekeeping/review", "enabled": True, "gate": "timekeeping_reviewer"},
-    {"key": "time_status", "title": "Time Status", "desc": "Track each parish's submissions, open or close a period, enter missing hours, and export.", "url": "/admin/timekeeping/status", "enabled": True, "gate": "timekeeping_reviewer"},
+    {"key": "time_review", "title": "Roster Review", "desc": "Approve or reject the roster changes (new hires, terminations, edits) parishes and emails ask for.", "url": "/admin/timekeeping/review", "enabled": True, "gate": "timekeeping_reviewer"},
+    {"key": "time_status", "title": "Time Review", "desc": "Review each parish's hours, open or close a period, enter missing hours, and export.", "url": "/admin/timekeeping/status", "enabled": True, "gate": "timekeeping_reviewer"},
 ]
 
 # The union of roles that unlock the "Administrative Tasks" tile/hub (2026-08-02

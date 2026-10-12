@@ -1,50 +1,89 @@
 {# 26-158: the period totals recorded for this parish (emails, standing hours, the diocese), as a scrolling
-   area like the other screens (Jay, 2026-10-11). The email's quote and the email-check line show on a
-   hover tip over the Source; the email's stored PDF opens from the PDF button (hover for a preview,
-   click for a large view). Included only on the diocese's backfill screen; its banners are on the page. #}
-{% if payroll_totals and payroll_totals.rows %}
+   area like the other screens (Jay, 2026-10-11). ONE ROW PER EMPLOYEE with each kind of hours in its own
+   column (Jay, 2026-10-11: "show the hours on the same row"). The email's quote and the email-check line show on a
+   hover tip over the Source; the email's stored PDF opens from the PDF button (hover for a preview, click for a
+   large view). People an email named that nobody entered yet come first, with a name list to pick the right
+   employee. Included only on the diocese's backfill screen; its banners are on the page. #}
+{% if payroll_totals and (payroll_totals.people or payroll_totals.unentered) %}
+{% set pt_ = payroll_totals %}
 <div class="te-tframe">
   <div class="te-thead">
     <h2>Period totals</h2>
-    <span class="c-muted">{{ payroll_totals.rows|length }} line{{ '' if payroll_totals.rows|length == 1 else 's' }}</span>
-    {% if not payroll_totals.writable %}<span class="sub">This period is not open, so these lines are read-only.</span>{% endif %}
-    {% if payroll_totals.writable %}
-    <form method="post" action="/admin/timekeeping/status/{{ payroll_totals.period_id }}/{{ payroll_totals.parish_id }}/totals/accept-all">
+    <span class="c-muted">{{ pt_.people|length }} employee{{ '' if pt_.people|length == 1 else 's' }}</span>
+    {% if not pt_.writable %}<span class="sub">This period is not open, so these lines are read-only.</span>{% endif %}
+    {% if pt_.writable and pt_.people %}
+    <form method="post" action="/admin/timekeeping/status/{{ pt_.period_id }}/{{ pt_.parish_id }}/totals/accept-all">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
       <button class="btn btn-sm" type="submit" data-tip="Lines with a flag, a waiting figure or a conflict are left for you to look at.">Accept all plain lines</button>
     </form>
     {% endif %}
   </div>
   <div class="te-tscroll">
+  {% if pt_.unentered %}
+  <div class="te-unentered">
+    <h3>Named in the emails, not entered yet <span class="c-muted">({{ pt_.unentered|length }})</span></h3>
+    <p class="sub">The reader could not place these. Choose the right employee and Enter, or Dismiss when nothing is needed. The PDF is the same email as the lines below.</p>
+    <table class="te-ttable">
+      <thead><tr><th>Name in the email</th><th>Read as</th><th>Why</th><th>Email</th><th>Choose the employee</th></tr></thead>
+      <tbody>
+      {% for u in pt_.unentered %}
+      <tr class="is-attn">
+        <td><strong>{{ u.employee_text }}</strong></td>
+        <td>{{ u.hours_label or '—' }}{% if u.quote %}<span class="te-flag sub">&ldquo;{{ u.quote }}&rdquo;</span>{% endif %}</td>
+        <td>{{ u.reason_label }}</td>
+        <td>{% if u.pdf_url %}<button type="button" class="te-pdf" data-pdf-pop data-pdf-src="{{ u.pdf_url }}" aria-label="Open the email PDF">PDF</button>{% else %}—{% endif %}</td>
+        <td>
+          {% if pt_.writable %}
+          <div class="ph-actions">
+            <form class="ph-inline" method="post" action="/admin/timekeeping/status/{{ pt_.period_id }}/{{ pt_.parish_id }}/unentered/{{ u.id }}/assign">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+              <select name="staff_id" aria-label="Employee" required>
+                <option value="">Choose&hellip;</option>
+                {% for s in pt_.roster %}<option value="{{ s.id }}"{% if s.id == u.suggested_staff_id %} selected{% endif %}>{{ s.last_name }}, {{ s.first_name }} (#{{ s.employee_number }}){% if not s.captures_hours %} - not hourly{% endif %}</option>{% endfor %}
+              </select>
+              {% if not u.hours or u.hours_single is not none %}<input type="text" inputmode="decimal" name="hours" value="{{ '%.2f'|format(u.hours_single) if u.hours_single is not none else '' }}" placeholder="Hours" aria-label="Hours">{% endif %}
+              <button class="btn btn-sm btn-primary" type="submit">Enter</button>
+            </form>
+            <form class="ph-inline" method="post" action="/admin/timekeeping/status/{{ pt_.period_id }}/{{ pt_.parish_id }}/unentered/{{ u.id }}/dismiss">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+              <button class="btn btn-sm" type="submit">Dismiss</button>
+            </form>
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% if pt_.people %}
   <table class="te-ttable">
-    <thead><tr><th>Employee</th><th>Category</th><th>Hours</th><th>Source</th><th>Status</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Employee</th>{% for c in pt_.cat_cols %}<th class="te-num">{{ c.label }}</th>{% endfor %}<th>Source</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody>
-    {% for r in payroll_totals.rows %}
-    {% set tip %}{% if r.quote %}&ldquo;{{ r.quote }}&rdquo;{% endif %}{% if r.proposed_quote %}
-New figure: &ldquo;{{ r.proposed_quote }}&rdquo;{% endif %}{% if 'email_match' in r.flags %}
-Email check: matches the email.{% endif %}{% if 'email_differs' in r.flags %}
-Email check: the email shows a different number.{% endif %}{% if 'email_named_no_number' in r.flags %}
-Email check: named in an email, no number found.{% endif %}{% if 'email_standing' in r.flags %}
-Email check: standing hours.{% endif %}{% if 'email_none' in r.flags %}
-Email check: no email found.{% endif %}{% endset %}
-    <tr class="{{ 'is-ok' if r.state == 'ok' else 'is-attn' }}">
-      <td>{{ r.last_name }}, {{ r.first_name }}{% if r.employee_number %} <span class="sub ph-small">#{{ r.employee_number }}</span>{% endif %}</td>
-      <td>{{ r.category_label }}</td>
-      <td>{{ "%.2f"|format(r.line_hours) }}
+    {% for p in pt_.people %}
+    <tr class="{{ 'is-attn' if p.attn else 'is-ok' }}">
+      <td>{{ p.last_name }}, {{ p.first_name }}{% if p.employee_number %} <span class="sub ph-small">#{{ p.employee_number }}</span>{% endif %}</td>
+      {% for c in pt_.cat_cols %}{% set r = p.cells.get(c.key) %}
+      <td class="te-num">{% if r %}{{ "%.2f"|format(r.line_hours) }}
         {% if r.proposed_hours is not none %}<span class="te-flag ph-state-attn">new figure: {{ "%.2f"|format(r.proposed_hours) }}{% if r.proposed_pdf_url %}<button type="button" class="te-pdf" data-pdf-pop data-pdf-src="{{ r.proposed_pdf_url }}" aria-label="Open the new figure's email PDF">PDF</button>{% endif %}</span>{% endif %}
         {% if r.grid_hours is not none %}<span class="te-flag sub">daily grid: {{ "%.2f"|format(r.grid_hours) }}</span>{% endif %}
-      </td>
-      <td><span class="te-src"{% if tip|trim %} data-tip="{{ tip|trim }}"{% endif %}>{{ r.source|capitalize }}</span>{% if r.pdf_url %}<button type="button" class="te-pdf" data-pdf-pop data-pdf-src="{{ r.pdf_url }}" aria-label="Open the email PDF">PDF</button>{% endif %}</td>
-      <td><span class="{{ 'ph-state-ok' if r.state == 'ok' else 'ph-state-attn' }}">{{ r.state_label }}</span>
-        {% if 'auto_accepted' in r.flags %}<span class="te-flag sub">Accepted automatically</span>{% endif %}
-        {% if 'jump' in r.flags %}<span class="te-flag ph-state-attn">Much higher than usual</span>{% endif %}
-        {% if 'inactive_employee' in r.flags %}<span class="te-flag ph-state-attn">Inactive employee</span>{% endif %}
-        {% if 'not_hourly' in r.flags %}<span class="te-flag sub">Not an hourly employee (information only)</span>{% endif %}
+        {% else %}<span class="c-muted">&mdash;</span>{% endif %}</td>
+      {% endfor %}
+      <td>{% for s in p.sources %}<span class="te-src"{% if p.tip %} data-tip="{{ p.tip }}"{% endif %}>{{ s|capitalize }}</span>{% if not loop.last %}, {% endif %}{% endfor %}{% for u in p.pdfs %}<button type="button" class="te-pdf" data-pdf-pop data-pdf-src="{{ u }}" aria-label="Open the email PDF">PDF</button>{% endfor %}</td>
+      <td><span class="{{ 'ph-state-ok' if not p.attn else 'ph-state-attn' }}">{{ p.state_label }}</span>
+        {% if p.auto_accepted %}<span class="te-flag sub">Accepted automatically</span>{% endif %}
+        {% if p.jump %}<span class="te-flag ph-state-attn">Much higher than usual</span>{% endif %}
+        {% if p.inactive %}<span class="te-flag ph-state-attn">Inactive employee</span>{% endif %}
+        {% if p.not_hourly %}<span class="te-flag sub">Not an hourly employee (information only)</span>{% endif %}
+        {% if p.by_elimination %}<span class="te-flag ph-state-attn">Name matched by elimination: check it against the email</span>{% endif %}
       </td>
       <td>
-        {% if payroll_totals.writable and r.review_status != 'rejected' %}
-        <div class="ph-actions">
-          {% set base = '/admin/timekeeping/status/' ~ payroll_totals.period_id ~ '/' ~ payroll_totals.parish_id ~ '/totals/' ~ r.line_id ~ '/' %}
+        {% if pt_.writable %}
+        <div class="ph-actions te-multi">
+        {% for r in p.lines %}{% if r.review_status != 'rejected' %}
+          {% set base = '/admin/timekeeping/status/' ~ pt_.period_id ~ '/' ~ pt_.parish_id ~ '/totals/' ~ r.line_id ~ '/' %}
+          <span class="te-act">{% if p.lines|length > 1 %}<span class="sub ph-small">{{ r.category_label }}</span>{% endif %}
           {% if r.state == 'conflict' %}
             <form class="ph-inline" method="post" action="{{ base }}use_total"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Use period total</button></form>
             <form class="ph-inline" method="post" action="{{ base }}use_grid"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Use daily grid</button></form>
@@ -52,7 +91,7 @@ Email check: no email found.{% endif %}{% endset %}
             <form class="ph-inline" method="post" action="{{ base }}accept_proposal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Use new figure</button></form>
             <form class="ph-inline" method="post" action="{{ base }}dismiss_proposal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Keep current</button></form>
           {% elif r.state == 'pending_hire' %}
-            <span class="sub ph-small">Approve the new hire in Time Review first.</span>
+            <span class="sub ph-small">Approve the new hire in Roster Review first.</span>
           {% else %}
             {% if r.state == 'needs_review' %}
             <form class="ph-inline" method="post" action="{{ base }}accept"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Accept</button></form>
@@ -60,6 +99,8 @@ Email check: no email found.{% endif %}{% endset %}
             <form class="ph-inline" method="post" action="{{ base }}edit"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="text" inputmode="decimal" name="hours" value="{{ '%.2f'|format(r.line_hours) }}" aria-label="Hours"><button class="btn btn-sm" type="submit">Save hours</button></form>
           {% endif %}
           <form class="ph-inline" method="post" action="{{ base }}reject"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Reject</button></form>
+          </span>
+        {% endif %}{% endfor %}
         </div>
         {% endif %}
       </td>
@@ -67,6 +108,7 @@ Email check: no email found.{% endif %}{% endset %}
     {% endfor %}
     </tbody>
   </table>
+  {% endif %}
   </div>
 </div>
 {% endif %}

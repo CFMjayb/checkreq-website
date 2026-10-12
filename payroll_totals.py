@@ -544,6 +544,202 @@ def mark_submission_received(org_id: int, *, period_id: int, parish_code: str, s
     return {"action": "created" if new else "unchanged", "submission_id": sub["id"]}
 
 
+# ------------------------------------------------- people an email named that were not entered
+
+UNENTERED_REASONS = ("no_figure", "no_match", "ambiguous", "low_confidence", "refused", "other")
+UNENTERED_REASON_LABELS = {
+    "no_figure": "No exact hours in the email (only a limit or a rule)",
+    "no_match": "No one on the roster matches this name",
+    "ambiguous": "More than one employee fits this name",
+    "low_confidence": "The reader was not sure of this line",
+    "refused": "Beacon refused this line",
+    "other": "Not entered",
+}
+
+
+def _clean_item_hours(raw) -> dict | None:
+    """{category_key: hours} with each hours a number from 0 up to 300, or None when there are none."""
+    if not isinstance(raw, dict):
+        return None
+    out = {}
+    for k, v in raw.items():
+        if v in (None, "", 0, 0.0):
+            continue
+        out[str(k).strip().lower()[:30]] = float(parse_hours(v))
+    return out or None
+
+
+def _hours_label(hours: dict | None, cats: dict[str, str]) -> str:
+    if not hours:
+        return ""
+    return ", ".join(f"{h:g} {cats.get(k, k).lower()}" for k, h in hours.items())
+
+
+def replace_unentered(org_id: int, *, period_id: int, source_ref: str, items: list[dict]) -> dict:
+    """The CURRENT list of people one email named that the reader could not enter. Idempotent: the same
+    list again changes nothing. Each item: parish_code, employee (the name as written), reason (one of
+    UNENTERED_REASONS), hours ({category: hours} as read, optional), employee_number (the reader's best
+    guess, optional), quote (the sentence, optional). An open item not in the list any more (the reader
+    entered the person on a later read) is marked cleared. An item a person dismissed stays dismissed. A
+    new or re-opened item takes the period off Final."""
+    ref = (source_ref or "").strip()
+    if not ref:
+        raise PayrollError("invalid", "source_ref is required.")
+    get_period(org_id, period_id)
+    clean: dict[tuple[int, str], dict] = {}
+    for it in items or []:
+        parish = _parish(org_id, str(it.get("parish_code") or ""))
+        name = " ".join(str(it.get("employee") or "").split())[:80]
+        if not name:
+            raise PayrollError("invalid", "Every item needs the employee's name as written.")
+        reason = it.get("reason") if it.get("reason") in UNENTERED_REASONS else "other"
+        staff_id = None
+        if it.get("employee_number") not in (None, ""):
+            s = db.query_one("SELECT id FROM portal.staff_roster WHERE parish_id = %s AND employee_number = %s "
+                             "ORDER BY is_active DESC, id LIMIT 1", (parish["id"], str(it["employee_number"]).strip()))
+            staff_id = s["id"] if s else None
+        clean[(parish["id"], name)] = {"reason": reason, "hours": _clean_item_hours(it.get("hours")),
+                                       "staff_id": staff_id, "quote": clean_quote(it.get("quote"))}
+    opened = cleared = kept = 0
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT u.id, u.parish_id, u.employee_text, u.status FROM portal.time_email_unentered u "
+                        "JOIN portal.parishes p ON p.id = u.parish_id "
+                        "WHERE u.period_id = %s AND u.source_ref = %s AND p.org_id = %s FOR UPDATE",
+                        (period_id, ref, org_id))
+            have = {(r["parish_id"], r["employee_text"]): r for r in cur.fetchall()}
+            for key, v in clean.items():
+                row = have.get(key)
+                hj = None if v["hours"] is None else json.dumps(v["hours"])
+                if row is None:
+                    cur.execute("INSERT INTO portal.time_email_unentered (period_id, parish_id, source_ref, employee_text, "
+                                "reason, hours, suggested_staff_id, quote) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s,%s)",
+                                (period_id, key[0], ref, key[1], v["reason"], hj, v["staff_id"], v["quote"]))
+                    opened += 1
+                elif row["status"] == "dismissed":
+                    kept += 1
+                elif row["status"] == "cleared":
+                    # a person already entered it from the list, or the reader did: leave it settled
+                    kept += 1
+                else:
+                    cur.execute("UPDATE portal.time_email_unentered SET reason = %s, hours = %s::jsonb, "
+                                "suggested_staff_id = %s, quote = %s, updated_at = now() WHERE id = %s",
+                                (v["reason"], hj, v["staff_id"], v["quote"], row["id"]))
+            for key, row in have.items():
+                if key not in clean and row["status"] == "open":
+                    cur.execute("UPDATE portal.time_email_unentered SET status = 'cleared', handled_at = now(), "
+                                "handled_note = %s, updated_at = now() WHERE id = %s",
+                                ("The reader entered this person or no longer lists them.", row["id"]))
+                    cleared += 1
+            if opened:
+                _unfinalize(cur, period_id)
+            conn.commit()
+    return {"listed": len(clean), "opened": opened, "cleared": cleared, "settled_kept": kept}
+
+
+def list_unentered(org_id: int, period_id: int, parish_id: int | None = None, status: str = "open") -> list[dict]:
+    """The people the emails named that nobody has entered yet (or, with status, the dismissed or cleared)."""
+    get_period(org_id, period_id)
+    args: list = [period_id, org_id, status]
+    extra = ""
+    if parish_id is not None:
+        extra = " AND u.parish_id = %s"
+        args.append(parish_id)
+    rows = db.query(
+        "SELECT u.id, u.period_id, u.parish_id, p.code AS parish_code, p.name AS parish_name, "
+        "COALESCE(p.short_name, p.name) AS dept_name, u.source_ref, u.employee_text, u.reason, u.hours, "
+        "u.suggested_staff_id, u.quote, u.status, u.created_at, sr.first_name AS sug_first, sr.last_name AS sug_last "
+        "FROM portal.time_email_unentered u JOIN portal.parishes p ON p.id = u.parish_id "
+        "LEFT JOIN portal.staff_roster sr ON sr.id = u.suggested_staff_id "
+        "WHERE u.period_id = %s AND p.org_id = %s AND u.status = %s" + extra +
+        " ORDER BY p.code, u.employee_text, u.id", args)
+    cats = {c["key"]: c["label"] for c in db.query(
+        "SELECT key, label FROM portal.timekeeping_categories WHERE org_id = %s", (org_id,))}
+    for r in rows:
+        r["reason_label"] = UNENTERED_REASON_LABELS.get(r["reason"], r["reason"])
+        r["hours_label"] = _hours_label(r["hours"], cats)
+        r["hours_single"] = next(iter(r["hours"].values())) if r["hours"] and len(r["hours"]) == 1 else None
+    return rows
+
+
+def count_unentered(org_id: int, period_id: int) -> dict[int, int]:
+    """Open items per parish id for one pay period."""
+    return {r["parish_id"]: r["n"] for r in db.query(
+        "SELECT u.parish_id, count(*) AS n FROM portal.time_email_unentered u JOIN portal.parishes p ON p.id = u.parish_id "
+        "WHERE u.period_id = %s AND p.org_id = %s AND u.status = 'open' GROUP BY u.parish_id", (period_id, org_id))}
+
+
+def _settle_unentered(item_id: int, org_id: int, user_id: int, status: str, note: str | None) -> dict:
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT u.* FROM portal.time_email_unentered u JOIN portal.parishes p ON p.id = u.parish_id "
+                        "WHERE u.id = %s AND p.org_id = %s FOR UPDATE", (item_id, org_id))
+            row = cur.fetchone()
+            if not row:
+                raise PayrollError("not_found", "That item was not found.")
+            if row["status"] != "open":
+                raise PayrollError("refused", "That item is not waiting any more.")
+            cur.execute("UPDATE portal.time_email_unentered SET status = %s, handled_by_user_id = %s, "
+                        "handled_at = now(), handled_note = %s, updated_at = now() WHERE id = %s",
+                        (status, user_id, (note or "").strip()[:300] or None, item_id))
+            conn.commit()
+    return row
+
+
+def dismiss_unentered(org_id: int, item_id: int, user_id: int, note: str | None = None) -> dict:
+    """A reviewer says this person needs nothing (for example the hours were entered by hand on the row,
+    or the person is not paid hourly). Who and when are kept."""
+    _settle_unentered(item_id, org_id, user_id, "dismissed", note)
+    return {"dismissed": True}
+
+
+def assign_unentered(org_id: int, item_id: int, staff_id: int, user_id: int, hours=None) -> dict:
+    """A reviewer picks the right employee for a name the reader could not place and the hours are entered for
+    that person, as email lines tied to the same email (so the PDF links to them), confirmed by the reviewer.
+    The hours are the ones the reader read; when it read none, `hours` (regular) must be given."""
+    row = db.query_one("SELECT u.* FROM portal.time_email_unentered u JOIN portal.parishes p ON p.id = u.parish_id "
+                       "WHERE u.id = %s AND p.org_id = %s", (item_id, org_id))
+    if not row:
+        raise PayrollError("not_found", "That item was not found.")
+    if row["status"] != "open":
+        raise PayrollError("refused", "That item is not waiting any more.")
+    staff = db.query_one("SELECT s.*, p.code AS parish_code FROM portal.staff_roster s JOIN portal.parishes p ON p.id = s.parish_id "
+                         "WHERE s.id = %s AND p.org_id = %s", (staff_id, org_id))
+    if not staff or not staff.get("employee_number"):
+        raise PayrollError("not_found", "Choose an employee from the list.")
+    if staff["parish_id"] != row["parish_id"]:
+        raise PayrollError("refused", "That employee is not on this parish's roster.")
+    figures = _clean_item_hours(row["hours"]) or {}
+    if hours not in (None, "") and len(figures) <= 1:
+        figures = {(next(iter(figures)) if figures else "regular"): float(parse_hours(hours))}
+    if not figures:
+        raise PayrollError("invalid", "Type the hours for this person first: the email gave no exact figure.")
+    period = get_period(org_id, row["period_id"])
+    who = db.query_one("SELECT COALESCE(display_name, email) AS n FROM checkreq.app_users WHERE id = %s", (user_id,))
+    note = f"Name chosen by {(who or {}).get('n') or 'a reviewer'} from the email"
+    placed = []
+    for cat, h in figures.items():
+        res = record_period_hours(org_id, period_id=period["id"], parish_code=staff["parish_code"], category_key=cat, hours=h,
+                                  source="email", source_ref=row["source_ref"],
+                                  quote=(f"(written as {row['employee_text']}) " + (row["quote"] or ""))[:300],
+                                  confidence=1, employee_number=staff["employee_number"], actor_user_id=user_id,
+                                  status="confirmed")
+        placed.append({"category": cat, "hours": h, "action": res.get("action")})
+    _settle_unentered(item_id, org_id, user_id, "cleared", note)
+    return {"entered": placed, "staff_id": staff["id"]}
+
+
+def _first_names_fit(a, b) -> bool:
+    """Two first names that are the same person's: the first word equal (Mary / Mary Frances, Abraham / Abraham (Bram))
+    or one a prefix of the other from three letters up (Tim / Timothy)."""
+    ta = re.findall(r"[a-z0-9']+", (a or "").lower().replace("'", ""))
+    tb = re.findall(r"[a-z0-9']+", (b or "").lower().replace("'", ""))
+    if not ta or not tb:
+        return False
+    x, y = ta[0], tb[0]
+    return x == y or (len(x) >= 3 and len(y) >= 3 and (x.startswith(y) or y.startswith(x)))
+
+
 def propose_roster_change(org_id: int, *, parish_code: str, change_type: str, source_ref: str,
                           quote: str | None = None, employee_number: str | None = None,
                           first_name: str | None = None, last_name: str | None = None,
@@ -569,6 +765,20 @@ def propose_roster_change(org_id: int, *, parish_code: str, change_type: str, so
         if emp and db.query_one("SELECT 1 AS x FROM portal.staff_roster WHERE parish_id = %s AND employee_number = %s",
                                 (parish["id"], emp)):
             raise PayrollError("refused", f"Employee number {emp} is already on this parish's roster.")
+        # Never ask for someone who is already on the roster (active or not) or already asked for: an email about a
+        # person's paperwork is not a new hire when she is already in the system, and a second email about the same
+        # hire must not queue a second request.
+        for r in db.query("SELECT id, first_name, employee_number, is_active FROM portal.staff_roster "
+                          "WHERE parish_id = %s AND lower(last_name) = lower(%s) ORDER BY is_active DESC, id",
+                          (parish["id"], last)):
+            if _first_names_fit(first, r["first_name"]):
+                return {"action": "already_on_roster", "change_id": None, "staff_id": r["id"],
+                        "employee_number": r["employee_number"], "is_active": bool(r["is_active"])}
+        for r in db.query("SELECT id, proposed_first_name FROM portal.staff_roster_changes WHERE parish_id = %s "
+                          "AND change_type = 'add' AND status = 'pending' AND lower(proposed_last_name) = lower(%s) "
+                          "ORDER BY id", (parish["id"], last)):
+            if _first_names_fit(first, r["proposed_first_name"]):
+                return {"action": "unchanged", "change_id": r["id"], "duplicate_of_pending": True}
     else:
         if not emp:
             raise PayrollError("invalid", "An employee number is needed to change an existing employee.")
@@ -993,8 +1203,14 @@ def finalize_period(org_id: int, period_id: int, user_id: int) -> dict:
     """Marks the hours Final for Checkwriters. Refused while any line still needs a decision."""
     get_period(org_id, period_id)
     left = unresolved(_period_rows(org_id, period_id))
-    if left:
-        raise PayrollError("refused", f"{len(left)} line(s) still need a decision, so the hours cannot be marked Final.")
+    unentered = sum(count_unentered(org_id, period_id).values())
+    if left or unentered:
+        parts = []
+        if left:
+            parts.append(f"{len(left)} line(s) still need a decision")
+        if unentered:
+            parts.append(f"{unentered} person(s) named in emails were not entered")
+        raise PayrollError("refused", " and ".join(parts).capitalize() + ", so the hours cannot be marked Final.")
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE portal.payroll_periods SET hours_finalized_at = now(), hours_finalized_by_user_id = %s, "
@@ -1013,7 +1229,7 @@ def unfinalize_period(org_id: int, period_id: int) -> None:
 
 def board_extras(org_id: int, period_id: int) -> dict[int, dict]:
     """Per parish id: pattern, channel, emails received (count and first time), lines needing
-    review, conflicts and waiting proposals. For the Time Status board."""
+    review, conflicts and waiting proposals. For the Time Review board."""
     get_period(org_id, period_id)
     out: dict[int, dict] = {}
 

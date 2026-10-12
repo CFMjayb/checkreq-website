@@ -70,11 +70,11 @@ def review_page(request: Request):
     user, org, err = _require_hr_admin(request)
     if err:
         return err
-    submitted_periods = timekeeping_entries.list_submitted_periods_for_org(org["id"])
+    # Roster Review (Jay, 2026-10-11): only the roster changes. The submitted-periods list is gone: all the time review is
+    # done on Time Review (the old Time Status board).
     roster_changes = timekeeping_roster_changes.list_pending_review_for_org(org["id"])
     return _render(request, "timekeeping_review.html", user, {
         "current_org": org,
-        "submitted_periods": submitted_periods,
         "roster_changes": roster_changes,
     })
 

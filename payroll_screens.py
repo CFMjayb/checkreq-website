@@ -102,6 +102,72 @@ def _status_back(period_id: int, msg: str | None = None, err: str | None = None)
 
 # ---------------------------------------------- helpers the existing screens call
 
+_EMAIL_CHECK_TIPS = {
+    "email_match": "Email check: matches the email.",
+    "email_differs": "Email check: the email shows a different number.",
+    "email_named_no_number": "Email check: named in an email, no number found.",
+    "email_standing": "Email check: standing hours.",
+    "email_none": "Email check: no email found.",
+}
+
+
+def _line_tip(r: dict) -> str:
+    """What the hover tip over a line's Source says: the sentence from the email, the sentence a new figure came
+    from, and the email-check result (kept from the one-row-per-line layout)."""
+    parts = []
+    if r.get("quote"):
+        parts.append("\u201c" + r["quote"] + "\u201d")
+    if r.get("proposed_quote"):
+        parts.append("New figure: \u201c" + r["proposed_quote"] + "\u201d")
+    for f in r.get("flags") or []:
+        if f in _EMAIL_CHECK_TIPS:
+            parts.append(_EMAIL_CHECK_TIPS[f])
+    return "\n".join(parts)
+
+
+def people_view(rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """The period totals as ONE ROW PER EMPLOYEE (Jay, 2026-10-11): each kind of hours is a column, so a person's
+    Regular and Overtime sit on the same row. Returns (people, columns). Every line keeps its own actions inside
+    the person's row."""
+    cats: dict = {}
+    groups: dict = {}
+    order: list = []
+    for r in rows:
+        cats[r["category_key"]] = (r["category_sort"] or 0, r["category_label"])
+        key = ("s", r["staff_id"]) if r["staff_id"] else ("p", r["pending_change_id"])
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {"last_name": r["last_name"], "first_name": r["first_name"],
+                               "employee_number": r["employee_number"], "cells": {}, "lines": [], "pdfs": [],
+                               "sources": [], "tips": []}
+            order.append(key)
+        g["cells"][r["category_key"]] = r
+        g["lines"].append(r)
+        if r.get("pdf_url") and r["pdf_url"] not in g["pdfs"]:
+            g["pdfs"].append(r["pdf_url"])
+        if r.get("source") and r["source"] not in g["sources"]:
+            g["sources"].append(r["source"])
+        t = _line_tip(r)
+        if t and t not in g["tips"]:
+            g["tips"].append(t)
+    people = []
+    for key in order:
+        g = groups[key]
+        flags = {f for ln in g["lines"] for f in (ln.get("flags") or [])}
+        bad = [ln for ln in g["lines"] if ln["state"] != "ok"]
+        g["attn"] = bool(bad)
+        g["state_label"] = STATE_LABELS.get((bad[0] if bad else g["lines"][0])["state"], "") if g["lines"] else ""
+        g["tip"] = "\n\n".join(g["tips"])
+        g["auto_accepted"] = "auto_accepted" in flags
+        g["jump"] = "jump" in flags
+        g["inactive"] = "inactive_employee" in flags
+        g["not_hourly"] = "not_hourly" in flags
+        g["by_elimination"] = any((ln.get("quote") or "").startswith("(written as") for ln in g["lines"])
+        people.append(g)
+    cols = [{"key": k, "label": v[1]} for k, v in sorted(cats.items(), key=lambda kv: (kv[1][0], kv[1][1]))]
+    return people, cols
+
+
 def section_context(org_id: int, period: dict, parish_id: int) -> dict:
     """What _payroll_totals_section.html shows on the diocese's backfill grid for one parish."""
     rows = [r for r in pt.period_rows(org_id, period["id"]) if r["parish_id"] == parish_id and r["line_id"] is not None]
@@ -110,13 +176,22 @@ def section_context(org_id: int, period: dict, parish_id: int) -> dict:
         r["pdf_url"] = email_pdf.url_for(org_id, r["source_ref"])
         r["proposed_pdf_url"] = email_pdf.url_for(org_id, r["proposed_ref"])
         r["state_label"] = STATE_LABELS.get(r["state"], r["state"])
-    return {"rows": rows, "writable": period["status"] in pt.WRITABLE_PERIOD_STATUSES,
+    # People the emails named that nobody entered yet: shown beside the same PDF as the lines that were entered.
+    unentered = pt.list_unentered(org_id, period["id"], parish_id)
+    for u in unentered:
+        u["pdf_url"] = email_pdf.url_for(org_id, u["source_ref"])
+    roster = db.query("SELECT id, first_name, last_name, employee_number, captures_hours FROM portal.staff_roster "
+                      "WHERE parish_id = %s AND is_active AND employee_number IS NOT NULL "
+                      "ORDER BY captures_hours DESC, last_name, first_name", (parish_id,)) if unentered else []
+    people, cat_cols = people_view(rows)
+    return {"rows": rows, "people": people, "cat_cols": cat_cols, "unentered": unentered, "roster": roster, "writable": period["status"] in pt.WRITABLE_PERIOD_STATUSES,
             "parish_id": parish_id, "period_id": period["id"]}
 
 
 def board_rows(org_id: int, period: dict, rows: list[dict]) -> list[dict]:
     """Adds the payroll columns to the status-board rows (in place, and returned)."""
     extras = pt.board_extras(org_id, period["id"])
+    unentered = pt.count_unentered(org_id, period["id"])
     zone = org_time.zone_name_for_org(org_id)
     for r in rows:
         e = extras.get(r["parish_id"], {})
@@ -132,7 +207,8 @@ def board_rows(org_id: int, period: dict, rows: list[dict]) -> list[dict]:
             r["total_hours"] = float(e["hours"])
         r["emails"] = e.get("emails", 0)
         r["first_received"] = org_time.format_local(e.get("first_received_at"), zone) if e.get("first_received_at") else None
-        r["needs_review"] = e.get("needs_review", 0) + e.get("pending_hires", 0)
+        # a person an email named that nobody entered counts as something to review, so the row turns red
+        r["needs_review"] = e.get("needs_review", 0) + e.get("pending_hires", 0) + unentered.get(r["parish_id"], 0)
         r["conflicts"] = e.get("conflicts", 0)
         r["proposals"] = e.get("proposals", 0)
         r["not_expected"] = (e.get("pattern") in NOT_EXPECTED_PATTERNS and not r.get("submission_id"))
@@ -142,7 +218,8 @@ def board_rows(org_id: int, period: dict, rows: list[dict]) -> list[dict]:
 
 def board_summary(org_id: int, period: dict) -> dict:
     rows = pt.period_rows(org_id, period["id"])
-    return {"left": len(pt.unresolved(rows)), "final": bool(period.get("hours_finalized_at")),
+    return {"left": len(pt.unresolved(rows)) + sum(pt.count_unentered(org_id, period["id"]).values()),
+            "final": bool(period.get("hours_finalized_at")),
             "final_at": org_time.format_local(period.get("hours_finalized_at"), org_time.zone_name_for_org(org_id))
             if period.get("hours_finalized_at") else None}
 
@@ -182,6 +259,36 @@ async def totals_accept_all(period_id: int, parish_id: int, request: Request):
     if res["skipped"]:
         msg += f" {res['skipped']} need a look on their own (flagged, a different figure waiting, or a conflict)."
     return _back(period_id, parish_id, msg=msg)
+
+
+@router.post("/admin/timekeeping/status/{period_id}/{parish_id}/unentered/{item_id}/dismiss")
+async def unentered_dismiss(period_id: int, parish_id: int, item_id: int, request: Request):
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        pt.dismiss_unentered(org["id"], item_id, user["id"], note=form.get("note"))
+    except pt.PayrollError as e:
+        return _back(period_id, parish_id, err=e.message)
+    return _back(period_id, parish_id, msg="Dismissed. It will not show again.")
+
+
+@router.post("/admin/timekeeping/status/{period_id}/{parish_id}/unentered/{item_id}/assign")
+async def unentered_assign(period_id: int, parish_id: int, item_id: int, request: Request):
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        staff_id = int(form.get("staff_id") or 0)
+    except ValueError:
+        staff_id = 0
+    try:
+        res = pt.assign_unentered(org["id"], item_id, staff_id, user["id"], hours=form.get("hours"))
+    except pt.PayrollError as e:
+        return _back(period_id, parish_id, err=e.message)
+    return _back(period_id, parish_id, msg=f"Entered {len(res['entered'])} line(s) for the employee you chose.")
 
 
 @router.post("/admin/timekeeping/status/{period_id}/{parish_id}/totals/{line_id}/{action}")
