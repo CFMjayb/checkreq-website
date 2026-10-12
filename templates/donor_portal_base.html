@@ -39,6 +39,7 @@ choose, notice) are drawn directly in this frame. Autoescape is on. No inline ev
     {% if flash_err %}<div class="banner banner-error">{{ flash_err }}</div>{% endif %}
     {% block content %}{% endblock %}
   </main>
+  <div class="app-version" title="Beacon version" style="padding:10px 12px 8px;font-size:11px;line-height:1;color:#8a8478;font-variant-numeric:tabular-nums;">{{ app_version() if app_version is defined else '' }}</div>
   <script src="/static/js/submit_loading.js?v={{ asset_version('js/submit_loading.js') }}"></script>
   <script src="/static/js/confirm_submit.js?v={{ asset_version('js/confirm_submit.js') }}"></script>
   <script src="/static/js/donor_person.js?v={{ asset_version('js/donor_person.js') }}"></script>

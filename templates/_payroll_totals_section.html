@@ -11,11 +11,24 @@
     <h2>Period totals</h2>
     <span class="c-muted">{{ pt_.people|length }} employee{{ '' if pt_.people|length == 1 else 's' }}</span>
     {% if not pt_.writable %}<span class="sub">This period is not open, so these lines are read-only.</span>{% endif %}
-    {% if pt_.writable and pt_.people %}
-    <form method="post" action="/admin/timekeeping/status/{{ pt_.period_id }}/{{ pt_.parish_id }}/totals/accept-all">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-      <button class="btn btn-sm" type="submit" data-tip="Lines with a flag, a waiting figure or a conflict are left for you to look at.">Accept all plain lines</button>
-    </form>
+    {% if pt_.writable and (pt_.people or pt_.add_roster) %}
+    <span class="te-thead-actions">
+      {% if pt_.people %}
+      <form method="post" action="/admin/timekeeping/status/{{ pt_.period_id }}/{{ pt_.parish_id }}/totals/accept-all">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button class="btn btn-sm" type="submit" data-tip="Lines with a flag, a waiting figure or a conflict are left for you to look at.">Accept all plain lines</button>
+      </form>
+      {% endif %}
+      {# Actions (the same gold drop-down as the other screens): Add a line opens ONE blank row at the top of the table, so no form takes up room until it is wanted #}
+      {% if pt_.add_roster %}
+      <div class="ff-dropdown">
+        <button type="button" class="btn btn-sm btn-primary" data-ff-dropdown aria-haspopup="menu" aria-expanded="false">Actions &#9662;</button>
+        <div class="ff-dropdown-menu" role="menu" hidden>
+          <button type="button" role="menuitem" data-te-addline-open>Add a line</button>
+        </div>
+      </div>
+      {% endif %}
+    </span>
     {% endif %}
   </div>
   <div class="te-tscroll">
@@ -57,15 +70,46 @@
     </table>
   </div>
   {% endif %}
-  {% if pt_.people %}
+  {% set can_add_ = pt_.writable and pt_.add_roster %}
+  {% if pt_.people or can_add_ %}
+  {% if can_add_ %}
+  {# the form for the Add a line row; its boxes sit in the table cells and point at it with form="te-addform" #}
+  <form id="te-addform" method="post" action="/admin/timekeeping/status/{{ pt_.period_id }}/{{ pt_.parish_id }}/totals/add-line" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+  </form>
+  {% endif %}
   <table class="te-ttable">
     <thead><tr><th>Employee</th>{% for c in pt_.cat_cols %}<th class="te-num">{{ c.label }}</th>{% endfor %}<th>Source</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody>
+    {% if can_add_ %}
+    {# ONE blank row, hidden until the Add a line button is pressed (static/js/timekeeping_entry.js) #}
+    <tr class="te-addrow" data-te-addrow hidden>
+      <td><select name="staff_id" form="te-addform" aria-label="Employee" required>
+        <option value="">Employee&hellip;</option>
+        {% for s in pt_.add_roster %}<option value="{{ s.id }}">{{ s.last_name }}, {{ s.first_name }} (#{{ s.employee_number }}){% if not s.captures_hours %} - not hourly{% endif %}</option>{% endfor %}
+      </select></td>
+      <td colspan="{{ pt_.cat_cols|length or 1 }}" class="te-addmid">
+        <select name="category_key" form="te-addform" aria-label="Kind of hours" required>
+          {% for c in pt_.cat_cols %}<option value="{{ c.key }}">{{ c.label }}</option>{% endfor %}
+        </select>
+        <input type="text" inputmode="decimal" name="hours" form="te-addform" class="te-hrs" placeholder="Hours" aria-label="Hours" required>
+      </td>
+      <td><select name="source_ref" form="te-addform" aria-label="From which email">
+        <option value="">No email (my own entry)</option>
+        {% for e in pt_.emails %}<option value="{{ e.ref }}">{{ e.label }}</option>{% endfor %}
+      </select></td>
+      <td><span class="sub ph-small">Confirmed at once. An email's PDF shows with the line.</span></td>
+      <td><span class="te-act">
+        <button class="btn btn-sm btn-primary" type="submit" form="te-addform">Add</button>
+        <button class="btn btn-sm" type="button" data-te-addline-cancel>Cancel</button>
+      </span></td>
+    </tr>
+    {% endif %}
     {% for p in pt_.people %}
     {% set edit = pt_.writable and p.staff_id %}
     {% set pf = loop.index %}
     {% set pbase = '/admin/timekeeping/status/' ~ pt_.period_id ~ '/' ~ pt_.parish_id ~ '/totals/person/' ~ p.staff_id ~ '/' %}
-    <tr class="{{ 'is-attn' if p.attn else 'is-ok' }}">
+    <tr class="{{ 'is-attn' if p.attn else 'is-ok' }}{{ ' te-jump' if p.staff_id }}"{% if p.staff_id %} data-te-jump="{{ p.staff_id }}"{% endif %}>
       <td>{{ p.last_name }}, {{ p.first_name }}{% if p.employee_number %} <span class="sub ph-small">#{{ p.employee_number }}</span>{% endif %}
         {% if edit %}<form id="pf-{{ pf }}" method="post" action="{{ pbase }}accept" hidden><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"></form>{% endif %}</td>
       {# every kind of hours is a column, like the summary grid: change a figure, or type one into an empty box, then Accept #}
@@ -124,27 +168,8 @@
     </tbody>
   </table>
   {% endif %}
-  {% if pt_.writable and pt_.add_roster %}
-  {# a line the reader missed, entered by hand (optionally tied to one of this parish's emails so its PDF shows with it) #}
-  <form class="te-addline" method="post" action="/admin/timekeeping/status/{{ pt_.period_id }}/{{ pt_.parish_id }}/totals/add-line">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <strong>Add a line</strong>
-    <select name="staff_id" aria-label="Employee" required>
-      <option value="">Employee&hellip;</option>
-      {% for s in pt_.add_roster %}<option value="{{ s.id }}">{{ s.last_name }}, {{ s.first_name }} (#{{ s.employee_number }}){% if not s.captures_hours %} - not hourly{% endif %}</option>{% endfor %}
-    </select>
-    <select name="category_key" aria-label="Kind of hours" required>
-      {% for c in pt_.cat_cols %}<option value="{{ c.key }}">{{ c.label }}</option>{% endfor %}
-    </select>
-    <input type="text" inputmode="decimal" name="hours" class="te-hrs" placeholder="Hours" aria-label="Hours" required>
-    <select name="source_ref" aria-label="From which email">
-      <option value="">No email (my own entry)</option>
-      {% for e in pt_.emails %}<option value="{{ e.ref }}">{{ e.label }}</option>{% endfor %}
-    </select>
-    <button class="btn btn-sm btn-primary" type="submit">Add</button>
-    <span class="sub">Confirmed at once. A line tied to an email shows that email's PDF.</span>
-  </form>
-  {% endif %}
   </div>
 </div>
+{# the bar between the two grids: drag it up or down to make the Period totals bigger or smaller (static/js/timekeeping_entry.js) #}
+<div class="te-splitter" data-te-splitter role="separator" aria-orientation="horizontal" tabindex="0" aria-label="Drag to make the Period totals bigger or smaller. Arrow keys also work. Double-click to reset." data-tip="Drag up or down to make the Period totals bigger or smaller. Double-click to reset."></div>
 {% endif %}

@@ -266,3 +266,134 @@
     if (!submitting && changedCount() > 0) { e.preventDefault(); e.returnValue = ''; }
   });
 })();
+
+/* The bar between the Period totals and the daily grid (diocese view): drag it up or down to make the top bigger or smaller.
+   The height is remembered on this PC. Arrow keys move it, Shift for bigger steps, double-click puts it back. */
+(function () {
+  'use strict';
+  var bar = document.querySelector('[data-te-splitter]');
+  var top = document.querySelector('.te-tframe');
+  var shell = document.querySelector('.te-shell');
+  if (!bar || !top || !shell) return;
+  var KEY = 'beacon.te.splitTop', MIN_TOP = 96, MIN_BOTTOM = 150;
+
+  function bottomFrame() { return shell.querySelector('.te-form .ff-frame'); }
+  function maxTop() {
+    var b = bottomFrame();
+    if (!b) return top.offsetHeight + 400;
+    return Math.max(MIN_TOP, top.offsetHeight + (b.offsetHeight - MIN_BOTTOM));
+  }
+  function setTop(h, save) {
+    h = Math.round(Math.min(Math.max(h, MIN_TOP), maxTop()));
+    top.style.flex = '0 0 ' + h + 'px';
+    if (save) { try { window.localStorage.setItem(KEY, String(h)); } catch (e) { /* private window: not remembered */ } }
+    return h;
+  }
+  function reset() {
+    top.style.flex = '';
+    try { window.localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
+  }
+
+  var saved = null;
+  try { saved = parseInt(window.localStorage.getItem(KEY), 10); } catch (e) { saved = null; }
+  if (saved && isFinite(saved)) {
+    setTop(saved, false);
+    window.addEventListener('load', function () { setTop(saved, false); });   // the frame is fitted to the window after first paint
+  }
+  window.addEventListener('resize', function () {
+    if (top.style.flex) setTop(parseInt(top.style.flex.split(' ').pop(), 10) || top.offsetHeight, false);
+  });
+
+  var startY = 0, startH = 0;
+  function move(e) { setTop(startH + (e.clientY - startY), false); }
+  function up() {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    document.removeEventListener('pointercancel', up);
+    bar.classList.remove('dragging');
+    document.body.classList.remove('te-dragging');
+    setTop(top.offsetHeight, true);
+  }
+  bar.addEventListener('pointerdown', function (e) {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    startY = e.clientY;
+    startH = top.offsetHeight;
+    bar.classList.add('dragging');
+    document.body.classList.add('te-dragging');
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
+  });
+  bar.addEventListener('keydown', function (e) {
+    var step = e.shiftKey ? 80 : 24;
+    if (e.key === 'ArrowUp') { e.preventDefault(); setTop(top.offsetHeight - step, true); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); setTop(top.offsetHeight + step, true); }
+    else if (e.key === 'Home' || e.key === 'Escape') { e.preventDefault(); reset(); }
+  });
+  bar.addEventListener('dblclick', reset);
+})();
+
+/* Period totals (diocese view):
+   - Actions > Add a line opens ONE blank row at the top of the table (nothing is shown until it is chosen);
+   - clicking a row moves the daily grid below to that employee and flashes the employee's line. */
+(function () {
+  'use strict';
+  var top = document.querySelector('.te-tframe');
+  if (!top) return;
+
+  // ---- Add a line --------------------------------------------------------------------------------------
+  var openBtn = top.querySelector('[data-te-addline-open]');
+  var row = top.querySelector('[data-te-addrow]');
+  if (openBtn && row) {
+    var scroller = top.querySelector('.te-tscroll');
+    function openRow() {
+      row.hidden = false;
+      if (scroller) scroller.scrollTop = 0;
+      var first = row.querySelector('select');
+      if (first) first.focus();
+    }
+    function closeRow() {
+      row.hidden = true;
+      Array.prototype.forEach.call(row.querySelectorAll('input[type="text"]'), function (el) { el.value = ''; });
+      Array.prototype.forEach.call(row.querySelectorAll('select'), function (el) { el.selectedIndex = 0; });
+    }
+    openBtn.addEventListener('click', openRow);   // an item in the Actions menu: it always opens the blank row
+    var cancel = row.querySelector('[data-te-addline-cancel]');
+    if (cancel) cancel.addEventListener('click', closeRow);
+    row.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); closeRow(); } });
+  }
+
+  // ---- click a row: the daily grid moves to that employee ---------------------------------------------
+  var form = document.querySelector('[data-te-form]');
+  var msg = document.querySelector('[data-te-msg]');
+  var flashTimer = null, picked = null;
+  function say(text) {
+    if (!msg) return;
+    msg.textContent = text; msg.className = 'ff-msg';
+    window.setTimeout(function () { if (msg.textContent === text) msg.textContent = ''; }, 4000);
+  }
+  top.addEventListener('click', function (e) {
+    var tr = e.target.closest && e.target.closest('tr[data-te-jump]');
+    if (!tr) return;
+    // a click on a box, a button, a link or a pick list is that control's own business, not a jump
+    if (e.target.closest('input, select, textarea, button, a, label, form')) return;
+    var staff = tr.getAttribute('data-te-jump');
+    var tb = form && form.querySelector('tbody.te-emp[data-staff="' + staff + '"]');
+    var name = (tr.cells[0] && tr.cells[0].textContent || '').replace(/\s+/g, ' ').trim();
+    if (!tb) { say(name + ' is not in the daily grid below (not an hourly employee).'); return; }
+    var scrollEl = form.querySelector('.ff-scroll');
+    var head = form.querySelector('table.te-table thead');
+    if (scrollEl) {
+      var delta = tb.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top - (head ? head.offsetHeight : 0);
+      scrollEl.scrollTo({ top: Math.max(0, scrollEl.scrollTop + delta), behavior: 'smooth' });
+    }
+    if (picked) picked.classList.remove('is-picked');
+    picked = tr; tr.classList.add('is-picked');
+    Array.prototype.forEach.call(form.querySelectorAll('tbody.te-emp.is-flash'), function (t) { t.classList.remove('is-flash'); });
+    void tb.offsetWidth;   // restart the flash if the same person is clicked again
+    tb.classList.add('is-flash');
+    if (flashTimer) window.clearTimeout(flashTimer);
+    flashTimer = window.setTimeout(function () { tb.classList.remove('is-flash'); }, 2000);
+  });
+})();
