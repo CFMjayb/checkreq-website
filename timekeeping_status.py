@@ -355,6 +355,7 @@ def backfill_entry_page(period_id: int, parish_id: int, request: Request):
     )
     ctx["diocese_mode"] = True
     ctx["payroll_totals"] = payroll_screens.section_context(org["id"], period, parish["id"])
+    ctx["parish_approval"] = payroll_screens.parish_approval_context(org["id"], period, parish["id"])
     ctx["back_link_url"] = f"/admin/timekeeping/status/{period_id}"
     ctx["back_link_label"] = "Back to Status Board"
     ctx["save_url"] = f"/admin/timekeeping/status/{period_id}/{parish_id}/save"

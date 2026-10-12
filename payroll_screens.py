@@ -171,6 +171,16 @@ def people_view(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     return people, cols
 
 
+def parish_approval_context(org_id: int, period: dict, parish_id: int) -> dict | None:
+    """What the parish's own page needs for its Approve department button (None when the period is not open)."""
+    if period["status"] != "open":
+        return None
+    try:
+        return pt.parish_approval_state(org_id, period["id"], parish_id)
+    except pt.PayrollError:
+        return None
+
+
 def section_context(org_id: int, period: dict, parish_id: int) -> dict:
     """What _payroll_totals_section.html shows on the diocese's backfill grid for one parish."""
     rows = [r for r in pt.period_rows(org_id, period["id"]) if r["parish_id"] == parish_id and r["line_id"] is not None]
@@ -540,43 +550,71 @@ async def standing_one(period_id: int, parish_id: int, request: Request):
     return _back(period_id, parish_id, msg=_standing_msg(res)) if on_parish_page else _status_back(period_id, msg=_standing_msg(res))
 
 
-@router.post("/admin/timekeeping/status/{period_id}/{parish_id}/approve")
-async def parish_approve(period_id: int, parish_id: int, request: Request):
-    """A parish row's menu: Mark reviewed and approved."""
+def _reply(period_id: int, parish_id: int, form, msg: str | None = None, err: str | None = None):
+    """Back to the parish's own page when the button was pressed there (form field back=parish), else to the board."""
+    if form.get("back") == "parish":
+        return _back(period_id, parish_id, msg=msg, err=err)
+    return _status_back(period_id, msg=msg, err=err)
+
+
+@router.post("/admin/timekeeping/status/{period_id}/approve-all")
+async def approve_all(period_id: int, request: Request):
+    """Actions > Approve all: every department that is ready (hours in, nothing waiting for a decision)."""
     user, org, err = _require_hr_admin(request)
     if err:
         return err
     try:
-        pt.approve_parish(org["id"], period_id, parish_id, user["id"])
+        res = pt.approve_all(org["id"], period_id, user["id"])
     except pt.PayrollError as e:
         return _status_back(period_id, err=e.message)
-    return _status_back(period_id, msg="Reviewed and approved.")
+    msg = f"Approved {res['approved']} department{'' if res['approved'] == 1 else 's'}."
+    if res["waiting"]:
+        msg += f" {res['waiting']} still {'has' if res['waiting'] == 1 else 'have'} something waiting for a decision and {'was' if res['waiting'] == 1 else 'were'} left."
+    if res["no_hours"]:
+        msg += f" {res['no_hours']} {'has' if res['no_hours'] == 1 else 'have'} no hours yet (use Confirm no hours this week when none are expected)."
+    return _status_back(period_id, msg=msg)
+
+
+@router.post("/admin/timekeeping/status/{period_id}/{parish_id}/approve")
+async def parish_approve(period_id: int, parish_id: int, request: Request):
+    """A parish row's menu, or the parish's own page: Approve department (mark reviewed and approved)."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        pt.approve_parish(org["id"], period_id, parish_id, user["id"])
+    except pt.PayrollError as e:
+        return _reply(period_id, parish_id, form, err=e.message)
+    return _reply(period_id, parish_id, form, msg="Reviewed and approved.")
 
 
 @router.post("/admin/timekeeping/status/{period_id}/{parish_id}/no-hours")
 async def parish_no_hours(period_id: int, parish_id: int, request: Request):
-    """A parish row's menu: Confirm no hours this week."""
+    """A parish row's menu, or the parish's own page: Confirm no hours this week."""
     user, org, err = _require_hr_admin(request)
     if err:
         return err
+    form = await request.form()
     try:
         pt.confirm_no_hours(org["id"], period_id, parish_id, user["id"])
     except pt.PayrollError as e:
-        return _status_back(period_id, err=e.message)
-    return _status_back(period_id, msg="Confirmed: no hours this period.")
+        return _reply(period_id, parish_id, form, err=e.message)
+    return _reply(period_id, parish_id, form, msg="Confirmed: no hours this period.")
 
 
 @router.post("/admin/timekeeping/status/{period_id}/{parish_id}/undo-approval")
 async def parish_undo(period_id: int, parish_id: int, request: Request):
-    """A parish row's menu: Undo (approval, confirmed no hours or confirmed standing hours)."""
+    """A parish row's menu, or the parish's own page: Undo (approval, confirmed no hours or confirmed standing hours)."""
     user, org, err = _require_hr_admin(request)
     if err:
         return err
+    form = await request.form()
     try:
         pt.undo_approval(org["id"], period_id, parish_id)
     except pt.PayrollError as e:
-        return _status_back(period_id, err=e.message)
-    return _status_back(period_id, msg="The approval was removed.")
+        return _reply(period_id, parish_id, form, err=e.message)
+    return _reply(period_id, parish_id, form, msg="The approval was removed.")
 
 
 @router.post("/admin/timekeeping/status/{period_id}/final")
