@@ -729,15 +729,46 @@ def assign_unentered(org_id: int, item_id: int, staff_id: int, user_id: int, hou
     return {"entered": placed, "staff_id": staff["id"]}
 
 
+# Everyday nicknames (Tony = Anthony): each set is ONE first name. Same list as the payroll email reader's match.py
+# (26-158 payroll_inbox/logic/match.py) -- keep the two in step.
+_NICK_SETS = [
+    {"anthony", "tony", "antony"}, {"timothy", "tim", "timmy"}, {"william", "will", "bill", "billy", "willy", "liam"},
+    {"robert", "rob", "bob", "bobby", "robbie", "bert"}, {"richard", "rick", "ricky", "dick", "rich", "richie"},
+    {"james", "jim", "jimmy", "jamie"}, {"john", "jack", "johnny", "jon"}, {"michael", "mike", "mick", "mickey"},
+    {"thomas", "tom", "tommy"}, {"charles", "charlie", "chuck", "chas"}, {"edward", "ed", "eddie", "ted", "teddy", "ned"},
+    {"joseph", "joe", "joey"}, {"daniel", "dan", "danny"}, {"david", "dave", "davy"}, {"donald", "don", "donnie"},
+    {"stephen", "steven", "steve", "stevie"}, {"matthew", "matt"}, {"nicholas", "nick", "nicky"}, {"patrick", "pat", "paddy"},
+    {"peter", "pete"}, {"samuel", "sam", "sammy"}, {"benjamin", "ben", "benny"}, {"alexander", "alex", "sandy"},
+    {"andrew", "andy", "drew"}, {"christopher", "chris", "kit"}, {"jonathan", "jon", "jonny"}, {"gregory", "greg"},
+    {"kenneth", "ken", "kenny"}, {"lawrence", "larry", "laurence"}, {"ronald", "ron", "ronnie"}, {"walter", "walt", "wally"},
+    {"raymond", "ray"}, {"frederick", "fred", "freddy", "freddie"}, {"gerald", "gerry", "jerry"}, {"harold", "harry", "hal"},
+    {"henry", "hank", "harry"}, {"albert", "al", "bert"}, {"arthur", "art", "artie"}, {"leonard", "leo", "len", "lenny"},
+    {"margaret", "peg", "peggy", "maggie", "meg", "marge", "margie", "greta"}, {"elizabeth", "liz", "beth", "betty", "lizzie", "libby", "eliza", "betsy"},
+    {"katherine", "catherine", "kathryn", "kate", "katie", "kathy", "cathy", "kitty", "kay"}, {"jennifer", "jen", "jenny", "jenn"},
+    {"patricia", "pat", "patty", "trish", "tricia"}, {"barbara", "barb", "barbie", "babs"}, {"susan", "sue", "susie", "suzy", "suzanne"},
+    {"deborah", "debra", "deb", "debbie"}, {"rebecca", "becky", "becca"}, {"jessica", "jess", "jessie"}, {"victoria", "vicky", "vicki", "tori"},
+    {"christine", "christina", "chris", "chrissy", "tina"}, {"dorothy", "dot", "dottie", "dolly"}, {"edith", "edie", "edy"},
+    {"abraham", "abe", "bram"}, {"cynthia", "cindy"}, {"judith", "judy", "jude"}, {"pamela", "pam"}, {"theresa", "teresa", "terry", "tess"},
+    {"virginia", "ginny", "ginger"}, {"eleanor", "ellie", "nell", "nellie"}, {"mary", "molly", "polly"}, {"nancy", "nan"},
+    {"frances", "fran", "frankie"}, {"franklin", "frank", "frankie"}, {"phillip", "philip", "phil"}, {"vincent", "vince", "vinny"},
+    {"timothea", "tim"}, {"alan", "allen", "allan", "al"}, {"douglas", "doug"}, {"russell", "russ"}, {"theodore", "ted", "teddy", "theo"},
+]
+_NICK = {}
+for _i, _set in enumerate(_NICK_SETS):
+    for _n in _set:
+        _NICK.setdefault(_n, set()).add(_i)
+
+
 def _first_names_fit(a, b) -> bool:
-    """Two first names that are the same person's: the first word equal (Mary / Mary Frances, Abraham / Abraham (Bram))
-    or one a prefix of the other from three letters up (Tim / Timothy)."""
+    """Two first names that are the same person's: the first word equal (Mary / Mary Frances, Abraham / Abraham (Bram)),
+    one a prefix of the other from three letters up (Tim / Timothy), or two forms of one name (Tony / Anthony)."""
     ta = re.findall(r"[a-z0-9']+", (a or "").lower().replace("'", ""))
     tb = re.findall(r"[a-z0-9']+", (b or "").lower().replace("'", ""))
     if not ta or not tb:
         return False
     x, y = ta[0], tb[0]
-    return x == y or (len(x) >= 3 and len(y) >= 3 and (x.startswith(y) or y.startswith(x)))
+    return (x == y or (len(x) >= 3 and len(y) >= 3 and (x.startswith(y) or y.startswith(x)))
+            or bool(_NICK.get(x, set()) & _NICK.get(y, set())))
 
 
 def propose_roster_change(org_id: int, *, parish_code: str, change_type: str, source_ref: str,

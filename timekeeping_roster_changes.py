@@ -170,7 +170,7 @@ def list_pending_review_for_org(org_id: int) -> list[dict]:
     payroll_periods.org_id (the diocese that owns the period it rode in
     on), never a bare parish_id join alone, so a change can never surface
     under the wrong diocese's queue."""
-    return db.query(
+    rows = db.query(
         "SELECT src.*, p.name AS parish_name, "
         "       sr.first_name AS current_first_name, sr.last_name AS current_last_name, "
         "       u.display_name AS created_by_name, u.email AS created_by_email, "
@@ -184,6 +184,36 @@ def list_pending_review_for_org(org_id: int) -> list[dict]:
         "ORDER BY src.submitted_at",
         (org_id,),
     )
+    # A pending ADD for someone who is already on the roster (Roster Review shows it and offers Reactivate when she is
+    # inactive, instead of approving a duplicate).
+    for r in rows:
+        ex = existing_staff_for_add(r)
+        r["existing_staff_id"] = ex["id"] if ex else None
+        r["existing_active"] = bool(ex["is_active"]) if ex else None
+        r["existing_name"] = f"{ex['first_name']} {ex['last_name']}" if ex else None
+        r["existing_employee_number"] = ex["employee_number"] if ex else None
+    return rows
+
+
+def existing_staff_for_add(change: dict) -> dict | None:
+    """For a pending 'add': the roster person at the same parish it is really about (same employee number, or the same
+    surname with a first name that fits: Mary / Mary Frances, Tim / Timothy), active or not. None for any other change type."""
+    if change.get("change_type") != "add":
+        return None
+    emp = (change.get("proposed_employee_number") or "").strip()
+    first, last = change.get("proposed_first_name"), (change.get("proposed_last_name") or "").strip().lower()
+    rows = db.query(
+        "SELECT id, first_name, last_name, employee_number, is_active FROM portal.staff_roster "
+        "WHERE parish_id = %s ORDER BY is_active DESC, id", (change["parish_id"],))
+    if emp:
+        for r in rows:
+            if (r["employee_number"] or "") == emp:
+                return r
+    if last:
+        for r in rows:
+            if (r["last_name"] or "").strip().lower() == last and payroll_totals._first_names_fit(first, r["first_name"]):
+                return r
+    return None
 
 
 def get_change_for_review(change_id: int, org_id: int) -> dict | None:
@@ -281,6 +311,28 @@ def approve_change(change: dict, reviewer_user_id: int, review_note: str | None 
         # 26-158: hours already recorded for this pending new hire move onto the new roster row.
         payroll_totals.on_roster_add_approved(change["id"], new_staff_id)
     _notify_outcome(change, approved=True, review_note=review_note)
+
+
+def reactivate_existing_instead(change: dict, reviewer_user_id: int, review_note: str | None = None) -> int | None:
+    """A pending ADD that is really someone already on the roster as INACTIVE (a rehire): reactivate that person rather than
+    creating a duplicate. The add request is stamped approved with a note saying so, and the hours recorded for the pending
+    hire move onto the reactivated person. Returns her roster id, or None when there is no inactive match to reactivate."""
+    ex = existing_staff_for_add(change)
+    if not ex or ex["is_active"]:
+        return None
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE portal.staff_roster SET is_active = TRUE, inactive_as_of = NULL, effective_date = CURRENT_DATE, "
+                "updated_at = NOW() WHERE id = %s AND parish_id = %s", (ex["id"], change["parish_id"]))
+            cur.execute(
+                "UPDATE portal.staff_roster_changes SET status = 'approved', reviewed_by_user_id = %s, reviewed_at = NOW(), "
+                "review_note = %s WHERE id = %s",
+                (reviewer_user_id, review_note or "Reactivated the existing roster person instead of adding a duplicate.",
+                 change["id"]))
+    payroll_totals.on_roster_add_approved(change["id"], ex["id"])
+    _notify_outcome(change, approved=True, review_note=review_note)
+    return ex["id"]
 
 
 def reject_change(change: dict, reviewer_user_id: int, review_note: str | None = None) -> None:

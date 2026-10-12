@@ -96,6 +96,28 @@ async def roster_change_approve(change_id: int, request: Request):
     return RedirectResponse("/admin/timekeeping/review?approved=1", status_code=303)
 
 
+@router.post("/admin/timekeeping/review/roster-changes/{change_id}/reactivate")
+async def roster_change_reactivate(change_id: int, request: Request):
+    """A pending add for someone already on the roster as inactive: reactivate her instead of adding a duplicate."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    note = (form.get("review_note") or "").strip() or None
+    change = timekeeping_roster_changes.get_change_for_review(change_id, org["id"])
+    if not change:
+        return RedirectResponse(
+            "/admin/timekeeping/review?error=That+change+was+not+found+or+has+already+been+reviewed.",
+            status_code=303,
+        )
+    if timekeeping_roster_changes.reactivate_existing_instead(change, user["id"], note) is None:
+        return RedirectResponse(
+            "/admin/timekeeping/review?error=That+person+is+not+on+the+roster+as+inactive%2C+so+there+is+nobody+to+reactivate.",
+            status_code=303,
+        )
+    return RedirectResponse("/admin/timekeeping/review?reactivated=1", status_code=303)
+
+
 @router.post("/admin/timekeeping/review/roster-changes/{change_id}/reject")
 async def roster_change_reject(change_id: int, request: Request):
     user, org, err = _require_hr_admin(request)

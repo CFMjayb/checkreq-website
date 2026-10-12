@@ -9,6 +9,7 @@ under {{ current_org.name }}.</p>
 
 {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
 {% if request.query_params.get('approved') %}<div class="banner banner-success">Change approved and applied to the roster.</div>{% endif %}
+{% if request.query_params.get('reactivated') %}<div class="banner banner-success">Reactivated. The person is back on the roster, and the hours recorded for her moved onto her record.</div>{% endif %}
 {% if request.query_params.get('rejected') %}<div class="banner banner-success">Change rejected. The parish has been notified.</div>{% endif %}
 
 <h2>Pending Roster Changes</h2>
@@ -28,6 +29,9 @@ reason — the parish sees it and can correct and resubmit.</p>
     <td>
       {% if c.change_type == 'add' %}
         {{ c.proposed_first_name }} {{ c.proposed_last_name }} <span class="sub">(new)</span>
+        {% if c.existing_staff_id %}
+        <div class="sub" style="color:#9c0006">Already on the roster{% if not c.existing_active %}, inactive{% endif %}: {{ c.existing_name }}{% if c.existing_employee_number %} (#{{ c.existing_employee_number }}){% endif %}</div>
+        {% endif %}
       {% else %}
         {{ c.current_first_name }} {{ c.current_last_name }}
       {% endif %}
@@ -47,9 +51,15 @@ reason — the parish sees it and can correct and resubmit.</p>
     <td>{{ c.period_label or (c.period_start|string ~ " to " ~ c.period_end|string) }}</td>
     <td>{{ c.submitted_at.strftime("%Y-%m-%d") if c.submitted_at else "—" }}</td>
     <td>
-      <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/approve" style="display:inline">
+      {% if c.existing_staff_id and not c.existing_active %}
+      <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/reactivate" style="display:inline" data-confirm="Reactivate {{ c.existing_name }} instead of adding a new person?">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-        <button type="submit" class="btn btn-primary btn-sm">Approve</button>
+        <button type="submit" class="btn btn-primary btn-sm">Reactivate</button>
+      </form>
+      {% endif %}
+      <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/approve" style="display:inline"{% if c.existing_staff_id %} data-confirm="This person looks like someone already on the roster. Add a second person anyway?"{% endif %}>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" class="btn {% if c.existing_staff_id %}btn-secondary{% else %}btn-primary{% endif %} btn-sm">{% if c.existing_staff_id %}Add anyway{% elif c.change_type == 'reactivate' %}Reactivate{% else %}Approve{% endif %}</button>
       </form>
       <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/reject" style="display:inline" onsubmit="return promptRejectReason(this)">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
