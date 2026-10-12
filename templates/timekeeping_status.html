@@ -38,6 +38,13 @@
       <div class="ff-dropdown">
         <button type="button" class="btn btn-sm btn-primary" data-ff-dropdown aria-haspopup="menu" aria-expanded="false">Actions &#9662;</button>
         <div class="ff-dropdown-menu" role="menu" hidden>
+          {% if payroll.reader.running %}
+          <button type="button" role="menuitem" disabled data-tip="A review has been running since {{ payroll.reader.running_since }}.">Review Inbox (running since {{ payroll.reader.running_since }})</button>
+          {% elif payroll.reader.connected %}
+          <form method="post" action="/admin/timekeeping/status/{{ period.id }}/review-inbox"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit" data-tip="Read the payroll mailbox now. It takes a few minutes; refresh to see Last updated change.">Review Inbox</button></form>
+          {% else %}
+          <button type="button" role="menuitem" disabled data-tip="The cloud reader is not connected yet. The reader on the diocese PC still checks the inbox by itself.">Review Inbox (not connected yet)</button>
+          {% endif %}
           <button type="button" role="menuitem" data-ff-dialog="setPeriodDialog">Set status (open / close)</button>
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/export">Excel for Checkwriters</a>
           {% if payroll.final %}
@@ -145,6 +152,11 @@
     <div class="ff-foot">
       <span class="ff-count" data-ff-count>{{ rows|length }} shown</span>
       <span class="ff-count">{{ rows|length }} parishes &middot; {{ ns.attn }} to review &middot; {{ ns.miss }} missing hours</span>
+      <span class="ff-count ff-updated" data-ff-updated{% if payroll.reader.detail %} data-tip="{{ payroll.reader.detail }}"{% endif %}>
+        {% if payroll.reader.running %}<span class="ph-state-attn">Review running since {{ payroll.reader.running_since }}</span> &middot; {% endif %}
+        {% if payroll.reader.failed %}<span class="ph-state-attn" data-tip="The last review failed {{ payroll.reader.failed_at }}. Nothing was lost; it will try again.">Last review failed {{ payroll.reader.failed_at }}</span> &middot; {% endif %}
+        Last updated: <strong>{{ payroll.reader.last or "never" }}</strong>
+      </span>
     </div>
   </div>
 

@@ -23,12 +23,14 @@ from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 import category_order
 import cornerstone_mode
 import db
 import email_pdf
 import org_time
+import payroll_inbox_run
 import payroll_totals as pt
 import rbac
 import registry
@@ -242,7 +244,22 @@ def board_summary(org_id: int, period: dict) -> dict:
     return {"left": len(pt.unresolved(rows)) + sum(pt.count_unentered(org_id, period["id"]).values()),
             "final": bool(period.get("hours_finalized_at")),
             "final_at": org_time.format_local(period.get("hours_finalized_at"), org_time.zone_name_for_org(org_id))
-            if period.get("hours_finalized_at") else None}
+            if period.get("hours_finalized_at") else None,
+            "reader": payroll_inbox_run.summary(org_id)}
+
+
+@router.post("/admin/timekeeping/status/{period_id}/review-inbox")
+async def review_inbox(period_id: int, request: Request):
+    """Time Review > Actions > Review Inbox: starts a review of the payroll mailbox (Cloud Run job). HR Admin or Beacon
+    Admin of this diocese; the browser sends nothing but the button press."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    code = await run_in_threadpool(payroll_inbox_run.start_review, org, user)
+    text = payroll_inbox_run.MESSAGES.get(code, payroll_inbox_run.MESSAGES["unavailable"])
+    if code in payroll_inbox_run.OK_CODES:
+        return _status_back(period_id, msg=text)
+    return _status_back(period_id, err=text)
 
 
 # ------------------------------------------------------------------ the stored email PDF
