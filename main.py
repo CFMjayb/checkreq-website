@@ -376,6 +376,8 @@ def _asset_version(rel_path: str) -> int:
 
 templates.env.globals["asset_version"] = _asset_version
 templates.env.globals["BEACON_ENV"] = BEACON_ENV
+import app_version
+templates.env.globals["app_version"] = app_version.label   # the v2.xxxx at the bottom left of every screen
 # M8: {{ csrf_token(request) }}, same registration pattern as the two lines
 # above and as auth_routes.py's login_branding -- see csrf_guard.py.
 csrf_guard.register_globals(templates)

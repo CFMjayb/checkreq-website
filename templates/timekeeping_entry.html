@@ -106,10 +106,9 @@
           </colgroup>
           <thead>
             <tr>
+              {# no dates up here (Jay, 2026-10-11): each employee's dates are shown inside that employee's expanded area #}
               <th class="te-l">Employee / Category</th>
-              {% for d in dates %}
-              <th class="te-dh{{ ' te-we' if d.weekday() >= 5 }}"><span class="te-dow">{{ d.strftime('%a') }}</span><span class="te-md">{{ d.month }}/{{ d.day }}</span></th>
-              {% endfor %}
+              <th class="te-hmid" colspan="{{ dates|length }}">Hours by type</th>
               <th class="te-r">Total</th>
             </tr>
           </thead>
@@ -148,6 +147,14 @@
                 </span>
               </td>
               <td class="te-r"><strong data-te-etotal data-s="{{ s.id }}">{{ '%.2f'|format(es.sum) }}</strong></td>
+            </tr>
+            {# the dates, shown only when this employee is opened #}
+            <tr class="te-detail te-daterow">
+              <td class="te-l te-catlabel">Dates</td>
+              {% for d in dates %}
+              <td class="te-dh{{ ' te-we' if d.weekday() >= 5 }}"><span class="te-dow">{{ d.strftime('%a') }}</span><span class="te-md">{{ d.month }}/{{ d.day }}</span></td>
+              {% endfor %}
+              <td class="te-r"></td>
             </tr>
             {% for c in categories %}
             {% set cell = cells[(s.id, c.id)] %}

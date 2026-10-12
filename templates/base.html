@@ -256,7 +256,8 @@
   </header>
   {% endif %}
   {% block content %}{% endblock %}
-  <footer style="margin-top:48px;padding:16px 24px;border-top:1px solid #d9d9d9;text-align:center;font-family:Arial,sans-serif;font-size:13px;color:#666;">
+  <footer style="position:relative;margin-top:48px;padding:16px 24px;border-top:1px solid #d9d9d9;text-align:center;font-family:Arial,sans-serif;font-size:13px;color:#666;">
+    <span class="app-version" title="Beacon version" style="position:absolute;left:12px;bottom:6px;font-size:11px;line-height:1;color:#8a8478;font-variant-numeric:tabular-nums;">{{ app_version() if app_version is defined else '' }}</span>
     <a href="/how-it-works" style="color:#1F4E79;text-decoration:none;font-weight:600;">About Beacon — How Beacon Works</a>
   </footer>
   {% if user and current_org and not parish_view %}<script src="/static/js/entity_switcher.js?v={{ asset_version('js/entity_switcher.js') }}"></script>{% endif %}
