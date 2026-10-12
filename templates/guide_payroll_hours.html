@@ -17,7 +17,7 @@
 
   <section class="hiw-section" id="how">
     <h2>How it works</h2>
-    <p>Each pay period, parishes email the hours of their hourly staff to the payroll mailbox. A routine reads that mail and records each person's <strong>period total</strong> in Beacon, marked <strong>Email</strong> and linked to the message it came from. <strong>Time Status</strong> is the checklist for the period. Staff key the hours into Checkwriters from the Excel sheet Beacon produces. <strong>Beacon holds hours only, never pay.</strong></p>
+    <p>Each pay period, parishes email the hours of their hourly staff to the payroll mailbox. A routine reads that mail and records each person's <strong>period total</strong> in Beacon, marked <strong>Email</strong> and linked to the message it came from. <strong>Time Review</strong> is the checklist for the period. Staff key the hours into Checkwriters from the Excel sheet Beacon produces. <strong>Beacon holds hours only, never pay.</strong></p>
   </section>
 
   <section class="hiw-section" id="reader">
@@ -31,7 +31,7 @@
       <li><strong>Matches each name to the parish's roster.</strong> A clear match is recorded. A close but uncertain match, or two people who fit, goes to review.</li>
       <li><strong>Records the hours</strong> by type (regular, overtime, holiday, sick, vacation) as a period total with the source <strong>Email</strong>, the sentence the number came from, and a <strong>PDF</strong> copy of the email (see below).</li>
     </ol>
-    <p>Other mail is sorted, not recorded: a <strong>new hire or a termination</strong> becomes a pending request in <strong>Time Review</strong> (the same queue the parishes use); a flat dollar amount such as a stipend is <strong>not</strong> hours, so it is listed for you to key by hand; a question or an automatic reply is set aside for a person.</p>
+    <p>Other mail is sorted, not recorded: a <strong>new hire or a termination</strong> becomes a pending request in <strong>Roster Review</strong> (the same queue the parishes use); a flat dollar amount such as a stipend is <strong>not</strong> hours, so it is listed for you to key by hand; a question or an automatic reply is set aside for a person.</p>
   </section>
 
   <section class="hiw-section" id="never">
@@ -47,11 +47,11 @@
 
   <section class="hiw-section" id="state">
     <h2>Where it stands</h2>
-    <p>The reader is <strong>on for production</strong>. It runs about every 30 minutes on a diocesan computer (for now), so Beacon updates as the mail arrives. Everything it records is a line <strong>waiting for review</strong>: nothing counts as confirmed until a person accepts it. It is limited to the open pay period and the periods after it, and each email is handled once. If a day's mail looks wrong, check <strong>Time Status</strong> first: a red row means there are lines to look at, an amber row means that parish has sent nothing yet.</p>
+    <p>The reader is <strong>on for production</strong>. It runs about every 30 minutes on a diocesan computer (for now), so Beacon updates as the mail arrives. Everything it records is a line <strong>waiting for review</strong>: nothing counts as confirmed until a person accepts it. It is limited to the open pay period and the periods after it, and each email is handled once. If a day's mail looks wrong, check <strong>Time Review</strong> first: a red row means there are lines to look at, an amber row means that parish has sent nothing yet.</p>
   </section>
 
   <section class="hiw-section" id="board">
-    <h2>The Time Status screen</h2>
+    <h2>The Time Review screen</h2>
     <div class="hiw-subcards">
       <div class="hiw-subcard">
         <h3>The top</h3>
@@ -73,13 +73,25 @@
   </section>
 
   <section class="hiw-section" id="review">
+    <h2>People the emails named but nobody entered</h2>
+    <p>If an email names someone the reader could not enter, that person is not lost. They come first in the <strong>Period totals</strong> area, under <strong>Named in the emails, not entered yet</strong>, beside the same email <strong>PDF</strong> as the people who were entered. Time Review counts them as lines to review, and the hours cannot be marked Final while any are left.</p>
+    <ul>
+      <li><strong>Why</strong> is shown for each: no exact hours in the email (only a limit such as &ldquo;did not exceed 5 hours per week&rdquo;), no one on the roster matches the name, more than one employee fits, or the reader was not sure.</li>
+      <li><strong>Choose the employee</strong> from the list (the reader's best guess is already picked) and press <strong>Enter</strong>: the hours the reader read are entered for that person, tied to the same email and confirmed. When the email gave no exact figure, type the hours first.</li>
+      <li><strong>Dismiss</strong> when nothing is needed (for example you already entered the hours by hand). Who dismissed it and when are kept.</li>
+      <li>A name the reader had to match loosely (the same surname with a nickname such as Edie for Edith, or a surname read a little off) is entered but marked <strong>Name matched loosely: check it against the email</strong>. With two people of the same surname at a parish the first name has to match.</li>
+    </ul>
+    <p>In the period totals each employee is <strong>one row</strong>, with Regular, Overtime and the other kinds of hours side by side.</p>
+  </section>
+
+  <section class="hiw-section" id="review">
     <h2>Reviewing a line</h2>
     <p>Every line shows the hours, the source and the status. Point at <strong>Email</strong> (the Source) to see the sentence the number came from and what the email check found. If the email's <strong>PDF</strong> button is there, point at it for a preview of the email, or click it for a large view, so you can check what the reader understood.</p>
     <ul>
       <li><strong>Accept</strong> confirms it. <strong>Save hours</strong> corrects it and confirms it. <strong>Reject</strong> sets it aside (it is kept, never deleted).</li>
       <li><strong>A different figure is waiting</strong>: a later email gave other hours for a line you already confirmed. The confirmed hours stay in force until you choose <strong>Use new figure</strong> or <strong>Keep current</strong>.</li>
       <li><strong>Conflict with the daily grid</strong>: the parish entered hours in Beacon <em>and</em> sent an email. Neither counts until you choose <strong>Use period total</strong> or <strong>Use daily grid</strong>.</li>
-      <li><strong>New hire not on the roster</strong>: approve the new person in <strong>Time Review</strong> first; their hours then move onto the roster row.</li>
+      <li><strong>New hire not on the roster</strong>: approve the new person in <strong>Roster Review</strong> first; their hours then move onto the roster row.</li>
       <li><strong>Accepted automatically</strong>: a NEW emailed line is confirmed the moment it arrives when the reader is at least <strong>80% sure</strong>, the person is an hourly employee on the roster, nothing is flagged, and the hours are within 25% of that person's recent confirmed hours. The line says so, and the edit log says why. Everything else waits for you. A later email with different hours never replaces a confirmed line; it waits as a new figure. The 80% is a setting (<code>payroll_auto_accept_confidence</code>); 0 turns it off.</li>
       <li><strong>Accept all</strong> confirms the plain lines for a parish. It leaves flagged lines (much higher than usual, not an hourly employee, inactive) and anything above for you to look at.</li>
     </ul>

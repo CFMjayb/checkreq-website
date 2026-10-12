@@ -35,6 +35,7 @@
       <li><a href="#getting-there">Getting to Your Parish's Portal View</a></li>
       <li><a href="#what-you-can-do">What You Can Do There</a></li>
       <li><a href="#access-and-roles">Access and Roles</a></li>
+      {% if timekeeping_enabled %}<li><a href="#timekeeping">Timekeeping: Reporting Hours to the Diocese</a></li>{% endif %}
       <li><a href="#questions">Questions or Feedback</a></li>
     </ol>
   </nav>
@@ -79,6 +80,10 @@
         <h3>Parish Finance</h3>
         <p>Where it applies, a parish can see its Shared Ministry Allocation status by year, print a statement, see payments applied against it, and (for some parishes) a Middendorf loan balance — with a way to ask the Business Office a question or request an SMA direct-debit enrollment, right from the page.</p>
       </div>
+      {% if timekeeping_enabled %}<div class="hiw-subcard">
+        <h3>Timekeeping</h3>
+        <p>Report the hours of your hourly staff for each pay period and see what the diocese received. <a href="#timekeeping">How it works</a>.</p>
+      </div>{% endif %}
       <div class="hiw-subcard">
         <h3>Requests</h3>
         <p>A parish can send a general request or feedback to the diocese, and see the history of what it's already sent.</p>
@@ -92,8 +97,34 @@
     <p>If you need access to your parish, or need to grant or remove someone else's, there's a "User Access" (or "Request Access") option available from inside your parish's own Parish Mode view.</p>
   </section>
 
+  {% if timekeeping_enabled %}
+  <section class="hiw-section" id="timekeeping">
+    <h2>5. Timekeeping: Reporting Hours to the Diocese</h2>
+    <p>Your parish is set up for <strong>Timekeeping</strong>. Every two weeks the diocese runs payroll, and it needs the hours worked by your hourly staff. Timekeeping is where your parish reports them. Beacon only handles hours: it never shows or stores what anyone is paid. Staff who are paid a fixed salary are not on the list.</p>
+    <p><strong>Who can use it:</strong> people who hold the Parish Finance or Parish Admin role for your parish. You will see a <strong>Timekeeping</strong> button on your parish's home page.</p>
+    <h3>What happens each pay period</h3>
+    <ol>
+      <li><strong>The diocese opens the pay period.</strong> The Timekeeping page shows the period's dates and the <strong>Submit by</strong> date.</li>
+      <li><strong>You report the hours.</strong> Each hourly employee is one line. Type the <strong>total hours for the period</strong> for each kind (regular, overtime, holiday, sick, vacation), or open the person and enter the hours <strong>day by day</strong>. For one person and one kind of hours use a total <em>or</em> the days, not both. The totals add up as you type.</li>
+      <li><strong>Save as you go.</strong> Press <strong>Save</strong> as often as you like. Beacon asks before you leave the page with changes that are not saved.</li>
+      <li><strong>Submit the period.</strong> When the hours are right, press <strong>Submit Period to Diocese</strong>. That locks the hours for the period and sends along any employee-list changes you asked for. After that you cannot change them unless the diocese reopens the period.</li>
+      <li><strong>The diocese reviews them.</strong> The Business Office checks the hours, may correct them, and sends them on to payroll. Once a pay period is closed it cannot be changed.</li>
+    </ol>
+    <h3>If your parish sends hours by email instead</h3>
+    <p>Some parishes email their hours to the diocese's payroll mailbox. If that is how your parish reports them, the diocese records them in Beacon for you, and you do not need to enter them again. Open <strong>Hours the diocese received</strong> to see exactly what was recorded for your parish, and whether each line is <em>Recorded</em> or still <em>waiting for the diocese to review</em>. If something looks wrong, tell the Business Office through a <a href="/parish-requests">request</a>.</p>
+    <h3>Your employee list</h3>
+    <p>The <strong>Staff Roster</strong> shows who is listed for your parish. To add a new hire, change someone's details or report that someone has left, use the Staff Roster page. <strong>Nothing changes until the diocese approves the request</strong>, and it is sent with your next submission.</p>
+    <h3>Good to know</h3>
+    <ul>
+      <li>Hours the diocese or an email recorded for a person show as locked on your screen. Ask the Business Office if one needs to change.</li>
+      <li>You always see the current period first. You can see what the diocese received for earlier ones under <strong>Hours the diocese received</strong>.</li>
+      <li>Questions about who is on the list, a missed deadline or a period that needs to be reopened go to the Business Office.</li>
+    </ul>
+  </section>
+  {% endif %}
+
   <section class="hiw-section" id="questions">
-    <h2>5. Questions or Feedback</h2>
+    <h2>{{ 6 if timekeeping_enabled else 5 }}. Questions or Feedback</h2>
     <p>Beacon includes a built-in <a href="/feedback">Feedback</a> link in the navigation menu of every page &mdash; the fastest way to flag something confusing, report a problem, or suggest an improvement. For anything more urgent, or for questions this page doesn't answer, contact the Diocesan Business Office.</p>
   </section>
 

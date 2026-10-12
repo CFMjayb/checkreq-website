@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Timekeeping Status — {{ current_org.name }}{% endblock %}
+{% block title %}Time Review — {{ current_org.name }}{% endblock %}
 {#
   Timekeeping Status -- built on the shared fixed frame (static/css/fixed_frame.css + js/fixed_frame.js):
   the title row, the period line and the filters stay at the top, the column headers stay under them,
@@ -29,7 +29,7 @@
 <div class="ff-shell">
 
   <div class="ff-title-row">
-    <h1>Timekeeping Status {{ guide_link("payroll-hours", "How payroll hours from email work") }}</h1>
+    <h1>Time Review {{ guide_link("payroll-hours", "How payroll hours from email work") }}</h1>
     <span class="ff-state {{ period.status }}" data-tip="This period is {{ period.status }}. Only an Open period accepts hours.">{{ period.status|capitalize }}</span>
     {% if payroll.final and not payroll.left %}<span class="ff-state final" data-tip="Hours were marked Final{% if payroll.final_at %} {{ payroll.final_at }}{% endif %}">Final</span>{% endif %}
     <a class="ff-back" href="/portal">&larr; Back to main menu</a>

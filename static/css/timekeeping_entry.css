@@ -102,3 +102,12 @@ table.te-table { table-layout: fixed; }
 .te-foot-links a { font-size: 0.82rem; margin-right: 12px; cursor: pointer; }
 .te-foot-grand { font-size: 0.95rem; }
 .te-foot-grand strong { font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+
+/* 26-158 (2026-10-11): one row per employee in Period totals, and the "named in the emails, not entered yet" list */
+.te-ttable th.te-num, .te-ttable td.te-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.te-multi { flex-direction: column; align-items: flex-start; gap: 3px; }
+.te-act { display: inline-flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
+.te-unentered { padding: 6px 10px 8px; border-bottom: 2px solid var(--color-gold, #c9a227); background: #fffaf0; }
+.te-unentered h3 { margin: 0 0 2px; font-size: 0.95rem; }
+.te-unentered p.sub { margin: 0 0 6px; font-size: 0.8rem; }
+.te-unentered .ph-inline select { max-width: 17em; }

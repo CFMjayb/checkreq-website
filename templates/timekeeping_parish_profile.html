@@ -4,7 +4,7 @@
 <link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
 <div class="page-shell-wide">
 <h1>Payroll profile <span class="sub">— {{ parish.name }}</span></h1>
-<p class="back-link"><a href="/admin/timekeeping/status">&larr; Back to Time Status</a></p>
+<p class="back-link"><a href="/admin/timekeeping/status">&larr; Back to Time Review</a></p>
 {% if request.query_params.get('saved') %}<div class="banner banner-success">Saved.</div>{% endif %}
 {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
 
@@ -20,7 +20,7 @@
       </select></label>
     <label style="display:block;margin-top:8px">Notes
       <input type="text" name="notes" maxlength="500" value="{{ profile.notes if profile and profile.notes else '' }}" style="width:100%"></label>
-    <p class="sub">A parish set to "Standing hours" or "No hours expected" shows <strong>Not Expected</strong> on the Time Status board instead of Not Started.</p>
+    <p class="sub">A parish set to "Standing hours" or "No hours expected" shows <strong>Not Expected</strong> on the Time Review board instead of Not Started.</p>
     <button class="btn" type="submit">Save</button>
   </form>
 </div>

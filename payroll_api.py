@@ -216,6 +216,27 @@ def beacon_record_register_hours(request: Request, body: dict = Body(...)):
         return _err(422, "invalid", "period_id must be a whole number.")
 
 
+@router.put("/api/payroll/email-unentered")
+def beacon_put_email_unentered(request: Request, body: dict = Body(...)):
+    """The CURRENT list of people one email named that the reader could not enter (no exact hours, no roster
+    match, not sure). Shown on the diocese's Period totals panel beside the email's PDF, counted as something to
+    review on Time Review, and offered a name list so a reviewer can pick the right employee. Idempotent."""
+    org, bad = _auth(request)
+    if bad:
+        return bad
+    try:
+        _need(body, "period_id", "source_ref")
+        items = body.get("items") or []
+        if not isinstance(items, list) or len(items) > 50:
+            raise pt.PayrollError("invalid", "items must be a list of up to 50 entries.")
+        return _ok(pt.replace_unentered(org["id"], period_id=int(body["period_id"]),
+                                        source_ref=str(body["source_ref"]), items=items))
+    except pt.PayrollError as e:
+        return _pe(e)
+    except (TypeError, ValueError, AttributeError):
+        return _err(422, "invalid", "period_id must be a whole number and every item must be an object.")
+
+
 @router.post("/api/payroll/submissions/received")
 def beacon_mark_submission_received(request: Request, body: dict = Body(...)):
     """Notes that an email arrived for a parish and period (idempotent on the message id)."""
