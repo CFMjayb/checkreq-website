@@ -32,6 +32,12 @@ table.te-ttable { width: 100%; border-collapse: separate; border-spacing: 0; fon
 .te-ttable .btn.btn-sm, .te-unentered .btn.btn-sm { padding: 2px 9px; font-size: 0.8rem; line-height: 1.25; min-height: 0; height: 22px; }
 .te-unentered input[type="text"], .te-unentered select { height: 24px; box-sizing: border-box; padding: 0 5px; font-size: 0.82rem; line-height: 1.2; }
 .te-ttable .ph-inline { margin-right: 2px; }
+/* One row per employee: every kind of hours is an editable box (like the summary grid), one Accept and one Reject per row. */
+.te-ttable td.te-num input.te-hrs, .te-addline input.te-hrs { width: 4.2em; height: 22px; box-sizing: border-box; padding: 0 5px; font-size: 0.82rem; line-height: 1.2; text-align: right; }
+.te-ttable td.te-num input.te-blank { background: #faf8f1; }
+.te-addline { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 10px; border-top: 1px solid var(--color-border, #ddd4c0); background: #f7f3ea; font-size: 0.85rem; }
+.te-addline select { height: 24px; box-sizing: border-box; padding: 0 4px; font-size: 0.82rem; max-width: 16em; }
+.te-addline .sub { font-size: 0.78rem; }
 .te-src { border-bottom: 1px dotted var(--color-muted, #6b645a); cursor: help; }
 .te-flag { display: block; font-size: 0.78rem; }
 
