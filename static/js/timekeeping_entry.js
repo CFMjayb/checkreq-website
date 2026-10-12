@@ -144,8 +144,7 @@
         var v = cell.mode === 'days' ? daySum(cell) : num(cell.total.value);
         if (cell.ctot) cell.ctot.textContent = fmt(v);
         tb.querySelectorAll('[data-te-sumtype][data-c="' + cell.c + '"]').forEach(function (el) {
-          el.textContent = fmt(v);
-          if (el.parentNode) el.parentNode.hidden = v <= 0;   // a type with nothing in it is not listed
+          el.textContent = v > 0 ? fmt(v) : '';   // a type with nothing in it stays empty (its column keeps its place)
         });
         etot += v;
         cell.days.forEach(function (el) { var i = el.dataset.i; perDay[i] = (perDay[i] || 0) + num(el.value); });

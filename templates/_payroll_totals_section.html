@@ -78,8 +78,14 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
   </form>
   {% endif %}
-  <table class="te-ttable">
-    <thead><tr><th>Employee</th>{% for c in pt_.cat_cols %}<th class="te-num">{{ c.label }}</th>{% endfor %}<th>Source</th><th>Status</th><th>Actions</th></tr></thead>
+  {# Fixed column widths: Employee 220px and each kind of hours 84px, EXACTLY like the daily grid below, so the number columns line up (static/css/timekeeping_entry.css) #}
+  <table class="te-ttable te-ptable" style="min-width: {{ 220 + pt_.cat_cols|length * 84 + 120 + 200 + 240 }}px">
+    <colgroup>
+      <col style="width:220px">
+      {% for c in pt_.cat_cols %}<col style="width:84px">{% endfor %}
+      <col style="width:120px"><col style="width:200px"><col>
+    </colgroup>
+    <thead><tr><th>Employee</th>{% for c in pt_.cat_cols %}<th class="te-num"{% if c.short != c.label %} data-tip="{{ c.label }}"{% endif %}>{{ c.short }}</th>{% endfor %}<th>Source</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody>
     {% if can_add_ %}
     {# ONE blank row, hidden until the Add a line button is pressed (static/js/timekeeping_entry.js) #}

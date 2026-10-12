@@ -24,6 +24,7 @@ from urllib.parse import quote_plus
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+import category_order
 import cornerstone_mode
 import db
 import email_pdf
@@ -50,7 +51,7 @@ PATTERN_LABELS = {
 NOT_EXPECTED_PATTERNS = ("standing_hours", "none")
 CHANNEL_LABELS = {"email": "Email", "parish": "Parish (in Beacon)", "diocese": "Diocese", "standing": "Standing hours",
                   "register": "Paid register"}
-CAT_ORDER = {"regular": 1, "overtime": 2, "holiday": 3, "sick": 4, "vacation": 5}
+# the order of the kinds of hours (Reg, OT, Sick, Vac, Holiday) now lives in category_order.py, shared with the daily grid below
 STATE_LABELS = {
     "ok": "OK", "needs_review": "Needs review", "proposal": "Different figure waiting",
     "conflict": "Conflict with the daily grid", "pending_hire": "New hire not on the roster yet",
@@ -191,7 +192,9 @@ def section_context(org_id: int, period: dict, parish_id: int) -> dict:
                       "ORDER BY sort_order, label", (org_id,)):
         if c["key"] not in have:
             cat_cols.append({"key": c["key"], "label": c["label"]})
-    cat_cols.sort(key=lambda c: (CAT_ORDER.get(c["key"], 50), c["label"]))
+    cat_cols.sort(key=lambda c: (category_order.rank(c["key"]), c["label"]))
+    for c in cat_cols:
+        c["short"] = category_order.short(c["key"], c["label"])
     writable = period["status"] in pt.WRITABLE_PERIOD_STATUSES
     add_roster = db.query("SELECT id, first_name, last_name, employee_number, captures_hours FROM portal.staff_roster "
                           "WHERE parish_id = %s AND is_active AND employee_number IS NOT NULL "
