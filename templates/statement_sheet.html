@@ -1,0 +1,93 @@
+{#
+statement_sheet.html -- ONE giving statement, as a page fragment (no base, no navigation). The layout follows the structure TouchPoint uses (letterhead at the
+top right, the donor at the left, the period, the summary by fund, the list of gifts, the wording, the signer). Used by the staff preview, the template preview, the
+PDF builder and the member's own statement, so there is one layout, never a staff copy and a member copy.
+Context (statement_render.sheet_context): profile (the parish statement profile row or None), donor {name, address}, statement (statement_rules.build_statement),
+period_from, period_to, recorded_as_of, words {notice, opening, closing, signer, questions} (already cleaned and filled, so they are safe to print as HTML),
+show_summary, show_list, accent, size, logo_src; d() and money() formatters.
+#}
+{% set st = statement %}
+<div class="stm-sheet stm-accent-{{ accent or 'green' }} stm-size-{{ size or 'normal' }}">
+  <div class="stm-head">
+    <div class="stm-head-left">{% if logo_src %}<img src="{{ logo_src }}" alt="" class="stm-logo">{% endif %}</div>
+    <div class="stm-head-right">
+      {% if profile and profile.legal_name %}<strong>{{ profile.legal_name }}</strong><br>
+        {% if profile.address1 %}{{ profile.address1 }}<br>{% endif %}{% if profile.address2 %}{{ profile.address2 }}<br>{% endif %}
+        {% if profile.city or profile.state or profile.postal_code %}{{ profile.city or '' }}{{ ', ' if profile.city and profile.state }}{{ profile.state or '' }} {{ profile.postal_code or '' }}<br>{% endif %}
+        {% if profile.ein %}IRS EIN: {{ profile.ein }}{% endif %}
+      {% else %}<em>The parish profile has not been filled in yet.</em>{% endif %}
+      {% if words.notice %}<div class="stm-notice">{{ words.notice|safe }}</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="stm-donor">
+    <strong>{{ donor.name }}</strong><br>
+    {% for line in donor.address %}{{ line }}<br>{% else %}<em>No mailing address on file</em>{% endfor %}
+  </div>
+
+  <p class="stm-period"><strong>Period: {{ d(period_from) }} &ndash; {{ d(period_to) }}</strong><span class="stm-asof">Recorded as of {{ d(recorded_as_of) }}</span></p>
+
+  {% if correction %}<p class="stm-correction"><strong>Corrected statement.</strong> Issued {{ d(correction.issued) }}. It replaces the statement dated {{ d(correction.replaces) }}.</p>{% endif %}
+
+  {% if words.opening %}<div class="stm-words">{{ words.opening|safe }}</div>{% endif %}
+
+  {% if st.gifts and show_summary %}
+  <h3 class="stm-h">Tax Deductible Summary by Fund</h3>
+  <table class="stm-table stm-narrow">
+    <thead><tr><th>Fund</th><th class="stm-num">Amount</th></tr></thead>
+    <tbody>
+      {% for f in st.by_fund %}<tr><td>{{ f.fund_name }}</td><td class="stm-num">{{ money(f.amount) }}</td></tr>{% endfor %}
+      <tr class="stm-total"><td>Tax Deductible Total</td><td class="stm-num">{{ money(st.deductible_total) }}</td></tr>
+    </tbody>
+  </table>
+  {% elif st.gifts %}
+  <p><strong>Tax Deductible Total: {{ money(st.deductible_total) }}</strong></p>
+  {% endif %}
+
+  {% if st.gifts and show_list %}
+  <h3 class="stm-h">Tax Deductible Contributions</h3>
+  <table class="stm-table">
+    <thead><tr><th>Date</th>{% if st.gifts[0].donor_label %}<th>Given by</th>{% endif %}<th>Fund</th><th class="stm-num">Amount</th>{% if st.show_check_numbers %}<th>Check #</th>{% endif %}</tr></thead>
+    <tbody>
+      {% for g in st.gifts %}
+      <tr><td>{{ d(g.date) }}</td>{% if g.donor_label %}<td>{{ g.donor_label }}</td>{% endif %}<td>{{ g.fund_name }}</td><td class="stm-num">{{ money(g.amount) }}</td>{% if st.show_check_numbers %}<td>{{ g.check_number }}</td>{% endif %}</tr>
+      {% if g.goods_value and g.goods_value > 0 %}<tr class="stm-sub"><td></td>{% if g.donor_label %}<td></td>{% endif %}<td colspan="{{ 2 if st.show_check_numbers else 1 }}">Value of goods or services given in return: {{ money(g.goods_value) }}. Tax-deductible part: {{ money(g.deductible) }}.</td></tr>{% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if st.in_kind %}
+  <h3 class="stm-h">Non-cash gifts</h3>
+  <table class="stm-table">
+    <thead><tr><th>Date</th><th>Fund</th><th>Description</th></tr></thead>
+    <tbody>{% for g in st.in_kind %}<tr><td>{{ d(g.date) }}</td><td>{{ g.fund_name }}</td><td>{{ g.description }}</td></tr>{% endfor %}</tbody>
+  </table>
+  <p class="stm-note">The parish describes a non-cash gift but does not place a value on it.</p>
+  {% endif %}
+
+  {% if st.stock %}
+  <h3 class="stm-h">Gifts of stock</h3>
+  <table class="stm-table">
+    <thead><tr><th>Date</th><th>Fund</th><th>Stock</th><th class="stm-num">Shares</th></tr></thead>
+    <tbody>{% for g in st.stock %}<tr><td>{{ d(g.date) }}</td><td>{{ g.fund_name }}</td><td>{{ g.symbol }}</td><td class="stm-num">{{ g.shares }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+
+  {% if st.nondeductible %}
+  <h3 class="stm-h">Not tax deductible</h3>
+  <table class="stm-table">
+    <thead><tr><th>Date</th><th>Fund</th><th class="stm-num">Amount</th></tr></thead>
+    <tbody>{% for g in st.nondeductible %}<tr><td>{{ d(g.date) }}</td><td>{{ g.fund_name }}</td><td class="stm-num">{{ money(g.amount) }}</td></tr>{% endfor %}
+      <tr class="stm-total"><td colspan="2">Total, not tax deductible</td><td class="stm-num">{{ money(st.nondeductible_total) }}</td></tr></tbody>
+  </table>
+  {% endif %}
+
+  {% if not st.has_reportable %}<p class="stm-note">No gifts are recorded for this period.</p>{% endif %}
+
+  <div class="stm-closing">
+    {% if words.closing %}<div class="stm-words">{{ words.closing|safe }}</div>{% endif %}
+    {% if words.questions %}<div class="stm-words">{{ words.questions|safe }}</div>{% endif %}
+    {% if words.signer %}<div class="stm-words">{{ words.signer|safe }}</div>{% endif %}
+  </div>
+</div>

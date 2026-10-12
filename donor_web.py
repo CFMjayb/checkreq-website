@@ -100,6 +100,8 @@ def nav_items(ctx) -> list[dict]:
         items.append({"key": "funds", "label": "Funds & campaigns", "href": "/giving/funds"})
     if s.get("giving_enabled") and (ctx.can("pledges.manage") or ctx.can("giving.read")):
         items.append({"key": "pledges", "label": "Pledges", "href": "/pledges"})
+    if s.get("giving_enabled") and ctx.can("statements.run"):
+        items.append({"key": "statements", "label": "Statements", "href": "/giving/statements"})
     return items
 
 

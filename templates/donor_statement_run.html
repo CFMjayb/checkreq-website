@@ -1,0 +1,86 @@
+{#
+donor_statement_run.html -- one statement run: its counts, the plain reasons for everyone skipped, a Build button with a progress bar, the statements and the downloads.
+Variables: run (the stmt_run row), counts {planned, built, failed, skipped, total}, reasons [(reason, n)], template_name, template_version, remaining, done, rows, status, page_no.
+The Build button is wired by static/js/statement_run.js (no inline handlers): it calls the chunk address again and again until the run is done.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Statements {{ run.period_to.year }}, run #{{ run.id }} — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}"><link rel="stylesheet" href="/static/css/donor_statements.css?v={{ asset_version('css/donor_statements.css') }}">{% endblock %}
+{% block extra_js %}<script src="/static/js/statement_run.js?v={{ asset_version('js/statement_run.js') }}"></script>{% endblock %}
+{% block content %}
+{% set open_run = run.status in ('planned', 'building') %}
+{% set to_build = counts.planned + counts.built + counts.failed %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/giving/statements/run">&larr; Run statements</a></p>
+  <div class="dm-head"><h1>Statements for {{ run.period_to.year }} <span class="dm-muted dm-small">run #{{ run.id }}, {{ run.status }}</span></h1></div>
+  <p class="dm-muted dm-small">Made {{ when(run.created_at) }} with <b>{{ template_name }}{% if template_version %}, version {{ template_version }}{% endif %}</b>. The wording of this run is fixed to that version, even if the template is changed later.
+    Gifts are read again as each statement is built. Nothing is sent to anyone.</p>
+
+  <div class="dm-cards">
+    <div class="dm-box"><div class="dm-lbl">To build</div><div class="dm-val" id="stm-planned">{{ counts.planned }}</div></div>
+    <div class="dm-box"><div class="dm-lbl">Built</div><div class="dm-val" id="stm-built">{{ counts.built }}</div></div>
+    <div class="dm-box"><div class="dm-lbl">Skipped</div><div class="dm-val">{{ counts.skipped }}</div></div>
+    <div class="dm-box"><div class="dm-lbl">Failed</div><div class="dm-val" id="stm-failed">{{ counts.failed }}</div></div>
+    <div class="dm-box"><div class="dm-lbl">Total deductible</div><div class="dm-val">{{ money(counts.total) }}</div></div>
+  </div>
+
+  {% if open_run %}
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Build</h3></div>
+    {% if counts.planned == 0 and counts.failed == 0 %}
+      <p class="dm-muted">Nothing is waiting to be built.</p>
+    {% endif %}
+    <p class="dm-muted dm-small">Beacon builds the statements a few at a time, so this page keeps working. If you close it, come back and press Build again: it carries on where it stopped.</p>
+    <progress id="stm-bar" value="{{ counts.built }}" max="{{ to_build or 1 }}" aria-label="Statements built"></progress>
+    <p><button type="button" class="btn btn-primary" id="stm-build" data-url="/giving/statements/run/{{ run.id }}/chunk" data-reload="/giving/statements/run/{{ run.id }}">Build the statements</button>
+      <span id="stm-msg" class="dm-muted dm-small" role="status" aria-live="polite"></span></p>
+    <form method="post" action="/giving/statements/run/{{ run.id }}/cancel" class="dm-inline" data-confirm="Cancel this run? Statements already built are kept; the rest are not built.">
+      {{ csrf() }}<button type="submit" class="btn btn-secondary btn-sm">Cancel this run</button>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if counts.failed %}
+  <div class="banner banner-error">{{ counts.failed }} statement{{ 's' if counts.failed != 1 else '' }} could not be built (each says why below).
+    <form method="post" action="/giving/statements/run/{{ run.id }}/retry" class="dm-inline">{{ csrf() }}<button type="submit" class="btn btn-secondary btn-sm">Try the failed ones again</button></form></div>
+  {% endif %}
+
+  {% if counts.built %}
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Downloads</h3></div>
+    <p><a class="btn btn-secondary btn-sm" href="/giving/statements/run/{{ run.id }}/print.pdf">All statements to print (one PDF)</a>
+       <a class="btn btn-secondary btn-sm" href="/giving/statements/run/{{ run.id }}/all.zip">All statements (ZIP, one PDF per donor)</a></p>
+    <p class="dm-muted dm-small">The print PDF holds the statements for donors who get a mailed copy, in the order of the list. The ZIP has a Print folder and an Email folder. Each download is recorded.</p>
+  </div>
+  {% endif %}
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Who is skipped, and why</h3></div>
+    {% if reasons %}
+      <table class="simple-table dm-table"><thead><tr><th>Reason</th><th class="dm-num">Donors</th></tr></thead>
+        <tbody>{% for reason, n in reasons %}<tr><td>{{ reason }}</td><td class="dm-num">{{ n }}</td></tr>{% endfor %}</tbody></table>
+      <p><a class="btn btn-secondary btn-sm" href="/giving/statements/run/{{ run.id }}/skipped.csv">Download the skipped list (spreadsheet)</a></p>
+    {% else %}<p class="doc-empty">Nobody was skipped.</p>{% endif %}
+  </div>
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>The statements</h3></div>
+    <p class="stm-bar">
+      <a href="/giving/statements/run/{{ run.id }}"{% if not status %} class="stm-year-on"{% endif %}>All</a>
+      {% for s in ('planned', 'built', 'failed', 'skipped') %}<a href="?status={{ s }}"{% if status == s %} class="stm-year-on"{% endif %}>{{ s|capitalize }}</a>{% endfor %}
+    </p>
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Donor</th><th>Status</th><th>Delivery</th><th class="dm-num">Gifts</th><th class="dm-num">Deductible</th><th></th></tr></thead>
+      <tbody>{% for r in rows %}
+        <tr><td>{{ r.name }}{% if r.spouse_person_id %} <span class="dm-muted dm-small">(joint)</span>{% endif %}</td>
+          <td>{{ r.status }}{% if r.skip_reason %}: {{ r.skip_reason }}{% endif %}{% if r.error %}: {{ r.error }}{% endif %}</td>
+          <td>{{ r.delivery or '' }}</td><td class="dm-num">{{ r.gift_count }}</td><td class="dm-num">{{ money(r.deductible_total) }}</td>
+          <td>{% if r.has_file %}<a href="/giving/statements/file/{{ r.id }}.pdf">Open the PDF</a>{% endif %}</td></tr>
+      {% else %}<tr><td colspan="6" class="doc-empty">Nothing to show here.</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="dm-muted dm-small">{% if page_no > 0 %}<a href="?page={{ page_no - 1 }}{{ '&status=' ~ status if status }}">Earlier</a> · {% endif %}{% if rows|length == 100 %}<a href="?page={{ page_no + 1 }}{{ '&status=' ~ status if status }}">More</a>{% endif %}</p>
+  </div>
+</div>
+{% endblock %}

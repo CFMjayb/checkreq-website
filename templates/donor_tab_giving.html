@@ -7,12 +7,15 @@ the staff-only parts are off (the lock line, the Batch column and link, soft cre
 picker, the summary by fund, and the notes about corrections and statements. Pledges is the other Giving sub-tab (donor_tab_pledges.html).
 #}
 {% from "donor_macros.html" import lock_note with context %}
-{% macro pp_pills() %}<nav class="pp-subtabs" aria-label="Giving"><a href="/my/giving" class="{{ 'pp-sub-on' if sub == 'contributions' }}">Contributions</a><a href="/my/pledges" class="{{ 'pp-sub-on' if sub == 'pledges' }}">Pledges</a></nav>{% endmacro %}
+{% macro pp_pills() %}<nav class="pp-subtabs" aria-label="Giving"><a href="/my/giving" class="{{ 'pp-sub-on' if sub == 'contributions' }}">Contributions</a><a href="/my/pledges" class="{{ 'pp-sub-on' if sub == 'pledges' }}">Pledges</a><a href="/my/statements" class="{{ 'pp-sub-on' if sub == 'statements' }}">Statements</a></nav>{% endmacro %}
 {% if self_mode and sub == "pledges" %}
 <div class="pp-giving-top"><span></span>{{ pp_pills() }}</div>
 {% include "donor_tab_pledges.html" %}
+{% elif self_mode and sub == "statements" %}
+{% include "donor_tab_statements.html" %}
 {% else %}
 {% if not self_mode %}{{ lock_note("Finance roles only · giving to " ~ parish.name) }}{% endif %}
+{% if not self_mode and ctx is defined and ctx.can("statements.run") %}<p class="dm-sub"><a href="/giving/statements/preview?person_id={{ p.id }}">Preview this person's giving statement</a> (builds and stores nothing)</p>{% endif %}
 {% if self_mode %}
 <div class="pp-giving-top">
   <div class="pp-giving-title">

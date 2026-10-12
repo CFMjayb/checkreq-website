@@ -133,6 +133,7 @@ _MEMBERSHIP = {"membership.view", "membership.edit", "sacrament.view", "sacramen
 _FINANCE = {
     "people.view", "people.create", "batch.view", "batch.open", "batch.line", "batch.close",
     "gift.correct", "funds.manage", "pledges.manage", "giving.read", "totals.read", "statements.run",
+    "statements.templates",          # edit the parish statement profile, settings and templates, choose the default (giving statements, 2026-10-11)
 }
 CAPS_BY_ROLE: dict[str, frozenset] = {
     "parish_admin": frozenset(_STAFF),

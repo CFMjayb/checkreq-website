@@ -1,0 +1,59 @@
+{#
+donor_statement_templates.html -- the statement templates a parish can use: Cornerstone's (global) templates, which a parish COPIES, and the parish's own,
+one of which is its default. A copy is never changed by anything Cornerstone does later; a newer Cornerstone version is only offered.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Statement templates — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}"><link rel="stylesheet" href="/static/css/donor_statements.css?v={{ asset_version('css/donor_statements.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/giving/statements">&larr; Giving statements</a></p>
+  <div class="dm-head"><h1>Statement templates</h1></div>
+  <p class="dm-muted">A template says how a statement looks and what it says. Cornerstone's templates are shared by every parish: <b>copy</b> one to your parish to change its wording. Your parish
+    has one <b>default</b> template, the one used when a statement is built. A copy never changes when Cornerstone changes its own; you are told when there is a newer version.</p>
+  {% if not default_id %}<div class="banner banner-info">This parish has no default template yet. The first time a statement is built, Beacon makes a copy of the Cornerstone Standard and uses it. Or make one of your own the default below.</div>{% endif %}
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Your parish's templates</h3></div>
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Name</th><th>Version</th><th>Copied from</th><th></th></tr></thead>
+      <tbody>
+      {% for t in own %}
+        <tr class="{{ '' if t.status == 'active' else 'dm-archived' }}">
+          <td><a href="/giving/statements/templates/{{ t.id }}">{{ t.name }}</a>
+            {% if t.is_default %} <span class="dm-pill">Default</span>{% endif %}
+            {% if t.status != 'active' %} <span class="dm-pill">Retired</span>{% endif %}
+            {% if t.created_automatically %}<span class="dm-sub"> (made automatically)</span>{% endif %}</td>
+          <td>{{ t.latest_version }}</td>
+          <td>{{ t.copied_from_name or '' }}{% if t.copied_from_version_no %} v{{ t.copied_from_version_no }}{% endif %}
+            {% if t.newer_global_version %}<br><span class="dm-sub">A newer Cornerstone version (v{{ t.newer_global_version }}) exists. Open the template to see it.</span>{% endif %}</td>
+          <td>{% if can_change and t.status == 'active' and not t.is_default %}
+            <form method="post" action="/giving/statements/templates/{{ t.id }}/default" class="dm-inline">{{ csrf() }}<button class="btn btn-secondary btn-sm" type="submit">Make default</button></form>
+            <form method="post" action="/giving/statements/templates/{{ t.id }}/retire" class="dm-inline">{{ csrf() }}<button class="btn btn-secondary btn-sm" type="submit">Retire</button></form>
+            {% elif can_change and t.status != 'active' %}
+            <form method="post" action="/giving/statements/templates/{{ t.id }}/retire" class="dm-inline">{{ csrf() }}<input type="hidden" name="restore" value="1"><button class="btn btn-secondary btn-sm" type="submit">Bring back</button></form>
+            {% endif %}</td>
+        </tr>
+      {% else %}<tr><td colspan="4" class="doc-empty">No templates of your own yet. Copy a Cornerstone template below.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+    <p class="dm-sub"><a href="/giving/statements/templates?retired={{ '0' if show_retired else '1' }}">{{ 'Hide retired templates' if show_retired else 'Show retired templates' }}</a></p>
+  </div>
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>From Cornerstone</h3></div>
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Name</th><th>Version</th><th>About</th><th></th></tr></thead>
+      <tbody>
+      {% for t in globals %}
+        <tr><td><a href="/giving/statements/templates/{{ t.id }}">{{ t.name }}</a></td><td>{{ t.latest_version }}</td><td>{{ t.description or '' }}</td>
+          <td>{% if can_change %}<form method="post" action="/giving/statements/templates/{{ t.id }}/copy" class="dm-inline">{{ csrf() }}<button class="btn btn-primary btn-sm" type="submit">Copy to my parish</button></form>{% endif %}</td></tr>
+      {% else %}<tr><td colspan="4" class="doc-empty">None.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+    {% if is_cornerstone %}<p class="dm-sub">You can change a Cornerstone template: open it. Everything you save becomes a new version; parishes that copied it are not changed.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}

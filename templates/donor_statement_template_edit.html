@@ -1,0 +1,62 @@
+{#
+donor_statement_template_edit.html -- one statement template: its wording and choices (when the person may change it), the versions, and a preview built from
+MADE-UP data (never a real person). A save is always a NEW version; nothing is edited in place.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}{{ template.name }} — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}"><link rel="stylesheet" href="/static/css/donor_statements.css?v={{ asset_version('css/donor_statements.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/giving/statements/templates">&larr; Statement templates</a></p>
+  <div class="dm-head"><h1>{{ template.name }}{% if is_default %} <span class="dm-pill">Default</span>{% endif %}{% if template.status != 'active' %} <span class="dm-pill">Retired</span>{% endif %}</h1></div>
+  <p class="dm-muted dm-small">{{ 'Cornerstone template' if template.scope == 'global' else "Your parish's template" }}, version {{ version.version_no }} of {{ versions[0].version_no }}.
+    {% if template.copied_from_name or template.copied_from_template_id %}Copied from a Cornerstone template (version {{ template.copied_from_version_no }}).{% endif %}</p>
+  {% if newer_global_version %}<div class="banner banner-info">Cornerstone has a newer version of the template this one was copied from (version {{ newer_global_version }}). Your copy has not changed. Open the Cornerstone template to read what is new, and copy any wording you want into this one.</div>{% endif %}
+
+  <div class="stm-two">
+    <div class="stm-edit">
+      {% if can_copy %}
+        <div class="card dm-card"><p>This is a Cornerstone template; only Cornerstone can change it. To use it, make your parish's own copy and change the wording there.</p>
+          <form method="post" action="/giving/statements/templates/{{ template.id }}/copy" class="dm-form">{{ csrf() }}<button class="btn btn-primary" type="submit">Copy to my parish</button></form></div>
+      {% endif %}
+      {% if can_edit %}
+      <form method="post" action="/giving/statements/templates/{{ template.id }}/save" class="dm-form dm-editform card dm-card">
+        {{ csrf() }}
+        <div class="field"><label>Name</label><input name="name" value="{{ template.name }}" maxlength="100"></div>
+        <div class="field"><label>About this template</label><input name="description" value="{{ template.description or '' }}" maxlength="300"></div>
+        {% for k in TEXT_PARTS %}
+        <div class="field"><label for="tp-{{ k }}">{{ TEXT_LABELS[k] }}</label><textarea id="tp-{{ k }}" name="{{ k }}" rows="{{ 5 if k in ('closing', 'opening') else 3 }}">{{ edit_text[k] }}</textarea></div>
+        {% endfor %}
+        <p class="dm-sub">Leave a blank line between paragraphs. You may use &lt;b&gt;bold&lt;/b&gt;, &lt;i&gt;italic&lt;/i&gt;, &lt;u&gt;underline&lt;/u&gt; and simple lists (&lt;ul&gt;&lt;li&gt;). Nothing else is kept: no links, pictures or styles.
+          To put in a value, type one of these in double braces: {% for f in MERGE_FIELDS %}<code>{{ '{{' }}{{ f }}{{ '}}' }}</code>{{ ', ' if not loop.last }}{% endfor %}.</p>
+        <div class="dm-grid">
+          <label class="dm-chk"><input type="checkbox" name="logo" value="1" {{ 'checked' if parts.letterhead.logo }}> Print the parish logo</label>
+          <label class="dm-chk"><input type="checkbox" name="summary_by_fund" value="1" {{ 'checked' if parts.sections.summary_by_fund }}> Summary by fund</label>
+          <label class="dm-chk"><input type="checkbox" name="gift_list" value="1" {{ 'checked' if parts.sections.gift_list }}> List every gift</label>
+          <label class="dm-chk"><input type="checkbox" name="check_numbers" value="1" {{ 'checked' if parts.sections.check_numbers }}> Check numbers (also needs the parish setting)</label>
+          <div class="field"><label>Type size</label><select name="size">{% for s in SIZES %}<option value="{{ s }}" {{ 'selected' if parts.look.size == s }}>{{ s|capitalize }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Colour</label><select name="accent">{% for a in ACCENTS %}<option value="{{ a }}" {{ 'selected' if parts.look.accent == a }}>{{ a|capitalize }}</option>{% endfor %}</select></div>
+        </div>
+        <div class="field"><label>What changed (optional)</label><input name="note" maxlength="200"></div>
+        <button type="submit" class="btn btn-primary">Save as a new version</button>
+      </form>
+      {% elif not can_copy %}
+        <div class="banner banner-info">You can look at this template but not change it.</div>
+      {% endif %}
+
+      <div class="card dm-card">
+        <div class="dm-section-head"><h3>Versions</h3></div>
+        <table class="simple-table dm-table"><thead><tr><th>Version</th><th>When</th><th>Note</th></tr></thead><tbody>
+          {% for v in versions %}<tr><td><a href="/giving/statements/templates/{{ template.id }}?version={{ v.version_no }}">{{ v.version_no }}</a>{% if v.version_no == version.version_no %} (shown){% endif %}</td><td>{{ when(v.created_at) }}</td><td>{{ v.note or '' }}</td></tr>{% endfor %}
+        </tbody></table>
+      </div>
+    </div>
+    <div class="stm-preview">
+      <p class="dm-sub"><b>Preview with made-up data.</b> No real person is used.</p>
+      {% include "statement_sheet.html" %}
+    </div>
+  </div>
+</div>
+{% endblock %}

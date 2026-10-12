@@ -1,0 +1,71 @@
+{#
+donor_statement_run_home.html -- Giving statements, "Run statements": choose a year and options, make the preview list (which builds nothing), and the history of every run.
+`opts` is statement_runs.run_options: {years, profile_ready, profile_gaps, last_entered, open_batches, open_runs, templates {globals, parish, default_id}, minimum}.
+`runs` is statement_runs.history.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Run statements — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}"><link rel="stylesheet" href="/static/css/donor_statements.css?v={{ asset_version('css/donor_statements.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/giving/statements">&larr; Giving statements</a></p>
+  <div class="dm-head"><h1>Run statements</h1></div>
+  <p class="dm-muted">Make the list first: it shows who gets a statement and, for everyone who does not, the plain reason. Nothing is built until you press Build on the next page, and nothing is ever sent to anyone.</p>
+
+  {% if not opts.profile_ready %}
+    <div class="banner banner-error">The parish profile is not ready: {{ opts.profile_gaps|join('; ') }}. <a href="/giving/statements">Finish it first</a>. A run is blocked until it is confirmed.</div>
+  {% endif %}
+  <p class="dm-muted dm-small">{% if opts.last_entered %}The last gift was entered {{ when(opts.last_entered) }}. {% endif %}{% if opts.open_batches %}<b>{{ opts.open_batches }} deposit{{ 's are' if opts.open_batches != 1 else ' is' }} still open</b>: gifts in an open deposit are not on any statement yet.{% else %}No deposits are open.{% endif %}</p>
+
+  {% if opts.open_runs %}
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Runs not finished</h3></div>
+    <ul>{% for r in opts.open_runs %}<li><a href="/giving/statements/run/{{ r.id }}">Run #{{ r.id }}</a> for {{ r.period_from.year }} ({{ r.status }})</li>{% endfor %}</ul>
+    <p class="dm-muted dm-small">A year can have only one run open at a time. Finish or cancel it before making another list for that year.</p>
+  </div>
+  {% endif %}
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Make the list</h3></div>
+    <form method="post" action="/giving/statements/run/plan" class="dm-form dm-editform">
+      {{ csrf() }}
+      <div class="dm-grid">
+        <div class="field"><label for="rn-year">Year</label>
+          <select id="rn-year" name="year">{% for y in opts.years %}<option value="{{ y }}">{{ y }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="rn-template">Template</label>
+          <select id="rn-template" name="template_id">
+            <option value="">The parish's default</option>
+            {% for t in opts.templates.parish %}<option value="{{ t.id }}">{{ t.name }} (version {{ t.latest_version }}){{ ' — default' if t.is_default }}</option>{% endfor %}
+            {% for t in opts.templates.globals %}<option value="{{ t.id }}">Cornerstone: {{ t.name }} (version {{ t.latest_version }})</option>{% endfor %}
+          </select></div>
+        <div class="field"><label for="rn-delivery">Who</label>
+          <select id="rn-delivery" name="delivery"><option value="all">Everyone</option><option value="print">Print only</option><option value="email">Email only</option></select></div>
+        <div class="field"><label for="rn-sort">Order</label>
+          <select id="rn-sort" name="sort"><option value="name">By name</option><option value="zip">By ZIP code</option><option value="envelope">By envelope number</option></select></div>
+        <div class="field"><label for="rn-prefix">Last name starts with</label><input id="rn-prefix" name="name_prefix" maxlength="20" placeholder="everyone (a letter for a test run)"></div>
+        <div class="field"><label for="rn-min">Minimum total ($)</label><input id="rn-min" name="minimum" size="8" value="{{ '%.2f'|format(opts.minimum or 0) }}"></div>
+      </div>
+      <button type="submit" class="btn btn-primary"{{ ' disabled' if not opts.profile_ready }}>Make the list</button>
+    </form>
+  </div>
+
+  <p class="dm-muted"><a href="/giving/statements/changed">Statements changed since they were issued</a>: a late gift or a correction after a statement was built, with a way to issue a corrected one.</p>
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>History</h3></div>
+    {% if runs %}
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Run</th><th>Year</th><th>Made</th><th>Template</th><th class="dm-num">To build</th><th class="dm-num">Built</th><th class="dm-num">Skipped</th><th class="dm-num">Failed</th><th class="dm-num">Total</th><th>Status</th></tr></thead>
+      <tbody>{% for r in runs %}
+        <tr><td><a href="/giving/statements/run/{{ r.id }}">#{{ r.id }}</a></td><td>{{ r.period_to.year }}</td><td>{{ when(r.created_at) }}</td>
+          <td>{{ r.template_name or 'Built-in Standard' }}{% if r.version_no %} v{{ r.version_no }}{% endif %}</td>
+          <td class="dm-num">{{ r.planned_count }}</td><td class="dm-num">{{ r.built_count }}</td><td class="dm-num">{{ r.skipped_count }}</td><td class="dm-num">{{ r.failed_count }}</td>
+          <td class="dm-num">{{ money(r.total_deductible) }}</td><td>{{ r.status }}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    {% else %}<p class="doc-empty">No statements have been run for this parish yet.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}

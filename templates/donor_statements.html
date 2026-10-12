@@ -1,0 +1,108 @@
+{#
+donor_statements.html -- Giving statements, the staff hub: the parish's statement profile (legal name, tax ID, address, signer; Finance
+confirms it), the statement settings, and a picker to preview one person's statement. Nothing here sends a statement to anyone.
+Templates and the run screen are added to this page in the next phases.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Statements — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}"><link rel="stylesheet" href="/static/css/donor_statements.css?v={{ asset_version('css/donor_statements.css') }}">{% endblock %}
+{% block content %}
+{% set P = profile or sug %}
+{% set stg = info.settings %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <div class="dm-head"><h1>Giving statements</h1></div>
+  <p class="dm-muted">A statement is a year-end letter to a donor with their gifts, for their taxes. Beacon builds it from the gifts in closed deposits, using the parish's
+    statement profile below. Nothing here sends a statement to anyone.</p>
+
+  {% if info.confirmed %}
+    <div class="banner banner-success">The parish profile was confirmed on {{ d(profile.confirmed_at) }}. Statements can be built.</div>
+  {% else %}
+    <div class="banner banner-error">The parish profile is not confirmed yet{% if info.missing %}: still to fill in {{ info.missing|join(', ') }}{% endif %}. Statements for real donors stay blocked until it is. You can still preview a statement below.</div>
+  {% endif %}
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Parish profile</h3></div>
+    <p class="dm-muted dm-small">What every statement says about the parish. The tax ID is printed on a tax document, so it is typed or checked by a person and confirmed.
+      {% if not profile %}The boxes below are filled in from what Beacon already holds (the parish record, its church office address and the clergy list): check each one.{% endif %}
+      Changing a confirmed profile takes the confirmation away until it is confirmed again.</p>
+    {% if can_edit %}
+    <form method="post" action="/giving/statements/profile" class="dm-form dm-editform">
+      {{ csrf() }}
+      <div class="dm-grid">
+        <div class="field"><label>Legal name of the parish</label><input name="legal_name" value="{{ P.legal_name or '' }}" maxlength="160"></div>
+        <div class="field"><label>Tax ID (EIN)</label><input name="ein" value="{{ P.ein or '' }}" maxlength="20" placeholder="12-3456789"></div>
+        <div class="field"><label>Street address</label><input name="address1" value="{{ P.address1 or '' }}" maxlength="160"></div>
+        <div class="field"><label>Address line 2</label><input name="address2" value="{{ P.address2 or '' }}" maxlength="160"></div>
+        <div class="field"><label>City</label><input name="city" value="{{ P.city or '' }}" maxlength="80"></div>
+        <div class="field"><label>State</label><input name="state" value="{{ P.state or '' }}" maxlength="20"></div>
+        <div class="field"><label>ZIP code</label><input name="postal_code" value="{{ P.postal_code or '' }}" maxlength="20"></div>
+        <div class="field"><label>Signer's name</label><input name="signer_name" value="{{ P.signer_name or '' }}" maxlength="160"></div>
+        <div class="field"><label>Signer's title</label><input name="signer_title" value="{{ P.signer_title or '' }}" maxlength="160" placeholder="for example Rector"></div>
+        <div class="field"><label>Questions: contact email</label><input name="contact_email" value="{{ P.contact_email or '' }}" maxlength="160"></div>
+      </div>
+      <p><label class="dm-chk"><input type="checkbox" name="use_logo" value="1" {{ 'checked' if (profile.use_logo if profile else true) }}> Print the parish logo</label>
+        <span class="dm-muted dm-small">{{ 'A logo is on file for this parish.' if info.has_logo else 'No logo is on file for this parish yet.' }}</span></p>
+      <button type="submit" name="action" value="save" class="btn btn-secondary">Save</button>
+      <button type="submit" name="action" value="confirm" class="btn btn-primary">Save and confirm</button>
+    </form>
+    {% else %}
+    <table class="simple-table dm-table"><tbody>
+      {% for k, lbl in (("legal_name", "Legal name"), ("ein", "Tax ID (EIN)"), ("address1", "Street address"), ("city", "City"), ("state", "State"), ("postal_code", "ZIP"), ("signer_name", "Signer"), ("signer_title", "Title")) %}
+        <tr><th>{{ lbl }}</th><td>{{ (profile[k] if profile else '') or '' }}</td></tr>
+      {% endfor %}
+    </tbody></table>
+    <p class="dm-muted dm-small">Only Finance can change the profile.</p>
+    {% endif %}
+  </div>
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Statement templates</h3></div>
+    <p class="dm-muted">{% if default_template %}The parish's default template is <b>{{ default_template.name }}</b> (version {{ default_template.latest_version }}).{% else %}The parish has no default template yet; Beacon makes a copy of the Cornerstone Standard the first time a statement is needed.{% endif %}
+      <a href="/giving/statements/templates">See and change the templates</a></p>
+  </div>
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Statement settings</h3></div>
+    {% if can_edit %}
+    <form method="post" action="/giving/statements/settings" class="dm-form dm-editform">
+      {{ csrf() }}
+      <div class="dm-grid">
+        <div class="field"><label>Do not issue a statement when the year's tax-deductible total is under ($)</label><input name="statement_min_total" value="{{ '%.2f'|format(stg.statement_min_total or 0) }}" size="8"></div>
+      </div>
+      <p><label class="dm-chk"><input type="checkbox" name="statement_allow_no_address" value="1" {{ 'checked' if stg.statement_allow_no_address }}> Still build a statement for a donor with no mailing address (to hand out at the church)</label></p>
+      <p><label class="dm-chk"><input type="checkbox" name="statement_include_nondeductible" value="1" {{ 'checked' if stg.statement_include_nondeductible }}> Show a separate &ldquo;not tax deductible&rdquo; section</label></p>
+      <p><label class="dm-chk"><input type="checkbox" name="statement_show_check_numbers" value="1" {{ 'checked' if stg.statement_show_check_numbers is not sameas false }}> Print check numbers</label></p>
+      <p><label class="dm-chk"><input type="checkbox" name="member_statements_enabled" value="1" {{ 'checked' if stg.member_statements_enabled }}> Let members get their own statement online (Giving &gt; Statements on their own page)</label>
+        <span class="dm-muted dm-small">Off until the parish profile is confirmed and you are ready. It also needs the parish's member screen turned on.</span></p>
+      <button type="submit" class="btn btn-primary">Save settings</button>
+    </form>
+    {% else %}
+    <p class="dm-muted">Minimum {{ money(stg.statement_min_total or 0) }}; donors with no address: {{ 'still built' if stg.statement_allow_no_address else 'skipped for print' }}; not-deductible section: {{ 'on' if stg.statement_include_nondeductible else 'off' }}; check numbers: {{ 'printed' if stg.statement_show_check_numbers is not sameas false else 'not printed' }}; members' own statements: {{ 'on' if stg.member_statements_enabled else 'off' }}.</p>
+    {% endif %}
+  </div>
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Run statements for a year</h3></div>
+    <p class="dm-muted">Make the list for a year, see who gets a statement and why anyone is skipped, then build them all: one PDF per donor, one print PDF, or a ZIP. Nothing is sent to anyone.
+      <a href="/giving/statements/run">Run statements</a></p>
+  </div>
+
+  <div class="card dm-card">
+    <div class="dm-section-head"><h3>Preview a statement</h3></div>
+    <p class="dm-muted dm-small">Pick a donor to see the statement as it would print for a year. This builds and stores nothing.</p>
+    <form method="get" action="/giving/statements" class="dm-form" role="search">
+      <input type="search" name="q" value="{{ q }}" placeholder="Donor's name (at least two letters)" aria-label="Donor's name">
+      <button type="submit" class="btn btn-secondary btn-sm">Find</button>
+    </form>
+    {% if q %}
+      <div class="table-scroll"><table class="simple-table dm-table">
+        <thead><tr><th>Donor</th><th class="dm-num">Gifts</th><th></th></tr></thead>
+        <tbody>{% for f in found %}<tr><td>{{ f.name }}</td><td class="dm-num">{{ f.gifts }}</td><td><a class="btn btn-secondary btn-sm" href="/giving/statements/preview?person_id={{ f.person_id }}">Preview</a></td></tr>
+        {% else %}<tr><td colspan="3" class="doc-empty">No donor with posted gifts matches &ldquo;{{ q }}&rdquo;.</td></tr>{% endfor %}</tbody>
+      </table></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

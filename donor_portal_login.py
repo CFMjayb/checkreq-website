@@ -105,7 +105,7 @@ def parish_lookup(parish_id: int) -> dict | None:
 # by the code or password alone, for every parish; the link only decides, AFTER that, whether they go straight in (they have access at
 # this parish) or are shown a menu of the parishes they do have access to (apply_link). A stranger learns nothing either way.
 RESERVED_SLUGS = {"signin", "code", "choose", "signout", "personal", "giving", "pledges", "help", "logo", "static", "my",
-                  "start", "password", "set-password", "email"}
+                  "start", "password", "set-password", "email", "statements"}
 
 
 def slugify(text: str) -> str:
