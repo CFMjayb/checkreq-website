@@ -122,6 +122,7 @@
             <td>
               {% if r.not_expected %}<span class="badge badge-skipped">Not Expected</span>
               {% elif not r.submission_id and r.recorded %}<span class="badge badge-submitted">Hours recorded</span>
+              {% elif r.named_only %}<span class="badge badge-pending">Emailed, needs a person</span>
               {% elif not r.submission_id %}<span class="badge badge-cancelled">Not Started</span>
               {% elif r.by_email %}<span class="badge badge-submitted">Received by email</span>
               {% elif r.submission_status == 'submitted' %}<span class="badge badge-submitted">Submitted</span>
