@@ -4,7 +4,7 @@
    hover tip over the Source; the email's stored PDF opens from the PDF button (hover for a preview, click for a
    large view). People an email named that nobody entered yet come first, with a name list to pick the right
    employee. Included only on the diocese's backfill screen; its banners are on the page. #}
-{% if payroll_totals and (payroll_totals.people or payroll_totals.unentered) %}
+{% if payroll_totals and (payroll_totals.people or payroll_totals.unentered or payroll_totals.emails) %}
 {% set pt_ = payroll_totals %}
 <div class="te-tframe">
   <div class="te-thead">
@@ -62,13 +62,26 @@
     <thead><tr><th>Employee</th>{% for c in pt_.cat_cols %}<th class="te-num">{{ c.label }}</th>{% endfor %}<th>Source</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody>
     {% for p in pt_.people %}
+    {% set edit = pt_.writable and p.staff_id %}
+    {% set pf = loop.index %}
+    {% set pbase = '/admin/timekeeping/status/' ~ pt_.period_id ~ '/' ~ pt_.parish_id ~ '/totals/person/' ~ p.staff_id ~ '/' %}
     <tr class="{{ 'is-attn' if p.attn else 'is-ok' }}">
-      <td>{{ p.last_name }}, {{ p.first_name }}{% if p.employee_number %} <span class="sub ph-small">#{{ p.employee_number }}</span>{% endif %}</td>
+      <td>{{ p.last_name }}, {{ p.first_name }}{% if p.employee_number %} <span class="sub ph-small">#{{ p.employee_number }}</span>{% endif %}
+        {% if edit %}<form id="pf-{{ pf }}" method="post" action="{{ pbase }}accept" hidden><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"></form>{% endif %}</td>
+      {# every kind of hours is a column, like the summary grid: change a figure, or type one into an empty box, then Accept #}
       {% for c in pt_.cat_cols %}{% set r = p.cells.get(c.key) %}
-      <td class="te-num">{% if r %}{{ "%.2f"|format(r.line_hours) }}
+      <td class="te-num">
+        {% if edit %}
+          {% if r %}<input class="te-hrs" type="text" inputmode="decimal" form="pf-{{ pf }}" name="h_{{ r.line_id }}" value="{{ '%.2f'|format(r.line_hours) }}" aria-label="{{ c.label }} hours for {{ p.first_name }} {{ p.last_name }}">
+          {% else %}<input class="te-hrs te-blank" type="text" inputmode="decimal" form="pf-{{ pf }}" name="n_{{ c.key }}" placeholder="&mdash;" aria-label="Add {{ c.label }} hours for {{ p.first_name }} {{ p.last_name }}">{% endif %}
+        {% else %}
+          {% if r %}{{ "%.2f"|format(r.line_hours) }}{% else %}<span class="c-muted">&mdash;</span>{% endif %}
+        {% endif %}
+        {% if r %}
         {% if r.proposed_hours is not none %}<span class="te-flag ph-state-attn">new figure: {{ "%.2f"|format(r.proposed_hours) }}{% if r.proposed_pdf_url %}<button type="button" class="te-pdf" data-pdf-pop data-pdf-src="{{ r.proposed_pdf_url }}" aria-label="Open the new figure's email PDF">PDF</button>{% endif %}</span>{% endif %}
         {% if r.grid_hours is not none %}<span class="te-flag sub">daily grid: {{ "%.2f"|format(r.grid_hours) }}</span>{% endif %}
-        {% else %}<span class="c-muted">&mdash;</span>{% endif %}</td>
+        {% endif %}
+      </td>
       {% endfor %}
       <td>{% for s in p.sources %}<span class="te-src"{% if p.tip %} data-tip="{{ p.tip }}"{% endif %}>{{ s|capitalize }}</span>{% if not loop.last %}, {% endif %}{% endfor %}{% for u in p.pdfs %}<button type="button" class="te-pdf" data-pdf-pop data-pdf-src="{{ u }}" aria-label="Open the email PDF">PDF</button>{% endfor %}</td>
       <td><span class="{{ 'ph-state-ok' if not p.attn else 'ph-state-attn' }}">{{ p.state_label }}</span>
@@ -76,31 +89,33 @@
         {% if p.jump %}<span class="te-flag ph-state-attn">Much higher than usual</span>{% endif %}
         {% if p.inactive %}<span class="te-flag ph-state-attn">Inactive employee</span>{% endif %}
         {% if p.not_hourly %}<span class="te-flag sub">Not an hourly employee (information only)</span>{% endif %}
-        {% if p.by_elimination %}<span class="te-flag ph-state-attn">Name matched by elimination: check it against the email</span>{% endif %}
+        {% if p.by_elimination %}<span class="te-flag ph-state-attn">Name matched loosely: check it against the email</span>{% endif %}
       </td>
       <td>
         {% if pt_.writable %}
         <div class="ph-actions te-multi">
-        {% for r in p.lines %}{% if r.review_status != 'rejected' %}
-          {% set base = '/admin/timekeeping/status/' ~ pt_.period_id ~ '/' ~ pt_.parish_id ~ '/totals/' ~ r.line_id ~ '/' %}
-          <span class="te-act">{% if p.lines|length > 1 %}<span class="sub ph-small">{{ r.category_label }}</span>{% endif %}
-          {% if r.state == 'conflict' %}
-            <form class="ph-inline" method="post" action="{{ base }}use_total"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Use period total</button></form>
-            <form class="ph-inline" method="post" action="{{ base }}use_grid"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Use daily grid</button></form>
-          {% elif r.state == 'proposal' %}
-            <form class="ph-inline" method="post" action="{{ base }}accept_proposal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Use new figure</button></form>
-            <form class="ph-inline" method="post" action="{{ base }}dismiss_proposal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Keep current</button></form>
-          {% elif r.state == 'pending_hire' %}
-            <span class="sub ph-small">Approve the new hire in Roster Review first.</span>
-          {% else %}
-            {% if r.state == 'needs_review' %}
-            <form class="ph-inline" method="post" action="{{ base }}accept"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Accept</button></form>
-            {% endif %}
-            <form class="ph-inline" method="post" action="{{ base }}edit"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="text" inputmode="decimal" name="hours" value="{{ '%.2f'|format(r.line_hours) }}" aria-label="Hours"><button class="btn btn-sm" type="submit">Save hours</button></form>
-          {% endif %}
-          <form class="ph-inline" method="post" action="{{ base }}reject"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Reject</button></form>
+        {% if p.staff_id %}
+          {# ONE Accept (saves any figure you changed first) and ONE Reject for the whole row #}
+          <span class="te-act">
+            <button class="btn btn-sm btn-primary" type="submit" form="pf-{{ pf }}" data-tip="Saves any figure you changed on this row, then accepts it.">Accept</button>
+            <form class="ph-inline" method="post" action="{{ pbase }}reject" data-confirm="Reject all of {{ p.first_name }} {{ p.last_name }}'s hours for this period?"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Reject</button></form>
           </span>
-        {% endif %}{% endfor %}
+          {# the few cases that need a choice of their own stay beside the line they belong to #}
+          {% for r in p.lines %}{% if r.review_status != 'rejected' %}
+            {% set base = '/admin/timekeeping/status/' ~ pt_.period_id ~ '/' ~ pt_.parish_id ~ '/totals/' ~ r.line_id ~ '/' %}
+            {% if r.state == 'conflict' %}
+            <span class="te-act"><span class="sub ph-small">{{ r.category_label }}: conflicts with the daily grid</span>
+              <form class="ph-inline" method="post" action="{{ base }}use_total"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Use period total</button></form>
+              <form class="ph-inline" method="post" action="{{ base }}use_grid"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Use daily grid</button></form></span>
+            {% elif r.state == 'proposal' %}
+            <span class="te-act"><span class="sub ph-small">{{ r.category_label }}: new figure</span>
+              <form class="ph-inline" method="post" action="{{ base }}accept_proposal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Use new figure</button></form>
+              <form class="ph-inline" method="post" action="{{ base }}dismiss_proposal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button class="btn btn-sm" type="submit">Keep current</button></form></span>
+            {% endif %}
+          {% endif %}{% endfor %}
+        {% else %}
+          <span class="sub ph-small">Approve the new hire in Roster Review first.</span>
+        {% endif %}
         </div>
         {% endif %}
       </td>
@@ -108,6 +123,27 @@
     {% endfor %}
     </tbody>
   </table>
+  {% endif %}
+  {% if pt_.writable and pt_.add_roster %}
+  {# a line the reader missed, entered by hand (optionally tied to one of this parish's emails so its PDF shows with it) #}
+  <form class="te-addline" method="post" action="/admin/timekeeping/status/{{ pt_.period_id }}/{{ pt_.parish_id }}/totals/add-line">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <strong>Add a line</strong>
+    <select name="staff_id" aria-label="Employee" required>
+      <option value="">Employee&hellip;</option>
+      {% for s in pt_.add_roster %}<option value="{{ s.id }}">{{ s.last_name }}, {{ s.first_name }} (#{{ s.employee_number }}){% if not s.captures_hours %} - not hourly{% endif %}</option>{% endfor %}
+    </select>
+    <select name="category_key" aria-label="Kind of hours" required>
+      {% for c in pt_.cat_cols %}<option value="{{ c.key }}">{{ c.label }}</option>{% endfor %}
+    </select>
+    <input type="text" inputmode="decimal" name="hours" class="te-hrs" placeholder="Hours" aria-label="Hours" required>
+    <select name="source_ref" aria-label="From which email">
+      <option value="">No email (my own entry)</option>
+      {% for e in pt_.emails %}<option value="{{ e.ref }}">{{ e.label }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-sm btn-primary" type="submit">Add</button>
+    <span class="sub">Confirmed at once. A line tied to an email shows that email's PDF.</span>
+  </form>
   {% endif %}
   </div>
 </div>

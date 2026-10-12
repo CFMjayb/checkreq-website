@@ -1,0 +1,23 @@
+/* Payroll notes page (Time Review > Actions > Payroll notes): a plain flowing page that prints cleanly. */
+.pn-page { max-width: 980px; }
+.pn-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
+.pn-top h1 { margin: 0; }
+.pn-buttons { margin-left: auto; display: inline-flex; gap: 8px; }
+.pn-sub { margin: 4px 0 14px; color: var(--color-muted, #6b645a); }
+.pn-empty { padding: 18px; background: #f7f3ea; border-radius: 6px; }
+.pn-dept { margin: 0 0 18px; break-inside: auto; }
+.pn-dept h2 { margin: 0 0 6px; font-size: 1.05rem; padding: 4px 8px; background: #f1ede2; border-left: 4px solid var(--color-franciscan-green, #1f3d2e); }
+.pn-email { margin: 0 0 10px 6px; break-inside: avoid; }
+.pn-meta { font-size: 0.82rem; color: var(--color-muted, #6b645a); margin-bottom: 2px; }
+table.pn-items { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+table.pn-items td { padding: 3px 8px; border-bottom: 1px solid rgba(0, 0, 0, 0.08); vertical-align: top; }
+td.pn-kind { width: 8.5em; font-weight: 600; white-space: nowrap; }
+td.pn-emp { width: 11em; white-space: nowrap; }
+.pn-result { display: block; font-size: 0.8rem; color: var(--color-muted, #6b645a); }
+@media print {
+  .site-header, .site-footer, nav, .pn-noprint, .banner, .te-pdf, .te-pdf-pop, dialog { display: none !important; }
+  body { background: #fff; color: #000; }
+  .pn-page { max-width: none; padding: 0; margin: 0; }
+  .pn-dept h2 { background: none; border-left: 3px solid #000; }
+  .pn-meta, .pn-result, .pn-sub { color: #000; }
+}

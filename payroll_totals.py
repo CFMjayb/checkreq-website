@@ -1089,6 +1089,193 @@ def accept_all(org_id: int, period_id: int, parish_id: int, user_id: int) -> dic
     return {"accepted": done, "skipped": skipped}
 
 
+# --------------------------------------------- the comments, notes and requests in each email (Payroll notes page)
+
+NOTE_KIND_LABELS = {
+    "note": "Note", "new_hire": "New hire", "termination": "Termination", "pay_change": "Pay change", "address_change": "Change of details",
+    "other": "To key by hand", "question": "Question", "admin": "Administrative",
+}
+NOTES_PER_EMAIL = 40
+
+
+def note_kind_label(kind: str) -> str:
+    return NOTE_KIND_LABELS.get(kind) or (kind or "other").replace("_", " ").capitalize()
+
+
+def replace_email_notes(org_id: int, *, period_id: int, source_ref: str, subject: str | None = None, sender: str | None = None,
+                        received_at=None, items: list | None = None) -> dict:
+    """Stores ONE email's CURRENT comments, notes and requests (the rows for that email are replaced as a set, so reading the
+    email again never doubles them and an empty list clears them). Each item: {parish_code, kind, employee, text, result}.
+    Personal data is never stored: such a text becomes a plain notice that points at the email."""
+    get_period(org_id, period_id)
+    ref = (source_ref or "").strip()
+    if not ref:
+        raise PayrollError("invalid", "source_ref (the message id) is required.")
+    items = items or []
+    if not isinstance(items, list) or len(items) > NOTES_PER_EMAIL:
+        raise PayrollError("invalid", f"items must be a list of up to {NOTES_PER_EMAIL} entries.")
+    when = None
+    if received_at:
+        try:
+            when = dt.datetime.fromisoformat(str(received_at).replace("Z", "+00:00"))
+        except ValueError:
+            when = None
+
+    def clip(v, n):
+        t = " ".join(str(v or "").split())
+        return t[:n] or None
+
+    rows = []
+    for i, it in enumerate(items):
+        if not isinstance(it, dict):
+            raise PayrollError("invalid", "Every item must be an object.")
+        text = clip(it.get("text"), 600)
+        if not text:
+            continue
+        if pii_problem(text):
+            text = "[Not stored: it looks like personal data. Read it in the email.]"
+        kind = re.sub(r"[^a-z_]", "", str(it.get("kind") or "other").lower())[:30] or "other"
+        parish_id = None
+        code = (it.get("parish_code") or "").strip()
+        if code:
+            pr = db.query_one("SELECT id FROM portal.parishes WHERE org_id = %s AND code = %s", (org_id, code))
+            parish_id = pr["id"] if pr else None
+        res = clip(it.get("result"), 200)
+        if res and pii_problem(res):
+            res = None
+        emp = clip(it.get("employee"), 80)
+        if emp and pii_problem(emp):
+            emp = None
+        rows.append((period_id, parish_id, ref, i, kind, emp, text, res, clip(subject, 200), clip(sender, 120), when))
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM portal.time_email_notes WHERE period_id = %s AND source_ref = %s", (period_id, ref))
+            for r in rows:
+                cur.execute("INSERT INTO portal.time_email_notes (period_id, parish_id, source_ref, seq, kind, employee_text, note_text, "
+                            "result_text, email_subject, email_sender, received_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", r)
+            conn.commit()
+    return {"stored": len(rows)}
+
+
+def list_email_notes(org_id: int, period_id: int) -> list[dict]:
+    """Every stored note of the period for this diocese, by department then email then order in the email."""
+    get_period(org_id, period_id)
+    rows = db.query(
+        "SELECT n.*, p.code AS parish_code, COALESCE(p.short_name, p.name) AS parish_name, p.name AS parish_full_name "
+        "FROM portal.time_email_notes n LEFT JOIN portal.parishes p ON p.id = n.parish_id "
+        "WHERE n.period_id = %s ORDER BY p.code NULLS LAST, n.received_at NULLS LAST, n.source_ref, n.seq", (period_id,))
+    for r in rows:
+        r["kind_label"] = note_kind_label(r["kind"])
+    return rows
+
+
+def _person_for_review(org_id: int, parish_id: int, staff_id: int) -> dict:
+    st = db.query_one(
+        "SELECT s.*, p.code AS parish_code FROM portal.staff_roster s JOIN portal.parishes p ON p.id = s.parish_id "
+        "WHERE s.id = %s AND s.parish_id = %s AND p.org_id = %s", (staff_id, parish_id, org_id))
+    if not st:
+        raise PayrollError("not_found", "That employee was not found for this parish.")
+    return st
+
+
+def review_person(org_id: int, period_id: int, parish_id: int, staff_id: int, action: str, user_id: int,
+                  figures: dict | None = None, new_figures: dict | None = None) -> dict:
+    """ONE decision for an employee's whole row on the Period totals (Jay, 2026-10-11: one Accept and one Reject per
+    employee; every kind of hours listed on the row, editable before you accept).
+      action 'accept': figures = {line_id: typed hours} -- a figure that differs from the line is saved as the diocese's
+        own (confirmed); new_figures = {category_key: typed hours} -- a figure typed into a blank cell is a NEW line,
+        added by hand and confirmed; every other plain line still waiting for review is accepted. A line with a different
+        figure waiting, or in conflict with the daily grid, is left for its own buttons.
+      action 'reject': every line of the employee that is not already rejected is rejected (kept, never deleted).
+    Returns counts."""
+    period = get_period(org_id, period_id)
+    if period["status"] not in WRITABLE_PERIOD_STATUSES:
+        raise PayrollError("refused", f"This pay period is {period['status']}. Reopen it before changing its hours.")
+    st = _person_for_review(org_id, parish_id, staff_id)
+    rows = [r for r in _period_rows(org_id, period_id) if r["staff_id"] == staff_id and r["line_id"] is not None]
+    by_id = {r["line_id"]: r for r in rows}
+    if action == "reject":
+        n = 0
+        for r in rows:
+            if r["review_status"] != "rejected":
+                review_line(org_id, r["line_id"], "reject", user_id, note="Rejected with the employee's other lines")
+                n += 1
+        return {"rejected": n}
+    if action != "accept":
+        raise PayrollError("invalid", f"Unknown action {action!r}.")
+    edited = created = accepted = skipped = 0
+    handled: set = set()
+    for lid, raw in (figures or {}).items():
+        r = by_id.get(lid)
+        raw = (raw or "").strip()
+        if r is None or raw == "":
+            continue
+        h = parse_hours(raw)
+        if h != Decimal(r["line_hours"]) or r["review_status"] == "rejected":
+            review_line(org_id, lid, "edit", user_id, hours=h, note="Edited on the review screen")
+            edited += 1
+            handled.add(lid)
+    for key, raw in (new_figures or {}).items():
+        raw = (raw or "").strip()
+        if raw == "":
+            continue
+        h = parse_hours(raw)
+        if h == 0:
+            continue
+        if not st["employee_number"]:
+            raise PayrollError("refused", "This employee has no employee number yet, so hours cannot be added.")
+        record_period_hours(org_id, period_id=period_id, parish_code=st["parish_code"], category_key=key, hours=h,
+                            source="diocese", quote="Added on the review screen", employee_number=st["employee_number"],
+                            actor_user_id=user_id, status="confirmed")
+        created += 1
+    for r in rows:
+        if r["line_id"] in handled or r["review_status"] != "needs_review":
+            continue
+        if r["state"] in ("proposal", "conflict", "pending_hire"):
+            skipped += 1
+            continue
+        review_line(org_id, r["line_id"], "accept", user_id, note="Accepted with the employee's other lines")
+        accepted += 1
+    return {"accepted": accepted, "edited": edited, "created": created, "skipped": skipped}
+
+
+def add_manual_line(org_id: int, period_id: int, parish_id: int, staff_id: int, category_key: str, hours,
+                    user_id: int, source_ref: str | None = None) -> dict:
+    """A line the reader missed, entered by hand (Jay, 2026-10-11). Confirmed on the spot. When an email of this parish
+    is chosen the line is tied to it (its PDF shows on the row); otherwise it is the diocese's own entry."""
+    period = get_period(org_id, period_id)
+    if period["status"] not in WRITABLE_PERIOD_STATUSES:
+        raise PayrollError("refused", f"This pay period is {period['status']}. Reopen it before changing its hours.")
+    st = _person_for_review(org_id, parish_id, staff_id)
+    if not st["employee_number"]:
+        raise PayrollError("refused", "This employee has no employee number yet, so hours cannot be added.")
+    if not st["is_active"]:
+        raise PayrollError("refused", "This employee is inactive. Reactivate them in Roster Review or Employees first.")
+    h = parse_hours(hours)
+    ref = (source_ref or "").strip() or None
+    if ref:
+        ok = db.query_one("SELECT 1 AS x FROM portal.time_email_receipts WHERE period_id = %s AND parish_id = %s "
+                          "AND source_ref = %s UNION SELECT 1 FROM portal.time_period_totals t "
+                          "JOIN portal.staff_roster s ON s.id = t.staff_id WHERE t.period_id = %s AND s.parish_id = %s "
+                          "AND t.source_ref = %s", (period_id, parish_id, ref, period_id, parish_id, ref))
+        if not ok:
+            raise PayrollError("refused", "That email was not found for this parish and pay period.")
+    return record_period_hours(
+        org_id, period_id=period_id, parish_code=st["parish_code"], category_key=category_key, hours=h,
+        source="email" if ref else "diocese", source_ref=ref, quote="Added by hand from this email" if ref else "Added by hand",
+        employee_number=st["employee_number"], actor_user_id=user_id, status="confirmed")
+
+
+def parish_email_choices(org_id: int, period_id: int, parish_id: int) -> list[dict]:
+    """The emails of this parish and period a hand-added line can be tied to: [{source_ref, received_at}]."""
+    return db.query(
+        "SELECT r.source_ref, r.received_at FROM portal.time_email_receipts r WHERE r.period_id = %s AND r.parish_id = %s "
+        "UNION SELECT DISTINCT t.source_ref, NULL::timestamptz FROM portal.time_period_totals t JOIN portal.staff_roster s ON s.id = t.staff_id "
+        "WHERE t.period_id = %s AND s.parish_id = %s AND t.source = 'email' AND t.source_ref IS NOT NULL "
+        "AND t.source_ref NOT IN (SELECT source_ref FROM portal.time_email_receipts WHERE period_id = %s AND parish_id = %s) "
+        "ORDER BY 2 NULLS LAST", (period_id, parish_id, period_id, parish_id, period_id, parish_id))
+
+
 def carry_forward_standing(org_id: int, period_id: int, user_id: int) -> dict:
     """For every active employee whose hours_basis is standing, records their standing_hours as a
     source=standing line in the Regular category. The line is confirmed on the spot when the

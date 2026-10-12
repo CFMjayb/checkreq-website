@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Payroll notes — {{ current_org.name }}{% endblock %}
+{#
+  Payroll notes (Jay, 2026-10-11: "a place where you write all of the comments/notes from the emails and the ability to print/export all of
+  the notes for a pay period"). Reached from Time Review > Actions. Every comment, note and request from the period's payroll emails, by
+  department, each email linked to its masked PDF. A plain flowing page, not the fixed frame, so it PRINTS cleanly (the print styles hide the
+  site header, the buttons and the pop-up chrome). Excel: the same rows, one per line.
+#}
+{% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/payroll_notes.css?v={{ asset_version('css/payroll_notes.css') }}">
+<link rel="stylesheet" href="/static/css/timekeeping_entry.css?v={{ asset_version('css/timekeeping_entry.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide pn-page">
+  <div class="pn-top">
+    <h1>Payroll notes</h1>
+    <a class="back-link pn-noprint" href="/admin/timekeeping/status/{{ period.id }}">&larr; Back to Time Review</a>
+    <div class="pn-buttons pn-noprint">
+      <button type="button" class="btn btn-sm btn-primary" onclick="window.print()">Print</button>
+      <a class="btn btn-sm btn-primary" href="/admin/timekeeping/status/{{ period.id }}/notes.xlsx">Export to Excel</a>
+    </div>
+  </div>
+  <p class="pn-sub"><strong>{{ period.label or (dt(period.period_start) ~ " to " ~ dt(period.period_end)) }}</strong>
+    {% if period.pay_date %} &middot; pay date {{ dt(period.pay_date) }}{% endif %}
+    &middot; {{ total }} note{{ '' if total == 1 else 's' }} and request{{ '' if total == 1 else 's' }} from the payroll emails. The hours are on Time Review.</p>
+  {% if not groups %}
+  <p class="pn-empty">No comments, notes or requests have come in the payroll emails for this pay period yet.</p>
+  {% endif %}
+  {% for g in groups %}
+  <section class="pn-dept">
+    <h2{% if g.full %} title="{{ g.full }}"{% endif %}>{{ g.label }}</h2>
+    {% for e in g.emails %}
+    <div class="pn-email">
+      <div class="pn-meta">Email{% if e.received %} received {{ e.received }}{% endif %}{% if e.sender %} &middot; from {{ e.sender }}{% endif %}{% if e.subject %} &middot; &ldquo;{{ e.subject }}&rdquo;{% endif %}
+        {% if e.pdf_url %}<button type="button" class="te-pdf pn-noprint" data-pdf-pop data-pdf-src="{{ e.pdf_url }}" aria-label="Open the email PDF">PDF</button>{% endif %}</div>
+      <table class="pn-items">
+        <tbody>
+        {% for n in e["items"] %}
+        <tr>
+          <td class="pn-kind">{{ n.kind_label }}</td>
+          <td class="pn-emp">{{ n.employee_text or '' }}</td>
+          <td class="pn-text">{{ n.note_text }}{% if n.result_text %}<span class="pn-result">What was done: {{ n.result_text }}</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/email_pdf_pop.js?v={{ asset_version('js/email_pdf_pop.js') }}"></script>
+{% endblock %}

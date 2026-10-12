@@ -156,6 +156,42 @@ def build_export_workbook(org: dict, period: dict, base_url: str | None = None) 
     return buf.getvalue()
 
 
+def notes_filename_for(org: dict, period: dict) -> str:
+    d = period.get("pay_date") or period["period_end"]
+    return f"{org['code']} Payroll Notes - PD {d.strftime('%Y.%m.%d')}.xlsx"
+
+
+def build_notes_workbook(org: dict, period: dict, notes: list[dict], zone: str | None, base_url: str | None = None) -> bytes:
+    """Every comment, note and request from the period's payroll emails, one row each, for the person who keys the payroll."""
+    import org_time
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Payroll notes"
+    heads = ["Department", "Email received", "From", "Subject", "Kind", "Employee", "Note", "What was done", "Email PDF"]
+    ws.cell(row=1, column=1, value=f"{org['name']}: comments, notes and requests from the payroll emails, pay date "
+                                   f"{(period.get('pay_date') or period['period_end']).strftime('%m/%d/%y')}").font = Font(bold=True, size=12)
+    _header(ws, 3, heads)
+    r = 4
+    for n in notes:
+        link = email_pdf.abs_url_for(org["id"], n["source_ref"], base_url) if base_url else None
+        vals = [(f"{n['parish_code']} {n['parish_name']}" if n.get("parish_code") else "Not tied to one department"),
+                org_time.format_local(n["received_at"], zone) if n.get("received_at") else "", n.get("email_sender") or "",
+                n.get("email_subject") or "", n["kind_label"], n.get("employee_text") or "", n["note_text"], n.get("result_text") or "",
+                "Open email PDF" if link else ""]
+        for c, v in enumerate(vals, start=1):
+            cell = ws.cell(row=r, column=c, value=v)
+            cell.alignment = Alignment(vertical="top", wrap_text=c in (3, 4, 7, 8))
+            if c == 9 and link:
+                cell.hyperlink = link
+                cell.font = Font(color="0563C1", underline="single")
+        r += 1
+    for col, width in enumerate([26, 20, 22, 34, 16, 22, 70, 30, 16], start=1):
+        ws.column_dimensions[get_column_letter(col)].width = width
+    bio = io.BytesIO()
+    wb.save(bio)
+    return bio.getvalue()
+
+
 def filename_for(org: dict, period: dict) -> str:
     d = period.get("pay_date") or period["period_end"]
     return f"{org['code']} Parish Hours - PD {d.strftime('%Y.%m.%d')}.xlsx"

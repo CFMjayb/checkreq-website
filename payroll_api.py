@@ -237,6 +237,24 @@ def beacon_put_email_unentered(request: Request, body: dict = Body(...)):
         return _err(422, "invalid", "period_id must be a whole number and every item must be an object.")
 
 
+@router.put("/api/payroll/email-notes")
+def beacon_put_email_notes(request: Request, body: dict = Body(...)):
+    """The CURRENT comments, notes and requests of one email, for the diocese's Payroll notes page (read, print or export them for
+    the pay period). Idempotent: the rows of that email are replaced as a set."""
+    org, bad = _auth(request)
+    if bad:
+        return bad
+    try:
+        _need(body, "period_id", "source_ref")
+        return _ok(pt.replace_email_notes(org["id"], period_id=int(body["period_id"]), source_ref=str(body["source_ref"]),
+                                          subject=body.get("subject"), sender=body.get("sender"), received_at=body.get("received_at"),
+                                          items=body.get("items") or []))
+    except pt.PayrollError as e:
+        return _pe(e)
+    except (TypeError, ValueError, AttributeError):
+        return _err(422, "invalid", "period_id must be a whole number and every item must be an object.")
+
+
 @router.post("/api/payroll/submissions/received")
 def beacon_mark_submission_received(request: Request, body: dict = Body(...)):
     """Notes that an email arrived for a parish and period (idempotent on the message id)."""

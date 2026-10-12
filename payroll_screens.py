@@ -50,6 +50,7 @@ PATTERN_LABELS = {
 NOT_EXPECTED_PATTERNS = ("standing_hours", "none")
 CHANNEL_LABELS = {"email": "Email", "parish": "Parish (in Beacon)", "diocese": "Diocese", "standing": "Standing hours",
                   "register": "Paid register"}
+CAT_ORDER = {"regular": 1, "overtime": 2, "holiday": 3, "sick": 4, "vacation": 5}
 STATE_LABELS = {
     "ok": "OK", "needs_review": "Needs review", "proposal": "Different figure waiting",
     "conflict": "Conflict with the daily grid", "pending_hire": "New hire not on the roster yet",
@@ -139,7 +140,7 @@ def people_view(rows: list[dict]) -> tuple[list[dict], list[dict]]:
         if g is None:
             g = groups[key] = {"last_name": r["last_name"], "first_name": r["first_name"],
                                "employee_number": r["employee_number"], "cells": {}, "lines": [], "pdfs": [],
-                               "sources": [], "tips": []}
+                               "sources": [], "tips": [], "staff_id": r["staff_id"], "pending_change_id": r["pending_change_id"]}
             order.append(key)
         g["cells"][r["category_key"]] = r
         g["lines"].append(r)
@@ -184,8 +185,25 @@ def section_context(org_id: int, period: dict, parish_id: int) -> dict:
                       "WHERE parish_id = %s AND is_active AND employee_number IS NOT NULL "
                       "ORDER BY captures_hours DESC, last_name, first_name", (parish_id,)) if unentered else []
     people, cat_cols = people_view(rows)
-    return {"rows": rows, "people": people, "cat_cols": cat_cols, "unentered": unentered, "roster": roster, "writable": period["status"] in pt.WRITABLE_PERIOD_STATUSES,
-            "parish_id": parish_id, "period_id": period["id"]}
+    # Every kind of hours is a column (like the summary grid), so a figure can be typed into any of them.
+    have = {c["key"] for c in cat_cols}
+    for c in db.query("SELECT key, label FROM portal.timekeeping_categories WHERE org_id = %s AND is_active "
+                      "ORDER BY sort_order, label", (org_id,)):
+        if c["key"] not in have:
+            cat_cols.append({"key": c["key"], "label": c["label"]})
+    cat_cols.sort(key=lambda c: (CAT_ORDER.get(c["key"], 50), c["label"]))
+    writable = period["status"] in pt.WRITABLE_PERIOD_STATUSES
+    add_roster = db.query("SELECT id, first_name, last_name, employee_number, captures_hours FROM portal.staff_roster "
+                          "WHERE parish_id = %s AND is_active AND employee_number IS NOT NULL "
+                          "ORDER BY captures_hours DESC, last_name, first_name", (parish_id,)) if writable else []
+    emails = []
+    if writable:
+        zone = org_time.zone_name_for_org(org_id)
+        for e in pt.parish_email_choices(org_id, period["id"], parish_id):
+            emails.append({"ref": e["source_ref"], "label": ("Email received " + org_time.format_local(e["received_at"], zone))
+                           if e["received_at"] else "Email behind the lines above"})
+    return {"rows": rows, "people": people, "cat_cols": cat_cols, "unentered": unentered, "roster": roster, "writable": writable,
+            "parish_id": parish_id, "period_id": period["id"], "add_roster": add_roster, "emails": emails}
 
 
 def board_rows(org_id: int, period: dict, rows: list[dict]) -> list[dict]:
@@ -246,6 +264,66 @@ def email_pdf_view(token: str, request: Request):
 
 # ------------------------------------------------------------------ review actions
 
+# ------------------------------------------------------------------ the Payroll notes page
+
+def notes_groups(org_id: int, period_id: int) -> list[dict]:
+    """The period's notes grouped by department, then by email: [{label, emails: [{received, sender, subject, pdf_url, items}]}]."""
+    zone = org_time.zone_name_for_org(org_id)
+    groups: dict = {}
+    order: list = []
+    for n in pt.list_email_notes(org_id, period_id):
+        gkey = n["parish_code"] or ""
+        g = groups.get(gkey)
+        if g is None:
+            g = groups[gkey] = {"label": (f"{n['parish_code']} {n['parish_name']}" if n["parish_code"] else "Not tied to one department"),
+                                "full": n.get("parish_full_name"), "emails": {}}
+            order.append(gkey)
+        e = g["emails"].get(n["source_ref"])
+        if e is None:
+            e = g["emails"][n["source_ref"]] = {
+                "received": org_time.format_local(n["received_at"], zone) if n.get("received_at") else None,
+                "sender": n.get("email_sender"), "subject": n.get("email_subject"),
+                "pdf_url": email_pdf.url_for(org_id, n["source_ref"]), "items": []}
+        e["items"].append(n)
+    out = []
+    for k in order:
+        g = groups[k]
+        out.append({"label": g["label"], "full": g["full"], "emails": list(g["emails"].values())})
+    return out
+
+
+@router.get("/admin/timekeeping/status/{period_id}/notes", response_class=HTMLResponse)
+def notes_page(period_id: int, request: Request):
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    try:
+        period = pt.get_period(org["id"], period_id)
+        groups = notes_groups(org["id"], period_id)
+    except pt.PayrollError as e:
+        return _status_back(period_id, err=e.message)
+    return _render(request, "timekeeping_notes.html", user,
+                   {"current_org": org, "period": period, "groups": groups,
+                    "total": sum(len(e["items"]) for g in groups for e in g["emails"])})
+
+
+@router.get("/admin/timekeeping/status/{period_id}/notes.xlsx")
+def notes_export(period_id: int, request: Request):
+    import payroll_export
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    try:
+        period = pt.get_period(org["id"], period_id)
+        notes = pt.list_email_notes(org["id"], period_id)
+    except pt.PayrollError as e:
+        return _status_back(period_id, err=e.message)
+    data = payroll_export.build_notes_workbook(org, period, notes, org_time.zone_name_for_org(org["id"]), str(request.base_url).rstrip("/"))
+    return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{payroll_export.notes_filename_for(org, period)}"',
+                             "Cache-Control": "private, no-store"})
+
+
 @router.post("/admin/timekeeping/status/{period_id}/{parish_id}/totals/accept-all")
 async def totals_accept_all(period_id: int, parish_id: int, request: Request):
     user, org, err = _require_hr_admin(request)
@@ -289,6 +367,59 @@ async def unentered_assign(period_id: int, parish_id: int, item_id: int, request
     except pt.PayrollError as e:
         return _back(period_id, parish_id, err=e.message)
     return _back(period_id, parish_id, msg=f"Entered {len(res['entered'])} line(s) for the employee you chose.")
+
+
+@router.post("/admin/timekeeping/status/{period_id}/{parish_id}/totals/person/{staff_id}/{action}")
+async def totals_person_action(period_id: int, parish_id: int, staff_id: int, action: str, request: Request):
+    """ONE Accept or Reject for an employee's whole row: figures typed into the row's boxes are saved first."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    figures, new_figures = {}, {}
+    for k in form.keys():
+        v = form.get(k)
+        if k.startswith("h_") and k[2:].isdigit():
+            figures[int(k[2:])] = v
+        elif k.startswith("n_") and len(k) > 2:
+            new_figures[k[2:]] = v
+    try:
+        res = pt.review_person(org["id"], period_id, parish_id, staff_id, action, user["id"],
+                               figures=figures, new_figures=new_figures)
+    except pt.PayrollError as e:
+        return _back(period_id, parish_id, err=e.message)
+    if action == "reject":
+        return _back(period_id, parish_id, msg=f"Rejected {res['rejected']} line(s) for the employee.")
+    bits = []
+    if res["accepted"]:
+        bits.append(f"{res['accepted']} accepted")
+    if res["edited"]:
+        bits.append(f"{res['edited']} changed")
+    if res["created"]:
+        bits.append(f"{res['created']} added")
+    msg = (", ".join(bits) if bits else "Nothing to accept") + "."
+    if res["skipped"]:
+        msg += f" {res['skipped']} line(s) have a different figure waiting or a conflict: use the buttons beside them."
+    return _back(period_id, parish_id, msg=msg)
+
+
+@router.post("/admin/timekeeping/status/{period_id}/{parish_id}/totals/add-line")
+async def totals_add_line(period_id: int, parish_id: int, request: Request):
+    """A line the reader missed, entered by hand (optionally tied to one of this parish's emails)."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        staff_id = int(form.get("staff_id") or 0)
+    except ValueError:
+        staff_id = 0
+    try:
+        pt.add_manual_line(org["id"], period_id, parish_id, staff_id, form.get("category_key") or "", form.get("hours"),
+                           user["id"], source_ref=form.get("source_ref"))
+    except pt.PayrollError as e:
+        return _back(period_id, parish_id, err=e.message)
+    return _back(period_id, parish_id, msg="Line added and confirmed.")
 
 
 @router.post("/admin/timekeeping/status/{period_id}/{parish_id}/totals/{line_id}/{action}")

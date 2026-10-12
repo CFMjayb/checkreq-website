@@ -46,6 +46,7 @@
           <form method="post" action="/admin/timekeeping/status/{{ period.id }}/final"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit">Mark hours Final</button></form>
           {% endif %}
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/variance">Variance report</a>
+          <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/notes">Payroll notes (print or export)</a>
           {% if period.status in ('open', 'future') %}
           <form method="post" action="/admin/timekeeping/status/{{ period.id }}/standing"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit">Carry forward standing hours</button></form>
           {% endif %}
