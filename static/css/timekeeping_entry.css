@@ -22,25 +22,27 @@
 .te-thead form { display: inline-flex; gap: 8px; align-items: center; margin: 0; }
 .te-tscroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
 table.te-ttable { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.85rem; }
-.te-ttable thead th { position: sticky; top: 0; z-index: 3; background: #f1ede2; text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--color-border, #ddd4c0); font-weight: 600; white-space: nowrap; }
-.te-ttable td { padding: 3px 8px; border-bottom: 1px solid rgba(0, 0, 0, 0.06); vertical-align: middle; }
+.te-ttable thead th { position: sticky; top: 0; z-index: 3; background: #f1ede2; text-align: left; padding: 2px 8px; border-bottom: 1px solid var(--color-border, #ddd4c0); font-weight: 600; white-space: nowrap; }
+.te-ttable td { padding: 1px 8px; line-height: 1.25; border-bottom: 1px solid rgba(0, 0, 0, 0.06); vertical-align: middle; }
 .te-ttable tr.is-attn td { background: #f6e0e0; }
 .te-ttable tr.is-ok td { background: #fff; }
 .te-ttable .ph-actions { flex-wrap: nowrap; }
 /* Compact controls: the hours box and the small buttons were the tallest things in a row (the site's normal box is made for full
    forms), so they set the row height. A row is now about one line of text. */
-.te-ttable .ph-inline input[type="text"] { width: 3.8em; height: 22px; box-sizing: border-box; padding: 0 5px; font-size: 0.82rem; line-height: 1.2; text-align: right; font-variant-numeric: tabular-nums; }
-.te-ttable .btn.btn-sm, .te-unentered .btn.btn-sm { padding: 2px 9px; font-size: 0.8rem; line-height: 1.25; min-height: 0; height: 22px; }
+.te-ttable .ph-inline input[type="text"] { width: 3.8em; height: 20px; box-sizing: border-box; padding: 0 5px; font-size: 0.82rem; line-height: 1.2; text-align: right; font-variant-numeric: tabular-nums; }
+.te-ttable .btn.btn-sm, .te-unentered .btn.btn-sm { padding: 1px 9px; font-size: 0.8rem; line-height: 1.25; min-height: 0; height: 20px; }
 .te-unentered input[type="text"], .te-unentered select { height: 24px; box-sizing: border-box; padding: 0 5px; font-size: 0.82rem; line-height: 1.2; }
 .te-ttable .ph-inline { margin-right: 2px; }
 /* One row per employee: every kind of hours is an editable box (like the summary grid), one Accept and one Reject per row. */
-.te-ttable td.te-num input.te-hrs { width: 4.6em; height: 22px; box-sizing: border-box; padding: 0 6px; font-size: 0.82rem; line-height: 1.2; text-align: right; font-variant-numeric: tabular-nums; }
+.te-ttable td.te-num input.te-hrs { width: 64px; height: 20px; box-sizing: border-box; padding: 0 5px; font-size: 0.82rem; line-height: 1.2; text-align: right; font-variant-numeric: tabular-nums; }
+.te-ttable.te-ptable { table-layout: fixed; }
+.te-ptable th:first-child, .te-ptable td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .te-ttable td.te-num input.te-blank { background: #faf8f1; }
 /* Add a line: ONE blank row at the top of the table, shown only after the Add a line button is pressed. */
 .te-ttable tr.te-addrow td { background: #fffaf0; border-bottom: 2px solid var(--color-gold, #c9a227); }
 .te-ttable tr.te-addrow[hidden] { display: none; }
-.te-ttable tr.te-addrow select { height: 24px; box-sizing: border-box; padding: 0 4px; font-size: 0.82rem; max-width: 16em; }
-.te-ttable tr.te-addrow input.te-hrs { width: 4.6em; height: 22px; box-sizing: border-box; padding: 0 6px; font-size: 0.82rem; text-align: right; font-variant-numeric: tabular-nums; }
+.te-ttable tr.te-addrow select { height: 22px; box-sizing: border-box; padding: 0 4px; font-size: 0.82rem; max-width: 16em; }
+.te-ttable tr.te-addrow input.te-hrs { width: 4.6em; height: 20px; box-sizing: border-box; padding: 0 6px; font-size: 0.82rem; text-align: right; font-variant-numeric: tabular-nums; }
 .te-ttable td.te-addmid { white-space: nowrap; }
 /* A row in the top grid is a pointer: click it and the daily grid below moves to that employee. */
 .te-ttable tr.te-jump { cursor: pointer; }
@@ -55,7 +57,7 @@ table.te-ttable { width: 100%; border-collapse: separate; border-spacing: 0; fon
 .te-flag { display: block; font-size: 0.78rem; }
 
 /* The email's PDF button: small, green, opens a preview on hover and a bigger view on click. */
-.te-pdf { margin-left: 6px; padding: 0 7px; height: 20px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; color: var(--color-franciscan-green, #1f3d2e); background: #fff8e6; border: 1px solid var(--color-gold, #c9a227); border-radius: 4px; cursor: pointer; vertical-align: middle; }
+.te-pdf { margin-left: 6px; padding: 0 7px; height: 18px; line-height: 1; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; color: var(--color-franciscan-green, #1f3d2e); background: #fff8e6; border: 1px solid var(--color-gold, #c9a227); border-radius: 4px; cursor: pointer; vertical-align: middle; }
 .te-pdf:hover, .te-pdf:focus-visible { background: var(--color-gold, #c9a227); color: #fff; }
 
 /* The hover preview: a small panel with the email PDF, placed beside the button. */
@@ -76,40 +78,56 @@ table.te-table { table-layout: fixed; }
 .te-table th.te-l, .te-table td.te-l { position: sticky; left: 0; z-index: 2; background: #fff; text-align: left; border-right: 1px solid var(--color-border, #ddd4c0); }
 .te-table th.te-r, .te-table td.te-r { position: sticky; right: 0; z-index: 2; background: #fff; border-left: 1px solid var(--color-border, #ddd4c0); text-align: right; font-variant-numeric: tabular-nums; }
 .te-table thead th.te-l, .te-table thead th.te-r { z-index: 5; background: #f1ede2; }
-.te-table .te-dh { padding: 1px 0; text-align: center; line-height: 1.1; }
-.te-table thead th.te-hmid { text-align: center; font-weight: 500; font-size: 0.8rem; color: var(--color-muted, #6b645a); }
+.te-table .te-dh { padding: 0; text-align: center; line-height: 1.1; }
+.te-table thead th.te-hmid { padding: 0; text-align: left; }
 /* The dates sit inside each employee's expanded area (not up in the header). */
-.te-daterow td { background: #fbf9f3; height: 26px; border-bottom: 1px solid rgba(0, 0, 0, 0.06); }
+.te-daterow td { background: #fbf9f3; height: 20px; border-bottom: 1px solid rgba(0, 0, 0, 0.06); }
 .te-daterow td.te-l, .te-daterow td.te-r { background: #fbf9f3; }
 .te-daterow td.te-catlabel { font-size: 0.75rem; color: var(--color-muted, #6b645a); font-weight: 500; }
-.te-dow { display: block; font-size: 0.68rem; font-weight: 500; color: var(--color-muted, #6b645a); }
-.te-md { display: block; font-size: 0.82rem; }
+.te-dow { display: block; font-size: 0.58rem; line-height: 0.95; font-weight: 500; color: var(--color-muted, #6b645a); }
+.te-md { display: block; font-size: 0.72rem; line-height: 1; }
 .te-we { background-color: rgba(0, 0, 0, 0.035); }
 .te-table .te-daterow td.te-we { background-color: #ebe5d6; }
 
+/* Tight rows (Jay, 2026-10-11): the page's normal line height and cell padding made every row taller than its box. */
+.te-table tbody td { line-height: 1.2; }
+.te-table thead th { padding-top: 2px; padding-bottom: 2px; line-height: 1.2; }
 /* The employee line. */
-.te-sum td { background: #f7f3ea; height: 28px; }
+.te-sum td { background: #f7f3ea; height: 18px; }
+.te-sum .te-pdf { height: 15px; font-size: 0.66rem; padding: 0 6px; }
 .te-sum td.te-l, .te-sum td.te-r { background: #f7f3ea; }
-.te-table .te-collapsed { white-space: normal; overflow: visible; text-overflow: clip; padding: 1px 8px; }
-.te-toggle { background: none; border: 0; cursor: pointer; font-size: 0.95rem; line-height: 1; padding: 2px 6px 2px 0; color: var(--color-ink, #2b2b2b); width: 22px; text-align: left; }
+.te-table .te-collapsed { white-space: normal; overflow: visible; text-overflow: clip; padding: 1px 0; }
+/* Alignment (Jay, 2026-10-11): the daily grid and the Period totals grid use the same geometry: first column 220px, then one 84px
+   column per kind of hours (Reg, OT, Sick, Vac, Holiday), a 64px box centred in each (10px each side). */
+.te-slots { display: flex; align-items: center; }
+.te-slot { flex: 0 0 84px; width: 84px; display: flex; justify-content: center; align-items: center; }
+.te-slot .te-when-closed { display: block; }
+.te-slot .te-when-open { display: none; }
+.te-emp.is-open .te-slot .te-when-closed { display: none; }
+.te-emp.is-open .te-slot .te-when-open { display: block; }
+.te-sumnum strong { display: inline-block; width: 64px; box-sizing: border-box; padding: 0 5px; text-align: right; font-size: 0.82rem; font-variant-numeric: tabular-nums; color: var(--color-ink, #2b2b2b); }
+.te-rest { flex: 1 1 auto; min-width: 0; padding-left: 10px; }
+.te-hcats { display: flex; }
+.te-hcats span { flex: 0 0 84px; box-sizing: border-box; padding: 0 10px; text-align: center; font-weight: 600; font-size: 0.85rem; color: var(--color-ink, #2b2b2b); white-space: nowrap; }
+.te-table td.te-fill, .te-table th.te-fillh { padding: 0; }
+.te-table th.te-r { text-align: center; padding-left: 0; padding-right: 0; }
+.te-table td.te-r { text-align: center; padding-left: 0; padding-right: 0; }
+.te-table td.te-r > strong, .te-table td.te-r > span { display: inline-block; width: 64px; box-sizing: border-box; padding: 0 5px; text-align: right; }
+.te-toggle { background: none; border: 0; cursor: pointer; font-size: 0.95rem; line-height: 1; padding: 0 6px 0 0; color: var(--color-ink, #2b2b2b); width: 22px; text-align: left; }
 .te-toggle:hover { color: var(--color-franciscan-green, #1f3d2e); }
 .te-name { font-weight: 600; }
 .te-pos { font-size: 0.78rem; margin-left: 4px; }
 .te-when-open { display: none; }
-.te-sumtype { display: inline-flex; align-items: baseline; gap: 4px; margin: 0 14px 0 0; font-size: 0.8rem; color: var(--color-muted, #6b645a); white-space: nowrap; }
-.te-sumtype strong { display: inline-block; min-width: 3.4em; text-align: right; color: var(--color-ink, #2b2b2b); font-variant-numeric: tabular-nums; }
-.te-sumtype[hidden] { display: none; }
-.te-clear { margin-left: 6px; height: 20px; padding: 0 10px; font-size: 0.75rem; line-height: 1; min-height: 0; }
+.te-clear { margin-left: 6px; height: 15px; padding: 0 10px; font-size: 0.75rem; line-height: 1; min-height: 0; }
 .te-emp.is-open .te-when-closed { display: none; }
 .te-emp.is-open .te-when-open { display: inline; }
 .te-emp:not(.is-open) .te-detail { display: none; }
-.te-cat { display: inline-flex; align-items: center; gap: 4px; margin: 0 14px 0 0; font-size: 0.8rem; color: var(--color-muted, #6b645a); white-space: nowrap; }
 .te-note { font-size: 0.78rem; color: var(--color-muted, #6b645a); font-style: italic; white-space: nowrap; }
 
 /* The boxes: text boxes (never number spinners) so every digit shows, centered, narrow. */
 .te-table input.te-day, .te-table input.te-total {
-  box-sizing: border-box; width: 100%; height: 20px; padding: 0 5px; margin: 0; text-align: right;
-  font-size: 0.82rem; font-variant-numeric: tabular-nums; border: 1px solid #d9d1bd; border-radius: 3px; background: #fff;
+  box-sizing: border-box; width: 100%; height: 16px; padding: 0 5px; margin: 0; text-align: right;
+  font-size: 0.78rem; font-variant-numeric: tabular-nums; border: 1px solid #d9d1bd; border-radius: 3px; background: #fff;
 }
 .te-table input.te-day { max-width: 44px; display: block; margin: 0 auto; }
 .te-table input.te-total { width: 64px; }
@@ -120,9 +138,9 @@ table.te-table { table-layout: fixed; }
 .te-table .te-dc { padding: 0 2px; }
 
 /* Expanded rows. */
-.te-cat-row td { height: 24px; }
-.te-catlabel { padding-left: 30px !important; font-size: 0.82rem; }
-.te-emp-total td { background: #f1ede2; font-weight: 600; font-size: 0.82rem; height: 22px; }
+.te-cat-row td { height: 18px; }
+.te-catlabel { padding-left: 30px !important; padding-top: 0 !important; padding-bottom: 0 !important; font-size: 0.78rem; }
+.te-emp-total td { background: #f1ede2; font-weight: 600; font-size: 0.78rem; height: 18px; }
 .te-emp-total td.te-l, .te-emp-total td.te-r { background: #f1ede2; }
 .te-emp-total td.c-num { text-align: right; padding-right: 8px; font-variant-numeric: tabular-nums; }
 .te-table tbody.te-emp { border-bottom: 2px solid var(--color-border, #ddd4c0); }
@@ -133,7 +151,9 @@ table.te-table { table-layout: fixed; }
 .te-foot-grand strong { font-size: 1.05rem; font-variant-numeric: tabular-nums; }
 
 /* 26-158 (2026-10-11): one row per employee in Period totals, and the "named in the emails, not entered yet" list */
-.te-ttable th.te-num, .te-ttable td.te-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; padding-right: 10px; min-width: 5.6em; }
+.te-ttable th.te-num, .te-ttable td.te-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; padding-left: 10px; padding-right: 10px; }
+/* the column names are centred over their boxes (the numbers inside the boxes stay right-justified) */
+.te-ttable th.te-num { text-align: center; }
 .te-multi { flex-direction: column; align-items: flex-start; gap: 3px; }
 .te-act { display: inline-flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
 .te-unentered { padding: 6px 10px 8px; border-bottom: 2px solid var(--color-gold, #c9a227); background: #fffaf0; }

@@ -63,6 +63,7 @@ import db
 import rbac
 import parish_mode
 import parish_roles
+import category_order
 import cornerstone_mode
 import org_features
 # Parish-level half of the two-level Timekeeping gate (2026-08-17). One-way
@@ -218,10 +219,11 @@ def list_categories(org_id: int, include_inactive: bool = False) -> list[dict]:
             "SELECT * FROM portal.timekeeping_categories WHERE org_id = %s ORDER BY sort_order",
             (org_id,),
         )
-    return db.query(
+    # the screen order (Reg, OT, Sick, Vac, Holiday) and the short names, the same on both grids of the entry screen
+    return category_order.sort_categories(db.query(
         "SELECT * FROM portal.timekeeping_categories WHERE org_id = %s AND is_active ORDER BY sort_order",
         (org_id,),
-    )
+    ))
 
 
 def create_category(org_id: int, key: str, label: str, sort_order: int) -> dict | None:

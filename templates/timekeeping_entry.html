@@ -98,17 +98,20 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="ff-frame">
       <div class="ff-scroll">
-        <table class="ff-table te-table" style="min-width: {{ 200 + dates|length * 50 + 84 }}px">
+        <table class="ff-table te-table" style="min-width: {{ 220 + dates|length * 50 + 84 }}px">
           <colgroup>
-            <col style="width:200px">
+            <col style="width:220px">
             {% for d in dates %}<col style="width:50px">{% endfor %}
+            <col>{# soaks up any extra width so the columns above keep their exact size #}
             <col style="width:84px">
           </colgroup>
           <thead>
             <tr>
               {# no dates up here (Jay, 2026-10-11): each employee's dates are shown inside that employee's expanded area #}
               <th class="te-l">Employee / Category</th>
-              <th class="te-hmid" colspan="{{ dates|length }}">Hours by type</th>
+              {# the kinds of hours, in the SAME columns as the Period totals grid above: Reg, OT, Sick, Vac, Holiday #}
+              <th class="te-hmid" colspan="{{ dates|length }}"><div class="te-hcats">{% for c in categories %}<span data-tip="{{ c.label }}">{{ c.short }}</span>{% endfor %}</div></th>
+              <th class="te-fillh"></th>
               <th class="te-r">Total</th>
             </tr>
           </thead>
@@ -123,11 +126,11 @@
                 {% for u in es.pdfs %}<button type="button" class="te-pdf" data-pdf-pop data-pdf-src="{{ u }}" aria-label="Open the email PDF">PDF</button>{% endfor %}
               </td>
               <td class="te-collapsed" colspan="{{ dates|length }}">
-                <span class="te-when-closed">
+                <div class="te-slots">
                   {% for c in categories %}
                   {% set cell = cells[(s.id, c.id)] %}
-                  <label class="te-cat">{{ c.label }}
-                    <input type="text" inputmode="decimal" autocomplete="off" maxlength="6" class="te-total{{ ' is-sum' if cell.mode == 'days' }}"
+                  <span class="te-slot">
+                    <span class="te-when-closed"><input type="text" inputmode="decimal" autocomplete="off" maxlength="6" class="te-total{{ ' is-sum' if cell.mode == 'days' }}"
                            data-s="{{ s.id }}" data-c="{{ c.id }}"
                            data-editable="{{ '1' if cell.editable_total else '0' }}"
                            data-locked="{{ '0' if editable and cell.editable_total else '1' }}"
@@ -136,16 +139,17 @@
                            {% if not cell.editable_total %}data-lock-tip="Recorded by the diocese ({{ cell.line.source if cell.line else '' }}). Ask the diocese to change it."{% endif %}
                            aria-label="{{ c.label }} total for {{ s.first_name }} {{ s.last_name }}"
                            value="{% if cell.mode == 'days' %}{{ '%.2f'|format(cell.days) }}{% elif cell.total is not none %}{{ '%.2f'|format(cell.total) }}{% endif %}"
-                           {% if cell.mode == 'days' or not editable or not cell.editable_total %}readonly{% endif %}>
-                  </label>
+                           {% if cell.mode == 'days' or not editable or not cell.editable_total %}readonly{% endif %}></span>
+                    {% set cs = cells[(s.id, c.id)].sum %}<span class="te-when-open te-sumnum"><strong data-te-sumtype data-s="{{ s.id }}" data-c="{{ c.id }}" aria-label="{{ c.label }} total">{{ '%.2f'|format(cs) if cs > 0 else '' }}</strong></span>
+                  </span>
                   {% endfor %}
-                  <span class="te-note">{{ 'Entered by day. Expand to change.' if any_days.v else 'Expand to enter by day.' }}</span>
-                </span>
-                <span class="te-when-open">
-                  {% for c in categories %}{% set cs = cells[(s.id, c.id)].sum %}<span class="te-sumtype"{% if cs <= 0 %} hidden{% endif %}>{{ c.label }} <strong data-te-sumtype data-s="{{ s.id }}" data-c="{{ c.id }}">{{ '%.2f'|format(cs) }}</strong></span>{% endfor %}
-                  {% if editable %}<button type="button" class="btn btn-sm te-clear" data-te-cleardays data-s="{{ s.id }}" data-tip="Empties the day boxes and keeps each type's total, which you can then edit.">Clear days, keep totals</button>{% endif %}
-                </span>
+                  <span class="te-rest">
+                    <span class="te-when-closed te-note">{{ 'Entered by day. Expand to change.' if any_days.v else 'Expand to enter by day.' }}</span>
+                    <span class="te-when-open">{% if editable %}<button type="button" class="btn btn-sm te-clear" data-te-cleardays data-s="{{ s.id }}" data-tip="Empties the day boxes and keeps each type's total, which you can then edit.">Clear days, keep totals</button>{% endif %}</span>
+                  </span>
+                </div>
               </td>
+              <td class="te-fill"></td>
               <td class="te-r"><strong data-te-etotal data-s="{{ s.id }}">{{ '%.2f'|format(es.sum) }}</strong></td>
             </tr>
             {# the dates, shown only when this employee is opened #}
@@ -154,6 +158,7 @@
               {% for d in dates %}
               <td class="te-dh{{ ' te-we' if d.weekday() >= 5 }}"><span class="te-dow">{{ d.strftime('%a') }}</span><span class="te-md">{{ d.month }}/{{ d.day }}</span></td>
               {% endfor %}
+              <td class="te-fill"></td>
               <td class="te-r"></td>
             </tr>
             {% for c in categories %}
@@ -169,6 +174,7 @@
                      value="{{ '%.2f'|format(val) if val is not none and val > 0 else '' }}"
                      {% if not editable %}disabled{% endif %}></td>
               {% endfor %}
+              <td class="te-fill"></td>
               <td class="te-r"><span data-te-ctotal data-s="{{ s.id }}" data-c="{{ c.id }}">{{ '%.2f'|format(cell.sum) }}</span></td>
             </tr>
             {% endfor %}
@@ -179,6 +185,7 @@
               {% for c in categories %}{% set v = entries.get((s.id, c.id, d)) %}{% if v %}{% set dsum.v = dsum.v + v %}{% endif %}{% endfor %}
               <td class="c-num" data-te-daytotal data-s="{{ s.id }}" data-i="{{ loop.index0 }}">{{ '%.2f'|format(dsum.v) if dsum.v > 0 }}</td>
               {% endfor %}
+              <td class="te-fill"></td>
               <td class="te-r"><strong data-te-etotal data-s="{{ s.id }}">{{ '%.2f'|format(es.sum) }}</strong></td>
             </tr>
           </tbody>
