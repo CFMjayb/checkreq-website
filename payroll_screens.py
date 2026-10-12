@@ -234,6 +234,8 @@ def board_rows(org_id: int, period: dict, rows: list[dict]) -> list[dict]:
         r["proposals"] = e.get("proposals", 0)
         r["not_expected"] = (e.get("pattern") in NOT_EXPECTED_PATTERNS and not r.get("submission_id"))
         r["by_email"] = (e.get("channel") == "email" and r.get("submission_status") != "submitted")
+        # emailed, but nothing could be recorded from it yet: a person has to look (the row is red for the same reason)
+        r["named_only"] = bool(r["emails"] and not r["recorded"] and not r.get("submission_id"))
     return rows
 
 

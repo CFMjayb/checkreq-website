@@ -1469,6 +1469,18 @@ def board_extras(org_id: int, period_id: int) -> dict[int, dict]:
                       "GROUP BY e.parish_id", (period_id, org_id)):
         d = slot(r["parish_id"])
         d["emails"], d["first_received_at"] = r["n"], r["first"] or d["first_received_at"]
+    # An email that only produced "named, not entered" people recorded no hours, so it has no receipt row, but it DID arrive.
+    # Count it (once per email) so the board does not say "Not Started" for a parish that has emailed.
+    for r in db.query("SELECT u.parish_id, count(DISTINCT u.source_ref) AS n, min(coalesce(nt.received_at, u.created_at)) AS first "
+                      "FROM portal.time_email_unentered u JOIN portal.parishes p ON p.id = u.parish_id "
+                      "LEFT JOIN portal.time_email_notes nt ON nt.period_id = u.period_id AND nt.source_ref = u.source_ref "
+                      "WHERE u.period_id = %s AND p.org_id = %s AND NOT EXISTS (SELECT 1 FROM portal.time_email_receipts e "
+                      "WHERE e.period_id = u.period_id AND e.parish_id = u.parish_id AND e.source_ref = u.source_ref) "
+                      "GROUP BY u.parish_id", (period_id, org_id)):
+        d = slot(r["parish_id"])
+        d["emails"] += r["n"]
+        if r["first"] and (d["first_received_at"] is None or r["first"] < d["first_received_at"]):
+            d["first_received_at"] = r["first"]
     for r in _period_rows(org_id, period_id):
         d = slot(r["parish_id"])
         # what the parish's period holds: counted hours, plus the grid's hours where a conflict holds them back
