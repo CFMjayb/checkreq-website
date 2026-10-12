@@ -26,7 +26,12 @@ table.te-ttable { width: 100%; border-collapse: separate; border-spacing: 0; fon
 .te-ttable tr.is-attn td { background: #f6e0e0; }
 .te-ttable tr.is-ok td { background: #fff; }
 .te-ttable .ph-actions { flex-wrap: nowrap; }
-.te-ttable .ph-inline input[type="text"] { width: 4.6em; text-align: right; }
+/* Compact controls: the hours box and the small buttons were the tallest things in a row (the site's normal box is made for full
+   forms), so they set the row height. A row is now about one line of text. */
+.te-ttable .ph-inline input[type="text"] { width: 3.8em; height: 22px; box-sizing: border-box; padding: 0 5px; font-size: 0.82rem; line-height: 1.2; text-align: right; }
+.te-ttable .btn.btn-sm, .te-unentered .btn.btn-sm { padding: 2px 9px; font-size: 0.8rem; line-height: 1.25; min-height: 0; height: 22px; }
+.te-unentered input[type="text"], .te-unentered select { height: 24px; box-sizing: border-box; padding: 0 5px; font-size: 0.82rem; line-height: 1.2; }
+.te-ttable .ph-inline { margin-right: 2px; }
 .te-src { border-bottom: 1px dotted var(--color-muted, #6b645a); cursor: help; }
 .te-flag { display: block; font-size: 0.78rem; }
 
