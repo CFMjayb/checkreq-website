@@ -20,6 +20,9 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from decimal import Decimal
+
+import category_order
 import db
 import email_pdf
 import payroll_totals as pt
@@ -76,6 +79,110 @@ def _link(ws, row: int, col: int, ref: str | None, org_id: int | None = None, ba
         c = ws.cell(row=row, column=col, value="Open email PDF")
         c.hyperlink = url
         c.font = Font(color="0563C1", underline="single")
+
+
+def summary_figures(org_id: int, rows: list[dict]) -> dict:
+    """The Summary sheet's numbers, one row per employee, grouped by department (code order).
+    Standing = hours whose source is standing. Entered = every other hour in force, by kind of hours.
+    Grand total = Standing + Entered, so each department subtotal can be compared with the Labor Summary."""
+    cats = category_order.sort_categories(db.query(
+        "SELECT id, key, label, sort_order FROM portal.timekeeping_categories WHERE org_id = %s AND is_active "
+        "ORDER BY sort_order", (org_id,)))
+    people: dict = {}
+    for r in rows:
+        if r["counted_hours"] is None:
+            continue  # only hours in force count here: lines still waiting for a decision are on the Review sheet
+        key = (r["parish_code"] or "~", r["parish_name"] or "", r["last_name"] or "", r["first_name"] or "",
+               r["staff_id"] if r["staff_id"] is not None else ("p", r["pending_change_id"]))
+        d = people.setdefault(key, {"parish_code": r["parish_code"], "dept": r.get("dept_name") or r["parish_name"],
+                                    "employee_number": r["employee_number"], "name": _name(r),
+                                    "cat": {}, "std": Decimal(0)})
+        h = Decimal(r["counted_hours"])
+        if r["source"] == "standing":
+            d["std"] += h
+        else:
+            d["cat"][r["category_id"]] = d["cat"].get(r["category_id"], Decimal(0)) + h
+    depts: dict = {}
+    for key in sorted(people, key=lambda k: k[:4]):
+        p = people[key]
+        p["entered"] = sum(p["cat"].values(), Decimal(0))
+        p["grand"] = p["entered"] + p["std"]
+        depts.setdefault((key[0], p["dept"]), []).append(p)
+    return {"cats": cats, "depts": depts}
+
+
+def _summary_sheet(wb, org: dict, rows: list[dict]) -> None:
+    """A new first sheet: one row per employee with each kind of hours, the Entered total, Standing and the Grand total,
+    a subtotal after each department and a grand total at the bottom."""
+    fig = summary_figures(org["id"], rows)
+    cats = fig["cats"]
+    ws = wb.create_sheet("Summary", 0)
+    heads = ["Parish Code", "Department", "Employee #", "Name"] + [c["short"] for c in cats] + [
+        "Entered total", "Standing", "Grand total"]
+    _header(ws, 1, heads)
+    ncat = len(cats)
+    bold = Font(bold=True)
+    sub_fill = PatternFill(start_color="E8F3E6", end_color="E8F3E6", fill_type="solid")
+    row = 2
+    grand = {"cat": {c["id"]: Decimal(0) for c in cats}, "entered": Decimal(0), "std": Decimal(0), "grand": Decimal(0)}
+
+    def put(r: int, c: int, v: Decimal | None, is_bold: bool = False, fill=None) -> None:
+        cell = ws.cell(row=r, column=c, value=None if v is None else float(v))
+        cell.number_format = "0.00"
+        if is_bold:
+            cell.font = bold
+        if fill:
+            cell.fill = fill
+
+    for (code, dept), people in fig["depts"].items():
+        sub = {"cat": {c["id"]: Decimal(0) for c in cats}, "entered": Decimal(0), "std": Decimal(0), "grand": Decimal(0)}
+        for p in people:
+            ws.cell(row=row, column=1, value=code)
+            ws.cell(row=row, column=2, value=dept)
+            ws.cell(row=row, column=3, value=p["employee_number"])
+            ws.cell(row=row, column=4, value=p["name"])
+            for i, c in enumerate(cats):
+                v = p["cat"].get(c["id"])
+                put(row, 5 + i, v)
+                if v:
+                    sub["cat"][c["id"]] += v
+            put(row, 5 + ncat, p["entered"] or None)
+            put(row, 6 + ncat, p["std"] or None)
+            put(row, 7 + ncat, p["grand"], is_bold=True)
+            sub["entered"] += p["entered"]
+            sub["std"] += p["std"]
+            sub["grand"] += p["grand"]
+            row += 1
+        fill = sub_fill
+        ws.cell(row=row, column=1, value=code).font = bold
+        ws.cell(row=row, column=2, value=f"{dept} total").font = bold
+        for col in range(1, 8 + ncat):
+            ws.cell(row=row, column=col).fill = fill
+        for i, c in enumerate(cats):
+            put(row, 5 + i, sub["cat"][c["id"]], True, fill)
+            grand["cat"][c["id"]] += sub["cat"][c["id"]]
+        put(row, 5 + ncat, sub["entered"], True, fill)
+        put(row, 6 + ncat, sub["std"], True, fill)
+        put(row, 7 + ncat, sub["grand"], True, fill)
+        grand["entered"] += sub["entered"]
+        grand["std"] += sub["std"]
+        grand["grand"] += sub["grand"]
+        row += 1
+    if not fig["depts"]:
+        ws.cell(row=2, column=1, value="No hours are in force for this period yet.")
+        row = 3
+    else:
+        ws.cell(row=row, column=2, value="GRAND TOTAL").font = bold
+        for i, c in enumerate(cats):
+            put(row, 5 + i, grand["cat"][c["id"]], True)
+        put(row, 5 + ncat, grand["entered"], True)
+        put(row, 6 + ncat, grand["std"], True)
+        put(row, 7 + ncat, grand["grand"], True)
+        row += 1
+    ws.cell(row=row + 1, column=1, value="Only hours in force are counted. Lines still waiting for a decision are on the Review sheet. "
+                                         "Standing = standing hours carried forward. Entered = everything else. "
+                                         "Compare each department total with the Labor Summary.").font = Font(italic=True)
+    _widths(ws, [12, 32, 14, 28] + [9] * ncat + [14, 11, 13])
 
 
 def build_export_workbook(org: dict, period: dict, base_url: str | None = None) -> bytes:
@@ -150,6 +257,9 @@ def build_export_workbook(org: dict, period: dict, base_url: str | None = None) 
     if not detail:
         wd.cell(row=2, column=1, value="No daily hours were entered in Beacon for this period.")
     _widths(wd, [12, 32, 18, 14, 14, 12, 10])
+
+    _summary_sheet(wb, org, rows)
+    wb.active = 0
 
     buf = io.BytesIO()
     wb.save(buf)
