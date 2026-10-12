@@ -139,7 +139,7 @@
             <td>{{ r.pattern_label or "—" }}</td>
             <td class="c-num" data-v="{{ r.emails or 0 }}"{% if r.first_received %} data-tip="First received {{ r.first_received }}"{% endif %}>{{ r.emails or "—" }}</td>
             <td data-v="{{ r.needs_review + r.proposals + r.conflicts }}">{% if r.needs_review or r.conflicts or r.proposals %}<span class="ph-state-attn">{{ r.needs_review + r.proposals }} to review{% if r.conflicts %}, {{ r.conflicts }} conflict{{ '' if r.conflicts == 1 else 's' }}{% endif %}</span>{% else %}—{% endif %}</td>
-            <td class="c-num" data-v="{{ r.std_hours or r.std_expected or 0 }}">{% if r.std_hours %}{{ "%.2f"|format(r.std_hours) }}{% elif r.std_expected %}<span class="c-muted" data-tip="Standing hours from the roster. Not confirmed for this period yet.">({{ "%.2f"|format(r.std_expected) }})</span>{% else %}—{% endif %}</td>
+            <td class="c-num" data-v="{{ r.std_hours or r.std_expected or 0 }}">{% if r.std_hours %}{{ "%.2f"|format(r.std_hours) }}{% elif r.std_expected %}<span class="c-muted" style="font-style:italic" data-tip="Standing hours from the roster. Not confirmed for this period yet.">{{ "%.2f"|format(r.std_expected) }}</span>{% else %}—{% endif %}</td>
             <td class="c-num" data-v="{{ r.entered_hours or 0 }}">{{ "%.2f"|format(r.entered_hours) if r.entered_hours else "—" }}</td>
             <td class="c-num" data-v="{{ r.total_hours or 0 }}">{{ "%.2f"|format(r.total_hours) if (r.total_hours or r.approval_kind == 'no_hours') else "—" }}</td>
             <td data-tip="{{ r.submitted_by_email or '' }}">{{ r.submitted_by_name or r.submitted_by_email or "—" }}</td>

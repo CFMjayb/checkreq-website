@@ -205,8 +205,27 @@ def section_context(org_id: int, period: dict, parish_id: int) -> dict:
         for e in pt.parish_email_choices(org_id, period["id"], parish_id):
             emails.append({"ref": e["source_ref"], "label": ("Email received " + org_time.format_local(e["received_at"], zone))
                            if e["received_at"] else "Email behind the lines above"})
+    # The parish's standing hours, shown BEFORE anyone confirms them so they can be reviewed (Jay, 2026-10-12: "they don't show at all on the detail").
+    standing = []
+    by_staff = {r["staff_id"]: r for r in rows if r["category_key"] == "regular" and r["staff_id"] is not None}
+    for s in db.query("SELECT id, first_name, last_name, employee_number, standing_hours FROM portal.staff_roster "
+                      "WHERE parish_id = %s AND is_active AND captures_hours AND hours_basis = 'standing' "
+                      "AND standing_hours IS NOT NULL AND employee_number IS NOT NULL ORDER BY last_name, first_name", (parish_id,)):
+        line = by_staff.get(s["id"])
+        if line is None:
+            status = "pending"
+        elif line["source"] != "standing":
+            status = "other"
+        elif line["review_status"] == "confirmed":
+            status = "confirmed"
+        else:
+            status = "waiting"
+        standing.append({"id": s["id"], "name": f"{s['last_name']}, {s['first_name']}", "employee_number": s["employee_number"],
+                         "hours": float(s["standing_hours"]), "status": status})
     return {"rows": rows, "people": people, "cat_cols": cat_cols, "unentered": unentered, "roster": roster, "writable": writable,
-            "parish_id": parish_id, "period_id": period["id"], "add_roster": add_roster, "emails": emails}
+            "parish_id": parish_id, "period_id": period["id"], "add_roster": add_roster, "emails": emails,
+            "standing": standing, "standing_total": sum(s["hours"] for s in standing),
+            "standing_open": sum(1 for s in standing if s["status"] in ("pending", "waiting"))}
 
 
 def board_rows(org_id: int, period: dict, rows: list[dict]) -> list[dict]:
@@ -474,15 +493,17 @@ async def standing_carry_forward(period_id: int, request: Request):
 
 @router.post("/admin/timekeeping/status/{period_id}/{parish_id}/standing")
 async def standing_one(period_id: int, parish_id: int, request: Request):
-    """A parish row's menu: Confirm standing hours."""
+    """A parish row's menu, or the Standing hours panel on the parish's own page: Confirm standing hours."""
     user, org, err = _require_hr_admin(request)
     if err:
         return err
+    form = await request.form()
+    on_parish_page = form.get("back") == "parish"
     try:
         res = pt.confirm_standing(org["id"], period_id, user["id"], parish_id)
     except pt.PayrollError as e:
-        return _status_back(period_id, err=e.message)
-    return _status_back(period_id, msg=_standing_msg(res))
+        return _back(period_id, parish_id, err=e.message) if on_parish_page else _status_back(period_id, err=e.message)
+    return _back(period_id, parish_id, msg=_standing_msg(res)) if on_parish_page else _status_back(period_id, msg=_standing_msg(res))
 
 
 @router.post("/admin/timekeeping/status/{period_id}/{parish_id}/approve")

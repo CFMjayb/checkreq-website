@@ -4,7 +4,7 @@
    hover tip over the Source; the email's stored PDF opens from the PDF button (hover for a preview, click for a
    large view). People an email named that nobody entered yet come first, with a name list to pick the right
    employee. Included only on the diocese's backfill screen; its banners are on the page. #}
-{% if payroll_totals and (payroll_totals.people or payroll_totals.unentered or payroll_totals.emails) %}
+{% if payroll_totals and (payroll_totals.people or payroll_totals.unentered or payroll_totals.emails or payroll_totals.standing) %}
 {% set pt_ = payroll_totals %}
 <div class="te-tframe">
   <div class="te-thead">
@@ -32,6 +32,37 @@
     {% endif %}
   </div>
   <div class="te-tscroll">
+  {# The parish's standing hours, shown before they are confirmed so they can be reviewed (Jay, 2026-10-12). After Confirm standing hours they are also lines below (Reg). #}
+  {% if pt_.standing %}
+  <div class="te-unentered te-standing">
+    <h3>Standing hours <span class="c-muted">({{ pt_.standing|length }} employee{{ '' if pt_.standing|length == 1 else 's' }}, {{ "%.2f"|format(pt_.standing_total) }} hours each period)</span></h3>
+    {% if pt_.writable and pt_.standing_open %}
+    <form class="ph-inline" method="post" action="/admin/timekeeping/status/{{ pt_.period_id }}/{{ pt_.parish_id }}/standing">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <input type="hidden" name="back" value="parish">
+      <button class="btn btn-sm btn-primary" type="submit" data-tip="Records these as Regular hours for this period. A parish with only standing hours turns green.">Confirm standing hours</button>
+    </form>
+    {% endif %}
+    <table class="te-ttable">
+      <thead><tr><th>Employee</th><th>Employee #</th><th class="te-num">Standing hours</th><th>This period</th></tr></thead>
+      <tbody>
+      {% for s in pt_.standing %}
+      <tr>
+        <td>{{ s.name }}</td>
+        <td>{{ s.employee_number }}</td>
+        <td class="te-num">{{ "%.2f"|format(s.hours) }}</td>
+        <td>
+          {% if s.status == 'confirmed' %}<span class="badge badge-approved">Confirmed</span>
+          {% elif s.status == 'waiting' %}<span class="badge badge-pending" data-tip="The hours were recorded but the last three periods did not all match, so they wait for review below.">Waiting for review</span>
+          {% elif s.status == 'other' %}<span class="badge badge-submitted" data-tip="Hours for this person came in another way. See the lines below.">Hours came in another way</span>
+          {% else %}<span class="badge badge-cancelled">Not confirmed yet</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
   {% if pt_.unentered %}
   <div class="te-unentered">
     <h3>Named in the emails, not entered yet <span class="c-muted">({{ pt_.unentered|length }})</span></h3>
