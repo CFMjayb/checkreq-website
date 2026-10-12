@@ -286,10 +286,12 @@ def _apply_change(change: dict) -> int | None:
                      change["staff_id"], parish_id),
                 )
             elif ct in ("deactivate", "reactivate"):
+                # a reactivated person is no longer "inactive as of" any date (the Employees screen does the same)
                 cur.execute(
-                    "UPDATE portal.staff_roster SET is_active = %s, updated_at = NOW() "
+                    "UPDATE portal.staff_roster SET is_active = %s, "
+                    "inactive_as_of = CASE WHEN %s THEN NULL ELSE inactive_as_of END, updated_at = NOW() "
                     "WHERE id = %s AND parish_id = %s",
-                    (ct == "reactivate", change["staff_id"], parish_id),
+                    (ct == "reactivate", ct == "reactivate", change["staff_id"], parish_id),
                 )
     return new_staff_id
 
@@ -310,6 +312,9 @@ def approve_change(change: dict, reviewer_user_id: int, review_note: str | None 
     if change["change_type"] == "add" and new_staff_id:
         # 26-158: hours already recorded for this pending new hire move onto the new roster row.
         payroll_totals.on_roster_add_approved(change["id"], new_staff_id)
+    if change["change_type"] == "reactivate" and change.get("staff_id"):
+        # 26-158: hours an email gave for her (waiting in "named, not entered yet") are entered now, to wait for review.
+        payroll_totals.on_staff_reactivated(change["staff_id"], reviewer_user_id)
     _notify_outcome(change, approved=True, review_note=review_note)
 
 
@@ -331,6 +336,7 @@ def reactivate_existing_instead(change: dict, reviewer_user_id: int, review_note
                 (reviewer_user_id, review_note or "Reactivated the existing roster person instead of adding a duplicate.",
                  change["id"]))
     payroll_totals.on_roster_add_approved(change["id"], ex["id"])
+    payroll_totals.on_staff_reactivated(ex["id"], reviewer_user_id)
     _notify_outcome(change, approved=True, review_note=review_note)
     return ex["id"]
 

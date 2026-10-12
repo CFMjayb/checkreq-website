@@ -26,9 +26,9 @@
 <link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
 {% endblock %}
 {% block content %}
-{% set ns = namespace(attn=0, miss=0, wait=0, ok=0, idle=0, ready=0) %}
+{% set ns = namespace(attn=0, miss=0, wait=0, ok=0, idle=0, ready=0, std=0, std_ready=0, std_done=0) %}
 {% set tok = csrf_token(request) %}
-{% for r in rows %}{% set st = r.state %}{% if st == 'attn' %}{% set ns.attn = ns.attn + 1 %}{% elif st == 'miss' %}{% set ns.miss = ns.miss + 1 %}{% elif st == 'wait' %}{% set ns.wait = ns.wait + 1 %}{% elif st == 'ok' %}{% set ns.ok = ns.ok + 1 %}{% elif st == 'idle' %}{% set ns.idle = ns.idle + 1 %}{% elif st == 'ready' %}{% set ns.ready = ns.ready + 1 %}{% endif %}{% endfor %}
+{% for r in rows %}{% set st = r.state %}{% if st == 'attn' %}{% set ns.attn = ns.attn + 1 %}{% elif st == 'miss' %}{% set ns.miss = ns.miss + 1 %}{% elif st == 'wait' %}{% set ns.wait = ns.wait + 1 %}{% elif st == 'ok' %}{% set ns.ok = ns.ok + 1 %}{% elif st == 'idle' %}{% set ns.idle = ns.idle + 1 %}{% elif st == 'ready' %}{% set ns.ready = ns.ready + 1 %}{% endif %}{% if r.pill == 'only_std' %}{% set ns.std = ns.std + 1 %}{% set ns.std_ready = ns.std_ready + 1 %}{% elif r.pill == 'only_std_done' %}{% set ns.std = ns.std + 1 %}{% set ns.std_done = ns.std_done + 1 %}{% endif %}{% endfor %}
 <div class="page-shell-wide">
 <div class="ff-shell">
 
@@ -90,8 +90,9 @@
       <div class="ff-multi-panel" hidden>
         <label><input type="checkbox" value="attn" checked> Needs review <span class="c-muted">({{ ns.attn }})</span></label>
         <label><input type="checkbox" value="miss" checked> Missing hours <span class="c-muted">({{ ns.miss }})</span></label>
-        <label><input type="checkbox" value="ready" checked> Ready to approve <span class="c-muted">({{ ns.ready }})</span></label>
-        <label><input type="checkbox" value="ok" checked> Approved or done <span class="c-muted">({{ ns.ok }})</span></label>
+        <label><input type="checkbox" value="ready" checked> Ready to approve <span class="c-muted">({{ ns.ready - ns.std_ready }})</span></label>
+        <label><input type="checkbox" value="ok" checked> Approved or done <span class="c-muted">({{ ns.ok - ns.std_done }})</span></label>
+        <label><input type="checkbox" value="std" checked> Only Std Hrs <span class="c-muted">({{ ns.std }})</span></label>
         <label><input type="checkbox" value="wait" checked> Not started <span class="c-muted">({{ ns.wait }})</span></label>
         <label><input type="checkbox" value="idle" checked> Not expected <span class="c-muted">({{ ns.idle }})</span></label>
       </div>
@@ -124,7 +125,7 @@
         <tbody>
           {% for r in rows %}
           {% set st = r.state %}
-          <tr class="ff-row {{ 'is-attn' if st == 'attn' else 'is-miss' if st == 'miss' else 'is-ready' if st == 'ready' else 'is-ok' if (st == 'ok' or st == 'idle') else '' }}" data-state="{{ st }}">
+          <tr class="ff-row {{ 'is-attn' if st == 'attn' else 'is-miss' if st == 'miss' else 'is-ready' if st == 'ready' else 'is-ok' if (st == 'ok' or st == 'idle') else '' }}" data-state="{{ 'std' if r.pill in ('only_std', 'only_std_done') else st }}">
             <td data-v="{{ r.parish_code or '~' }}" data-tip="{{ r.parish_name }}"><a href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{% if r.parish_code %}{{ r.parish_code }} {% endif %}{{ r.short_name or r.parish_name }}</a><span hidden>{{ r.parish_name }}</span></td>
             <td>
               {% if r.pill == 'approved' %}<span class="badge badge-approved" data-tip="Reviewed and approved {{ r.approval_tip or '' }}">Approved</span>

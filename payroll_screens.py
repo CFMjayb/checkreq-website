@@ -35,6 +35,7 @@ import payroll_totals as pt
 import rbac
 import registry
 import timekeeping
+import timekeeping_roster_changes
 
 router = APIRouter()
 
@@ -422,6 +423,39 @@ async def unentered_assign(period_id: int, parish_id: int, item_id: int, request
     except pt.PayrollError as e:
         return _back(period_id, parish_id, err=e.message)
     return _back(period_id, parish_id, msg=f"Entered {len(res['entered'])} line(s) for the employee you chose.")
+
+
+@router.post("/admin/timekeeping/status/{period_id}/{parish_id}/unentered/{item_id}/reactivate")
+async def unentered_reactivate(period_id: int, parish_id: int, item_id: int, request: Request):
+    """The name in the email is an INACTIVE roster person: reactivate her through the Roster Review path (so it is logged
+    like any reactivation) and her hours from the email are entered, to wait for review."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    item = db.query_one("SELECT u.*, p.code AS parish_code FROM portal.time_email_unentered u JOIN portal.parishes p ON p.id = u.parish_id "
+                        "WHERE u.id = %s AND u.parish_id = %s AND p.org_id = %s", (item_id, parish_id, org["id"]))
+    if not item or item["status"] != "open":
+        return _back(period_id, parish_id, err="That item is not waiting any more.")
+    staff = db.query_one("SELECT id, first_name, last_name, employee_number, is_active FROM portal.staff_roster "
+                         "WHERE id = %s AND parish_id = %s", (item["suggested_staff_id"], parish_id)) if item["suggested_staff_id"] else None
+    if not staff or staff["is_active"]:
+        return _back(period_id, parish_id, err="There is no inactive roster person to reactivate for this name.")
+    if not staff["employee_number"]:
+        return _back(period_id, parish_id, err="She has no employee number yet. Reactivate her on the Employees screen.")
+    try:
+        pend = db.query_one("SELECT id FROM portal.staff_roster_changes WHERE staff_id = %s AND change_type = 'reactivate' "
+                            "AND status = 'pending' ORDER BY id LIMIT 1", (staff["id"],))
+        change_id = pend["id"] if pend else pt.propose_roster_change(
+            org["id"], parish_code=item["parish_code"], change_type="reactivate", source_ref=item["source_ref"],
+            quote=item["quote"], employee_number=staff["employee_number"], first_name=staff["first_name"],
+            last_name=staff["last_name"], period_id=period_id, actor_user_id=user["id"]).get("change_id")
+    except pt.PayrollError as e:
+        return _back(period_id, parish_id, err=e.message)
+    change = timekeeping_roster_changes.get_change_for_review(change_id, org["id"]) if change_id else None
+    if change is None:
+        return _back(period_id, parish_id, err="Could not find the Reactivate request. Use the Employees screen.")
+    timekeeping_roster_changes.approve_change(change, user["id"], "Reactivated from the Time Review list.")
+    return _back(period_id, parish_id, msg=f"Reactivated {staff['first_name']} {staff['last_name']}. Her hours from the email are entered and wait for review.")
 
 
 @router.post("/admin/timekeeping/status/{period_id}/{parish_id}/totals/person/{staff_id}/{action}")
