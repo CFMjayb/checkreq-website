@@ -599,8 +599,14 @@ def replace_unentered(org_id: int, *, period_id: int, source_ref: str, items: li
             s = db.query_one("SELECT id FROM portal.staff_roster WHERE parish_id = %s AND employee_number = %s "
                              "ORDER BY is_active DESC, id LIMIT 1", (parish["id"], str(it["employee_number"]).strip()))
             staff_id = s["id"] if s else None
+        # A name that matches ONE INACTIVE roster person at this parish (a rehire, or someone wrongly inactive): suggest her
+        # and queue a Reactivate request in Roster Review (the reader only knows the active roster).
+        inactive = inactive_roster_match(parish["id"], name) if staff_id is None else None
+        if inactive:
+            staff_id = inactive["id"]
         clean[(parish["id"], name)] = {"reason": reason, "hours": _clean_item_hours(it.get("hours")),
-                                       "staff_id": staff_id, "quote": clean_quote(it.get("quote"))}
+                                       "staff_id": staff_id, "quote": clean_quote(it.get("quote")),
+                                       "inactive": inactive, "parish_code": str(it.get("parish_code") or "")}
     opened = cleared = kept = 0
     with db.connect() as conn:
         with conn.cursor() as cur:
@@ -635,7 +641,23 @@ def replace_unentered(org_id: int, *, period_id: int, source_ref: str, items: li
             if opened:
                 _unfinalize(cur, period_id)
             conn.commit()
-    return {"listed": len(clean), "opened": opened, "cleared": cleared, "settled_kept": kept}
+    queued = 0
+    for v in clean.values():
+        m = v.get("inactive")
+        if not m or not m.get("employee_number"):
+            continue
+        if db.query_one("SELECT 1 AS x FROM portal.staff_roster_changes WHERE staff_id = %s AND change_type = 'reactivate' "
+                        "AND status = 'pending'", (m["id"],)):
+            continue  # already waiting in Roster Review
+        try:
+            r = propose_roster_change(org_id, parish_code=v["parish_code"], change_type="reactivate", source_ref=ref,
+                                      quote=v["quote"], employee_number=m["employee_number"], first_name=m["first_name"],
+                                      last_name=m["last_name"], period_id=period_id)
+            if r.get("action") == "created":
+                queued += 1
+        except PayrollError:
+            pass
+    return {"listed": len(clean), "opened": opened, "cleared": cleared, "settled_kept": kept, "reactivations_queued": queued}
 
 
 def list_unentered(org_id: int, period_id: int, parish_id: int | None = None, status: str = "open") -> list[dict]:
@@ -649,7 +671,8 @@ def list_unentered(org_id: int, period_id: int, parish_id: int | None = None, st
     rows = db.query(
         "SELECT u.id, u.period_id, u.parish_id, p.code AS parish_code, p.name AS parish_name, "
         "COALESCE(p.short_name, p.name) AS dept_name, u.source_ref, u.employee_text, u.reason, u.hours, "
-        "u.suggested_staff_id, u.quote, u.status, u.created_at, sr.first_name AS sug_first, sr.last_name AS sug_last "
+        "u.suggested_staff_id, u.quote, u.status, u.created_at, sr.first_name AS sug_first, sr.last_name AS sug_last, "
+        "sr.is_active AS sug_active, sr.employee_number AS sug_emp "
         "FROM portal.time_email_unentered u JOIN portal.parishes p ON p.id = u.parish_id "
         "LEFT JOIN portal.staff_roster sr ON sr.id = u.suggested_staff_id "
         "WHERE u.period_id = %s AND p.org_id = %s AND u.status = %s" + extra +
@@ -660,6 +683,10 @@ def list_unentered(org_id: int, period_id: int, parish_id: int | None = None, st
         r["reason_label"] = UNENTERED_REASON_LABELS.get(r["reason"], r["reason"])
         r["hours_label"] = _hours_label(r["hours"], cats)
         r["hours_single"] = next(iter(r["hours"].values())) if r["hours"] and len(r["hours"]) == 1 else None
+        # the suggested person is on the roster but inactive: say so, and the page offers Reactivate
+        r["inactive_match"] = bool(r["suggested_staff_id"]) and r.get("sug_active") is False
+        if r["inactive_match"]:
+            r["reason_label"] = "On the roster but inactive. Reactivate her and these hours are entered."
     return rows
 
 
@@ -694,7 +721,7 @@ def dismiss_unentered(org_id: int, item_id: int, user_id: int, note: str | None 
     return {"dismissed": True}
 
 
-def assign_unentered(org_id: int, item_id: int, staff_id: int, user_id: int, hours=None) -> dict:
+def assign_unentered(org_id: int, item_id: int, staff_id: int, user_id: int, hours=None, confirm: bool = True) -> dict:
     """A reviewer picks the right employee for a name the reader could not place and the hours are entered for
     that person, as email lines tied to the same email (so the PDF links to them), confirmed by the reviewer.
     The hours are the ones the reader read; when it read none, `hours` (regular) must be given."""
@@ -717,14 +744,15 @@ def assign_unentered(org_id: int, item_id: int, staff_id: int, user_id: int, hou
         raise PayrollError("invalid", "Type the hours for this person first: the email gave no exact figure.")
     period = get_period(org_id, row["period_id"])
     who = db.query_one("SELECT COALESCE(display_name, email) AS n FROM checkreq.app_users WHERE id = %s", (user_id,))
-    note = f"Name chosen by {(who or {}).get('n') or 'a reviewer'} from the email"
+    note = (f"Name chosen by {(who or {}).get('n') or 'a reviewer'} from the email" if confirm else
+            f"Entered when {(who or {}).get('n') or 'a reviewer'} reactivated her. The hours wait for review")
     placed = []
     for cat, h in figures.items():
         res = record_period_hours(org_id, period_id=period["id"], parish_code=staff["parish_code"], category_key=cat, hours=h,
                                   source="email", source_ref=row["source_ref"],
                                   quote=(f"(written as {row['employee_text']}) " + (row["quote"] or ""))[:300],
-                                  confidence=1, employee_number=staff["employee_number"], actor_user_id=user_id,
-                                  status="confirmed")
+                                  confidence=1 if confirm else 0.5, employee_number=staff["employee_number"],
+                                  actor_user_id=user_id, status="confirmed" if confirm else None)
         placed.append({"category": cat, "hours": h, "action": res.get("action")})
     _settle_unentered(item_id, org_id, user_id, "cleared", note)
     return {"entered": placed, "staff_id": staff["id"]}
@@ -770,6 +798,71 @@ def _first_names_fit(a, b) -> bool:
     x, y = ta[0], tb[0]
     return (x == y or (len(x) >= 3 and len(y) >= 3 and (x.startswith(y) or y.startswith(x)))
             or bool(_NICK.get(x, set()) & _NICK.get(y, set())))
+
+
+def _name_parts(text) -> tuple[str, str] | None:
+    """(first, last) of a name as written: 'Elizabeth Boucher' or 'Boucher, Elizabeth'. None when it is one word."""
+    t = " ".join(str(text or "").split())
+    if not t:
+        return None
+    if "," in t:
+        last, first = [x.strip() for x in t.split(",", 1)]
+    else:
+        w = t.split()
+        if len(w) < 2:
+            return None
+        first, last = w[0], w[-1]
+    return (first, last) if first and last else None
+
+
+def inactive_roster_match(parish_id: int, name) -> dict | None:
+    """The ONE inactive roster person at this parish a written name is about (same surname, a first name that fits), or None
+    when there is none, more than one, or an ACTIVE person fits too (the reader's own match already covers active people)."""
+    parts = _name_parts(name)
+    if not parts:
+        return None
+    first, last = parts
+    rows = db.query("SELECT id, first_name, last_name, employee_number, is_active FROM portal.staff_roster "
+                    "WHERE parish_id = %s AND lower(last_name) = lower(%s)", (parish_id, last))
+    fits = [r for r in rows if _first_names_fit(first, r["first_name"])]
+    if any(r["is_active"] for r in fits):
+        return None
+    inactive = [r for r in fits if not r["is_active"]]
+    return inactive[0] if len(inactive) == 1 else None
+
+
+def on_staff_reactivated(staff_id: int, user_id: int | None) -> dict:
+    """A roster person was reactivated (Roster Review, the Employees screen, a rehire): answer her waiting Reactivate request
+    and enter the hours of every open 'named, not entered' item that is about her, as email lines tied to the same email.
+    Those lines WAIT FOR REVIEW (a reviewer still looks at the number). An item with no exact figure stays listed."""
+    s = db.query_one("SELECT s.id, s.parish_id, s.first_name, s.last_name, s.is_active, p.org_id FROM portal.staff_roster s "
+                     "JOIN portal.parishes p ON p.id = s.parish_id WHERE s.id = %s", (staff_id,))
+    if not s or not s["is_active"]:
+        return {"entered": 0, "items": 0}
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE portal.staff_roster_changes SET status = 'approved', reviewed_by_user_id = %s, reviewed_at = now(), "
+                        "review_note = 'She was reactivated.' WHERE staff_id = %s AND change_type = 'reactivate' "
+                        "AND status = 'pending'", (user_id, staff_id))
+            conn.commit()
+    entered = items = 0
+    for it in db.query("SELECT u.id, u.employee_text, u.suggested_staff_id FROM portal.time_email_unentered u "
+                       "JOIN portal.payroll_periods pp ON pp.id = u.period_id "
+                       "WHERE u.parish_id = %s AND u.status = 'open' AND pp.status IN ('open', 'future') AND pp.org_id = %s",
+                       (s["parish_id"], s["org_id"])):
+        mine = it["suggested_staff_id"] == staff_id
+        if not mine and it["suggested_staff_id"] is None:
+            parts = _name_parts(it["employee_text"])
+            mine = bool(parts) and parts[1].lower() == (s["last_name"] or "").strip().lower() and _first_names_fit(parts[0], s["first_name"])
+        if not mine:
+            continue
+        try:
+            res = assign_unentered(s["org_id"], it["id"], staff_id, user_id, confirm=False)
+        except PayrollError:
+            continue  # no exact figure in the email: it stays listed for a reviewer to finish
+        entered += len(res["entered"])
+        items += 1
+    return {"entered": entered, "items": items}
 
 
 def propose_roster_change(org_id: int, *, parish_code: str, change_type: str, source_ref: str,

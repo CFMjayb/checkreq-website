@@ -79,6 +79,12 @@
         <td>
           {% if pt_.writable %}
           <div class="ph-actions">
+            {% if u.inactive_match %}
+            <form class="ph-inline" method="post" action="/admin/timekeeping/status/{{ pt_.period_id }}/{{ pt_.parish_id }}/unentered/{{ u.id }}/reactivate" data-confirm="Reactivate {{ u.sug_first }} {{ u.sug_last }} and enter these hours? They wait for review.">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+              <button class="btn btn-sm btn-primary" type="submit" data-tip="She is on the roster but inactive. This reactivates her and enters the hours from this email, to wait for review.">Reactivate {{ u.sug_first }}</button>
+            </form>
+            {% endif %}
             <form class="ph-inline" method="post" action="/admin/timekeeping/status/{{ pt_.period_id }}/{{ pt_.parish_id }}/unentered/{{ u.id }}/assign">
               <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
               <select name="staff_id" aria-label="Employee" required>

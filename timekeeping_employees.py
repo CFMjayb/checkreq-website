@@ -74,6 +74,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 import cornerstone_mode
 import db
+import payroll_totals
 import rbac
 
 router = APIRouter()
@@ -347,6 +348,7 @@ async def employees_save(request: Request):
     owned = {str(e["id"]): e for e in list_employees(org["id"], show="all")}
 
     edited, activated, deactivated, problems = 0, 0, 0, []
+    reactivated_ids: list[int] = []
     with db.connect() as conn:
         with conn.cursor() as cur:
             for raw_id in posted:
@@ -423,6 +425,7 @@ async def employees_save(request: Request):
                             "  updated_at = now() WHERE id = %s AND parish_id = %s",
                             (as_of, sid, row["parish_id"]))
                         activated += 1
+                        reactivated_ids.append(sid)
                     else:
                         cur.execute(
                             "UPDATE portal.staff_roster SET is_active = FALSE, "
@@ -436,6 +439,15 @@ async def employees_save(request: Request):
                         as_of=as_of, actor_id=user["id"])
         conn.commit()
 
+    # 26-158: hours an email gave for a person who was inactive are entered now (they wait for review), and her
+    # waiting Reactivate request in Roster Review is answered. A problem here never undoes the save.
+    hours_entered = 0
+    for sid in reactivated_ids:
+        try:
+            hours_entered += payroll_totals.on_staff_reactivated(sid, user["id"])["entered"]
+        except Exception as exc:  # noqa: BLE001
+            print(f"[employees] on_staff_reactivated {sid} failed: {type(exc).__name__}")
+
     bits = []
     if edited:
         bits.append(f"{edited} updated")
@@ -443,6 +455,8 @@ async def employees_save(request: Request):
         bits.append(f"{deactivated} inactivated")
     if activated:
         bits.append(f"{activated} activated")
+    if hours_entered:
+        bits.append(f"{hours_entered} hours line(s) from emails entered for them, waiting for review")
     saved = ", ".join(bits) + "." if bits else "No changes to save."
     return _redirect_back(request, saved=saved,
                           error=" ".join(problems) if problems else None)

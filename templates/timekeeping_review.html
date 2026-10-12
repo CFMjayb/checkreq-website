@@ -34,6 +34,7 @@ reason — the parish sees it and can correct and resubmit.</p>
         {% endif %}
       {% else %}
         {{ c.current_first_name }} {{ c.current_last_name }}
+        {% if c.change_type == 'reactivate' and c.source_quote %}<div class="sub">An email names her: &ldquo;{{ c.source_quote }}&rdquo;. Reactivating her enters the hours from that email, to wait for review.</div>{% endif %}
       {% endif %}
     </td>
     <td>
