@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% from "_guide_link.html" import guide_link %}
+{% block title %}Neighborhood — {{ parish.name }}{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<style>
+  .nb-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  .nb-head h1 { margin: 0; }
+  .nb-top { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: var(--space-5); align-items: start; margin-bottom: var(--space-5); }
+  @media (max-width: 800px) { .nb-top { grid-template-columns: 1fr; } }
+  .nb-rings { display: flex; gap: var(--space-2); flex-wrap: wrap; margin: var(--space-3) 0; }
+  #nbMap { height: 380px; border-radius: var(--radius-lg); box-shadow: var(--shadow-card); background: #e8efe9; }
+  .nb-section { margin-bottom: var(--space-6); }
+  .nb-section h2 { margin-bottom: var(--space-3); }
+  .nb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: var(--space-4); align-items: start; }
+  .nb-wide { grid-column: 1 / -1; }
+  .nb-card h3 { margin: 0 0 var(--space-2); font-size: 1rem; }
+  .nb-big { font-size: 2rem; font-weight: 700; color: var(--color-franciscan-green-dark); line-height: 1.15; }
+  .nb-compare { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: grid; gap: 2px; font-size: 0.9rem; }
+  .nb-compare li { display: flex; justify-content: space-between; border-top: 1px solid var(--color-border); padding-top: 2px; }
+  .nb-source { margin-top: var(--space-3); }
+  .nb-flag { font-size: 0.7rem; font-weight: 600; padding: 1px 7px; border-radius: 999px; vertical-align: middle; white-space: nowrap; }
+  .nb-use-caution { background: var(--color-warning-bg); color: var(--color-warning); }
+  .nb-unreliable { background: #fbe9e9; color: var(--color-danger); }
+  table.nb-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  table.nb-table th { text-align: left; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--color-text-muted); border-bottom: 2px solid var(--color-border); padding: 3px 6px; }
+  table.nb-table td { padding: 3px 6px; border-bottom: 1px solid var(--color-border); vertical-align: middle; }
+  table.nb-table td.num, table.nb-table th.num { text-align: right; white-space: nowrap; }
+  table.nb-table td.cmp { color: var(--color-text-muted); text-align: right; white-space: nowrap; }
+  .nb-bar { height: 10px; background: var(--color-franciscan-green); border-radius: 3px; min-width: 1px; }
+  .nb-barcell { width: 32%; }
+  .nb-pyr { display: grid; grid-template-columns: 1fr 64px 1fr; gap: 6px; align-items: center; font-size: 0.82rem; margin-bottom: 2px; }
+  .nb-pyr .m { justify-self: end; background: var(--color-franciscan-green); height: 10px; border-radius: 3px; }
+  .nb-pyr .f { justify-self: start; background: var(--color-gold); height: 10px; border-radius: 3px; }
+  .nb-pyr .band { text-align: center; color: var(--color-text-muted); }
+  .nb-pyr-head { display: grid; grid-template-columns: 1fr 64px 1fr; gap: 6px; font-size: 0.72rem; text-transform: uppercase; color: var(--color-text-muted); margin-bottom: var(--space-2); }
+  .nb-list { margin: 0; padding-left: 1.1em; font-size: 0.92rem; }
+  .nb-foot { margin-top: var(--space-6); }
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-shell">
+<div class="nb-head">
+  <h1>Neighborhood</h1>
+  {{ guide_link("neighborhood", "How to read this page") }}
+</div>
+<p class="back-link"><a href="/parish-view">&larr; Back</a></p>
+
+{% if state != "ok" %}
+<div class="banner banner-info">{{ message }}</div>
+{% else %}
+
+<div class="nb-top">
+  <div class="card">
+    <h2 style="margin:0 0 var(--space-2)">{{ parish.name }}</h2>
+    <p class="sub">{{ site.address_used }}</p>
+    <div class="nb-rings">
+      {% for m in rings %}
+      <a class="btn btn-sm {{ 'btn-primary' if m == ring else 'btn-secondary' }}" href="/neighborhood?ring={{ m }}">{{ m }}-minute drive</a>
+      {% endfor %}
+    </div>
+    <p class="sub">The numbers below are for the people who live within a {{ ring }}-minute drive of the church.</p>
+  </div>
+  <div id="nbMap" data-ring="{{ ring }}" role="img" aria-label="Map of the drive-time areas around the church"></div>
+</div>
+
+{% for section in sections %}
+<div class="nb-section">
+  <h2>{{ section.title }}</h2>
+  <div class="nb-grid">
+    {% for c in section.cards %}
+    <div class="card nb-card {{ 'nb-wide' if c.kind == 'pyramid' or (c.kind == 'bars' and c.rows|length > 12) else '' }}">
+      <h3>{{ c.title }}</h3>
+
+      {% if c.kind == "stat" %}
+        <div class="nb-big">{{ c.display }}{% if c.flag %} <span class="nb-flag nb-{{ c.flag|replace(' ', '-') }}">{{ c.flag }}</span>{% endif %}</div>
+        {% if c.moe %}<div class="sub">margin of error &plusmn;{{ c.moe }}</div>{% endif %}
+        {% if c.compare %}
+        <ul class="nb-compare">
+          {% for x in c.compare %}<li><span>{{ x.label }}</span><strong>{{ x.display }}</strong></li>{% endfor %}
+        </ul>
+        {% endif %}
+
+      {% elif c.kind == "bars" %}
+        {% if c.headline %}
+        <div class="nb-big">{{ c.headline.display }}{% if c.headline.flag %} <span class="nb-flag nb-{{ c.headline.flag|replace(' ', '-') }}">{{ c.headline.flag }}</span>{% endif %}</div>
+        <div class="sub">{{ c.headline.label }}
+          {% for x in c.headline.compare %} &middot; {{ x.label }} {{ x.display }}{% endfor %}</div>
+        {% endif %}
+        <table class="nb-table">
+          <thead><tr>
+            <th></th><th class="nb-barcell"></th>{% if c.rows and c.rows[0].count %}<th class="num">People or homes</th>{% endif %}<th class="num">Share</th>
+            {% if c.has_compare %}{% for col in c.columns %}<th class="num">{{ col }}</th>{% endfor %}{% endif %}
+          </tr></thead>
+          <tbody>
+          {% for r in c.rows %}
+            <tr>
+              <td>{{ r.label }}{% if r.flag %} <span class="nb-flag nb-{{ r.flag|replace(' ', '-') }}">{{ r.flag }}</span>{% endif %}</td>
+              <td class="nb-barcell"><div class="nb-bar" style="width: {{ r.width }}%"></div></td>
+              {% if r.count %}<td class="num">{{ r.count }}</td>{% endif %}
+              <td class="num">{{ r.pct_display }}</td>
+              {% if c.has_compare %}{% for d in r.compare_display %}<td class="cmp">{{ d }}</td>{% endfor %}{% endif %}
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+
+      {% elif c.kind == "pyramid" %}
+        <div class="nb-pyr-head"><span style="text-align:right">Male</span><span></span><span>Female</span></div>
+        {% for r in c.rows %}
+        <div class="nb-pyr">
+          <div style="justify-self:end;display:flex;align-items:center;gap:6px"><span class="sub">{{ r.male }}%</span><div class="m" style="width: {{ r.male_width }}%; min-width:1px"></div></div>
+          <div class="band">{{ r.band }}</div>
+          <div style="display:flex;align-items:center;gap:6px"><div class="f" style="width: {{ r.female_width }}%; min-width:1px"></div><span class="sub">{{ r.female }}%</span></div>
+        </div>
+        {% endfor %}
+        <p class="sub">Each bar is a share of everyone in the area.</p>
+      {% endif %}
+
+      <div class="sub nb-source">{{ c.source }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+
+<div class="nb-section">
+  <h2>Faith and Giving</h2>
+  <div class="nb-grid">
+    <div class="card nb-card">
+      <h3>Other Episcopal parishes nearby</h3>
+      {% if nearby %}
+      <ul class="nb-list">
+        {% for n in nearby %}<li>{{ n.name }} <span class="sub">({{ n.org_code }}, {{ n.miles }} miles, within {{ n.within_minutes }} minutes)</span></li>{% endfor %}
+      </ul>
+      {% else %}
+      <p class="sub">No other parish known to Beacon is inside these drive-time areas.</p>
+      {% endif %}
+      <div class="sub nb-source">Beacon parish locations</div>
+    </div>
+    {% if parochial %}
+    <div class="card nb-card">
+      <h3>This parish, from its {{ parochial.year }} parochial report</h3>
+      <ul class="nb-compare">
+        {% if parochial.members %}<li><span>Members</span><strong>{{ parochial.members }}</strong></li>{% endif %}
+        {% if parochial.attendance %}<li><span>Average Sunday attendance</span><strong>{{ parochial.attendance }}</strong></li>{% endif %}
+        {% if parochial.pledges %}<li><span>Amount pledged</span><strong>{{ parochial.pledges }}</strong></li>{% endif %}
+      </ul>
+      <div class="sub nb-source">Parochial report, latest filing</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="sub nb-foot">
+  Statistics: U.S. Census Bureau, American Community Survey {{ vintage }} 5-year estimates (five-year averages, not a single year).
+  Where the Census margin of error is large the number carries a flag. Drive-time areas: openrouteservice.org.
+  Map data &copy; OpenStreetMap contributors. Numbers built {{ run_date }}.
+</div>
+{% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}
+{% if state == "ok" %}
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script>
+(function () {
+  var el = document.getElementById('nbMap');
+  if (!el || typeof L === 'undefined') return;
+  L.Icon.Default.imagePath = '/static/vendor/leaflet/images/';
+  var chosen = parseInt(el.getAttribute('data-ring'), 10);
+  var map = L.map(el, { scrollWheelZoom: false });
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> | Drive times &copy; <a href="https://openrouteservice.org">openrouteservice.org</a>'
+  }).addTo(map);
+  fetch('/neighborhood/map.json', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d) return;
+      var bounds = null;
+      d.rings.forEach(function (ring) {                      // largest first, so the small ring sits on top
+        var on = ring.minutes === chosen;
+        var layer = L.geoJSON(ring.geometry, { style: { color: '#2f5d3a', weight: on ? 3 : 1, fillColor: '#2f5d3a', fillOpacity: on ? 0.22 : 0.08 } })
+          .bindTooltip(ring.minutes + '-minute drive', { sticky: true }).addTo(map);
+        if (!bounds) bounds = layer.getBounds();
+      });
+      d.parishes.forEach(function (p) {
+        L.circleMarker([p.lat, p.lon], { radius: 5, color: '#8a6d1d', fillColor: '#c9a227', fillOpacity: 0.9, weight: 1 })
+          .bindTooltip(p.name).addTo(map);
+      });
+      L.marker([d.site.lat, d.site.lon]).bindTooltip(d.site.name).addTo(map);
+      map.fitBounds(bounds || [[d.site.lat, d.site.lon], [d.site.lat, d.site.lon]], { padding: [12, 12] });
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}

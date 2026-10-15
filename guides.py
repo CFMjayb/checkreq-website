@@ -72,6 +72,13 @@ GUIDES = {
         "back_url": "/admin/sma-letters",
         "back_label": "SMA Letters",
     },
+    # 2026-10-15 (26-XXX Neighborhood Insights): the Neighborhood page in Parish Mode (parish_neighborhood.py).
+    "neighborhood": {
+        "title": "Neighborhood",
+        "template": "guide_neighborhood.html",
+        "back_url": "/neighborhood",
+        "back_label": "Neighborhood",
+    },
 }
 
 

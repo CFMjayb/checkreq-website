@@ -116,6 +116,7 @@ import digest_extras
 import parish_documents
 import cornerstone_documents
 import parish_info
+import parish_neighborhood
 import parish_finance
 import tile_badges
 import announcements
@@ -9552,6 +9553,8 @@ parish_requests.register(app, current_user=_current_user, render=_render)
 # 2026-08-08 feedback batch: live Databank contact info, replacing the plain
 # Diocese/City/Served Tier/Status card on parish_view.html.
 parish_info.register(app, current_user=_current_user, render=_render)
+# 26-XXX Neighborhood Insights: the Neighborhood page and its Parish Home tile (reads the nbhd schema, writes nothing).
+parish_neighborhood.register(app, current_user=_current_user, render=_render, templates=templates)
 # Parish Portal Plan.md S6/S7 addendum (2026-08-16): SMA status/statement,
 # Middendorf loan progress, AP payments processed, Ask the Business Office,
 # SMA direct-debit enrollment. Thin wiring only -- all logic lives in

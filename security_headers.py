@@ -79,7 +79,7 @@ CSP_REPORT_ONLY = (
     "script-src 'self' 'unsafe-inline'; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src 'self' https://fonts.gstatic.com; "
-    "img-src 'self' data: blob:; "
+    "img-src 'self' data: blob: https://tile.openstreetmap.org; "  # OpenStreetMap map tiles on the Neighborhood page
     "connect-src 'self'; "
     "frame-src 'self' blob:; "
     "object-src 'none'; "
