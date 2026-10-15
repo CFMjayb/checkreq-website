@@ -1,0 +1,98 @@
+{# The Snapshot: what stands out, big-number tiles, donuts and grids. Built by neighborhood_snapshot.py. No numbers are worked out here. #}
+{% macro tile(t) %}
+<div class="nb-tile{{ ' nb-tile-big' if t.big else '' }}" title="{{ t.tip }}">
+  {{ t.icon }}
+  <div class="nb-tile-num">{{ t.display }}{% if t.flag %}<span class="nb-flag nb-{{ t.flag|replace(' ', '-') }}">{{ t.flag }}</span>{% endif %}</div>
+  <div class="nb-tile-label">{{ t.label }}</div>
+  {% if t.sub %}<div class="nb-tile-sub">{{ t.sub }}</div>{% endif %}
+  {{ t.bullet }}
+  <div class="nb-tile-cmp">
+    {% for lv in ['us', 'state', 'county'] %}<span class="lv-{{ lv }}">{% if t.cmp[lv].has %}{{ t.cmp[lv].label }} {{ t.cmp[lv].display }}{% elif t.compare %}No {{ t.cmp[lv].label }} figure{% else %}&nbsp;{% endif %}</span>{% endfor %}
+  </div>
+</div>
+{% endmacro %}
+
+{% macro chart_card(c) %}
+{% if c %}
+<div class="card nb-chart">
+  <h3>{{ c.title }}</h3>
+  <div class="nb-chart-body">
+    {{ c.svg }}
+    <ul class="nb-legend">
+      {% for l in c.legend %}
+      <li><span class="nb-sw" style="background: {{ l.color }}"></span><span>{{ l.label }}{% if l.flag %}<span class="nb-flag nb-{{ l.flag|replace(' ', '-') }}">{{ l.flag }}</span>{% endif %}</span><span class="nb-lg-val">{{ l.pct }}</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% if c.note %}<div class="sub nb-note">{{ c.note }}</div>{% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+<div class="nb-snap">
+
+  <section class="card nb-stand" aria-labelledby="nbStandH">
+    <h2 id="nbStandH">What stands out</h2>
+    {% for lv in snapshot.levels %}
+    <div class="lv-{{ lv.key }}">
+      <p class="nb-lead">{{ snapshot.lead[lv.key] }}</p>
+      {% if snapshot.stands[lv.key] %}
+      <ul class="nb-stand-list">
+        {% for s in snapshot.stands[lv.key] %}
+        <li class="nb-st nb-st-{{ s.direction }}">
+          <span class="nb-arrow" aria-hidden="true">{{ '&#9650;'|safe if s.direction == 'above' else '&#9660;'|safe }}</span>
+          <div>
+            <div class="nb-st-head">{{ s.headline }}{% if s.rough %} <span class="sub">(a rough estimate)</span>{% endif %}</div>
+            {% if s.may_point_to %}<div class="sub nb-st-pt">{{ s.may_point_to }}</div>{% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="nb-none">Nothing here differs much from the {{ lv.name }} average.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+
+  <div class="nb-tiles nb-kpis">
+    {% for t in snapshot.top %}{{ tile(t) }}{% endfor %}
+  </div>
+
+  <div class="nb-charts">
+    {{ chart_card(snapshot.generations) }}
+    {{ chart_card(snapshot.race) }}
+    {% if snapshot.balance %}
+    <div class="card nb-chart">
+      <h3>{{ snapshot.balance.title }}</h3>
+      <div class="nb-hbars">
+        {% for r in snapshot.balance.rows %}
+        <div class="nb-hbar-row" title="{{ r.label }}: {{ r.display }}">
+          <div class="nb-hbar-top"><span>{{ r.label }}{% if r.flag %}<span class="nb-flag nb-{{ r.flag|replace(' ', '-') }}">{{ r.flag }}</span>{% endif %}</span><strong>{{ r.display }}</strong></div>
+          <div class="nb-hbar">
+            <div class="nb-hbar-fill" style="width: {{ r.width }}%"></div>
+            {% for lv in ['us', 'state', 'county'] %}{% if r.ticks[lv] is not none %}<span class="nb-mk lv-{{ lv }}" style="left: {{ r.ticks[lv] }}%" title="{{ snapshot.balance.names[lv] }} {{ r.tick_displays[lv] }}"></span>{% endif %}{% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="sub nb-note">{{ snapshot.balance.note }}</div>
+    </div>
+    {% endif %}
+    {{ chart_card(snapshot.employment) }}
+    {{ chart_card(snapshot.education) }}
+    {{ chart_card(snapshot.enrollment) }}
+    {{ chart_card(snapshot.tenure) }}
+    {{ chart_card(snapshot.daytime) }}
+  </div>
+
+  <div class="nb-tiles nb-tilegrid">
+    {% for t in snapshot.grid %}{{ tile(t) }}{% endfor %}
+  </div>
+
+  <p class="sub nb-reliability">
+    The thin bar in each tile is this area; the orange tick is the comparison you picked.
+    {% if snapshot.any_flagged %}A small <span class="nb-flag nb-use-caution">use caution</span> or <span class="nb-flag nb-unreliable">unreliable</span> flag means the Census asked only a sample of households here, so the real figure could be quite a bit higher or lower.{% endif %}
+    Hover over any tile or shape to see the exact figure. The "All details" tab holds every number with its source.
+  </p>
+</div>

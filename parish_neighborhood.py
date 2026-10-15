@@ -25,6 +25,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import db
+import neighborhood_snapshot
 import parish_finance
 import parish_mode
 
@@ -383,7 +384,7 @@ def _schools_card(site_id: int, minutes: int) -> dict | None:
     for r in rows:
         kind = ("Private" if r["is_private"] else "Public") + (f" {r['level'].lower()}" if r["level"] else "")
         items.append({"label": r["name"], "detail": f"{kind}, {r['miles']} miles {_COMPASS[int(((float(r['az']) % 360) + 22.5) // 45) % 8]}"})
-    return {"kind": "list", "key": "nearby_schools", "title": f"Schools nearest the church ({rows[0]['total']} in this area)", "entries": items,
+    return {"kind": "list", "key": "nearby_schools", "total": int(rows[0]["total"]), "title": f"Schools nearest the church ({rows[0]['total']} in this area)", "entries": items,
             "source": "NCES public school locations 2023-24 and the NCES Private School Survey 2021-22 (a sample: some private schools are not listed)"}
 
 
@@ -464,7 +465,8 @@ def neighborhood_page(request: Request):
     geo_names = {"county": (home["county_name"] if home else "County"), "state": STATE_NAMES.get(state_fips or "", "State"), "us": "U.S."}
 
     values = _values_by_metric(run["id"], iso["id"])
-    sections = _sections(values, _benchmarks(run["id"], county_geoid, state_fips), geo_names)
+    bm = _benchmarks(run["id"], county_geoid, state_fips)
+    sections = _sections(values, bm, geo_names)
     schools = _schools_card(site["id"], chosen)
     if schools:
         education = next((s for s in sections if s["title"] == "Education and Schools"), None)
@@ -474,9 +476,15 @@ def neighborhood_page(request: Request):
         education["cards"].append(schools)
 
     nearby = _nearby_parishes(site["id"], parish["org_id"])
+    try:   # the Snapshot is an extra view of the same numbers: if it ever fails, the detailed cards must still show
+        snapshot = neighborhood_snapshot.build(values, bm, geo_names, parish["name"], chosen,
+                                               schools_total=(schools or {}).get("total"), nearby_count=len(nearby)) if values else None
+    except Exception as exc:   # noqa: BLE001
+        print(f"[neighborhood] snapshot failed for parish {parish['id']}: {type(exc).__name__}: {exc}")
+        snapshot = None
     ctx = {
         "parish": parish, "state": "ok", "message": "", "site": site, "rings": minutes, "ring": chosen, "sections": sections,
-        "geo_names": geo_names, "nearby": nearby, "parochial": _parochial(parish, user), "no_values": not values,
+        "geo_names": geo_names, "nearby": nearby, "parochial": _parochial(parish, user), "no_values": not values, "snapshot": snapshot,
         "run_date": run["finished_at"].strftime("%m/%d/%y") if run["finished_at"] else "", "vintage": run["acs_vintage"],
     }
     return _render(request, "parish_neighborhood.html", user, ctx)
