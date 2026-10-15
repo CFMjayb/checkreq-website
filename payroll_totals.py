@@ -1856,6 +1856,8 @@ def variance(org_id: int, period_id: int) -> dict:
         b, g = beacon.get(key), rmap.get(key)
         bh = None if b is None else b["counted_hours"]
         gh = None if g is None else Decimal(g["hours"])
+        if (g is None and bh == 0) or (b is None and gh == 0):
+            continue  # nothing paid and nothing counted is agreement (an actualized "not paid" line holds 0)
         if b is not None and g is not None:
             kind = "match" if abs(bh - gh) < Decimal("0.005") else "differs"
         elif g is not None:
@@ -1863,7 +1865,8 @@ def variance(org_id: int, period_id: int) -> dict:
         else:
             kind = "beacon_hours_not_paid"
         src = b or g
-        rows.append({"kind": kind, "parish_code": src["parish_code"], "parish_name": src["parish_name"],
+        rows.append({"kind": kind, "staff_id": src["staff_id"], "category_id": src["category_id"],
+                     "parish_code": src["parish_code"], "parish_name": src["parish_name"],
                      "dept_name": src.get("dept_name") or src["parish_name"],
                      "employee_number": src["employee_number"], "last_name": src["last_name"],
                      "first_name": src["first_name"],
@@ -1876,4 +1879,16 @@ def variance(org_id: int, period_id: int) -> dict:
                      "difference": None if (bh is None or gh is None) else float(bh - gh)})
     counts = {k: sum(1 for r in rows if r["kind"] == k)
               for k in ("match", "differs", "paid_no_beacon_hours", "beacon_hours_not_paid")}
-    return {"rows": rows, "counts": counts, "register_loaded": bool(reg)}
+    # per department, hours only: what Beacon counts against what was paid, and how many rows differ
+    depts: dict = {}
+    for r in rows:
+        d = depts.setdefault(r["parish_code"], {"parish_code": r["parish_code"], "dept_name": r["dept_name"],
+                                                "beacon_hours": 0.0, "register_hours": 0.0, "differing": 0})
+        d["beacon_hours"] += r["beacon_hours"] or 0.0
+        d["register_hours"] += r["register_hours"] or 0.0
+        if r["kind"] != "match":
+            d["differing"] += 1
+    departments = sorted(({**d, "beacon_hours": round(d["beacon_hours"], 2), "register_hours": round(d["register_hours"], 2),
+                           "difference": round(d["beacon_hours"] - d["register_hours"], 2)} for d in depts.values()),
+                         key=lambda d: d["parish_code"] or "~")
+    return {"rows": rows, "counts": counts, "register_loaded": bool(reg), "departments": departments}

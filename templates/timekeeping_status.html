@@ -50,6 +50,7 @@
           <form method="post" action="/admin/timekeeping/status/{{ period.id }}/final"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit" data-tip="Needs every row green{% if payroll.not_done %}. {{ payroll.not_done }} not green yet{% endif %}">Mark hours Final</button></form>
           {% endif %}
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/variance">Variance report</a>
+          <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/closeout" data-tip="After payroll is processed: close the period, match the paid hours, file the reports, open the next period.">Close out this pay period</a>
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/notes">Payroll notes (print or export)</a>
           {% if period.status in ('open', 'future') %}
           <form method="post" action="/admin/timekeeping/status/{{ period.id }}/standing"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit" data-tip="Records every standing person's hours for this period. A parish with only standing hours turns green; a parish with other hours still needs its approval.">Confirm all standing hours</button></form>

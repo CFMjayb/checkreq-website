@@ -32,6 +32,7 @@ from fastapi.responses import JSONResponse
 import db
 import email_pdf
 import org_features
+import payroll_closeout
 import payroll_totals as pt
 
 router = APIRouter()
@@ -214,6 +215,23 @@ def beacon_record_register_hours(request: Request, body: dict = Body(...)):
         return _pe(e)
     except (TypeError, ValueError):
         return _err(422, "invalid", "period_id must be a whole number.")
+
+
+@router.put("/api/payroll/register-hours/batch")
+def beacon_load_register_batch(request: Request, body: dict = Body(...)):
+    """The PAID hours of one pay period (hours only) in one call, found by pay date. Replaces the paid hours the period
+    held. People who are not on the roster are listed by employee number. When the diocese's auto switch is ON and the
+    period is closed, Beacon is actualized to the paid hours straight away. Used by the close-out script on the payroll PC."""
+    org, bad = _auth(request)
+    if bad:
+        return bad
+    try:
+        _need(body, "pay_date", "lines")
+        return _ok(payroll_closeout.load_register_batch(
+            org["id"], pay_date=body["pay_date"], lines=body["lines"], source_ref=body.get("source_ref"),
+            period_start=body.get("period_start"), period_end=body.get("period_end")))
+    except pt.PayrollError as e:
+        return _pe(e)
 
 
 @router.put("/api/payroll/email-unentered")
