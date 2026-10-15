@@ -117,6 +117,9 @@ import parish_documents
 import cornerstone_documents
 import parish_info
 import parish_neighborhood
+import parish_sustain
+import parish_resources
+import congregational_vitality
 import parish_finance
 import tile_badges
 import announcements
@@ -593,6 +596,10 @@ MODULES = [
     # "This is different from Parish Mode Timekeeping."
     {"key": "time_review", "title": "Roster Review", "desc": "Approve or reject the roster changes (new hires, terminations, edits) parishes and emails ask for.", "url": "/admin/timekeeping/review", "enabled": True, "gate": "timekeeping_reviewer"},
     {"key": "time_status", "title": "Time Review", "desc": "Review each parish's hours, open or close a period, enter missing hours, and export.", "url": "/admin/timekeeping/status", "enabled": True, "gate": "timekeeping_reviewer"},
+    # 26-XXX Congregational Vitality (phase 4): the diocese's side-by-side views of every parish's neighborhood and finances. Gated on the
+    # synthetic "congregational_vitality" pseudo-role injected in _render() below (Beacon Admin or Setup Admin at the current diocese, never
+    # in Cornerstone Mode). Not in CORNERSTONE_MODULE_KEYS, so it never appears for a served parish's own entity.
+    {"key": "congregational_vitality", "title": "Congregational Vitality", "desc": "Every parish's neighborhood and finances side by side: Neighborhood Review and Parish Sustainability Review.", "url": "/congregational-vitality", "enabled": True, "gate": "congregational_vitality"},
 ]
 
 # The union of roles that unlock the "Administrative Tasks" tile/hub (2026-08-02
@@ -821,6 +828,10 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # this also keeps the tiles out of Cornerstone Mode without a second check.
     if org_id is not None and entity_roles & {"hr_admin", "beacon_admin"}             and org_features.is_enabled(org_id, "timekeeping"):
         entity_roles = entity_roles | {"timekeeping_reviewer"}
+    # 26-XXX Congregational Vitality: the diocese's pages are for Beacon Admin or Setup Admin at the CURRENT diocese (the same two the
+    # parish Finance page accepts for diocesan staff). A served parish's own entity (Cornerstone Mode) is not a diocese.
+    if org_id is not None and entity_roles & {"beacon_admin", "setup_admin"} and not cornerstone_mode.is_cornerstone_org(org_id):
+        entity_roles = entity_roles | {"congregational_vitality"}
     # 2026-09-15, Jay's Entity-vs-Parish login split: same synthetic-
     # pseudo-role trick as administrative_tasks/parish_reviewer above, so
     # the two "Request Access" tiles (entity-flavored -> /access-request,
@@ -9555,6 +9566,12 @@ parish_requests.register(app, current_user=_current_user, render=_render)
 parish_info.register(app, current_user=_current_user, render=_render)
 # 26-XXX Neighborhood Insights: the Neighborhood page and its Parish Home tile (reads the nbhd schema, writes nothing).
 parish_neighborhood.register(app, current_user=_current_user, render=_render, templates=templates)
+# 26-XXX Congregational Vitality: the Parish Sustainability Review (reads the sustain schema; writes only saved scenarios).
+parish_sustain.register(app, current_user=_current_user, render=_render, templates=templates)
+# 26-XXX: the "Resources for Parishes" menu on Parish Home (Neighborhood View, Parish Sustainability Review, the document archive).
+parish_resources.register(app, current_user=_current_user, render=_render, templates=templates)
+# 26-XXX: the diocese's Congregational Vitality pages (Neighborhood Review, Parish Sustainability Review, projection defaults).
+congregational_vitality.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 # Parish Portal Plan.md S6/S7 addendum (2026-08-16): SMA status/statement,
 # Middendorf loan progress, AP payments processed, Ask the Business Office,
 # SMA direct-debit enrollment. Thin wiring only -- all logic lives in

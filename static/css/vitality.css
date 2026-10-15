@@ -1,0 +1,76 @@
+/* The diocese's Congregational Vitality pages (26-XXX Congregational Vitality, phase 4): the menu, the Neighborhood Review table, the
+   Parish Sustainability Review list and the projection defaults form. Beacon colors. Shading is two neutral tints plus an arrow and the
+   word "higher" or "lower", so color is never the only carrier, and higher is never colored as good or bad. */
+
+.vt h1 { margin: 0; }
+.vt .lbl { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-muted); font-weight: 600; }
+
+/* the header band */
+.vt-band { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--space-4); flex-wrap: wrap; margin: var(--space-3) 0 var(--space-4); border-bottom: 3px solid var(--color-gold); }
+.vt-band h2 { margin: 2px 0 var(--space-1); }
+.vt-band .sub { margin: 0; max-width: 60ch; }
+.vt-controls { display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: flex-end; }
+.vt-seg { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.vt-seg .lbl { margin-right: 2px; }
+.vt-salary { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.vt-salary input[type=text] { font: inherit; padding: 5px 8px; border: 1px solid var(--color-border); border-radius: 6px; background: #fff; width: 9.5em; }
+.vt-error { margin: var(--space-1) 0 0; color: var(--color-danger); font-size: 0.85rem; }
+
+/* count cards */
+.vt-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: var(--space-3); margin-bottom: var(--space-4); }
+.vt-card .sub { margin: 0; }
+.vt-big { font-size: 1.9rem; font-weight: 700; line-height: 1.1; margin: 2px 0; font-variant-numeric: tabular-nums; }
+.vt-of { font-size: 1rem; font-weight: 400; color: var(--color-text-muted); }
+
+/* key above the table */
+.vt-key { display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: center; font-size: 0.82rem; color: var(--color-text-muted); margin-bottom: var(--space-2); }
+.vt-sq { display: inline-block; width: 12px; height: 12px; border: 1px solid var(--color-border); border-radius: 2px; margin-right: 4px; vertical-align: -1px; background: #fff; }
+
+/* the tables: one row per parish, scrolls sideways in a narrow window instead of squeezing */
+.vt-scroll { overflow: auto; max-height: 74vh; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: #fff; }   /* its own scroll box, so the headings stay in view */
+.vt-table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 1180px; font-size: 0.88rem; }
+.vt-table th { position: sticky; top: 0; z-index: 1; background: #f3f1ea; text-align: left; font-weight: 600; padding: 8px 10px; border-bottom: 2px solid var(--color-border); white-space: nowrap; }
+.vt-table th a { color: var(--color-franciscan-green-dark); text-decoration: none; }
+.vt-table th a:hover, .vt-table th a:focus-visible { text-decoration: underline; }
+.vt-table th[aria-sort] { background: #ece7d8; }
+.vt-table td { padding: 6px 9px; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+.vt-table tbody tr:hover td { filter: brightness(0.985); }
+.vt-name { min-width: 13em; }
+.vt-name a { font-weight: 600; color: var(--color-franciscan-green-dark); }
+.vt-place { font-size: 0.78rem; color: var(--color-text-muted); }
+.vt-v { font-weight: 600; font-variant-numeric: tabular-nums; }
+.vt-c { font-size: 0.74rem; color: var(--color-text-muted); white-space: nowrap; }
+.vt-txt { min-width: 17em; }
+.vt-table th:first-child, .vt-table td.vt-name { position: sticky; left: 0; background: #fff; box-shadow: 1px 0 0 var(--color-border); }   /* the parish name stays in view when the table scrolls sideways */
+.vt-table th:first-child { background: #f3f1ea; z-index: 3; }
+.vt-table td.vt-name { z-index: 2; }
+.vt-note { font-size: 0.82rem; }
+.vt-flag { font-weight: 400; font-size: 0.72rem; color: var(--color-text-muted); border: 1px solid var(--color-border); border-radius: 999px; padding: 0 6px; white-space: nowrap; }
+.vt-none { color: var(--color-text-muted); font-style: italic; }
+.vt-hi { background: #f7efd7; }
+.vt-lo { background: #e4edf3; }
+.vt-sq.vt-hi { background: #f7efd7; }
+.vt-sq.vt-lo { background: #e4edf3; }
+.vt-spark { display: block; }
+
+.vt-foot { margin-top: var(--space-4); }
+.vt-foot p { margin: 0 0 var(--space-2); }
+
+/* the defaults form */
+.vt-defaults { display: grid; gap: var(--space-4); max-width: 640px; }
+.vt-field label { display: block; font-weight: 600; margin-bottom: 4px; }
+.vt-field input[type=text] { font: inherit; padding: 6px 8px; border: 1px solid var(--color-border); border-radius: 6px; background: #fff; width: 14em; }
+.vt-field.has-error input[type=text] { border-color: var(--color-danger); }
+.vt-field .sub { margin: 4px 0 0; }
+.vt-note-line { font-style: italic; }
+.vt-actions { display: flex; gap: var(--space-3); }
+
+/* a parish page opened from the diocese's list says so */
+.vt-diocesan { margin-bottom: var(--space-3); }
+
+@media print {
+  .vt-controls, .vt-key, .back-link { display: none; }
+  .vt-scroll { overflow: visible; border: 0; }
+  .vt-table { min-width: 0; font-size: 0.75rem; }
+  .vt-table th { position: static; }
+}

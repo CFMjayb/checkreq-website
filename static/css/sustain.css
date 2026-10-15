@@ -1,0 +1,97 @@
+/* The Parish Sustainability Review (26-XXX Congregational Vitality): trend charts, "what stands out", and "Can we afford a priest?".
+   Beacon colors. Chart colors are the validated categorical slots drawn by sustain_viz.py. */
+
+.sv-head h1 { margin: 0; }
+.sv-band { margin: var(--space-3) 0 var(--space-4); border-bottom: 3px solid var(--color-gold); }
+.sv-band h2 { margin: 2px 0 var(--space-1); }
+.sv-band .lbl { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-muted); font-weight: 600; }
+.sv-sec { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; margin: var(--space-6) 0 var(--space-3); }
+.sv-sec h2 { margin: 0; }
+.sv-sec .sub { margin: 0; }
+
+/* what stands out */
+.sv-stand { border-left: 5px solid var(--color-gold); margin-bottom: var(--space-4); }
+.sv-stand h2 { margin: 0 0 var(--space-2); }
+.sv-stand ul { margin: 0; padding-left: 1.2em; display: grid; gap: var(--space-2); }
+.sv-stand li { font-weight: 600; }
+
+/* trend charts */
+.sv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: var(--space-4); align-items: start; }
+.sv-chart { min-width: 0; }
+.sv-chart-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
+.sv-chart-head h3 { margin: 0; font-size: 1rem; }
+.sv-tools { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.sv-seg { display: inline-flex; border: 1px solid var(--color-border); border-radius: 999px; overflow: hidden; background: #fff; }
+.sv-seg button { font: inherit; font-size: 0.8rem; border: 0; background: transparent; color: var(--color-franciscan-green-dark); padding: 3px 10px; cursor: pointer; }
+.sv-seg button.is-active { background: var(--color-franciscan-green); color: #fff; font-weight: 600; }
+.sv-tbtn { font: inherit; font-size: 0.8rem; border: 1px solid var(--color-border); background: #fff; color: var(--color-franciscan-green-dark); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
+.sv-tbtn[aria-pressed="true"] { background: var(--color-franciscan-green); color: #fff; }
+.sv-seg button:focus-visible, .sv-tbtn:focus-visible, #svSheet:focus-visible { outline: 3px solid var(--color-gold); outline-offset: 2px; }
+.sv-svg { display: block; width: 100%; max-width: 480px; height: auto; margin-inline: auto; }   /* a cap, so the axis text does not scale up in a wide column */
+.sv-proj .sv-svg { max-width: 720px; }
+.sv-ax { font-size: 9.5px; fill: #6f6e69; }
+.sv-end { font-size: 10px; font-weight: 600; fill: #1c2621; font-variant-numeric: tabular-nums; }
+.sv-legend { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: grid; gap: 3px; font-size: 0.82rem; }
+.sv-legend li { display: grid; grid-template-columns: 24px 1fr auto; gap: 8px; align-items: center; }
+.sv-lg-val { font-variant-numeric: tabular-nums; color: var(--color-text-muted); }
+.sv-lg-yr { font-size: 0.75rem; }
+.sv-note { margin: var(--space-2) 0 0; font-size: 0.8rem; }
+
+/* range and table switches (the page script sets these; without it the 10-year chart shows and the rest stays hidden) */
+.sv-js .sv-chart[data-range="ten"] .sv-view[data-view="all"], .sv-js .sv-chart[data-range="all"] .sv-view[data-view="ten"] { display: none; }
+.sv-js .sv-chart[data-range="ten"] .sv-view[data-view="ten"], .sv-js .sv-chart[data-range="all"] .sv-view[data-view="all"] { display: block; }
+.sv-js .sv-chart[data-mode="table"] .sv-plot, .sv-js .sv-chart[data-mode="table"] .sv-legend,
+.sv-js .sv-proj[data-mode="table"] .sv-plot, .sv-js .sv-proj[data-mode="table"] .sv-legend { display: none; }
+.sv-js .sv-chart[data-mode="table"] .sv-view .sv-table, .sv-js .sv-proj[data-mode="table"] .sv-table { display: block; }
+.sv-table { overflow-x: auto; max-height: 260px; overflow-y: auto; }
+table.sv-table-el { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+table.sv-table-el th { text-align: left; font-weight: 600; color: var(--color-text-muted); border-bottom: 1px solid var(--color-border); padding: 4px 6px; }
+table.sv-table-el td, table.sv-table-el tbody th { border-bottom: 1px solid var(--color-border); padding: 4px 6px; font-weight: 400; color: var(--color-text); }
+table.sv-table-el .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* the calculator */
+.sv-calc { display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); gap: var(--space-5); align-items: start; }
+@media (max-width: 860px) { .sv-calc { grid-template-columns: 1fr; } }
+.sv-inputs { display: grid; gap: var(--space-3); }
+.sv-inp label { display: flex; justify-content: space-between; gap: 8px; font-size: 0.88rem; font-weight: 600; }
+.sv-inp output { font-variant-numeric: tabular-nums; color: var(--color-text-muted); font-weight: 400; }
+.sv-inp input[type=number], .sv-scen input[type=text], .sv-scen select { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--color-border); border-radius: 6px; background: #fff; }
+.sv-inp input[type=range] { width: 100%; accent-color: var(--color-franciscan-green); }
+.sv-inp input:disabled { background: #f3f1ea; color: var(--color-text-muted); }
+.hint { font-size: 0.75rem; color: var(--color-text-muted); font-weight: 400; display: block; }
+.sv-tog { display: flex; gap: 8px; align-items: flex-start; font-size: 0.88rem; }
+.sv-scen { display: grid; gap: var(--space-2); border-top: 1px solid var(--color-border); padding-top: var(--space-3); }
+.sv-scen-row { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.sv-scen-row .lbl { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-muted); font-weight: 600; }
+.sv-scen-row .btn { justify-self: start; }
+.sv-sheet { margin: 0; font-size: 0.85rem; }
+.sv-sheet.is-on a { font-weight: 700; }
+
+.sv-out { min-width: 0; }
+.sv-answer { font-size: 1.2rem; line-height: 1.35; margin: 0 0 var(--space-2); font-weight: 400; }
+.sv-answer strong { font-weight: 700; }
+.sv-answer-surplus strong { color: var(--color-franciscan-green-dark); }
+.sv-answer-deficit_every_year strong, .sv-answer-deficit_some_years strong { color: #8a3a12; }
+.sv-notice { margin: 0 0 var(--space-2); padding: 6px 10px; border-radius: 6px; font-size: 0.85rem; }
+.sv-notice-gold { background: #fbf1d3; color: #6b5208; }
+.sv-notice-warn { background: #fbe9e9; color: var(--color-danger); }
+.sv-notice-info { background: #e3eefb; color: #1d4f8f; }
+.sv-error { background: #fbe9e9; color: var(--color-danger); padding: 8px 12px; border-radius: 6px; margin: 0 0 var(--space-3); }
+.sv-tile-head { margin: var(--space-3) 0 var(--space-1); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-muted); font-weight: 600; }
+.sv-kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-2); margin-bottom: var(--space-4); }
+.sv-tile { background: #f3f1ea; border-radius: 8px; padding: 8px 10px; }
+.sv-tile b { display: block; font-size: 1.3rem; line-height: 1.2; color: var(--color-franciscan-green-dark); }
+.sv-tile span { font-size: 0.75rem; color: var(--color-text-muted); }
+.sv-proj { margin-top: var(--space-2); }
+
+.sv-link { display: block; text-decoration: none; margin-top: var(--space-5); }
+.sv-link h3 { margin: 0 0 4px; }
+.sv-link .sub { margin: 0; }
+.sv-foot { margin-top: var(--space-6); }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+@media print {
+  .site-header, .site-footer, footer, .back-link, .sv-tools, .sv-inputs, .sv-scen { display: none !important; }
+  .sv-calc { grid-template-columns: 1fr; }
+  .card { box-shadow: none !important; border: 1px solid #ddd; break-inside: avoid; }
+}

@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Neighborhood Review — {{ org.name }}{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/vitality.css?v={{ asset_version('css/vitality.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell page-shell-wide vt">
+<h1>Neighborhood Review</h1>
+<p class="back-link"><a href="/congregational-vitality">&larr; Back to Congregational Vitality</a></p>
+
+{% if state == "no_run" %}
+<div class="banner banner-info">The neighborhood numbers have not been built for this diocese yet.</div>
+{% else %}
+<header class="card vt-band">
+  <div>
+    <div class="lbl">{{ org.name }}</div>
+    <h2>Parish neighborhoods at a glance</h2>
+    <p class="sub">Which parishes sit in growing, older, or poorer areas? The numbers are for the people who live within a {{ ring }}-minute drive of each church.</p>
+  </div>
+  <div class="vt-controls">
+    <div class="vt-seg" role="group" aria-label="Drive time">
+      <span class="lbl">Drive time</span>
+      {% for r in ring_links %}<a class="btn btn-sm {{ 'btn-primary' if r.active else 'btn-secondary' }}" href="{{ r.href }}"{% if r.active %} aria-current="true"{% endif %}>{{ r.minutes }} min</a>{% endfor %}
+    </div>
+    <div class="vt-seg" role="group" aria-label="Compare with">
+      <span class="lbl">Compare with</span>
+      {% for l in level_links %}<a class="btn btn-sm {{ 'btn-primary' if l.active else 'btn-secondary' }}" href="{{ l.href }}"{% if l.active %} aria-current="true"{% endif %}>{{ l.name }}</a>{% endfor %}
+    </div>
+  </div>
+</header>
+
+<section class="vt-cards" aria-label="Summary">
+  {% for c in table.summary %}
+  <div class="card vt-card">
+    <div class="lbl">{{ c.title }}</div>
+    <div class="vt-big">{{ c.count }} <span class="vt-of">of {{ c.of }}</span></div>
+    <div class="sub">parishes, {{ c.what }}, against {{ c.against }}</div>
+  </div>
+  {% endfor %}
+</section>
+
+<div class="vt-key" aria-label="How to read the table">
+  <span><span class="vt-sq vt-hi"></span>&#9650; clearly higher than {{ table.level_word }}</span>
+  <span><span class="vt-sq vt-lo"></span>&#9660; clearly lower</span>
+  <span><span class="vt-sq"></span>about the same</span>
+  <span>Higher is not better or worse. Click a column heading to sort.</span>
+</div>
+
+<div class="vt-scroll">
+<table class="vt-table" aria-label="Parish neighborhoods">
+  <thead>
+    <tr>
+      {% for col in table.columns %}
+      <th scope="col"{% if col.active %} aria-sort="{{ 'descending' if col.arrow == 'down' else 'ascending' }}"{% endif %}>
+        <a href="{{ col.href }}">{{ col.title }}{% if col.arrow == 'down' %} &#9660;{% elif col.arrow == 'up' %} &#9650;{% endif %}</a>
+      </th>
+      {% endfor %}
+      <th scope="col" class="vt-txt">What stands out most</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in table.rows %}
+    <tr>
+      <td class="vt-name">
+        {% if r.href %}<a href="{{ r.href }}">{{ r.name }}</a>{% else %}{{ r.name }}{% endif %}
+        <div class="vt-place">{{ r.place }}</div>
+      </td>
+      {% if r.has_numbers %}
+        {% for col in table.columns[1:] %}
+        {% set c = r.cells[col.key] %}
+        <td class="{{ 'vt-hi' if c.shade == 'hi' else ('vt-lo' if c.shade == 'lo' else '') }}">
+          <div class="vt-v">{{ c.text }}{% if c.reliability == 'use caution' or c.small %} <span class="vt-flag">use caution</span>{% elif c.reliability == 'unreliable' %} <span class="vt-flag">unreliable</span>{% endif %}</div>
+          {% if c.bench_text %}<div class="vt-c">{{ level_name }} {{ c.bench_text }}{% if c.word %} &middot; {% if c.shade == 'hi' %}&#9650; {% elif c.shade == 'lo' %}&#9660; {% endif %}{{ c.word }}{% endif %}</div>{% elif col.key == 'total_population' %}<div class="vt-c">{{ ring }}-minute drive</div>{% endif %}
+        </td>
+        {% endfor %}
+        <td class="vt-txt"><div class="vt-note">{{ r.top or "Nothing differs much." }}</div></td>
+      {% else %}
+        <td colspan="{{ table.columns|length }}" class="vt-none">{{ r.reason or "No numbers yet" }}</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<footer class="vt-foot sub">
+  <p>Sources: U.S. Census Bureau, American Community Survey {{ vintage }} (5-year averages); 2010 and 2020 Census.{% if run_date %} Numbers built {{ run_date }}.{% endif %} Each parish is compared with its own state or county.</p>
+  <p>"Use caution" means the real figure could be a fair bit higher or lower. "Unreliable" means treat it as a rough guess, and it is never shaded.{% if table.counts.without %} {{ table.counts.without }} parish{{ "es" if table.counts.without != 1 else "" }} below {{ "have" if table.counts.without != 1 else "has" }} no numbers yet; the reason is on its row.{% endif %}</p>
+</footer>
+{% endif %}
+</div>
+{% endblock %}

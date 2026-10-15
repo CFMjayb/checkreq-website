@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Parish Sustainability Review — {{ org.name }}{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/vitality.css?v={{ asset_version('css/vitality.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell page-shell-wide vt">
+<h1>Parish Sustainability Review</h1>
+<p class="back-link"><a href="/congregational-vitality">&larr; Back to Congregational Vitality</a></p>
+
+<header class="card vt-band">
+  <div>
+    <div class="lbl">{{ org.name }}</div>
+    <h2>Which parishes could afford a priest?</h2>
+    <p class="sub">One row per parish, from each parish's own parochial report.{% if as_of %} Data as of {{ as_of.strftime('%m/%d/%y') }}.{% endif %} A parish name opens its full review.</p>
+  </div>
+  <form class="vt-controls" method="get" action="{{ list_href }}">
+    <label class="lbl" for="vtSalary">Test salary and housing</label>
+    <div class="vt-salary">
+      <input id="vtSalary" name="salary" type="text" inputmode="numeric" value="{{ salary_text }}" placeholder="e.g. 65000" autocomplete="off">
+      <input type="hidden" name="sort" value="{{ sort }}">
+      <input type="hidden" name="dir" value="{{ dir }}">
+      <button class="btn btn-sm btn-primary" type="submit">Apply</button>
+      {% if salary is not none %}<a class="btn btn-sm btn-secondary" href="{{ list_href }}?sort={{ sort }}&amp;dir={{ dir }}">Clear</a>{% endif %}
+    </div>
+    {% if salary_error %}<p class="vt-error" role="alert">{{ salary_error }}</p>{% endif %}
+  </form>
+</header>
+
+{% if not lst.guideline_loaded and salary is none %}
+<div class="banner banner-info">The diocese's pay guideline has not been loaded yet, so there is no salary to test. Type a test salary above to see every parish at that salary, or <a href="{{ defaults_href }}">review the projection defaults</a>.</div>
+{% elif salary is not none %}
+<div class="banner banner-info">Every parish is tested with a priest paid ${{ '{:,.0f}'.format(salary) }} in salary and housing, plus the diocese's pension rate{% if lst.guideline_loaded %} (instead of the pay guideline){% endif %}.</div>
+{% endif %}
+
+<section class="vt-cards" aria-label="Summary">
+  <div class="card vt-card"><div class="lbl">With a report</div><div class="vt-big">{{ lst.counts.with_report }} <span class="vt-of">of {{ lst.counts.with_report + lst.counts.without }}</span></div><div class="sub">parishes have a parochial report on file</div></div>
+  <div class="card vt-card"><div class="lbl">Affordable</div><div class="vt-big">{{ lst.counts.affordable }}</div><div class="sub">no gap in the final year, or reserves that last 10 years or more</div></div>
+  <div class="card vt-card"><div class="lbl">Not affordable</div><div class="vt-big">{{ lst.counts.not_affordable }}</div><div class="sub">a gap in the final year and reserves under 10 years</div></div>
+  <div class="card vt-card"><div class="lbl">Not tested</div><div class="vt-big">{{ lst.counts.untested }}</div><div class="sub">no salary to test, or the report cannot be projected</div></div>
+</section>
+
+<div class="vt-scroll">
+<table class="vt-table" aria-label="Parish sustainability">
+  <thead>
+    <tr>
+      {% for col in columns %}
+      <th scope="col"{% if col.active %} aria-sort="{{ 'descending' if col.arrow == 'down' else 'ascending' }}"{% endif %}>
+        <a href="{{ col.href }}">{{ col.title }}{% if col.arrow == 'down' %} &#9660;{% elif col.arrow == 'up' %} &#9650;{% endif %}</a>
+      </th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in lst.rows %}
+    <tr>
+      <td class="vt-name">
+        {% if r.href %}<a href="{{ r.href }}">{{ r.name }}</a>{% else %}{{ r.name }}{% endif %}
+        <div class="vt-place">{{ r.place }}{% if r.year %}{{ " · " if r.place else "" }}latest filing {{ r.year }}{% endif %}</div>
+      </td>
+      {% if r.has_report %}
+      <td>
+        <div class="vt-v">{{ "{:,.0f}".format(r.attendance.latest) if r.attendance.latest is not none else "n/a" }}</div>
+        <div class="vt-c">{{ r.spark }}</div>
+      </td>
+      <td class="{{ 'vt-lo' if r.attendance.direction == 'down' else ('vt-hi' if r.attendance.direction == 'up' else '') }}">
+        {% if r.attendance.word %}<div class="vt-v">{% if r.attendance.direction == 'down' %}&#9660; {% elif r.attendance.direction == 'up' %}&#9650; {% endif %}{{ r.attendance.word }}</div><div class="vt-c">since {{ r.attendance.then_year }}</div>{% else %}<div class="vt-v">n/a</div><div class="vt-c">no {{ r.attendance.then_year }} figure</div>{% endif %}
+      </td>
+      <td>
+        {% if r.deficit.of %}<div class="vt-v">{{ r.deficit.word }}</div><div class="vt-c">years spending more than came in</div>{% else %}<div class="vt-v">n/a</div>{% endif %}
+      </td>
+      <td><div class="vt-v">${{ "{:,.0f}".format(r.reserves_today) }}</div><div class="vt-c">cash and unrestricted reserves</div></td>
+      <td>
+        {% if r.priest.status == 'ok' %}<div class="vt-v">{{ r.runway_text }}</div><div class="vt-c">with a priest at ${{ "{:,.0f}".format(r.priest.salary) }}</div>
+        {% elif r.priest.status == 'no_salary' %}<div class="vt-c">No salary to test</div>
+        {% else %}<div class="vt-c" title="{{ r.priest.error }}">Cannot test</div>{% endif %}
+      </td>
+      <td>
+        {% if r.priest.status == 'ok' %}<div class="vt-v">{{ r.priest.word }}</div>
+        {% else %}<div class="vt-c">{{ r.priest.error or "&mdash;"|safe }}</div>{% endif %}
+      </td>
+      {% else %}
+      <td colspan="6" class="vt-none">No parochial report is linked to this parish yet.</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<footer class="vt-foot sub">
+  <p>Source: each parish's own parochial reports (the latest filing and the ten years before it). Deficit years use the whole-form totals, so they compare across the 2024 form change. Affordable means no gap in the final year of the five-year projection, or reserves that last 10 years or more.</p>
+  <p>The projection follows the diocese's Financial Projection spreadsheet and the parish's own review page, so a parish's row equals its page. Higher is not better or worse; it is information to start a conversation.</p>
+</footer>
+</div>
+{% endblock %}

@@ -75,15 +75,7 @@
     <h3>Parish Information</h3>
     <p class="desc">Contact details, clergy, and parish leadership.</p>
   </a>
-  {# 26-XXX Neighborhood Insights: shown only for a parish whose church location is confirmed and whose diocese has a finished run.
-     neighborhood_tile never raises; the global is registered by parish_neighborhood. #}
-  {% set nb_tile = neighborhood_tile(user, parish) if neighborhood_tile is defined else {"show": False} %}
-  {% if nb_tile.show %}
-  <a class="module-tile" href="{{ nb_tile.href }}">
-    <h3>{{ nb_tile.label }}</h3>
-    <p class="desc">{{ nb_tile.desc }}</p>
-  </a>
-  {% endif %}
+  {# 26-XXX Neighborhood View lives under Resources for Parishes (parish_resources.py), Congregational Vitality plan, 2026-10-15. #}
   {# 26-129 Donor Management: shown only when it is turned on for this parish AND the person holds a role that opens a screen.
      donor_tile never raises; the global is registered by donor_register. #}
   {% set dm_tile = donor_tile(user, parish) if donor_tile is defined else {"show": False} %}
@@ -111,9 +103,11 @@
     <h3>Documents</h3>
     <p class="desc">What the diocese has shared with you, and your own parish's files.</p>
   </a>
-  <a class="module-tile" href="/resource-library">
+  {# Resources for Parishes is a small menu (parish_resources.py): Neighborhood View, Parish Sustainability Review, and the
+     Resource Document Archive (the shared library that used to open from this tile). Jay, 2026-10-15. #}
+  <a class="module-tile" href="/parish-resources">
     <h3>Resources for Parishes</h3>
-    <p class="desc">Shared diocese-wide resources.</p>
+    <p class="desc">Neighborhood View, Parish Sustainability Review, and shared diocese-wide documents.</p>
   </a>
   {# Timekeeping, gate revised 2026-08-16: available to any parish under a
      diocese with the org_features "timekeeping" flag on -- NOT gated on

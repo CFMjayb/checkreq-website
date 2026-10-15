@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Parish Sustainability Review{% if parish %} — {{ parish.name }}{% endif %}{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/sustain.css?v={{ asset_version('css/sustain.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell" id="svRoot" data-base="{{ base_path|default('/sustainability') }}">
+<div class="sv-head"><h1>Parish Sustainability Review</h1></div>
+<p class="back-link"><a href="{{ back_url|default('/parish-resources') }}">&larr; {{ back_label|default('Back to Resources for Parishes') }}</a></p>
+{% if diocesan %}
+<div class="banner banner-info">Diocesan view of {{ parish.name }}.{% if can_spreadsheet_mode %} <a href="/congregational-vitality/sustainability/defaults">Edit the diocese's projection defaults</a>.{% endif %}</div>
+{% endif %}
+
+{% if state == "denied" %}
+<div class="banner banner-info">The Parish Sustainability Review is shown to the people who see {{ parish.name }}'s Finance section. Ask your parish administrator if you need access.</div>
+
+{% elif state == "no_report" %}
+<div class="banner banner-info">No parochial report on file yet for {{ parish.name }}.</div>
+
+{% else %}
+<header class="card sv-band">
+  <div>
+    <div class="lbl">Parochial report</div>
+    <h2>{{ parish.name }}</h2>
+    <p class="sub">Latest filing: {{ latest_year }}{% if as_of %} &middot; Data as of {{ as_of.strftime('%m/%d/%y') }}{% endif %}</p>
+  </div>
+</header>
+
+<section class="card sv-stand" aria-labelledby="svStandHead">
+  <h2 id="svStandHead">What stands out</h2>
+  {% if takeaways %}
+  <ul>
+    {% for t in takeaways %}<li>{{ t }}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="sub">Not enough years of numbers to say what has changed.</p>
+  {% endif %}
+</section>
+
+<div class="sv-sec"><h2>Ten-year trends</h2><p class="sub">Gray band: 2020 and 2021, the pandemic years. Dashed line: 2024, when the parochial report form changed.</p></div>
+<div class="sv-grid">
+  {% for c in charts %}{{ c }}{% endfor %}
+</div>
+
+<div class="sv-sec"><h2>Can we afford a priest?</h2><p class="sub">Five-year projection from the {{ latest_year }} parochial report</p></div>
+<section class="card sv-calc" id="svCalc" data-spreadsheet-ok="{{ 1 if can_spreadsheet_mode else 0 }}" aria-label="Can we afford a priest?">
+  <form id="svForm" class="sv-inputs" autocomplete="off">
+    <div class="sv-inp">
+      <label for="svSalary">Priest salary and housing</label>
+      <input id="svSalary" name="salary" type="number" inputmode="numeric" min="0" max="1000000" step="1000" value="{{ form.salary }}" placeholder="Enter a salary">
+      <div class="hint">Pension adds <span id="svPension">{{ "%g"|format(form.pension_rate) }}</span>% on top (set by the diocese).{% if guideline_missing %} The diocese's clergy pay guideline has not been loaded yet, so there is no starting figure.{% endif %}</div>
+    </div>
+    <div class="sv-inp">
+      <label for="svHealth">Health insurance a year</label>
+      <input id="svHealth" name="health_annual" type="number" inputmode="numeric" min="0" max="200000" step="500" value="{{ form.health_annual }}" placeholder="Not included">
+      <div class="hint">Leave blank if you do not know it; the answer then says health insurance is not included.</div>
+    </div>
+    {% macro slider(id, name, label, lo, hi, val, hint="") %}
+    <div class="sv-inp">
+      <label for="{{ id }}">{{ label }} <output for="{{ id }}" id="{{ id }}Out">{{ "%g"|format(val) }}%</output></label>
+      <input id="{{ id }}" name="{{ name }}" type="range" min="{{ lo }}" max="{{ hi }}" step="0.5" value="{{ val }}">
+      {% if hint %}<div class="hint">{{ hint }}</div>{% endif %}
+    </div>
+    {% endmacro %}
+    {{ slider("svIncome", "income_growth", "Giving and income growth a year", -10, 15, form.income_growth) }}
+    {{ slider("svRaise", "salary_growth", "Priest pay raise a year", 0, 15, form.salary_growth) }}
+    {{ slider("svOther", "other_exp_growth", "Other costs growth a year", 0, 15, form.other_exp_growth) }}
+    {{ slider("svDraw", "safe_draw_rate", "Safe draw from endowment", 0, 10, form.safe_draw_rate, "What share of unrestricted reserves a parish can draw each year. Set by the diocese; change it here to try other rates.") }}
+    <label class="sv-tog"><input id="svIncluded" name="included" type="checkbox"{{ " checked" if form.included }}>
+      <span>Last year's costs already included a full-time priest.
+        <span class="hint">Untick for a parish in transition or with part-time clergy, so the new priest is added on top.</span></span></label>
+    <label class="sv-tog"><input id="svDrawSwitch" name="count_inv_as_draw" type="checkbox"{{ " checked" if form.count_inv_as_draw }}>
+      <span>Count "investments used for operations" as a draw on reserves, not new income.</span></label>
+
+    <div class="sv-scen">
+      <div class="sv-scen-row">
+        <label for="svScenName" class="lbl">Save this scenario as</label>
+        <input id="svScenName" type="text" maxlength="60" placeholder="For example: Full-time rector">
+        <button type="button" class="btn btn-sm btn-secondary" id="svSave">Save scenario</button>
+      </div>
+      <div class="sv-scen-row">
+        <label for="svScenPick" class="lbl">Saved scenarios</label>
+        <select id="svScenPick">
+          <option value="">{{ "Choose one" if scenarios else "None saved yet" }}</option>
+          {% for s in scenarios %}<option value="{{ s.id }}">{{ s.name }}{% if s.created_by %} ({{ s.created_by }}){% endif %}</option>{% endfor %}
+        </select>
+        <button type="button" class="btn btn-sm btn-secondary" id="svLoad">Load scenario</button>
+        <button type="button" class="btn btn-sm btn-secondary" id="svDelete">Delete</button>
+      </div>
+      <p class="sub" id="svScenMsg" role="status"></p>
+    </div>
+    {% if can_spreadsheet_mode %}
+    <p class="sv-sheet"><a href="#" id="svSheet" role="button" aria-pressed="false">Spreadsheet mode</a>
+      <span class="hint">Diocesan staff only: the old workbook's rules and fixed rates, to check numbers against it.</span></p>
+    {% endif %}
+  </form>
+
+  <div class="sv-out" aria-live="polite">
+    <p class="sv-error" id="svError" role="alert"{% if result.ok %} hidden{% endif %}>{% if not result.ok %}{{ result.error }}{% endif %}</p>
+    <div id="svResult">{% if result.ok %}{% include "_sustain_result.html" %}{% endif %}</div>
+  </div>
+</section>
+
+{% if neighborhood and neighborhood.show %}
+<a class="card sv-link" href="{{ neighborhood.href }}">
+  <h3>See who lives near the parish</h3>
+  <p class="sub">Neighborhood: who lives within a short drive of the church, from public Census data.</p>
+</a>
+{% endif %}
+
+<footer class="sv-foot sub">
+  <p>Source: the parish's own parochial reports, {{ rows[0].filing_year }} to {{ latest_year }}. Dollars adjusted with the Consumer Price Index (CPI-U, U.S. city average).{% if cpi_note %} {{ cpi_note }}{% endif %}</p>
+  <p>The projection follows the diocese's Financial Projection spreadsheet. A parish with fewer than 10 pledges does not show the amount pledged or the average pledge, to protect households' privacy. Only the parish's own leaders and diocesan staff see this page.</p>
+</footer>
+{% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/sustain.js?v={{ asset_version('js/sustain.js') }}"></script>
+{% endblock %}
