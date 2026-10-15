@@ -63,6 +63,12 @@ SECTIONS = [
         _stat("total_households", "Households", "count"),
         _stat("avg_household_size", "Average household size", "dec2"),
     ]),
+    ("Population and Household Growth", [
+        _stat("pop_cagr_2010_2020", "Population growth per year, 2010 to 2020", "pct2"),
+        _stat("pop_cagr_2000_2020", "Population growth per year, 2000 to 2020", "pct2"),
+        _stat("hh_cagr_2010_2020", "Household growth per year, 2010 to 2020", "pct2"),
+        _stat("hh_cagr_2000_2020", "Household growth per year, 2000 to 2020", "pct2"),
+    ]),
     ("Household Composition", [
         _bars("hh_family_by_size", "Family households by size"),
         _bars("hh_nonfamily_by_size", "Nonfamily households by size"),
@@ -115,11 +121,16 @@ SECTIONS = [
     ]),
     ("Health", [
         _stat("insured_pct", "Residents with health coverage", "pct"),
+        _stat("routine_checkup_pct", "Adults with a routine checkup in the past year", "pct"),
+        _stat("dental_visit_pct", "Adults with a dental visit in the past year", "pct"),
         _bars("insurance_payor_mix", "Health insurance by age and type"),
         _stat("hh_with_disability_pct", "Households with a person with a disability", "pct"),
     ]),
     ("Connectivity", [
         _stat("hh_no_internet_pct", "Households without internet access", "pct"),
+    ]),
+    ("Daytime Population", [
+        _bars("daytime_population", "People in the area on a workday", headline_fmt="count", headline_label="Daytime population: workers plus residents who stay"),
     ]),
 ]
 
@@ -134,6 +145,8 @@ def _fmt(value, fmt: str) -> str:
         return f"{v:.1f}%"
     if fmt == "dollars":
         return f"${round(v):,}"
+    if fmt == "pct2":
+        return f"{v:.2f}%"
     if fmt == "dec0":
         return f"{v:.0f}"
     if fmt == "dec1":
@@ -332,20 +345,46 @@ def _sections(values: dict, bm: dict, geo_names: dict) -> list[dict]:
 # ---------------------------------------------------------------------------------------------- live sections (no stored run needed)
 
 
-def _nearby_parishes(site_id: int) -> list[dict]:
+# Which other parishes may be shown: active, in the same diocese as the parish being viewed, and not switched off.
+_VISIBLE_NEIGHBOR = ("p.is_active AND p.org_id = %s AND COALESCE(p.modules->>'neighborhood', 'true') <> 'false'")
+
+
+def _nearby_parishes(site_id: int, org_id: int) -> list[dict]:
     return db.query(
-        "SELECT p.name, o.code AS org_code, round(ST_Distance(s1.pt::geography, s2.pt::geography)::numeric / 1609.344, 1) AS miles, "
+        "SELECT p.id AS parish_id, p.name, o.code AS org_code, round(ST_Distance(s1.pt::geography, s2.pt::geography)::numeric / 1609.344, 1) AS miles, "
         "min(i.minutes) AS within_minutes "
         "FROM nbhd.site s1 "
         "JOIN nbhd.isochrone i ON i.site_id = s1.id AND i.is_current "
         "JOIN nbhd.site s2 ON s2.is_primary AND s2.verified_at IS NOT NULL AND s2.parish_id IS NOT NULL AND s2.id <> s1.id AND ST_Covers(i.geom, s2.pt) "
         "JOIN portal.parishes p ON p.id = s2.parish_id "
         "JOIN checkreq.organizations o ON o.id = p.org_id "
-        "WHERE s1.id = %s "
-        "GROUP BY p.name, o.code, s1.pt, s2.pt "
+        f"WHERE s1.id = %s AND {_VISIBLE_NEIGHBOR} "
+        "GROUP BY p.id, p.name, o.code, s1.pt, s2.pt "
         "ORDER BY min(i.minutes), ST_Distance(s1.pt::geography, s2.pt::geography), p.name",
-        (site_id,),
+        (site_id, org_id),
     )
+
+
+_COMPASS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+
+
+def _schools_card(site_id: int, minutes: int) -> dict | None:
+    """The nearest schools inside the chosen drive-time area (live query, no stored run needed): a list card for Education and Schools."""
+    rows = db.query(
+        "SELECT sc.name, sc.level, sc.is_private, round((ST_Distance(s.pt::geography, sc.pt::geography) / 1609.344)::numeric, 1) AS miles, "
+        "degrees(ST_Azimuth(s.pt::geography, sc.pt::geography)) AS az, count(*) OVER () AS total "
+        "FROM nbhd.site s JOIN nbhd.isochrone i ON i.site_id = s.id AND i.is_current AND i.minutes = %s "
+        "JOIN nbhd.school_location sc ON ST_Covers(i.geom, sc.pt) WHERE s.id = %s "
+        "ORDER BY ST_Distance(s.pt::geography, sc.pt::geography), sc.name LIMIT 12", (minutes, site_id),
+    )
+    if not rows:
+        return None
+    items = []
+    for r in rows:
+        kind = ("Private" if r["is_private"] else "Public") + (f" {r['level'].lower()}" if r["level"] else "")
+        items.append({"label": r["name"], "detail": f"{kind}, {r['miles']} miles {_COMPASS[int(((float(r['az']) % 360) + 22.5) // 45) % 8]}"})
+    return {"kind": "list", "key": "nearby_schools", "title": f"Schools nearest the church ({rows[0]['total']} in this area)", "entries": items,
+            "source": "NCES public school locations 2023-24 and the NCES Private School Survey 2021-22 (a sample: some private schools are not listed)"}
 
 
 def _parochial(parish: dict, user) -> dict | None:
@@ -426,11 +465,18 @@ def neighborhood_page(request: Request):
 
     values = _values_by_metric(run["id"], iso["id"])
     sections = _sections(values, _benchmarks(run["id"], county_geoid, state_fips), geo_names)
+    schools = _schools_card(site["id"], chosen)
+    if schools:
+        education = next((s for s in sections if s["title"] == "Education and Schools"), None)
+        if education is None:
+            education = {"title": "Education and Schools", "cards": []}
+            sections.append(education)
+        education["cards"].append(schools)
 
-    nearby = _nearby_parishes(site["id"])
+    nearby = _nearby_parishes(site["id"], parish["org_id"])
     ctx = {
         "parish": parish, "state": "ok", "message": "", "site": site, "rings": minutes, "ring": chosen, "sections": sections,
-        "geo_names": geo_names, "nearby": nearby, "parochial": _parochial(parish, user),
+        "geo_names": geo_names, "nearby": nearby, "parochial": _parochial(parish, user), "no_values": not values,
         "run_date": run["finished_at"].strftime("%m/%d/%y") if run["finished_at"] else "", "vintage": run["acs_vintage"],
     }
     return _render(request, "parish_neighborhood.html", user, ctx)
@@ -453,7 +499,8 @@ def neighborhood_map(request: Request):
         "SELECT p.name, s2.lat, s2.lon FROM nbhd.site s1 "
         "JOIN nbhd.isochrone i ON i.site_id = s1.id AND i.is_current "
         "JOIN nbhd.site s2 ON s2.is_primary AND s2.verified_at IS NOT NULL AND s2.parish_id IS NOT NULL AND s2.id <> s1.id AND ST_Covers(i.geom, s2.pt) "
-        "JOIN portal.parishes p ON p.id = s2.parish_id WHERE s1.id = %s GROUP BY p.name, s2.lat, s2.lon", (site["id"],),
+        f"JOIN portal.parishes p ON p.id = s2.parish_id WHERE s1.id = %s AND {_VISIBLE_NEIGHBOR} GROUP BY p.name, s2.lat, s2.lon",
+        (site["id"], parish["org_id"]),
     )
     return JSONResponse({
         "site": {"name": parish["name"], "lat": float(site["lat"]), "lon": float(site["lon"]), "address": site["address_used"]},
