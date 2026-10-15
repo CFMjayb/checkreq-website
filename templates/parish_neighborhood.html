@@ -3,6 +3,7 @@
 {% block title %}Neighborhood — {{ parish.name }}{% endblock %}
 {% block extra_css %}
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/static/css/neighborhood_snapshot.css?v={{ asset_version('css/neighborhood_snapshot.css') }}">
 <style>
   .nb-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
   .nb-head h1 { margin: 0; }
@@ -66,6 +67,25 @@
 
 {% if no_values %}
 <div class="banner banner-info">The numbers for this {{ ring }}-minute area have not been built yet. Try the other drive time, or ask the diocesan office to run the update again.</div>
+{% endif %}
+
+{% if snapshot %}
+<div id="nbRoot" data-tab="snapshot" data-cmp="us">
+  <div class="nb-controls">
+    <div class="nb-tabs" role="group" aria-label="View">
+      <button type="button" class="nb-tab is-active" data-tab="snapshot" aria-selected="true">Snapshot</button>
+      <button type="button" class="nb-tab" data-tab="details" aria-selected="false">All details</button>
+    </div>
+    <div class="nb-cmp-switch" role="group" aria-label="Compare with">
+      <span class="nb-cmp-label">Compare with</span>
+      {% for lv in snapshot.levels %}<button type="button" class="nb-cmp-btn{{ ' is-active' if lv.key == 'us' else '' }}" data-cmp="{{ lv.key }}" aria-pressed="{{ 'true' if lv.key == 'us' else 'false' }}">{{ lv.name }}</button>{% endfor %}
+      <button type="button" class="btn btn-sm btn-secondary" id="nbPrint">Print</button>
+    </div>
+  </div>
+  {% include "_neighborhood_snapshot.html" %}
+  <div class="nb-details">
+{% else %}
+  <div class="nb-details">
 {% endif %}
 
 {% for section in sections %}
@@ -159,6 +179,8 @@
     {% endif %}
   </div>
 </div>
+</div>{# end of the All details part #}
+{% if snapshot %}</div>{# end of nbRoot #}{% endif %}
 
 <div class="sub nb-foot">
   Statistics: U.S. Census Bureau, American Community Survey {{ vintage }} 5-year estimates (five-year averages, not a single year).
@@ -171,6 +193,7 @@
 {% block extra_js %}
 {% if state == "ok" %}
 <script src="/static/vendor/leaflet/leaflet.js"></script>
+<script src="/static/js/neighborhood_snapshot.js?v={{ asset_version('js/neighborhood_snapshot.js') }}"></script>
 <script>
 (function () {
   var el = document.getElementById('nbMap');
