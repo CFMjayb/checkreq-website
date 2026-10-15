@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Close out pay period — {{ current_org.name }}{% endblock %}
+{#
+  The close-out checklist (26-158, Jay 2026-10-15). After payroll is processed: hours Final, close the period, load the paid
+  hours (on the payroll PC), tie out, actualize, file the reports, open the next period. Each step shows done, to do or waiting,
+  with at most one button. A plain page (no scrolling rows). Hours only, never pay.
+#}
+{% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/closeout.css?v={{ asset_version('css/closeout.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide co-page">
+  <div class="co-top">
+    <h1>Close out this pay period</h1>
+    <a class="back-link" href="/admin/timekeeping/status/{{ period.id }}">&larr; Back to Time Review</a>
+  </div>
+  <p class="co-sub"><strong>{{ period.label or (dt(period.period_start) ~ " to " ~ dt(period.period_end)) }}</strong>
+    &middot; {{ dt(period.period_start) }} &ndash; {{ dt(period.period_end) }}
+    {% if period.pay_date %}&middot; pay date {{ dt(period.pay_date) }}{% endif %}
+    &middot; <span class="badge {{ 'badge-approved' if period.status == 'closed' else 'badge-submitted' if period.status == 'open' else 'badge-cancelled' }}">{{ period.status|capitalize }}</span></p>
+
+  {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% if request.query_params.get('saved') %}<div class="banner banner-success">{{ request.query_params.get('saved') }}</div>{% endif %}
+
+  <div class="table-scroll">
+  <table class="simple-table co-steps">
+    <thead><tr><th class="co-n">#</th><th>Step</th><th>Status</th><th>What happened, or what is next</th><th></th></tr></thead>
+    <tbody>
+    {% for s in steps %}
+      <tr class="co-{{ s.state }}">
+        <td class="co-n">{{ s.n }}</td>
+        <td><strong>{{ s.title }}</strong></td>
+        <td>{% if s.state == 'done' %}<span class="badge badge-approved">Done</span>
+            {% elif s.state == 'todo' %}<span class="badge badge-pending">To do</span>
+            {% else %}<span class="badge badge-cancelled">Waiting</span>{% endif %}</td>
+        <td>{{ s.detail }}</td>
+        <td class="co-act">
+          {% if s.action %}
+          <form method="post" action="{{ s.action.url }}" data-confirm="{{ s.action.confirm }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+            <button type="submit" class="btn btn-sm btn-primary">{{ s.action.label }}</button>
+          </form>
+          {% elif s.link %}<a class="btn btn-sm" href="{{ s.link.url }}">{{ s.link.label }}</a>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {% if departments_off %}
+  <h2 class="co-h2">Departments that do not tie yet</h2>
+  <div class="table-scroll">
+  <table class="simple-table co-depts">
+    <thead><tr><th>Department</th><th class="co-num">Beacon hours</th><th class="co-num">Paid hours</th><th class="co-num">Difference</th><th class="co-num">Lines that differ</th></tr></thead>
+    <tbody>
+    {% for d in departments_off %}
+      <tr><td>{% if d.parish_code %}{{ d.parish_code }} {% endif %}{{ d.dept_name }}</td>
+          <td class="co-num">{{ "%.2f"|format(d.beacon_hours) }}</td><td class="co-num">{{ "%.2f"|format(d.register_hours) }}</td>
+          <td class="co-num">{{ "%.2f"|format(d.difference) }}</td><td class="co-num">{{ d.differing }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+  <div class="co-auto">
+    <h2 class="co-h2">Automatic matching for {{ current_org.name }}</h2>
+    <p>{% if state.auto %}<span class="badge badge-approved">On</span>{% else %}<span class="badge badge-cancelled">Off</span>{% endif %}
+      When this is on, the moment the paid hours are loaded into a <strong>closed</strong> pay period, Beacon changes its hours to the paid hours
+      by itself. Every change keeps the old figure and a note in the edit history. When it is off, a person presses the button in step 5.</p>
+    <form method="post" action="/admin/timekeeping/status/{{ period.id }}/closeout/auto"
+          data-confirm="{{ 'Turn automatic matching off?' if state.auto else 'Turn automatic matching on for this diocese?' }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+      <input type="hidden" name="on" value="{{ '0' if state.auto else '1' }}">
+      <button type="submit" class="btn btn-sm">{{ 'Turn off' if state.auto else 'Turn on' }}</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

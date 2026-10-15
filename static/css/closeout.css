@@ -1,0 +1,14 @@
+/* The close-out checklist (26-158): a plain page, steps down the left, one button per step on the right. */
+.co-page { padding-bottom: 32px; }
+.co-top { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+.co-top h1 { margin: 0; }
+.co-sub { margin: 6px 0 14px; }
+.co-steps td { vertical-align: top; padding: 10px 10px; }
+.co-steps .co-n { width: 2rem; font-weight: 700; color: var(--color-muted, #5d6b63); }
+.co-steps .co-act { text-align: right; white-space: nowrap; }
+.co-steps .co-act form { display: inline; }
+.co-waiting td { color: var(--color-muted, #5d6b63); }
+.co-h2 { font-size: 1.1rem; margin: 22px 0 8px; }
+.co-depts .co-num { text-align: right; font-variant-numeric: tabular-nums; }
+.co-auto { margin-top: 24px; padding: 14px 16px; border: 1px solid var(--color-border, #ddd4c0); border-radius: 8px; max-width: 62rem; }
+.co-auto p { margin: 0 0 10px; }

@@ -64,6 +64,8 @@ STATE_LABELS = {
 def register(app, *, current_user, current_org, render) -> None:
     global _current_user, _current_org, _render
     _current_user, _current_org, _render = current_user, current_org, render
+    import closeout_screens  # the close-out checklist (26-158); registered here so it sits before /status/{period}/{parish}
+    closeout_screens.register(app, current_user=current_user, current_org=current_org, render=render, gate=_require_hr_admin)
     app.include_router(router)
 
 
