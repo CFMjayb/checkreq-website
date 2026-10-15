@@ -169,7 +169,7 @@
   if (!el || typeof L === 'undefined') return;
   L.Icon.Default.imagePath = '/static/vendor/leaflet/images/';
   var chosen = parseInt(el.getAttribute('data-ring'), 10);
-  var map = L.map(el, { scrollWheelZoom: false });
+  var map = L.map(el, { scrollWheelZoom: false }).setView([39, -98], 4);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 18,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> | Drive times &copy; <a href="https://openrouteservice.org">openrouteservice.org</a>'
@@ -178,6 +178,7 @@
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
       if (!d) return;
+      map.setView([d.site.lat, d.site.lon], 11);   // Leaflet needs a view before any shape is added
       var bounds = null;
       d.rings.forEach(function (ring) {                      // largest first, so the small ring sits on top
         var on = ring.minutes === chosen;
