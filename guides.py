@@ -65,6 +65,13 @@ GUIDES = {
         "back_url": "/admin/polls",
         "back_label": "Polls & Surveys",
     },
+    # 2026-10-15 (26-159 Neighborhood Insights): the Neighborhood page in Parish Mode (parish_neighborhood.py).
+    "neighborhood": {
+        "title": "Neighborhood",
+        "template": "guide_neighborhood.html",
+        "back_url": "/neighborhood",
+        "back_label": "Neighborhood",
+    },
 }
 
 

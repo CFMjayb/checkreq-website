@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">Who lives within a short drive of your church, from public Census data.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="what">
+    <h2>What this page is</h2>
+    <p>A picture of the neighborhood around your church: how many people and households live there, their ages, incomes, languages, housing, schools and more. It uses <strong>public Census data</strong>, not your parish's own records, so it describes the <em>neighbors</em>, not your congregation.</p>
+  </section>
+
+  <section class="hiw-section" id="drive">
+    <h2>The 7-minute and 15-minute drive</h2>
+    <p>The area is everything you can reach by car from the church in 7 minutes, or in 15. Use the two buttons above the map to switch. The shaded shapes on the map are those areas. They follow the roads, so they are not circles. The gold dots are other parishes known to Beacon that sit inside the areas.</p>
+  </section>
+
+  <section class="hiw-section" id="compare">
+    <h2>The comparisons</h2>
+    <p>Most cards show the same number for your <strong>county</strong>, your <strong>state</strong> and the <strong>U.S.</strong>, so you can see where your neighborhood differs. The county is the one the church is in.</p>
+  </section>
+
+  <section class="hiw-section" id="flags">
+    <h2>&ldquo;Use caution&rdquo; and &ldquo;unreliable&rdquo;</h2>
+    <p>The Census asks a sample of households, so every number has a <strong>margin of error</strong>. In a small area, especially in the country, it can be large. When it is, the number carries a flag: <strong>use caution</strong> means the number could be off by a lot, <strong>unreliable</strong> means treat it as a rough hint at most. The number is still shown, so you can decide for yourself.</p>
+  </section>
+
+  <section class="hiw-section" id="when">
+    <h2>How current is it?</h2>
+    <p>The footer says which Census release the numbers come from and when Beacon built them. Most of it is the American Community Survey 2020&ndash;2024, which is an <strong>average over five years</strong>, not a count of one year. The unemployment rate here, for example, is that five-year average, not this month's rate. Generations use ages as of 2022.</p>
+  </section>
+
+  <section class="hiw-section" id="missing">
+    <h2>If the page says it is not available</h2>
+    <p>The page appears once the diocesan office has confirmed where your church is and the numbers have been built for your diocese. If you see a message instead of numbers, ask the diocesan office to check your church's location. If your church is not on the map at all, nothing is wrong on your side.</p>
+  </section>
+
+</div>
+{% endblock %}
