@@ -1,4 +1,4 @@
-/* Neighborhood page: switch between Snapshot and All details, pick the comparison (U.S., state, county), print.
+/* Neighborhood View: switch between Story, Report and All details, pick the comparison (U.S., state, county), print.
    No inline handlers (the page's security rules). The choices are remembered in this browser only. */
 (function () {
   var root = document.getElementById('nbRoot');
@@ -12,9 +12,10 @@
     try { window.localStorage.setItem(key, value); } catch (e) { /* private window: just do not remember */ }
   }
 
-  var tab = load('nb.tab', 'snapshot');
+  var tab = load('nb.tab', 'story');
   var cmp = load('nb.cmp', 'us');
-  if (tab !== 'snapshot' && tab !== 'details') tab = 'snapshot';
+  if (tab === 'snapshot') tab = 'report';   /* the old Snapshot tab became Report */
+  if (tab !== 'story' && tab !== 'report' && tab !== 'details') tab = 'story';
   if (['us', 'state', 'county'].indexOf(cmp) < 0) cmp = 'us';
 
   function paint() {

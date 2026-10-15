@@ -1,0 +1,21 @@
+{# One projection, already worked out by sustain_builder.calc_result: the answer, the notices, the four tiles, the chart and the table.
+   Included by parish_sustain.html on first load and rendered alone for every recalculation (POST /sustainability/project). #}
+<p class="sv-answer sv-answer-{{ result.answer.kind }}"><strong>{{ result.answer.lead }}</strong> {{ result.answer.rest }}</p>
+{% for n in result.notices %}
+<p class="sv-notice sv-notice-{{ n.kind }}" role="note">{{ n.text }}</p>
+{% endfor %}
+<p class="lbl sv-tile-head">{{ result.tile_heading }}</p>
+<div class="sv-kv">
+  {% for t in result.tiles %}
+  <div class="sv-tile"><b>{{ t.value }}</b><span>{{ t.label }}</span></div>
+  {% endfor %}
+</div>
+<section class="sv-proj" data-mode="chart" aria-labelledby="svProjHead">
+  <div class="sv-chart-head">
+    <h3 id="svProjHead">Projected surplus or deficit, {{ result.first_year }} to {{ result.last_year }}</h3>
+    <div class="sv-tools"><button type="button" class="sv-tbtn" aria-pressed="false">Table</button></div>
+  </div>
+  <div class="sv-plot">{{ result.chart }}</div>
+  {{ result.legend }}
+  <div class="sv-table" hidden>{{ result.table }}</div>
+</section>

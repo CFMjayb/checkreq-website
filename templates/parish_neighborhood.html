@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_guide_link.html" import guide_link %}
-{% block title %}Neighborhood — {{ parish.name }}{% endblock %}
+{% block title %}Neighborhood View — {{ parish.name }}{% endblock %}
 {% block extra_css %}
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/static/css/neighborhood_snapshot.css?v={{ asset_version('css/neighborhood_snapshot.css') }}">
@@ -42,10 +42,13 @@
 {% block content %}
 <div class="page-shell">
 <div class="nb-head">
-  <h1>Neighborhood</h1>
+  <h1>Neighborhood View</h1>
   {{ guide_link("neighborhood", "How to read this page") }}
 </div>
-<p class="back-link"><a href="/parish-view">&larr; Back</a></p>
+<p class="back-link"><a href="{{ back_url|default('/parish-resources') }}">&larr; {{ back_label|default('Back to Resources for Parishes') }}</a></p>
+{% if diocesan %}
+<div class="banner banner-info">Diocesan view of {{ parish.name }}.</div>
+{% endif %}
 
 {% if state != "ok" %}
 <div class="banner banner-info">{{ message }}</div>
@@ -57,12 +60,12 @@
     <p class="sub">{{ site.address_used }}</p>
     <div class="nb-rings">
       {% for m in rings %}
-      <a class="btn btn-sm {{ 'btn-primary' if m == ring else 'btn-secondary' }}" href="/neighborhood?ring={{ m }}">{{ m }}-minute drive</a>
+      <a class="btn btn-sm {{ 'btn-primary' if m == ring else 'btn-secondary' }}" href="{{ base_path|default('/neighborhood') }}?ring={{ m }}">{{ m }}-minute drive</a>
       {% endfor %}
     </div>
     <p class="sub">The numbers below are for the people who live within a {{ ring }}-minute drive of the church.</p>
   </div>
-  <div id="nbMap" data-ring="{{ ring }}" role="img" aria-label="Map of the drive-time areas around the church"></div>
+  <div id="nbMap" data-ring="{{ ring }}" data-map-url="{{ base_path|default('/neighborhood') }}/map.json" role="img" aria-label="Map of the drive-time areas around the church"></div>
 </div>
 
 {% if no_values %}
@@ -70,10 +73,11 @@
 {% endif %}
 
 {% if snapshot %}
-<div id="nbRoot" data-tab="snapshot" data-cmp="us">
+<div id="nbRoot" data-tab="story" data-cmp="us">
   <div class="nb-controls">
     <div class="nb-tabs" role="group" aria-label="View">
-      <button type="button" class="nb-tab is-active" data-tab="snapshot" aria-selected="true">Snapshot</button>
+      <button type="button" class="nb-tab is-active" data-tab="story" aria-selected="true">Story</button>
+      <button type="button" class="nb-tab" data-tab="report" aria-selected="false">Report</button>
       <button type="button" class="nb-tab" data-tab="details" aria-selected="false">All details</button>
     </div>
     <div class="nb-cmp-switch" role="group" aria-label="Compare with">
@@ -210,7 +214,7 @@
     s.textContent = text;
     return s;
   }
-  fetch('/neighborhood/map.json', { credentials: 'same-origin' })
+  fetch(el.getAttribute('data-map-url') || '/neighborhood/map.json', { credentials: 'same-origin' })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
       if (!d) return;

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Projection defaults — {{ org.name }}{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/vitality.css?v={{ asset_version('css/vitality.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell vt">
+<h1>Projection defaults</h1>
+<p class="back-link"><a href="/congregational-vitality/sustainability">&larr; Back to Parish Sustainability Review</a></p>
+
+{% if saved is not none and not errors %}
+<div class="banner banner-success" role="status">{% if saved|int == 0 %}Nothing changed.{% else %}Saved. {{ saved }} default{{ "s" if saved|int != 1 else "" }} changed.{% endif %}</div>
+{% endif %}
+{% if errors %}
+<div class="banner banner-error" role="alert">Nothing was saved. Fix the fields marked below and save again.</div>
+{% endif %}
+
+<p class="sub">These are the starting values every parish's "Can we afford a priest?" calculator uses for {{ org.name }}. A parish leader can change the rates on their own page for a quick what-if; only you change them for everyone. The pension rate is shown to parishes but they cannot change it.</p>
+
+<form method="post" action="/congregational-vitality/sustainability/defaults" class="card vt-defaults">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+  {% for f in fields %}
+  <div class="vt-field{% if f.error %} has-error{% endif %}">
+    <label for="d_{{ f.key }}">{{ f.label }}{% if f.kind == "percent" %} (percent){% else %} (dollars){% endif %}</label>
+    <input id="d_{{ f.key }}" name="d_{{ f.key }}" type="text" inputmode="decimal" value="{{ f.value }}" autocomplete="off"{% if f.blank_ok %} placeholder="not decided yet"{% endif %}>
+    {% if f.error %}<p class="vt-error" role="alert">{{ f.error }}</p>{% endif %}
+    {% if f.hint %}<p class="sub">{{ f.hint }}</p>{% endif %}
+    {% if f.note %}<p class="sub vt-note-line">{{ f.note }}</p>{% endif %}
+    {% if f.set_by %}<p class="sub vt-note-line">Last set by {{ f.set_by }}{% if f.set_at %} on {{ f.set_at }}{% endif %}.</p>{% endif %}
+  </div>
+  {% endfor %}
+  <div class="vt-actions">
+    <button class="btn btn-primary" type="submit">Save defaults</button>
+    <a class="btn btn-secondary" href="/congregational-vitality/sustainability">Cancel</a>
+  </div>
+</form>
+</div>
+{% endblock %}

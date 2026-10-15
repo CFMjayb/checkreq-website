@@ -10,9 +10,28 @@
 .nb-tab.is-active, .nb-cmp-btn.is-active { background: var(--color-franciscan-green); color: #fff; border-color: var(--color-franciscan-green); }
 .nb-tab:focus-visible, .nb-cmp-btn:focus-visible { outline: 3px solid var(--color-gold); outline-offset: 2px; }
 
-/* with scripts: show one tab at a time. without: both are shown, one after the other */
-.nb-js #nbRoot[data-tab="snapshot"] .nb-details { display: none; }
+/* with scripts: show one tab at a time (Story, Report or All details). without: all are shown, one after the other */
+.nb-js #nbRoot[data-tab="story"] .nb-report, .nb-js #nbRoot[data-tab="story"] .nb-details { display: none; }
+.nb-js #nbRoot[data-tab="report"] .nb-story, .nb-js #nbRoot[data-tab="report"] .nb-details { display: none; }
 .nb-js #nbRoot[data-tab="details"] .nb-snap { display: none; }
+
+/* section headings on the Story tab, and the "in the pews and in the neighborhood" panel */
+.nb-sec { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; margin: var(--space-5) 0 var(--space-3); }
+.nb-sec h2 { margin: 0; }
+.nb-sec .sub { margin: 0; }
+.nb-pews { margin-bottom: var(--space-5); }
+.nb-pews h2 { margin: 0 0 2px; }
+.nb-pews-sub { margin: 0 0 var(--space-3); }
+.nb-pews-grid { display: grid; grid-template-columns: minmax(110px, 0.8fr) 1fr 1fr; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+.nb-pews-grid > div { padding: 10px 12px; border-bottom: 1px solid var(--color-border); min-width: 0; }
+.nb-pews-grid .nb-ph { background: #f3f1ea; font-weight: 600; font-size: 0.85rem; }
+.nb-pews-grid .nb-pk { color: var(--color-text-muted); font-size: 0.85rem; }
+.nb-pv { font-size: 1.35rem; font-weight: 700; line-height: 1.2; color: var(--color-franciscan-green-dark); }
+.nb-pv-none { font-size: 1rem; font-weight: 400; color: var(--color-text-muted); }
+.nb-pn { display: block; font-size: 0.78rem; color: var(--color-text-muted); font-weight: 400; }
+.nb-pews-note { margin: var(--space-3) 0 var(--space-2); }
+.nb-pews-ask { margin: 0; }
+@media (max-width: 560px) { .nb-pews-grid { grid-template-columns: 1fr 1fr; } .nb-pews-grid .nb-ph:first-child, .nb-pews-grid .nb-pk { grid-column: 1 / -1; background: #f3f1ea; } }
 
 /* which comparison is showing (U.S., state or county) */
 #nbRoot[data-cmp="us"] .lv-state, #nbRoot[data-cmp="us"] .lv-county,

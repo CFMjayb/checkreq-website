@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Congregational Vitality{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/vitality.css?v={{ asset_version('css/vitality.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Congregational Vitality</h1>
+<p class="back-link"><a href="/portal">&larr; Back to the portal</a></p>
+
+{% if state == "denied" %}
+<div class="banner banner-info">Congregational Vitality is for diocesan staff. Ask a Beacon Admin if you need access.</div>
+{% elif state == "notfound" %}
+<div class="banner banner-info">That parish was not found in this diocese. <a href="/congregational-vitality">Back to Congregational Vitality</a></div>
+{% else %}
+<p class="sub">{{ org.name }}: how each parish's neighborhood and finances look, side by side.</p>
+<div class="module-grid">
+  {% for t in tiles %}
+  <a class="module-tile" href="{{ t.href }}">
+    <h3>{{ t.label }}</h3>
+    <p class="desc">{{ t.desc }}</p>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+</div>
+{% endblock %}

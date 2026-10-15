@@ -31,6 +31,8 @@
 
 <div class="nb-snap">
 
+  {#- The Story tab: sentences first, then the numbers (Congregational Vitality mockup B). -#}
+  <div class="nb-story">
   <section class="card nb-stand" aria-labelledby="nbStandH">
     <h2 id="nbStandH">What stands out</h2>
     {% for lv in snapshot.levels %}
@@ -55,6 +57,71 @@
     {% endfor %}
   </section>
 
+    <div class="nb-sec"><h2>Key numbers</h2><p class="sub">The thin bar is this area; the orange tick is the comparison you picked.</p></div>
+  <div class="nb-tiles nb-kpis">
+    {% for t in snapshot.top %}{{ tile(t) }}{% endfor %}
+  </div>
+
+  {% if pews %}
+  <section class="card nb-pews" aria-labelledby="nbPewsH">
+    <h2 id="nbPewsH">In the pews and in the neighborhood</h2>
+    <p class="sub nb-pews-sub">Two different sources, side by side</p>
+    {% if pews.has_report and pews.rows %}
+    <div class="nb-pews-grid">
+      <div class="nb-ph">&nbsp;</div>
+      <div class="nb-ph">{{ pews.caption_pews }}<span class="nb-pn">{{ pews.year }} parochial report</span></div>
+      <div class="nb-ph">{{ pews.caption_nbhd }}<span class="nb-pn">Census, {{ pews.minutes }}-minute drive</span></div>
+      {% for r in pews.rows %}
+      <div class="nb-pk">{{ r.label }}</div>
+      <div><div class="nb-pv{{ ' nb-pv-none' if r.pews.value == 'Not reported' else '' }}">{{ r.pews.value }}</div><div class="nb-pn">{{ r.pews.note }}</div></div>
+      <div><div class="nb-pv">{{ r.nbhd.value }}</div><div class="nb-pn">{{ r.nbhd.note }}</div></div>
+      {% endfor %}
+    </div>
+    <p class="sub nb-pews-note">{{ pews.caution }}</p>
+    <p class="nb-pews-ask"><strong>Worth asking:</strong> who in the neighborhood is not yet in the pews, and what would help them feel at home?</p>
+    {% else %}
+    <p><strong>No parochial report on file for this parish yet.</strong> When one is loaded, this panel puts the parish's own numbers next to the neighborhood.</p>
+    {% if pews.reference %}<p class="sub">Neighborhood for reference: {{ pews.reference }}.</p>{% endif %}
+    {% endif %}
+  </section>
+  {% endif %}
+
+    <div class="nb-sec"><h2>Details</h2><p class="sub">Hover over any shape for the exact figure.</p></div>
+  <div class="nb-charts">
+    {{ chart_card(snapshot.generations) }}
+    {{ chart_card(snapshot.race) }}
+    {% if snapshot.balance %}
+    <div class="card nb-chart">
+      <h3>{{ snapshot.balance.title }}</h3>
+      <div class="nb-hbars">
+        {% for r in snapshot.balance.rows %}
+        <div class="nb-hbar-row" title="{{ r.label }}: {{ r.display }}">
+          <div class="nb-hbar-top"><span>{{ r.label }}{% if r.flag %}<span class="nb-flag nb-{{ r.flag|replace(' ', '-') }}">{{ r.flag }}</span>{% endif %}</span><strong>{{ r.display }}</strong></div>
+          <div class="nb-hbar">
+            <div class="nb-hbar-fill" style="width: {{ r.width }}%"></div>
+            {% for lv in ['us', 'state', 'county'] %}{% if r.ticks[lv] is not none %}<span class="nb-mk lv-{{ lv }}" style="left: {{ r.ticks[lv] }}%" title="{{ snapshot.balance.names[lv] }} {{ r.tick_displays[lv] }}"></span>{% endif %}{% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="sub nb-note">{{ snapshot.balance.note }}</div>
+    </div>
+    {% endif %}
+    {{ chart_card(snapshot.employment) }}
+    {{ chart_card(snapshot.education) }}
+    {{ chart_card(snapshot.enrollment) }}
+    {{ chart_card(snapshot.tenure) }}
+    {{ chart_card(snapshot.daytime) }}
+  </div>
+  <p class="sub nb-reliability">
+    The thin bar in each tile is this area; the orange tick is the comparison you picked.
+    {% if snapshot.any_flagged %}A small <span class="nb-flag nb-use-caution">use caution</span> or <span class="nb-flag nb-unreliable">unreliable</span> flag means the Census asked only a sample of households here, so the real figure could be quite a bit higher or lower.{% endif %}
+    Hover over any tile or shape to see the exact figure. The "All details" tab holds every number with its source.
+  </p>
+  </div>
+
+  {#- The Report tab: the two-page tile layout for printing and vestry packets (mockup A, the sample's layout). -#}
+  <div class="nb-report">
   <div class="nb-tiles nb-kpis">
     {% for t in snapshot.top %}{{ tile(t) }}{% endfor %}
   </div>
@@ -95,4 +162,5 @@
     {% if snapshot.any_flagged %}A small <span class="nb-flag nb-use-caution">use caution</span> or <span class="nb-flag nb-unreliable">unreliable</span> flag means the Census asked only a sample of households here, so the real figure could be quite a bit higher or lower.{% endif %}
     Hover over any tile or shape to see the exact figure. The "All details" tab holds every number with its source.
   </p>
+  </div>
 </div>

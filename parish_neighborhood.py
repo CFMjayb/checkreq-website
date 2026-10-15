@@ -25,9 +25,11 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import db
+import neighborhood_pews
 import neighborhood_snapshot
 import parish_finance
 import parish_mode
+import sustain_data
 
 router = APIRouter()
 
@@ -207,7 +209,7 @@ def neighborhood_tile(user, parish) -> dict:
         )
         if not row:
             return {"show": False}
-        return {"show": True, "href": "/neighborhood", "label": "Neighborhood",
+        return {"show": True, "href": "/neighborhood", "label": "Neighborhood View",
                 "desc": "Who lives within a short drive of your church, from public Census data."}
     except Exception:
         return {"show": False}
@@ -389,17 +391,23 @@ def _schools_card(site_id: int, minutes: int) -> dict | None:
 
 
 def _parochial(parish: dict, user) -> dict | None:
-    ueid = parish.get("parochial_report_id")
-    if not ueid:
+    """The parish's latest parochial-report numbers, from the same harmonized view the Parish Sustainability Review reads
+    (sustain.parish_year_v, through sustain_data): attendance is the in-person figure of every form era, and the amount pledged is
+    hidden for EVERY viewer when the parish has fewer than 10 pledges (the plan's privacy rule), on top of the finance-viewer rule.
+    "raw" carries the full row for the Story tab's panel (neighborhood_pews)."""
+    try:
+        rows = sustain_data.parish_years(parish)
+    except Exception as exc:   # noqa: BLE001  (the page must still build if the sustain schema is not there)
+        print(f"[neighborhood] parochial history unavailable for parish {parish.get('id')}: {type(exc).__name__}: {exc}")
         return None
-    row = db.query_one("SELECT * FROM nbhd.parish_parochial_latest WHERE parish_ueid = %s", (ueid,))
-    if not row:
+    if not rows:
         return None
+    row = rows[-1]
     try:
         show_pledges = parish_finance.can_view_finance(user, parish)
     except Exception:
         show_pledges = False
-    out = {"year": row["filing_year"], "members": row["members_this_year"], "attendance": row["average_sunday_attendance"], "pledges": None}
+    out = {"year": row["filing_year"], "members": row["members"], "attendance": row["asa_in_person"], "pledges": None, "raw": row}
     if show_pledges and row.get("amount_pledged") is not None:
         out["pledges"] = _fmt(row["amount_pledged"], "dollars")
     out["members"] = _fmt(out["members"], "count") if out["members"] is not None else None
@@ -434,21 +442,32 @@ def neighborhood_page(request: Request):
     user, parish, redirect = _resolve(request)
     if redirect:
         return redirect
+    return _render(request, "parish_neighborhood.html", user, page_context(request, user, parish))
 
-    base = {"parish": parish, "state": "ok", "message": "", "sections": [], "rings": [], "ring": None}
+
+def page_context(request: Request, user, parish, *, base_path: str = "/neighborhood", back_url: str = "/parish-resources",
+                 back_label: str = "Back to Resources for Parishes", diocesan: bool = False) -> dict:
+    """Everything parish_neighborhood.html needs for `parish`. Used by the parish's own route and by the diocese's
+    (congregational_vitality.py), which differ only in where the page's own links point (`base_path`: the ring buttons and the map
+    data) and where Back goes. The caller has already decided this person may see this parish."""
+    base = {"parish": parish, "state": "ok", "message": "", "sections": [], "rings": [], "ring": None,
+            "base_path": base_path, "back_url": back_url, "back_label": back_label, "diocesan": diocesan}
     if _switched_off(parish):
         base.update(state="off", message="The Neighborhood page is turned off for this parish.")
-        return _render(request, "parish_neighborhood.html", user, base)
+        return base
     site = _site(parish)
     if not site:
-        base.update(state="no_site", message="Your church's location has not been confirmed yet, so the Neighborhood page cannot be built for it. "
-                                              "Ask the diocesan office to confirm it.")
-        return _render(request, "parish_neighborhood.html", user, base)
+        base.update(state="no_site", message=("This church's location has not been confirmed yet, so the Neighborhood page cannot be built for it."
+                                               if diocesan else
+                                               "Your church's location has not been confirmed yet, so the Neighborhood page cannot be built for it. "
+                                               "Ask the diocesan office to confirm it."))
+        return base
     run = _latest_run(parish["org_id"])
     rings = _rings(site["id"])
     if not run or not rings:
-        base.update(state="no_run", message="The Neighborhood numbers have not been built for your diocese yet.")
-        return _render(request, "parish_neighborhood.html", user, base)
+        base.update(state="no_run", message="The Neighborhood numbers have not been built for the diocese yet." if diocesan
+                    else "The Neighborhood numbers have not been built for your diocese yet.")
+        return base
 
     minutes = [r["minutes"] for r in rings]
     try:
@@ -482,19 +501,32 @@ def neighborhood_page(request: Request):
     except Exception as exc:   # noqa: BLE001
         print(f"[neighborhood] snapshot failed for parish {parish['id']}: {type(exc).__name__}: {exc}")
         snapshot = None
-    ctx = {
-        "parish": parish, "state": "ok", "message": "", "site": site, "rings": minutes, "ring": chosen, "sections": sections,
-        "geo_names": geo_names, "nearby": nearby, "parochial": _parochial(parish, user), "no_values": not values, "snapshot": snapshot,
-        "run_date": run["finished_at"].strftime("%m/%d/%y") if run["finished_at"] else "", "vintage": run["acs_vintage"],
-    }
-    return _render(request, "parish_neighborhood.html", user, ctx)
+    parochial = _parochial(parish, user)
+    try:   # the Story tab's "in the pews and in the neighborhood" panel is extra: if it fails, the rest of the page must still show
+        pews = neighborhood_pews.build(parochial, values, chosen) if values else None
+    except Exception as exc:   # noqa: BLE001
+        print(f"[neighborhood] pews panel failed for parish {parish['id']}: {type(exc).__name__}: {exc}")
+        pews = None
+    base.update(
+        site=site, rings=minutes, ring=chosen, sections=sections, geo_names=geo_names, nearby=nearby, parochial=parochial,
+        no_values=not values, snapshot=snapshot, pews=pews,
+        run_date=run["finished_at"].strftime("%m/%d/%y") if run["finished_at"] else "", vintage=run["acs_vintage"],
+    )
+    return base
 
 
 @router.get("/neighborhood/map.json")
 def neighborhood_map(request: Request):
-    """The church point, its drive-time areas and the other parishes inside them, as plain JSON for the map."""
     user, parish, redirect = _resolve(request)
-    if redirect or _switched_off(parish):
+    if redirect:
+        return JSONResponse({"error": "not available"}, status_code=404)
+    return map_response(parish)
+
+
+def map_response(parish):
+    """The church point, its drive-time areas and the other parishes inside them, as plain JSON for the map. Used by the parish's own
+    route and the diocese's; the caller has already decided this person may see this parish."""
+    if _switched_off(parish):
         return JSONResponse({"error": "not available"}, status_code=404)
     site = _site(parish)
     if not site:
