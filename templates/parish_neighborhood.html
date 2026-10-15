@@ -64,6 +64,10 @@
   <div id="nbMap" data-ring="{{ ring }}" role="img" aria-label="Map of the drive-time areas around the church"></div>
 </div>
 
+{% if no_values %}
+<div class="banner banner-info">The numbers for this {{ ring }}-minute area have not been built yet. Try the other drive time, or ask the diocesan office to run the update again.</div>
+{% endif %}
+
 {% for section in sections %}
 <div class="nb-section">
   <h2>{{ section.title }}</h2>
@@ -115,6 +119,10 @@
         </div>
         {% endfor %}
         <p class="sub">Each bar is a share of everyone in the area.</p>
+      {% elif c.kind == "list" %}
+        <ul class="nb-list">
+          {% for it in c.entries %}<li>{{ it.label }} <span class="sub">({{ it.detail }})</span></li>{% endfor %}
+        </ul>
       {% endif %}
 
       <div class="sub nb-source">{{ c.source }}</div>
@@ -174,6 +182,11 @@
     maxZoom: 18,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> | Drive times &copy; <a href="https://openrouteservice.org">openrouteservice.org</a>'
   }).addTo(map);
+  function tip(text) {   // a text node, so a name with markup in it is shown as text and never run
+    var s = document.createElement('span');
+    s.textContent = text;
+    return s;
+  }
   fetch('/neighborhood/map.json', { credentials: 'same-origin' })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
@@ -183,14 +196,14 @@
       d.rings.forEach(function (ring) {                      // largest first, so the small ring sits on top
         var on = ring.minutes === chosen;
         var layer = L.geoJSON(ring.geometry, { style: { color: '#2f5d3a', weight: on ? 3 : 1, fillColor: '#2f5d3a', fillOpacity: on ? 0.22 : 0.08 } })
-          .bindTooltip(ring.minutes + '-minute drive', { sticky: true }).addTo(map);
+          .bindTooltip(tip(ring.minutes + '-minute drive'), { sticky: true }).addTo(map);
         if (!bounds) bounds = layer.getBounds();
       });
       d.parishes.forEach(function (p) {
         L.circleMarker([p.lat, p.lon], { radius: 5, color: '#8a6d1d', fillColor: '#c9a227', fillOpacity: 0.9, weight: 1 })
-          .bindTooltip(p.name).addTo(map);
+          .bindTooltip(tip(p.name)).addTo(map);
       });
-      L.marker([d.site.lat, d.site.lon]).bindTooltip(d.site.name).addTo(map);
+      L.marker([d.site.lat, d.site.lon]).bindTooltip(tip(d.site.name)).addTo(map);
       map.fitBounds(bounds || [[d.site.lat, d.site.lon], [d.site.lat, d.site.lon]], { padding: [12, 12] });
     });
 })();
