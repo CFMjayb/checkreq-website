@@ -1,4 +1,10 @@
 FROM python:3.11-slim
+# Apply Debian security updates published since the base image was built.
+# Added 2026-10-16 for CVE-2026-66046 / -76957 / -93990 / -77214 (expat, HIGH): the nightly scan
+# flagged them as fixable on the production image once Debian shipped the patch, but the slim base
+# had not been refreshed yet. Upgrading here clears that class on every rebuild (the same line
+# qbo-mcp-server and email-mcp-server already carry).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/*
 # Closes CVE-2026-24049 (wheel) / CVE-2026-23949 (jaraco.context). The scanner
 # flags the copies vendored INSIDE the base image's setuptools
 # (setuptools/_vendor/wheel-0.45.1, jaraco.context-5.3.0), so upgrading the
