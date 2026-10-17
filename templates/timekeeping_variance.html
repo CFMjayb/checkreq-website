@@ -47,7 +47,7 @@
         </thead>
         <tbody>
           {% for r in bad %}
-          <tr class="ff-row is-attn">
+          <tr class="ff-row{% if r.kind != 'category_only' %} is-attn{% endif %}">
             <td data-v="{{ r.parish_code or '~' }}" data-tip="{{ r.parish_name }}">{% if r.parish_code %}{{ r.parish_code }} {% endif %}{{ r.dept_name or r.parish_name }}</td>
             <td data-v="{{ (r.last_name ~ ' ' ~ r.first_name)|lower }}">{{ r.last_name }}, {{ r.first_name }}{% if r.employee_number %} <span class="c-muted">#{{ r.employee_number }}</span>{% endif %}</td>
             <td>{{ r.category_label }}</td>
@@ -56,7 +56,7 @@
             <td class="c-num" data-v="{{ r.beacon_hours if r.beacon_hours is not none else '' }}">{{ "%.2f"|format(r.beacon_hours) if r.beacon_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.register_hours if r.register_hours is not none else '' }}">{{ "%.2f"|format(r.register_hours) if r.register_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.difference if r.difference is not none else '' }}">{{ "%+.2f"|format(r.difference) if r.difference is not none else "—" }}</td>
-            <td><span class="ph-state-attn">{{ {'differs': 'Hours differ', 'paid_no_beacon_hours': 'Paid, no Beacon hours', 'beacon_hours_not_paid': 'Beacon hours, none paid'}[r.kind] }}</span></td>
+            <td>{% if r.kind == 'category_only' %}<span class="c-muted" data-tip="This person's total hours are the same as paid ({{ '%.2f'|format(r.person_beacon_total) }}). Only the categories differ. Left as entered, for review.">Total matches, categories differ</span>{% else %}<span class="ph-state-attn">{{ {'differs': 'Hours differ', 'paid_no_beacon_hours': 'Paid, no Beacon hours', 'beacon_hours_not_paid': 'Beacon hours, none paid'}[r.kind] }}</span>{% endif %}</td>
           </tr>
           {% else %}
           <tr class="ff-empty"><td colspan="7">Every line matches.</td></tr>
@@ -70,6 +70,7 @@
         <strong class="{{ 'ph-state-attn' if report.counts.differs else '' }}">{{ report.counts.differs }}</strong> differ &middot;
         <strong class="{{ 'ph-state-attn' if report.counts.paid_no_beacon_hours else '' }}">{{ report.counts.paid_no_beacon_hours }}</strong> paid with no Beacon hours &middot;
         <strong class="{{ 'ph-state-attn' if report.counts.beacon_hours_not_paid else '' }}">{{ report.counts.beacon_hours_not_paid }}</strong> Beacon hours with no pay
+        {% if report.category_only_people %}&middot; <strong>{{ report.category_only_people }}</strong> {{ 'person' if report.category_only_people == 1 else 'people' }}: total matches, categories differ (for review){% endif %}
       </span>
     </div>
   </div>

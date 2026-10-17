@@ -179,9 +179,11 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
         raise PayrollError("refused", "The paid hours have not been loaded for this period yet.")
     actor = user_id if user_id is not None else pt.service_user_id()
     rep = pt.variance(org_id, period_id)
-    todo = [r for r in rep["rows"] if r["kind"] != "match"]
+    todo = [r for r in rep["rows"] if r["kind"] not in ("match", "category_only")]
+    # a person whose TOTAL hours tie to the paid total keeps their lines as entered; only a note is left for review
+    review = [r for r in rep["rows"] if r["kind"] == "category_only"]
     ref = period["register_source_ref"] or f"LaborDist {period['pay_date'].strftime('%Y.%m.%d')}"
-    n_diff = n_new = n_zero = 0
+    n_diff = n_new = n_zero = n_noted = 0
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT staff_id, category_id FROM portal.time_entries WHERE period_id = %s "
@@ -220,9 +222,28 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
                         "VALUES (%s,%s,%s,%s,'register',%s,'confirmed',%s,%s,now(),%s) RETURNING id",
                         (period_id, r["staff_id"], r["category_id"], paid, ref, flags, actor, actor))
                     pt._log_edit(cur, cur.fetchone()["id"], None, paid, None, "confirmed", actor, "register", note)
+            for r in review:
+                if r["beacon_hours"] is None:
+                    continue  # nothing of Beacon's in this category to put a note on
+                cur.execute("SELECT id, hours, review_status FROM portal.time_period_totals "
+                            "WHERE period_id = %s AND staff_id = %s AND category_id = %s",
+                            (period_id, r["staff_id"], r["category_id"]))
+                line = cur.fetchone()
+                if not line:
+                    continue  # the hours came only from the parish's daily grid: there is no line to note on
+                paid_here = "none" if r["register_hours"] is None else f"{r['register_hours']:g}"
+                note = (f"For review: the paid hours add up to the same total ({r['person_register_total']:g}) but the categories "
+                        f"differ. Beacon kept {r['category_label']} {r['beacon_hours']:g} as entered; paid {paid_here} in this "
+                        f"category ({ref})")
+                cur.execute("SELECT 1 FROM portal.time_period_total_edits WHERE total_id = %s AND note = %s", (line["id"], note))
+                if cur.fetchone():
+                    continue  # already noted by an earlier press of the button
+                pt._log_edit(cur, line["id"], line["hours"], line["hours"], line["review_status"], line["review_status"],
+                             actor, "register", note)
+                n_noted += 1
             conn.commit()
     after = pt.variance(org_id, period_id)
-    left = sum(1 for r in after["rows"] if r["kind"] != "match")
+    left = sum(1 for r in after["rows"] if r["kind"] not in ("match", "category_only"))
     tied = left == 0 and not period["register_unmatched"]
     if tied:
         with db.connect() as conn:
@@ -231,7 +252,7 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
                             "actualized_automatically = %s, updated_at = now() WHERE id = %s", (actor, bool(auto), period_id))
                 conn.commit()
     return {"changed": n_diff, "added": n_new, "zeroed": n_zero, "left": left, "unmatched": period["register_unmatched"],
-            "tied": tied, "automatic": bool(auto)}
+            "tied": tied, "automatic": bool(auto), "for_review": after.get("category_only_people", 0), "noted": n_noted}
 
 
 # ------------------------------------------------------------------ opening the next period, and the checklist's facts

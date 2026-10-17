@@ -39,7 +39,7 @@ _render = None
 # identical addition for the "Administrative Tasks" portal tile itself to
 # even appear for such a user -- see this project's own wiring snippet for
 # that one-line change.
-_ADMIN_TASK_ROLE_KEYS = ["cfo", "setup_admin", "beacon_admin", "vendor_approver", "hr_admin"]
+_ADMIN_TASK_ROLE_KEYS = ["cfo", "setup_admin", "beacon_admin", "vendor_approver"]  # hr_admin removed 2026-10-17 (HR cards moved)
 
 
 def register(app, *, current_user, current_org, render) -> None:
@@ -122,50 +122,8 @@ _CARDS = [
     # screen only ever shows/acts on the current diocese's own parishes.
     {"title": "Manage Parishes", "desc": "Designate a parish Cornerstone Served, or view its status.",
      "url": "/admin/manage-parishes", "role": "setup_admin", "group": "parish"},
-    # Cornerstone Served Parishes Phase K (2026-08-16) -- diocese-wide
-    # Timekeeping config, entity-scoped the same way Manage Parishes is
-    # (timekeeping.py's own _require_diocese_admin() independently rejects
-    # a Cornerstone-Mode-selected entity too, since these are keyed to the
-    # DIOCESE org, never a served parish's own linked org).
-    # 2026-08-16, Jay: moved to their own "HR" group at the bottom, and now
-    # gated on the new checkreq.org_features "timekeeping" flag (see
-    # org_features.py) in addition to the existing role check -- these
-    # cards (and the whole HR group heading itself) simply don't appear
-    # for a diocese that hasn't had Timekeeping/HR turned on, DME being the
-    # first and currently only one. feature_key is checked generically in
-    # the loop below, same pattern as the role/entity-scoped checks.
-    # Added 2026-08-17 (Jay: "not all parishes will be HR-activated - that
-    # needs to be a feature toggle somewhere"). Sits FIRST in the HR group
-    # because it is the prerequisite for everything else here -- a parish that
-    # isn't activated has no roster and no entry grid. `setup_admin`, matching
-    # the two configuration cards below rather than the hr_admin operational
-    # ones; see timekeeping_activation.py's docstring for why that split was
-    # chosen (and why widening to hr_admin is the deliberately-open direction).
-    {"title": "HR Activation", "desc": "Choose which parishes use Timekeeping / HR.",
-     "url": "/admin/timekeeping/parishes", "role": "setup_admin", "group": "hr", "feature_key": "timekeeping"},
-    # Added 2026-08-17 (Jay: "where do I load the employees for HR? ... create a
-    # screen card that allows adds/mods/and inactivations with a as-of date").
-    # hr_admin/beacon_admin -- the OPERATIONAL half of this group's gate split,
-    # not the setup_admin configuration half: day-to-day employee maintenance is
-    # operations, unlike Payroll Periods / Time Categories / HR Activation.
-    {"title": "Employees", "desc": "Add, change or inactivate staff across every parish, with an as-of date.",
-     "url": "/admin/timekeeping/employees", "role": ["hr_admin", "beacon_admin"], "group": "hr", "feature_key": "timekeeping"},
-    # role widened to include hr_admin 2026-08-17 (Jay: the "Payroll diocesan
-    # admin" who opens each period IS hr_admin) -- must stay in step with
-    # timekeeping._require_diocese_admin(), since a visible tile whose route
-    # 403s, or a hidden tile whose route works, is the mismatch this project's
-    # own "tile must match its route's gate" principle exists to prevent.
-    {"title": "Payroll Periods", "desc": "Define diocese payroll periods, and open or close each one.",
-     "url": "/admin/timekeeping/periods", "role": ["setup_admin", "hr_admin"], "group": "hr", "feature_key": "timekeeping"},
-    {"title": "Time Categories", "desc": "Configure the categories parishes report hours against.",
-     "url": "/admin/timekeeping/categories", "role": ["setup_admin", "hr_admin"], "group": "hr", "feature_key": "timekeeping"},
-    # Timekeeping Review and Timekeeping Status USED to live here. Moved to
-    # the diocese MAIN MENU 2026-08-17 at Jay's direction -- "I think there
-    # needs to be a main menu items on the Diocese for Time Review and Time
-    # Status, and appear according to the personal RBAC" -- because they are
-    # operational queues, whereas this HR group is deliberately the four
-    # CONFIGURATION screens only (HR Activation, Employees, Payroll Periods,
-    # Time Categories). See MODULES in main.py, gate "timekeeping_reviewer".
+    # 2026-10-17: the HR group (HR Activation, Employees, Payroll Periods, Time Categories) moved to the HR & Payroll menu's
+    # HR Administrative Tasks submenu -- see hr_hub.py. Time Review and Roster Review are there too.
 
     # 26-129 SMA letters (2026-10-08, plan revision 12 step 1): build each parish's Shared Ministry Allocation
     # letter from the Task Force model and check them on one sheet. Entity-scoped (Setup Admin or Beacon Admin at
@@ -185,14 +143,12 @@ _CARD_GROUPS = [
     ("ap", "AP"),
     ("reports", "Reports"),
     ("parish", "Parish"),
-    ("hr", "HR"),
 ]
 
 # Titles whose underlying route is genuinely entity-scoped (not cross-entity
 # by design/necessity like everything else in this hub) -- see admin_hub()'s
 # own docstring for why this distinction matters.
-_ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes", "Payroll Periods", "Time Categories",
-                          "HR Activation", "Employees", "Report Templates", "Polls & Surveys",
+_ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes", "Report Templates", "Polls & Surveys",
                           "SMA Letters"}
 
 

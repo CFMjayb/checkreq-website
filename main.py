@@ -126,7 +126,7 @@ import announcements
 import parish_requests
 import parish_org_admin
 import cornerstone_mode
-# Needed by _render()'s synthetic "timekeeping_reviewer" gate (2026-08-17) --
+# Needed by _render()'s synthetic "hr_menu" gate (2026-08-17, renamed 2026-10-17) --
 # main.py had never imported this directly before; admin_hub.py was the only
 # consumer. A missing import here is a runtime NameError, not a compile error,
 # so it is worth stating why it exists.
@@ -137,6 +137,7 @@ import timekeeping_roster
 import timekeeping_employees
 import timekeeping_entries
 import timekeeping_review
+import hr_hub  # the HR & Payroll menu (2026-10-17)
 import timekeeping_status
 import payroll_api
 import payroll_screens
@@ -544,58 +545,21 @@ MODULES = [
     # Check Request/My Requests just above.
     {"key": "approval_queue", "title": "Approval Queue", "desc": "Review requests awaiting your approval.", "url": "/my-approvals", "enabled": True, "gate": "can_review_approvals"},
     {"key": "ap_review", "title": "AP Review", "desc": "Final review and QBO posting for fully-approved requests.", "url": "/admin/ap-review", "enabled": True, "gate": "ap_reviewer"},
-    # Parish Portal S3 (2026-08-08), consolidated same day per Jay's direct
-    # feedback ("Request Access replaces Request Parish Access and Parish
-    # Access Requests -- the sub-screen should do all of this, depending on
-    # your RBAC"): ONE tile, gate=None so a parish volunteer with zero
-    # checkreq.roles grants can still reach it -- the page itself
-    # (parish_access.py) shows the submit form to everyone and additionally
-    # shows the review queue inline for anyone who qualifies as a reviewer
-    # (beacon_admin, or parish_admin at the relevant parish). The old
-    # separate "Parish Access Requests" tile/gate is gone; /admin/
-    # parish-access-requests now just redirects here.
-    # 2026-09-15: gated to Parish logins only (was gate=None, visible to
-    # everyone) -- an Entity login now has its own request_entity_access
-    # tile below instead. Since a login is now provably Entity XOR Parish
-    # (rbac.MixedLoginTypeError), this can never wrongly hide the tile from
-    # someone who genuinely needs it.
-    {"key": "request_parish_access", "title": "Request Access", "desc": "Ask for access to a parish, or review pending requests if you're a reviewer.", "url": "/parish-access-request", "enabled": True, "gate": "is_parish_login"},
-    # 2026-09-15, Jay's Entity-vs-Parish login split: the entity-side
-    # equivalent of the parish tile above -- an Entity login (even one
-    # holding only the entity_member baseline, with no functional access
-    # yet) needs a real way to ask for more, not just an empty portal.
-    # access_requests.py's own picker is scoped to entities this login
-    # already has SOME footing in (Jay: "a user requests a role, they
-    # should only be able to select entities that they have the default
-    # role for") -- reaching a brand-new entity is an admin action (Add
-    # User, from within that entity), not self-service.
-    {"key": "request_entity_access", "title": "Request Access", "desc": "Ask for an additional role at an entity you already belong to.", "url": "/access-request", "enabled": True, "gate": "is_entity_login"},
-    # Parish Portal S4+S5 (2026-08-08): same "parish_reviewer" synthetic
-    # pseudo-role as the tile above -- a pure Parish Admin (no
+    # 2026-10-17, Jay: the two "Request Access" tiles (request_parish_access for a Parish login, request_entity_access for an
+    # Entity login) are gone from the main menu; Request Access is an item in the menu under the signed-in person's name
+    # (templates/base.html), which links to /parish-access-request or /access-request by login type. The pending-request
+    # badge for reviewers (tile_badges key request_parish_access) is shown on that menu item.
+    # Parish Portal S4+S5 (2026-08-08): "parish_reviewer" synthetic
+    # pseudo-role -- a pure Parish Admin (no
     # checkreq.roles grant at all) needs to reach this without the
     # Administrative Tasks hub's own top-level gate blocking them.
     {"key": "parish_requests_review", "title": "Parish Requests", "desc": "Review parish feedback and general requests.", "url": "/admin/parish-requests", "enabled": True, "gate": "parish_reviewer"},
-    # 2026-08-17, Jay: "I think there needs to be a main menu items on the
-    # Diocese for Time Review and Time Status, and appear according to the
-    # personal RBAC." Moved OUT of the Administrative Tasks HR group (which
-    # keeps only the four configuration cards: HR Activation, Employees,
-    # Payroll Periods, Time Categories) because these two are day-to-day
-    # operational queues, not setup.
-    #
-    # Gated on the synthetic "timekeeping_reviewer" pseudo-role injected in
-    # _render() below -- the same trick administrative_tasks/parish_reviewer
-    # already use. It has to be synthetic because a tile's `gate` is a single
-    # role key, while the real condition is TWO things at once: the diocese
-    # has the timekeeping feature flag on AND the person holds hr_admin or
-    # beacon_admin there. Encoding that in one place keeps the tile check as
-    # the same generic `m.gate in entity_roles` as every other tile.
-    #
-    # Deliberately absent from CORNERSTONE_MODULE_KEYS: these are diocese-wide
-    # review screens and their routes reject a Cornerstone-Mode-selected entity
-    # outright. This is also NOT the Parish Mode timekeeping grid -- Jay:
-    # "This is different from Parish Mode Timekeeping."
-    {"key": "time_review", "title": "Roster Review", "desc": "Approve or reject the roster changes (new hires, terminations, edits) parishes and emails ask for.", "url": "/admin/timekeeping/review", "enabled": True, "gate": "timekeeping_reviewer"},
-    {"key": "time_status", "title": "Time Review", "desc": "Review each parish's hours, open or close a period, enter missing hours, and export.", "url": "/admin/timekeeping/status", "enabled": True, "gate": "timekeeping_reviewer"},
+    # 2026-10-17, Jay: "All HR/Timekeeping menu items should be part of a submenu named HR & Payroll from the main menu" and
+    # "Time Review and Roster Review would be under this new menu". The two diocese tiles (Roster Review, Time Review) and the
+    # HR group of Administrative Tasks now live under ONE tile; hr_hub.py owns the menu and its HR Administrative Tasks submenu.
+    # Gated on the synthetic "hr_menu" pseudo-role injected in _render() below: Timekeeping turned on for the CURRENT diocese AND
+    # hr_admin / beacon_admin / setup_admin there. Deliberately absent from CORNERSTONE_MODULE_KEYS (diocese-wide screens).
+    {"key": "hr_payroll", "title": "HR & Payroll", "desc": "Time Review, Roster Review, and the HR administrative tasks: employees, payroll periods, time categories and activation.", "url": "/hr", "enabled": True, "gate": "hr_menu"},
     # 26-XXX Congregational Vitality (phase 4): the diocese's side-by-side views of every parish's neighborhood and finances. Gated on the
     # synthetic "congregational_vitality" pseudo-role injected in _render() below (Beacon Admin or Setup Admin at the current diocese, never
     # in Cornerstone Mode). Not in CORNERSTONE_MODULE_KEYS, so it never appears for a served parish's own entity.
@@ -605,7 +569,7 @@ MODULES = [
 # The union of roles that unlock the "Administrative Tasks" tile/hub (2026-08-02
 # feedback batch, Item 1) -- deliberately excludes ap_reviewer, which keeps its
 # own separate portal tile and was never part of the consolidated 8.
-ADMIN_TASK_ROLE_KEYS = {"cfo", "setup_admin", "beacon_admin", "vendor_approver", "hr_admin"}
+ADMIN_TASK_ROLE_KEYS = {"cfo", "setup_admin", "beacon_admin", "vendor_approver"}  # hr_admin removed 2026-10-17: its cards moved to HR & Payroll
 
 # Cornerstone Served Parishes Phase B (2026-08-16) -- the tile subset shown
 # on /portal when the current entity is a served parish-org, per Jay's own
@@ -826,8 +790,10 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # beacon_admin there. org_features.is_enabled() returns False for a NULL
     # org and for a served parish-org (the flag lives on the diocese row), so
     # this also keeps the tiles out of Cornerstone Mode without a second check.
-    if org_id is not None and entity_roles & {"hr_admin", "beacon_admin"}             and org_features.is_enabled(org_id, "timekeeping"):
-        entity_roles = entity_roles | {"timekeeping_reviewer"}
+    # 2026-10-17: now the gate of the single HR & Payroll tile (hr_hub.py); setup_admin joins because the HR Administrative
+    # Tasks submenu holds screens a Setup Admin may use (HR Activation, Payroll Periods, Time Categories).
+    if org_id is not None and entity_roles & {"hr_admin", "beacon_admin", "setup_admin"} and org_features.is_enabled(org_id, "timekeeping"):
+        entity_roles = entity_roles | {"hr_menu"}
     # 26-XXX Congregational Vitality: the diocese's pages are for Beacon Admin or Setup Admin at the CURRENT diocese (the same two the
     # parish Finance page accepts for diocesan staff). A served parish's own entity (Cornerstone Mode) is not a diocese.
     if org_id is not None and entity_roles & {"beacon_admin", "setup_admin"} and not cornerstone_mode.is_cornerstone_org(org_id):
@@ -843,6 +809,8 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # never reach this far anyway, since main.py's own roleless-gate above
     # already redirects a true zero-everything user to /access-request
     # before /portal ever renders.
+    # 2026-10-17: the two Request Access TILES are gone (Request Access is now an item in the user menu, base.html, chosen by
+    # user.login_type), so nothing on the portal grid reads these two pseudo-roles any more; kept because they are harmless.
     if user.get("login_type") == "entity":
         entity_roles = entity_roles | {"is_entity_login"}
     elif user.get("login_type") == "parish":
@@ -9597,6 +9565,7 @@ timekeeping_employees.register(app, current_user=_current_user, current_org=_cur
 timekeeping_roster.register(app, render=_render)
 timekeeping_entries.register(app, render=_render)
 timekeeping_review.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+hr_hub.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 # Diocese status board / "enter missing data" backfill / Excel export
 # (2026-08-16, per Jay's direct request) -- new sibling module, same
 # current_user/current_org/render signature as timekeeping.py/

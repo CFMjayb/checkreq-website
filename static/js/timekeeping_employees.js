@@ -22,6 +22,7 @@
   var changedEl = document.getElementById('empChanged');
   var menu = document.getElementById('empMenu');
   var menuToggle = document.getElementById('empMenuToggle');
+  var menuHistory = document.getElementById('empMenuHistory');
   var menuRow = null;
   var leaving = false;           // set once we are deliberately navigating away
 
@@ -126,6 +127,7 @@
     menuRow = tr;
     btn.setAttribute('aria-expanded', 'true');
     menuToggle.textContent = effectiveActive(tr) ? 'Inactivate' : 'Activate';
+    if (menuHistory) menuHistory.href = '/admin/timekeeping/employees/' + tr.dataset.id + '/hours-history';
     menu.hidden = false;
     var r = btn.getBoundingClientRect();
     var w = menu.offsetWidth || 150;
@@ -168,11 +170,12 @@
       case 'first': return inputs[1].value.trim();
       case 'emp': var s = inputs[2].value.trim(); return /^\d+$/.test(s) ? parseInt(s, 10) : s;
       case 'hours': return tr.querySelector('input[type=checkbox]').checked ? 1 : 0;
+      case 'std': var sv = parseFloat(tr.querySelector('input.emp-std').value); return isNaN(sv) ? -1 : sv;
       case 'eff': return tr.querySelector('.c-date').dataset.v || '';
     }
     return '';
   }
-  var secondary = { last: ['first'], first: ['last'], parish: ['last', 'first'], emp: ['last', 'first'], hours: ['last', 'first'], eff: ['last', 'first'] };
+  var secondary = { last: ['first'], first: ['last'], parish: ['last', 'first'], emp: ['last', 'first'], hours: ['last', 'first'], std: ['last', 'first'], eff: ['last', 'first'] };
   function sortBy(key, dir) {
     var list = rows();
     list.sort(function (a, b) {
