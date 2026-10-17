@@ -1850,6 +1850,8 @@ def variance(org_id: int, period_id: int) -> dict:
         "WHERE rh.period_id = %s AND p.org_id = %s", (period_id, org_id))
     rmap = {(x["staff_id"], x["category_id"]): x for x in reg if x["captures_hours"]}
     rows = []
+    tot_b: dict = {}  # per person, ALL categories together: what Beacon counts and what was paid
+    tot_g: dict = {}
     for key in sorted(set(beacon) | set(rmap), key=lambda k: (
             (beacon.get(k) or {}).get("parish_code") or (rmap.get(k) or {}).get("parish_code") or "~",
             (beacon.get(k) or {}).get("last_name") or (rmap.get(k) or {}).get("last_name") or "")):
@@ -1858,6 +1860,8 @@ def variance(org_id: int, period_id: int) -> dict:
         gh = None if g is None else Decimal(g["hours"])
         if (g is None and bh == 0) or (b is None and gh == 0):
             continue  # nothing paid and nothing counted is agreement (an actualized "not paid" line holds 0)
+        tot_b[key[0]] = tot_b.get(key[0], Decimal(0)) + (bh or Decimal(0))
+        tot_g[key[0]] = tot_g.get(key[0], Decimal(0)) + (gh or Decimal(0))
         if b is not None and g is not None:
             kind = "match" if abs(bh - gh) < Decimal("0.005") else "differs"
         elif g is not None:
@@ -1877,8 +1881,18 @@ def variance(org_id: int, period_id: int) -> dict:
                      "beacon_hours": None if bh is None else float(bh),
                      "register_hours": None if gh is None else float(gh),
                      "difference": None if (bh is None or gh is None) else float(bh - gh)})
+    # A person whose categories differ but whose TOTAL hours tie to the paid hours is not a difference (Jay, 2026-10-17):
+    # for example Holiday or Sick hours Beacon keeps as entered that payroll paid as Regular. Such rows are marked
+    # category_only; Actualize leaves them alone and notes them for review.
+    for r in rows:
+        tb, tg = tot_b.get(r["staff_id"], Decimal(0)), tot_g.get(r["staff_id"], Decimal(0))
+        r["person_beacon_total"] = float(tb)
+        r["person_register_total"] = float(tg)
+        if r["kind"] != "match" and abs(tb - tg) < Decimal("0.005"):
+            r["kind"] = "category_only"
     counts = {k: sum(1 for r in rows if r["kind"] == k)
-              for k in ("match", "differs", "paid_no_beacon_hours", "beacon_hours_not_paid")}
+              for k in ("match", "differs", "paid_no_beacon_hours", "beacon_hours_not_paid", "category_only")}
+    category_only_people = len({r["staff_id"] for r in rows if r["kind"] == "category_only"})
     # per department, hours only: what Beacon counts against what was paid, and how many rows differ
     depts: dict = {}
     for r in rows:
@@ -1886,9 +1900,10 @@ def variance(org_id: int, period_id: int) -> dict:
                                                 "beacon_hours": 0.0, "register_hours": 0.0, "differing": 0})
         d["beacon_hours"] += r["beacon_hours"] or 0.0
         d["register_hours"] += r["register_hours"] or 0.0
-        if r["kind"] != "match":
+        if r["kind"] not in ("match", "category_only"):
             d["differing"] += 1
     departments = sorted(({**d, "beacon_hours": round(d["beacon_hours"], 2), "register_hours": round(d["register_hours"], 2),
                            "difference": round(d["beacon_hours"] - d["register_hours"], 2)} for d in depts.values()),
                          key=lambda d: d["parish_code"] or "~")
-    return {"rows": rows, "counts": counts, "register_loaded": bool(reg), "departments": departments}
+    return {"rows": rows, "counts": counts, "register_loaded": bool(reg), "departments": departments,
+            "category_only_people": category_only_people}

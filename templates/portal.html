@@ -36,8 +36,10 @@
        cross-entity `any_org_roles` -- Jay's direction, every role check
        including nav visibility is entity-scoped, no exceptions).
        Any future tile can gate on any role with no template change. #}
+    {% set shown = namespace(n=0) %}
     {% for m in modules %}
       {% if not m.gate or m.gate in entity_roles %}
+        {% set shown.n = shown.n + 1 %}
         {% if m.enabled and current_org %}
         <a class="module-tile" href="{{ m.url }}">
           {% if tile_badges.get(m.key) %}
@@ -56,6 +58,9 @@
       {% endif %}
     {% endfor %}
   </div>
+  {% if current_org and not shown.n %}
+  <p class="sub">Nothing is set up for your role at {{ current_org.name }} yet. To ask for access, click your name (upper right) and choose <strong>Request Access</strong>.</p>
+  {% endif %}
 
 </div>
 {% endblock %}

@@ -19,6 +19,7 @@ input.emp-in {
   width: 100%; box-sizing: border-box; height: 22px; padding: 1px 5px; margin: 0;
   font-size: 0.85rem; border: 1px solid #cdc4ae; border-radius: 3px; background: #fff;
 }
+input.emp-std { text-align: right; }
 tr.is-inactive input.emp-in { background: transparent; border-color: transparent; color: inherit; pointer-events: none; }
 tr.is-inactive input[type=checkbox] { pointer-events: none; opacity: 0.55; }
 .emp-table input[type=checkbox] { margin: 0; }
@@ -36,8 +37,8 @@ tr.is-inactive input[type=checkbox] { pointer-events: none; opacity: 0.55; }
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
 }
 .emp-menu[hidden] { display: none; }
-.emp-menu button { display: block; width: 100%; text-align: left; background: none; border: 0; cursor: pointer; padding: 6px 10px; border-radius: 4px; font-size: 0.9rem; }
-.emp-menu button:hover { background: #f1ede2; }
+.emp-menu button, .emp-menu a { box-sizing: border-box; text-decoration: none; color: inherit; display: block; width: 100%; text-align: left; background: none; border: 0; cursor: pointer; padding: 6px 10px; border-radius: 4px; font-size: 0.9rem; }
+.emp-menu button:hover, .emp-menu a:hover { background: #f1ede2; }
 
 /* The Save bar's pending-changes note and button (the bar itself is .ff-foot). */
 .emp-changed { font-size: 0.85rem; font-weight: 600; margin-left: auto; }

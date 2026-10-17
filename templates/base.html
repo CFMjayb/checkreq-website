@@ -240,6 +240,13 @@
           {% if my_polls_nav is defined %}{% set _mp = my_polls_nav(user) %}{% if _mp.total %}
           <a href="/my-polls" class="user-menu-item">My Polls{% if _mp.waiting and not impersonating %} <span style="display:inline-block;background:var(--color-danger);color:#fff;border-radius:999px;font-size:0.7rem;font-weight:700;line-height:1;padding:2px 7px;margin-left:4px;">{{ _mp.waiting }}</span>{% endif %}</a>
           {% endif %}{% endif %}
+          {# 2026-10-17, Jay: Request Access left the main menu and lives here. A Parish login goes to the parish page (which also
+             holds the review queue for a reviewer, with its pending count); an Entity login to the entity page. #}
+          {% if user.login_type == 'parish' %}
+          <a href="/parish-access-request" class="user-menu-item">Request Access{% set _rb = (tile_badges.get('request_parish_access') if tile_badges is defined and tile_badges else none) %}{% if _rb and not impersonating %} <span style="display:inline-block;background:var(--color-danger);color:#fff;border-radius:999px;font-size:0.7rem;font-weight:700;line-height:1;padding:2px 7px;margin-left:6px">{{ _rb.count }}</span>{% endif %}</a>
+          {% elif user.login_type == 'entity' %}
+          <a href="/access-request" class="user-menu-item">Request Access</a>
+          {% endif %}
           <a href="/account/profile" class="user-menu-item">Profile</a>
           <a href="/account/password" class="user-menu-item">Change Password</a>
           {# M8 (Security Assessment 2026-09-19): was <a href="/logout">, a

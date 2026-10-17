@@ -67,6 +67,7 @@ raises the limit so a larger post still works.
 from __future__ import annotations
 
 import datetime as dt
+from decimal import Decimal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request
@@ -82,6 +83,27 @@ router = APIRouter()
 # See the module docstring. Far above anything this screen can post, far below
 # anything abusive.
 _MAX_FORM_FIELDS = 20000
+
+
+def _current_standing(row: dict):
+    """The standing hours a roster row holds now: the figure when the person is standing, else None."""
+    if row.get("hours_basis") == "standing" and row.get("standing_hours") is not None:
+        return Decimal(row["standing_hours"])
+    return None
+
+
+def _parse_standing(raw: str):
+    """(value, None) for a valid standing figure (more than 0, up to 300), (None, None) for blank, (None, message) for a bad one."""
+    raw = (raw or "").strip()
+    if raw == "":
+        return None, None
+    try:
+        h = payroll_totals.parse_hours(raw)
+    except payroll_totals.PayrollError as e:
+        return None, e.message
+    if h <= 0:
+        return None, "Standing hours must be more than 0 (leave the box blank for none)."
+    return h, None
 
 
 async def _read_form(request: Request):
@@ -204,6 +226,8 @@ def list_employees(org_id: int, *, parish_id: int | None = None,
         where.append("s.captures_hours")
     elif hours == "no":
         where.append("NOT s.captures_hours")
+    elif hours == "standing":
+        where.append("s.hours_basis = 'standing'")
     if q:
         where.append("(s.last_name ILIKE %s OR s.first_name ILIKE %s "
                      "OR s.employee_number ILIKE %s)")
@@ -290,6 +314,12 @@ async def employees_add(request: Request):
     position = (form.get("position") or "").strip() or None
     emp_no = (form.get("employee_number") or "").strip() or None
     captures = form.get("captures_hours") is not None
+    std, std_err = _parse_standing(form.get("standing_hours"))
+    if std_err:
+        return _redirect_back(request, error=std_err)
+    if std is not None and not (captures and emp_no):
+        return _redirect_back(request, error="Standing hours need Reports hours checked and an employee number "
+                                             "(the payroll register keys on it).")
 
     if emp_no:
         dupe = db.query_one(
@@ -308,15 +338,17 @@ async def employees_add(request: Request):
             cur.execute(
                 "INSERT INTO portal.staff_roster "
                 "(parish_id, first_name, last_name, position, employee_number, "
-                " captures_hours, effective_date, is_active, created_by_user_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, %s) RETURNING id",
+                " captures_hours, effective_date, is_active, created_by_user_id, hours_basis, standing_hours) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s) RETURNING id",
                 (parish["id"], first, last, position, emp_no, captures, as_of,
-                 user["id"]))
+                 user["id"], "standing" if std is not None else None, std))
             new_id = cur.fetchone()["id"]
             _log_change(cur, parish_id=parish["id"], staff_id=new_id,
                         change_type="add", as_of=as_of, actor_id=user["id"],
                         first=first, last=last, position=position,
-                        employee_number=emp_no, captures_hours=captures)
+                        employee_number=emp_no, captures_hours=captures,
+                        note=(f"Direct diocese-side HR edit (no parish proposal step). Standing hours set to {std}."
+                              if std is not None else ""))
         conn.commit()
     return _redirect_back(request, saved=f"Added {last}, {first} (effective "
                                          f"{as_of.strftime('%m/%d/%y')}).")
@@ -376,7 +408,19 @@ async def employees_save(request: Request):
                 emp_no = (form.get(f"employee_number_{raw_id}") or "").strip() or None
                 captures = form.get(f"captures_hours_{raw_id}") is not None
 
-                field_change = (
+                # Standing hours (2026-10-17): a number makes the person standing at that figure, blank clears it. Not
+                # posted (an older caller) = left alone.
+                cur_std = _current_standing(row)
+                if f"standing_hours_{raw_id}" in form:
+                    new_std, std_err = _parse_standing(form.get(f"standing_hours_{raw_id}"))
+                    if std_err:
+                        problems.append(f"{who}: skipped -- {std_err}")
+                        continue
+                else:
+                    new_std = cur_std
+                std_changed = new_std != cur_std
+
+                field_change = std_changed or (
                     (first, last, position, emp_no, captures)
                     != (row["first_name"], row["last_name"], row["position"],
                         row["employee_number"], bool(row["captures_hours"])))
@@ -392,6 +436,10 @@ async def employees_save(request: Request):
                 if field_change and not (first and last):
                     problems.append(f"{who}: skipped -- first and last name are "
                                     "both required.")
+                    continue
+                if field_change and new_std is not None and not (captures and emp_no):
+                    problems.append(f"{who}: skipped -- standing hours need Reports hours checked and an employee "
+                                    "number (the payroll register keys on it).")
                     continue
                 if field_change and emp_no and emp_no != row["employee_number"]:
                     if any(o["employee_number"] == emp_no and o["id"] != sid
@@ -410,11 +458,21 @@ async def employees_save(request: Request):
                         "  updated_at = now() WHERE id = %s AND parish_id = %s",
                         (first, last, position, emp_no, captures, as_of, sid,
                          row["parish_id"]))
+                    note = ""
+                    if std_changed:
+                        # standing -> hours_basis 'standing'; cleared -> back to unset (a person who was 'variable' or
+                        # 'salaried' is never touched by a blank box, because cur_std was None for them already)
+                        cur.execute(
+                            "UPDATE portal.staff_roster SET hours_basis = %s, standing_hours = %s "
+                            "WHERE id = %s AND parish_id = %s",
+                            ("standing" if new_std is not None else None, new_std, sid, row["parish_id"]))
+                        note = ("Direct diocese-side HR edit (no parish proposal step). Standing hours "
+                                + (f"set to {new_std}." if new_std is not None else "cleared."))
                     _log_change(cur, parish_id=row["parish_id"], staff_id=sid,
                                 change_type="edit", as_of=as_of,
                                 actor_id=user["id"], first=first, last=last,
                                 position=position, employee_number=emp_no,
-                                captures_hours=captures)
+                                captures_hours=captures, note=note)
                     edited += 1
 
                 if state_change:

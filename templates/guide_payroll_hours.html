@@ -52,6 +52,7 @@
 
   <section class="hiw-section" id="board">
     <h2>The Time Review screen</h2>
+    <p>Open it from the <strong>HR &amp; Payroll</strong> tile on the main menu. That menu also holds <strong>Roster Review</strong> and <strong>HR Administrative Tasks</strong> (Employees, Payroll Periods, Time Categories and HR Activation).</p>
     <div class="hiw-subcards">
       <div class="hiw-subcard">
         <h3>The top</h3>
@@ -68,7 +69,7 @@
       </div>
       <div class="hiw-subcard">
         <h3>A row's menu</h3>
-        <p>The three dots open <strong>View / edit hours</strong> (see the lines under <strong>Period totals</strong>) and <strong>Parish profile</strong>. Use <strong>Search</strong> and <strong>Show</strong> to find a parish or to see only the ones that need review, are missing hours, are ready to approve, are complete, have <strong>Only Std Hrs</strong> (only standing hours this period) or are not started.</p>
+        <p>The three dots open <strong>View / edit hours</strong> (see the lines under <strong>Period totals</strong>), <strong>Hours history</strong> (one row per pay period for that department) and <strong>Parish profile</strong>. Use <strong>Search</strong> and <strong>Show</strong> to find a parish or to see only the ones that need review, are missing hours, are ready to approve, are complete, have <strong>Only Std Hrs</strong> (only standing hours this period) or are not started.</p>
       </div>
     </div>
   </section>
@@ -123,7 +124,12 @@
 
   <section class="hiw-section" id="standing">
     <h2>Standing hours</h2>
-    <p>For people whose hours are the same every period (set <strong>Hours basis: standing</strong> and the hours on the Employees screen), <strong>Actions &gt; Confirm all standing hours</strong> (or <strong>Confirm standing hours</strong> in one parish's menu) records them for the period as Regular hours. They are confirmed automatically when the last three periods were confirmed at the same figure; otherwise they wait for review. A parish that has <em>only</em> standing hours turns green (<strong>Only Std Hrs</strong>); a parish that also has other hours still needs its approval. If an email later gives different hours, it appears as a waiting figure.</p>
+    <p>For people whose hours are the same every period (type the hours in the <strong>Std hrs</strong> column of the <strong>Employees</strong> screen, under HR &amp; Payroll &gt; HR Administrative Tasks; clear the box to stop. The person must report hours and have an employee number), <strong>Actions &gt; Confirm all standing hours</strong> (or <strong>Confirm standing hours</strong> in one parish's menu) records them for the period as Regular hours. They are confirmed automatically when the last three periods were confirmed at the same figure; otherwise they wait for review. A parish that has <em>only</em> standing hours turns green (<strong>Only Std Hrs</strong>); a parish that also has other hours still needs its approval. If an email later gives different hours, it appears as a waiting figure.</p>
+  </section>
+
+  <section class="hiw-section" id="history">
+    <h2>Hours history</h2>
+    <p>A row for every pay period, newest first, with the hours counted for each kind of hours (Reg, OT, Sick, Vac, Holiday), the <strong>Total</strong>, the <strong>Paid</strong> figure once the paid hours are loaded, and how many lines are still <strong>Waiting</strong> for review (a waiting line is not counted yet). Open it for <em>one employee</em> from the three-dot menu on the <strong>Employees</strong> screen, or for <em>one department</em> from its three-dot menu on Time Review; each page links to the other, and a period's name opens that period for the department. Pay #1 to #20 were loaded from the paid labor distribution, so for those periods Beacon's hours <em>are</em> the paid hours. It shows hours only, never pay.</p>
   </section>
 
   <section class="hiw-section" id="final">
@@ -143,7 +149,7 @@
       <li><strong>Close the pay period.</strong> Hours stop landing in it.</li>
       <li><strong>Load the paid hours.</strong> On the payroll PC, double-click <em>Close Out Pay Period.bat</em>. It reads the labor distribution in the pay date's folder, checks it against the Checkwriters register, and sends <strong>hours only</strong> to Beacon. Pay never leaves the PC.</li>
       <li><strong>Tie out.</strong> Beacon's hours against the paid hours, with the departments that differ listed.</li>
-      <li><strong>Actualize.</strong> One button makes Beacon match the paid hours. The old figure stays in the edit history, a person paid with no Beacon hours gets a line, and Beacon hours that were not paid become 0 with a note.</li>
+      <li><strong>Actualize.</strong> One button makes Beacon match the paid hours. The old figure stays in the edit history, a person paid with no Beacon hours gets a line, and Beacon hours that were not paid become 0 with a note. <strong>A person whose total hours across all categories match the paid total is left as entered</strong> (for example Holiday or Sick hours that payroll paid as Regular): nothing is changed, a note for review is added to each of their lines, and the Variance report shows them as &ldquo;Total matches, categories differ&rdquo;.</li>
       <li><strong>File the reports.</strong> Not connected yet. It waits for the DME Documents site.</li>
       <li><strong>Open the next pay period.</strong> One button, available once this period is closed.</li>
     </ol>

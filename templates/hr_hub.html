@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} — Beacon{% endblock %}
+{#
+  The HR & Payroll menu and its HR Administrative Tasks submenu (hr_hub.py). Same tile look as the Administrative Tasks hub.
+  A card marked `submenu` leads to another menu of cards rather than to a screen.
+#}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+{% endblock %}
+{% block content %}
+{% from "_guide_link.html" import guide_link %}
+<div class="page-shell-wide">
+
+<h1>{{ page_title }}</h1>
+<p><a href="{{ back_url }}">&larr; {{ back_label }}</a></p>
+<p class="sub">{{ sub }}</p>
+
+<div class="setup-grid" style="margin-top: var(--space-5);">
+  {% for c in cards %}
+  <div class="setup-tile is-built">
+    <div class="tile-head">
+      <h2><a href="{{ c.url }}">{{ c.title }}{% if c.submenu %} &rsaquo;{% endif %}</a></h2>
+      {% if c.guide %}{{ guide_link(c.guide, "How to use: " ~ c.title) }}{% endif %}
+    </div>
+    <div class="desc">{{ c.desc }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+</div>
+{% endblock %}

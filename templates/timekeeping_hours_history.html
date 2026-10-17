@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Hours history — {{ title }}{% endblock %}
+{#
+  Hours history (hours_history.py): one row per pay period with the hours Beacon counts for each kind of hours, the total, and the
+  paid total where it has been loaded. For one person or one department. On the shared fixed frame (fixed_frame.css / .js). Hours only.
+#}
+{% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
+{% macro num(v) %}{% if v is none %}&mdash;{% else %}{{ "%.2f"|format(v) }}{% endif %}{% endmacro %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+<link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
+{% endblock %}
+{% block content %}
+{% set n = hist.cats|length %}
+{% set w = (61 / (n + 3))|round(2) %}
+<div class="page-shell-wide">
+<div class="ff-shell">
+  <div class="ff-title-row">
+    <h1>Hours history: {{ title }}</h1>
+    <a class="ff-back" href="{{ back_url }}">&larr; {{ back_label }}</a>
+  </div>
+  <div class="ff-info">
+    {% if person %}
+    <strong>{% if person.employee_number %}#{{ person.employee_number }} {% endif %}{{ person.parish_code }} {{ person.dept_name }}</strong>
+    {% if not person.is_active %}<span>inactive</span>{% endif %}
+    {% if person.hours_basis == 'standing' and person.standing_hours is not none %}<span>standing hours: {{ "%g"|format(person.standing_hours) }} each period</span>{% endif %}
+    <a href="/admin/timekeeping/parish/{{ person.parish_id }}/hours-history">The whole department&rsquo;s history</a>
+    {% else %}
+    <strong>Everyone at this department</strong>
+    <a href="/admin/timekeeping/employees?parish_id={{ parish.id }}">Its employees</a>
+    {% endif %}
+    <span>Hours only. Pay #1 to #20 were loaded from the paid labor distribution, so those hours are the paid hours. Later periods show Beacon&rsquo;s hours, and Paid where the paid hours have been loaded.</span>
+  </div>
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      <table class="ff-table">
+        <colgroup>
+          <col style="width:20%"><col style="width:8%"><col style="width:11%">
+          {% for c in hist.cats %}<col style="width:{{ w }}%">{% endfor %}
+          <col style="width:{{ w }}%"><col style="width:{{ w }}%"><col style="width:{{ w }}%">
+        </colgroup>
+        <thead>
+          <tr>
+            <th data-sort="1" data-dir="desc">Pay period<span class="arrow">&#9660;</span></th>
+            <th data-sort="1">Pay date<span class="arrow"></span></th>
+            <th data-sort="1">Status<span class="arrow"></span></th>
+            {% for c in hist.cats %}<th data-sort="1" class="c-num" data-tip="{{ c.label }}">{{ c.short }}<span class="arrow"></span></th>{% endfor %}
+            <th data-sort="1" class="c-num" data-tip="All kinds of hours Beacon counts for the period">Total<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num" data-tip="What payroll paid, once the paid hours are loaded for the period">Paid<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num" data-tip="Lines still waiting for review. They are not counted yet.">Waiting<span class="arrow"></span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in hist.rows %}
+          {% set p = r.period %}
+          <tr class="ff-row{% if r.waiting %} is-attn{% endif %}">
+            <td data-v="{{ p.period_start.isoformat() }}"><a href="/admin/timekeeping/status/{{ p.id }}/{{ parish_id }}">{{ p.label or (dt(p.period_start) ~ " to " ~ dt(p.period_end)) }}</a>
+              <span class="c-muted">{{ dt(p.period_start) }} &ndash; {{ dt(p.period_end) }}</span></td>
+            <td data-v="{{ p.pay_date.isoformat() if p.pay_date else '' }}">{{ dt(p.pay_date) }}</td>
+            <td>{{ 'Open' if p.status == 'open' else 'Closed' }}{% if p.hours_finalized_at %} &middot; Final{% endif %}</td>
+            {% for c in hist.cats %}{% set v = r.cells[c.id] %}<td class="c-num" data-v="{{ v if v is not none else '' }}">{{ num(v) }}</td>{% endfor %}
+            <td class="c-num" data-v="{{ r.total }}"><strong>{{ num(r.total) }}</strong></td>
+            <td class="c-num" data-v="{{ r.paid if r.paid is not none else '' }}">{{ num(r.paid) }}</td>
+            <td class="c-num" data-v="{{ r.waiting }}">{% if r.waiting %}<span class="ph-state-attn">{{ r.waiting }}</span>{% else %}&mdash;{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr class="ff-empty"><td colspan="{{ n + 6 }}">No pay periods have started yet.</td></tr>
+          {% endfor %}
+        </tbody>
+        {% if hist.rows %}
+        <tfoot>
+          <tr class="ff-row">
+            <td colspan="3"><strong>All periods shown</strong></td>
+            {% for c in hist.cats %}<td class="c-num"><strong>{{ num(hist.totals.by_cat[c.id]) }}</strong></td>{% endfor %}
+            <td class="c-num"><strong>{{ num(hist.totals.total) }}</strong></td>
+            <td class="c-num"><strong>{{ num(hist.totals.paid) }}</strong></td>
+            <td class="c-num"></td>
+          </tr>
+        </tfoot>
+        {% endif %}
+      </table>
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count">{{ hist.rows|length }} pay period{{ '' if hist.rows|length == 1 else 's' }}</span>
+    </div>
+  </div>
+</div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
+{% endblock %}

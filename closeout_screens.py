@@ -55,6 +55,10 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
     var = st["variance"]
     counts = var["counts"] if var else {}
     differing = sum(counts.get(k, 0) for k in ("differs", "paid_no_beacon_hours", "beacon_hours_not_paid"))
+    # people whose total hours tie to the paid total but whose categories differ: left as entered, noted for review
+    for_review = var.get("category_only_people", 0) if var else 0
+    review_text = (f" {for_review} person(s) have the same total hours as paid but different categories: left as entered, "
+                   f"noted for review." if for_review else "")
     nxt = st["next"]
     steps = []
 
@@ -93,11 +97,12 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
     if var is None:
         s4.update(state="waiting", detail="Waits for the paid hours.")
     elif differing == 0:
-        s4.update(state="done", detail=f"All {counts.get('match', 0)} lines match the paid hours.")
+        s4.update(state="done", detail=f"All {counts.get('match', 0)} lines match the paid hours." + review_text,
+                  **({"link": {"label": "See the lines for review", "url": f"{base}/variance"}} if for_review else {}))
     else:
         s4.update(state="todo", detail=(f"{counts.get('match', 0)} match. {counts.get('differs', 0)} differ, "
                                          f"{counts.get('paid_no_beacon_hours', 0)} were paid with no Beacon hours, "
-                                         f"{counts.get('beacon_hours_not_paid', 0)} Beacon hours were not paid."),
+                                         f"{counts.get('beacon_hours_not_paid', 0)} Beacon hours were not paid." + review_text),
                   link={"label": "See each difference", "url": f"{base}/variance"})
     steps.append(s4)
 
@@ -105,16 +110,19 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
     if st["actualized"]:
         s5.update(state="done", detail=f"Actualized {_when(p['actualized_at'], org_id)}"
                                        + (" automatically." if p["actualized_automatically"] else
-                                          f" by {st['actualized_by']}." if st["actualized_by"] else "."))
+                                          f" by {st['actualized_by']}." if st["actualized_by"] else ".") + review_text)
     elif not st["closed"] or var is None:
         s5.update(state="waiting", detail="Needs the period closed and the paid hours loaded.")
     elif differing == 0 and p["register_unmatched"]:
         s5.update(state="waiting", detail="Every line matches, but some paid people are not on the roster (step 3).")
     else:
-        s5.update(state="todo", detail=f"{differing} change(s) to make. The old figures stay in the edit history. "
-                                       "Beacon hours that were not paid become 0 with a note.",
+        s5.update(state="todo",
+                  detail=((f"{differing} change(s) to make. The old figures stay in the edit history. "
+                           "Beacon hours that were not paid become 0 with a note.") if differing else
+                          "No line needs to change. Press the button to record the period as Actualized.") + review_text,
                   action={"label": "Make Beacon match the paid hours", "url": f"{base}/closeout/actualize",
-                          "confirm": f"Change {differing} line(s) to the paid hours?"})
+                          "confirm": (f"Change {differing} line(s) to the paid hours?" if differing else
+                                      "Record this period as Actualized?")})
     steps.append(s5)
 
     steps.append({"n": 6, "title": "File the reports in the Documents folders", "state": "waiting",
@@ -185,6 +193,8 @@ async def closeout_actualize(period_id: int, request: Request):
         parts = [f"{r['changed']} changed to the paid hours", f"{r['added']} added", f"{r['zeroed']} set to 0 (not paid)"]
         tail = " Beacon now matches the paid hours." if r["tied"] else f" {r['left']} difference(s) left" + (
             f" and {r['unmatched']} paid person(s) not on the roster." if r["unmatched"] else ".")
+        if r.get("for_review"):
+            tail += f" {r['for_review']} person(s) kept as entered because their total hours match (noted for review)."
         return "Actualized: " + ", ".join(parts) + "." + tail
     return _act(request, period_id, lambda o, u: pc.actualize_period(o, period_id, u), msg)
 

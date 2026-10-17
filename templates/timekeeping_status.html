@@ -36,7 +36,7 @@
     <h1>Time Review {{ guide_link("payroll-hours", "How payroll hours from email work") }}</h1>
     <span class="ff-state {{ period.status }}" data-tip="This period is {{ period.status }}. Only an Open period accepts hours.">{{ period.status|capitalize }}</span>
     {% if payroll.final and not payroll.left %}<span class="ff-state final" data-tip="Hours were marked Final{% if payroll.final_at %} {{ payroll.final_at }}{% endif %}">Final</span>{% endif %}
-    <a class="ff-back" href="/portal">&larr; Back to main menu</a>
+    <a class="ff-back" href="/hr">&larr; Back to HR &amp; Payroll</a>
     <div class="ff-actions">
       <button type="button" class="btn btn-sm btn-primary" data-ff-dialog="changePeriodDialog">Change period</button>
       <div class="ff-dropdown">
@@ -163,6 +163,7 @@
                 {% endif %}
                 {% endif %}
                 <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{{ "Enter missing data" if not r.submission_id and not r.recorded else "View / edit hours" }}</a>
+                <a role="menuitem" href="/admin/timekeeping/parish/{{ r.parish_id }}/hours-history">Hours history</a>
                 <a role="menuitem" href="/admin/timekeeping/parish-profile/{{ r.parish_id }}">Parish profile</a>
               </div>
             </td>
