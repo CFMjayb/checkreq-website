@@ -4,6 +4,8 @@
 .ph-inline { display: inline-flex; gap: 4px; align-items: center; margin: 0 4px 0 0; }
 .ph-inline input[type="number"] { width: 5.5em; }
 .ph-quote { color: var(--color-muted, #6b6b6b); font-size: 0.85em; max-width: 24em; }
+.ph-foot-check { display: inline-flex; align-items: center; gap: 4px; margin: 0; cursor: pointer; font-weight: normal; }
+.ph-foot-check input[type="checkbox"] { width: auto; height: auto; margin: 0; flex: 0 0 auto; cursor: pointer; }
 .ph-state-ok { color: #1f6b3a; }
 .ph-state-attn { color: #9c0006; font-weight: 600; }
 .ph-small { font-size: 0.85em; }
