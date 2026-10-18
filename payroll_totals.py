@@ -31,6 +31,7 @@ import json
 import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+import category_order
 import db
 
 MAX_HOURS = Decimal("300")
@@ -1842,7 +1843,7 @@ def variance(org_id: int, period_id: int) -> dict:
         if r["counted_hours"] is not None and r["staff_id"] is not None and r["captures_hours"]:
             beacon[(r["staff_id"], r["category_id"])] = r
     reg = db.query(
-        "SELECT rh.staff_id, rh.category_id, rh.hours, c.label, c.sort_order, sr.employee_number, sr.first_name, "
+        "SELECT rh.staff_id, rh.category_id, rh.hours, c.label, c.key AS cat_key, c.sort_order, sr.employee_number, sr.first_name, "
         "sr.last_name, sr.captures_hours, p.code AS parish_code, p.name AS parish_name, "
         "COALESCE(p.short_name, p.name) AS dept_name "
         "FROM portal.time_register_hours rh JOIN portal.staff_roster sr ON sr.id = rh.staff_id "
@@ -1852,9 +1853,15 @@ def variance(org_id: int, period_id: int) -> dict:
     rows = []
     tot_b: dict = {}  # per person, ALL categories together: what Beacon counts and what was paid
     tot_g: dict = {}
-    for key in sorted(set(beacon) | set(rmap), key=lambda k: (
-            (beacon.get(k) or {}).get("parish_code") or (rmap.get(k) or {}).get("parish_code") or "~",
-            (beacon.get(k) or {}).get("last_name") or (rmap.get(k) or {}).get("last_name") or "")):
+    def order_key(k):
+        """Department, then employee (last, first, employee number: one person's lines stay together), then the kind of hours in the
+        screen order Reg, OT, Sick, Vac, Holiday (Jay, 2026-10-17)."""
+        src = beacon.get(k) or rmap.get(k)
+        return (src.get("parish_code") or "~", (src.get("last_name") or "").lower(), (src.get("first_name") or "").lower(),
+                src.get("employee_number") or "", k[0], category_order.rank(src.get("category_key") or src.get("cat_key")),
+                src.get("category_sort") or src.get("sort_order") or 0, k[1])
+
+    for key in sorted(set(beacon) | set(rmap), key=order_key):
         b, g = beacon.get(key), rmap.get(key)
         bh = None if b is None else b["counted_hours"]
         gh = None if g is None else Decimal(g["hours"])
@@ -1880,7 +1887,7 @@ def variance(org_id: int, period_id: int) -> dict:
                      "entered_hours": float(bh) if (b is not None and bh is not None and b["source"] != "standing") else None,
                      "beacon_hours": None if bh is None else float(bh),
                      "register_hours": None if gh is None else float(gh),
-                     "difference": None if (bh is None or gh is None) else float(bh - gh)})
+                     "difference": float((bh or Decimal(0)) - (gh or Decimal(0)))})  # Beacon minus paid; a missing side is 0, so a person's rows add up
     # A person whose categories differ but whose TOTAL hours tie to the paid hours is not a difference (Jay, 2026-10-17):
     # for example Holiday or Sick hours Beacon keeps as entered that payroll paid as Regular. Such rows are marked
     # category_only; Actualize leaves them alone and notes them for review.
