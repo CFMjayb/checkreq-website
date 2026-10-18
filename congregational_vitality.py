@@ -34,6 +34,7 @@ import parish_sustain
 import rbac
 import registry
 import sustain_data
+import sustain_defaults
 import sustain_review
 import vitality_data
 import vitality_viz
@@ -341,7 +342,9 @@ def sustainability_review_page(request: Request):
         if row["has_report"] and row["attendance"]:
             row["spark"] = vitality_viz.sparkline(row["attendance"]["series"])
     ctx = {"state": "ok", "org": org, "lst": lst, "columns": columns, "salary": salary, "salary_text": request.query_params.get("salary", "") if salary is not None else "",
-           "salary_error": salary_error, "as_of": loaded, "sort": sort, "dir": "desc" if desc else "asc", "defaults_href": f"{path}/defaults", "list_href": path}
+           "salary_error": salary_error, "as_of": loaded, "sort": sort, "dir": "desc" if desc else "asc", "defaults_href": f"{path}/defaults", "list_href": path,
+           # a diocese that has not set its projection defaults cannot test any parish: say so once, not on every row
+           "defaults_missing": sustain_defaults.labels(sustain_defaults.missing_defaults(defaults))}
     return _render(request, "vitality_sustain.html", user, ctx)
 
 

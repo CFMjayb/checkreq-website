@@ -32,6 +32,7 @@ import parish_roles
 import rbac
 import sustain_builder
 import sustain_data
+import sustain_defaults
 from offloop import offloop
 
 router = APIRouter()
@@ -111,13 +112,21 @@ def page_response(request: Request, user, parish, *, base_path: str = "/sustaina
         defaults = sustain_data.assumption_defaults(parish["org_id"])
         guidelines = sustain_data.guideline_rows(parish["org_id"])
         base = ctx["latest"]
-        result = sustain_builder.calc_result(base, defaults, guidelines, None)
-        form_inputs = result["inputs"] or sustain_builder.calc_inputs_for_form(base, defaults, guidelines)
         nb = _neighborhood_link(user, parish)
         if neighborhood_href and nb.get("show"):
             nb = dict(nb, href=neighborhood_href)
-        ctx.update(result=result, form=sustain_builder.form_values(form_inputs), scenarios=sustain_data.list_scenarios(parish["id"]),
-                   guideline_missing=not guidelines, neighborhood=nb)
+        ctx.update(scenarios=sustain_data.list_scenarios(parish["id"]), guideline_missing=not guidelines, neighborhood=nb)
+        unset = sustain_defaults.missing_defaults(defaults)
+        if unset:
+            # The diocese has not set its projection defaults (build_inputs would raise, and used to answer 500). The ten-year trends
+            # still show; the calculator is replaced by a short notice. Nothing is made up. Only diocesan staff are told where to set
+            # them; a parish leader is told to ask the diocese.
+            ctx.update(defaults_missing=sustain_defaults.labels(unset), can_set_defaults=ctx["can_spreadsheet_mode"],
+                       result={"ok": False, "error": sustain_defaults.NOT_SET_SENTENCE, "inputs": None}, form=None)
+        else:
+            result = sustain_builder.calc_result(base, defaults, guidelines, None)
+            form_inputs = result["inputs"] or sustain_builder.calc_inputs_for_form(base, defaults, guidelines)
+            ctx.update(defaults_missing=[], can_set_defaults=False, result=result, form=sustain_builder.form_values(form_inputs))
     return _render(request, "parish_sustain.html", user, ctx)
 
 

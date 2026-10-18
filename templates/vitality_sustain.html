@@ -27,7 +27,9 @@
   </form>
 </header>
 
-{% if not lst.guideline_loaded and salary is none %}
+{% if defaults_missing %}
+<div class="banner banner-info" id="vtNoDefaults" role="status">Your diocese has not set its projection defaults yet, so no parish can be tested. A Beacon Admin or Setup Admin can set them under Congregational Vitality &rsaquo; <a href="{{ defaults_href }}">Projection defaults</a>. Still to set: {{ defaults_missing|join(", ") }}.</div>
+{% elif not lst.guideline_loaded and salary is none %}
 <div class="banner banner-info">The diocese's pay guideline has not been loaded yet, so there is no salary to test. Type a test salary above to see every parish at that salary, or <a href="{{ defaults_href }}">review the projection defaults</a>.</div>
 {% elif salary is not none %}
 <div class="banner banner-info">Every parish is tested with a priest paid ${{ '{:,.0f}'.format(salary) }} in salary and housing, plus the diocese's pension rate{% if lst.guideline_loaded %} (instead of the pay guideline){% endif %}.</div>
@@ -73,10 +75,11 @@
       <td>
         {% if r.priest.status == 'ok' %}<div class="vt-v">{{ r.runway_text }}</div><div class="vt-c">with a priest at ${{ "{:,.0f}".format(r.priest.salary) }}</div>
         {% elif r.priest.status == 'no_salary' %}<div class="vt-c">No salary to test</div>
-        {% else %}<div class="vt-c" title="{{ r.priest.error }}">Cannot test</div>{% endif %}
+        {% else %}<div class="vt-c"{% if not defaults_missing %} title="{{ r.priest.error }}"{% endif %}>Cannot test</div>{% endif %}
       </td>
       <td>
         {% if r.priest.status == 'ok' %}<div class="vt-v">{{ r.priest.word }}</div>
+        {% elif defaults_missing %}<div class="vt-c">&mdash;</div>
         {% else %}<div class="vt-c">{{ r.priest.error or "&mdash;"|safe }}</div>{% endif %}
       </td>
       {% else %}
