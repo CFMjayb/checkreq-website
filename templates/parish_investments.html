@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% from "_doc_tree_macro.html" import doc_tree with context %}
+{% block title %}Investments — {{ parish.name }}{% endblock %}
+{% block content %}
+<div class="page-shell">
+<h1>Investments — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</h1>
+<p class="back-link"><a href="/parish-finance">&larr; Back to Finance</a></p>
+
+{% if not can_view %}
+<div class="banner banner-info">You don't have permission to view this parish's investments. Ask your
+diocese for the Finance-Investments role if you need access.</div>
+{% else %}
+
+{% if list_error %}<div class="banner banner-error">Couldn't load investments right now: {{ list_error }}</div>{% endif %}
+
+{% if not folder %}
+<div class="card"><p class="sub">No SharePoint folder has been matched for this parish yet. Contact the diocesan office to have it set up.</p></div>
+{% else %}
+
+{% if folder_stale %}
+<div class="banner banner-error">This parish's SharePoint folder may have been renamed or moved — contact the diocesan office if the files below look out of date.</div>
+{% endif %}
+
+<div class="card doc-area">
+  <p class="sub">Investment statements and reports the diocese has filed for your parish. Read-only.</p>
+  {% if files %}
+  {{ doc_tree(files, '/parish-finance/investments/download/') }}
+  {% else %}
+  <p class="doc-empty">Nothing here yet.</p>
+  {% endif %}
+</div>
+
+{% endif %}
+{% endif %}
+</div>
+{% endblock %}

@@ -10,6 +10,10 @@
 diocese for the Parish Finance role if you need access.</div>
 {% else %}
 
+{% if can_view_investments %}
+<p class="finance-subnav"><a href="/parish-finance/investments" class="btn btn-sm">Investments</a></p>
+{% endif %}
+
 {% if request.query_params.get('asked') %}<div class="banner banner-success">Your question was sent to the Business Office.</div>{% endif %}
 {% if request.query_params.get('error') == 'empty_question' %}<div class="banner banner-error">Please enter a question before sending.</div>{% endif %}
 {% if request.query_params.get('requested') %}<div class="banner banner-success">Direct debit enrollment requested — the Business Office will follow up to complete it.</div>{% endif %}

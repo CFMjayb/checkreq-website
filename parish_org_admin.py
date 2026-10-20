@@ -130,7 +130,7 @@ def _create_sharepoint_folder_for_parish(org: dict, parish: dict) -> str | None:
     folder_name = f"{code}. {name}, {city}" if city else f"{code}. {name}"
 
     try:
-        token = sharepoint_client.get_access_token()
+        token = sharepoint_client.get_access_token(org["sp_parish_hostname"])
         site_id = sharepoint_client.get_site_id(
             token, org["sp_parish_hostname"], org["sp_parish_site_path"]
         )
