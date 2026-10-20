@@ -43,6 +43,9 @@ PARISH_BASE_ROLE = "parish_member"
 # parish_finance row, and revoking Treasurer later does not revoke it.
 ROLE_ALSO_GRANTS: dict[str, tuple[str, ...]] = {
     "parish_treasurer": ("parish_finance",),
+    # Jay, 2026-10-20: Finance-Investments sees the Finance page (so it carries Parish Finance) plus
+    # the Investments item and folder, which are gated on this role itself -- see migration 095.
+    "parish_finance_investments": ("parish_finance",),
 }
 
 

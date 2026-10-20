@@ -49,6 +49,8 @@ import qbo_mcp_client
 import email_client
 import registry
 import sma_parish_view          # the read-only SMA letter section (26-129 plan rev 12)
+import parish_documents         # can_view_investments(): the one gate for the Investments item/page/folder (2026-10-20)
+import parish_investments       # the Investments page under Finance; registered below, so main.py needs no change
 
 router = APIRouter()
 
@@ -123,6 +125,7 @@ def register(app, *, current_user, render) -> None:
     global _current_user, _render
     _current_user, _render = current_user, render
     app.include_router(router)
+    parish_investments.register(app, render=render)   # /parish-finance/investments (+ download)
 
 
 # ── Context + authorization ─────────────────────────────────────────────────
@@ -299,6 +302,8 @@ def parish_finance_page(request: Request):
         "payments": payments, "payments_error": payments_error,
         "has_ap": bool(parish.get("qbo_ap_vendor_id")),
         "sma_letter": sma_parish_view.for_parish(parish),
+        # The Investments item under Finance: Finance-Investments holders and the diocesan roles that see everything.
+        "can_view_investments": parish_documents.can_view_investments(user, parish),
     })
 
 

@@ -105,7 +105,41 @@ _render = None
 READONLY_SUBFOLDER = "Read Only Files"
 EDITABLE_SUBFOLDER = "Parish Files"
 TO_DIOCESE_SUBFOLDER = "For the Diocese"
-_SPECIAL_SUBFOLDERS = {READONLY_SUBFOLDER, EDITABLE_SUBFOLDER, TO_DIOCESE_SUBFOLDER}
+# 2026-10-20 (Jay, DME Beacon Documents site): two more subfolders in every DME entity's folder,
+# filed by the diocese and NOT part of the open "From the Diocese" listing -- payroll reports
+# (26-158 step 6 / 26-113) and investment statements (26-160). Sensitive, so they are hidden from
+# the generic listing and their paths are refused to everyone except the roles that own them (see
+# _is_restricted_path / _can_view_restricted): Investments -> the parish's Finance-Investments role,
+# HRPayroll -> hr_admin; Beacon Admin and Setup Admin see both (Jay, 2026-10-20).
+HRPAYROLL_SUBFOLDER = "HRPayroll"
+INVESTMENTS_SUBFOLDER = "Investments"
+# Inside HRPayroll (Jay, 2026-10-20): "Payroll Reports" holds one folder per pay period, created as the
+# payroll reports are filed (26-158 step 6 / 26-113). The setup script creates "Payroll Reports" itself.
+HRPAYROLL_REPORTS_SUBFOLDER = "Payroll Reports"
+RESTRICTED_SUBFOLDERS = (HRPAYROLL_SUBFOLDER, INVESTMENTS_SUBFOLDER)
+_SPECIAL_SUBFOLDERS = {READONLY_SUBFOLDER, EDITABLE_SUBFOLDER, TO_DIOCESE_SUBFOLDER, *RESTRICTED_SUBFOLDERS}
+
+
+def _restricted_key(name: str) -> str:
+    """Loose form of a folder name for the restricted check: case, spaces, dots, dashes and
+    underscores ignored, so a hand-made "HR Payroll" or "hrpayroll" is held to the same rule as
+    "HRPayroll" -- a folder someone names slightly differently must never fall into the open listing."""
+    return re.sub(r"[\s._-]+", "", name or "").casefold()
+
+
+_RESTRICTED_KEYS = frozenset(_restricted_key(n) for n in RESTRICTED_SUBFOLDERS)
+
+
+def _is_restricted_name(name: str) -> bool:
+    return _restricted_key(name) in _RESTRICTED_KEYS
+
+
+def _is_restricted_path(rel_path: str) -> bool:
+    """True if a client-supplied rel_path points into (or at) HRPayroll / Investments. Only the first
+    segment matters: the download/delete call that follows runs the path through path_guard, which
+    refuses "..", ".", empty parts, backslashes and "%", so nothing can start somewhere else and climb
+    into a restricted folder afterwards (a trick path is refused there, not here)."""
+    return _is_restricted_name((rel_path or "").split("/", 1)[0])
 _FUZZY_THRESHOLD = 0.72
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB -- generous for scanned documents
 
@@ -179,7 +213,9 @@ def _fuzzy_match_folder(parish: dict, folder_names: list[str]) -> str | None:
 
 
 def _site_and_token(org: dict) -> tuple[str, str]:
-    token = sharepoint_client.get_access_token()
+    # The token is for the TENANT the org's site lives in (2026-10-20: DME's Beacon Documents
+    # site is a different tenant from Maryland's DioNet); an unconfigured host raises.
+    token = sharepoint_client.get_access_token(org["sp_parish_hostname"])
     site_id = sharepoint_client.get_site_id(token, org["sp_parish_hostname"], org["sp_parish_site_path"])
     return token, site_id
 
@@ -293,7 +329,7 @@ def list_readonly(org: dict, folder_name: str) -> list[dict]:
     base = _parish_root(org, folder_name)
     out = []
     for e in sharepoint_client.list_folder(token, site_id, base):
-        if e["name"] in _SPECIAL_SUBFOLDERS:
+        if e["name"] in _SPECIAL_SUBFOLDERS or _is_restricted_name(e["name"]):
             continue
         node = {"name": e["name"], "is_folder": e["is_folder"], "rel_path": e["name"], "size": e.get("size", 0)}
         if e["is_folder"]:
@@ -314,6 +350,14 @@ def list_to_diocese(org: dict, folder_name: str) -> list[dict]:
     token, site_id = _site_and_token(org)
     base = _parish_root(org, folder_name)
     return sharepoint_client.list_tree(token, site_id, f"{base}/{TO_DIOCESE_SUBFOLDER}", TO_DIOCESE_SUBFOLDER)
+
+
+def list_investments(org: dict, folder_name: str) -> list[dict]:
+    """The parish's Investments folder as a tree (read-only; the diocese files here). Shown ONLY on the
+    Investments page under Finance (parish_investments.py), never in the open Documents areas."""
+    token, site_id = _site_and_token(org)
+    base = _parish_root(org, folder_name)
+    return sharepoint_client.list_tree(token, site_id, f"{base}/{INVESTMENTS_SUBFOLDER}", INVESTMENTS_SUBFOLDER)
 
 
 def upload_readonly(org: dict, folder_name: str, filename: str, data: bytes, content_type: str) -> None:
@@ -399,6 +443,42 @@ def _can_edit_parish_docs(user: dict, parish: dict) -> bool:
     return parish_roles.user_has_any_parish_role(
         user["id"], ["parish_documents", "parish_admin"], parish["id"]
     )
+
+
+def _sees_everything(user: dict, parish: dict) -> bool:
+    """The CFM / diocesan roles that see ALL of a parish's restricted folders (Jay, 2026-10-20: "Beacon
+    Admin and Setup Admin can see all of this" -- "for example", so this is the one place to add more).
+    Held AT THIS PARISH'S OWN diocese, never "at any entity"."""
+    org_id = parish.get("org_id")
+    if parish_roles.holds_role_at_parish_org(user["id"], "beacon_admin", org_id):
+        return True
+    return bool(org_id) and rbac.user_has_role(user["id"], "setup_admin", org_id)
+
+
+def can_view_investments(user: dict, parish: dict) -> bool:
+    """The Investments item under Finance, its page, and the parish's Investments folder: everyone who
+    sees everything, or the parish's own Finance-Investments role (migration 095). Treasurer and Parish
+    Finance alone do NOT qualify."""
+    return _sees_everything(user, parish) or parish_roles.user_has_parish_role(
+        user["id"], "parish_finance_investments", parish["id"])
+
+
+def can_view_hrpayroll(user: dict, parish: dict) -> bool:
+    """The HRPayroll folder: everyone who sees everything, or the HR role (entity-level hr_admin held at
+    the parish's own diocese -- there is no parish-level HR role)."""
+    org_id = parish.get("org_id")
+    return _sees_everything(user, parish) or (bool(org_id) and rbac.user_has_role(user["id"], "hr_admin", org_id))
+
+
+def _can_view_restricted(user: dict, parish: dict, rel_path: str) -> bool:
+    """May this user open `rel_path`, which _is_restricted_path says sits in HRPayroll or Investments?
+    Each folder has its own rule; anything else restricted (there is nothing else today) is refused."""
+    key = _restricted_key((rel_path or "").split("/", 1)[0])
+    if key == _restricted_key(INVESTMENTS_SUBFOLDER):
+        return can_view_investments(user, parish)
+    if key == _restricted_key(HRPAYROLL_SUBFOLDER):
+        return can_view_hrpayroll(user, parish)
+    return False
 
 
 def _parish_context(request: Request):
@@ -594,6 +674,8 @@ def parish_documents_download(rel_path: str, request: Request, download: int = 0
     user, parish, org, err = _parish_context(request)
     if err:
         return err
+    if _is_restricted_path(rel_path) and not _can_view_restricted(user, parish, rel_path):
+        return JSONResponse({"error": "Not found"}, status_code=404)
     folder, _stale = get_parish_folder(org, parish)
     if not folder:
         return JSONResponse({"error": "Not found"}, status_code=404)
@@ -734,6 +816,8 @@ async def admin_parish_documents_delete(parish_id: int, request: Request):
         return RedirectResponse("/admin/parish-documents")
     form = await request.form()
     rel_path = (form.get("rel_path") or "").strip()
+    if _is_restricted_path(rel_path) and not _can_view_restricted(user, parish, rel_path):
+        return JSONResponse({"error": "You can't remove that file."}, status_code=403)
     org = _current_org(request)
     folder, _stale = get_parish_folder(org, parish)
     if folder and rel_path:
@@ -751,6 +835,8 @@ def admin_parish_documents_download(parish_id: int, rel_path: str, request: Requ
         return err
     parish = _parish_in_current_diocese(request, parish_id)
     if not parish:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    if _is_restricted_path(rel_path) and not _can_view_restricted(user, parish, rel_path):
         return JSONResponse({"error": "Not found"}, status_code=404)
     org = _current_org(request)
     folder, _stale = get_parish_folder(org, parish)

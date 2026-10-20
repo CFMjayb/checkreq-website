@@ -10,12 +10,16 @@ Dockerfile explicit per-file COPY list), so this is this project's own copy,
 trimmed to only what attachment upload needs (a single in-memory PUT -- no
 download/list/chunked-session code, since these files are small).
 
-Credentials: GCP Secret Manager secret `sharepoint-credentials` (project
-cfm-qbo-mcp) -- the SAME secret 26-101/26-102/26-130 already use, already
-has Sites.ReadWrite.All admin-consented. Do NOT confuse this with
-`checkreq-azure-credentials` (auth_azure.py) -- that's 26-129's own separate
-interactive user-login app registration, a different credential set for a
-different purpose.
+Credentials: one GCP Secret Manager secret PER SHAREPOINT TENANT (project
+cfm-qbo-mcp), chosen by the site's hostname -- see _TENANT_SECRETS below.
+`sharepoint-credentials` is the Maryland (EDOM) one, the SAME secret
+26-101/26-102/26-130 already use, already has Sites.ReadWrite.All
+admin-consented. A token for one tenant is rejected by every other, so each
+tenant has its own credentials AND its own token cache (2026-10-20, DME's
+Beacon Documents site: one table entry + one secret, not a new module per
+entity). Do NOT confuse any of these with `checkreq-azure-credentials`
+(auth_azure.py) -- that's 26-129's own separate interactive user-login app
+registration, a different credential set for a different purpose.
 """
 from __future__ import annotations
 
@@ -32,10 +36,21 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 SCOPE = "https://graph.microsoft.com/.default"
 
 _SECRET_PROJECT = os.environ.get("FIRESTORE_PROJECT", "cfm-qbo-mcp")
-_SECRET_NAME = "sharepoint-credentials"
 
-_cached_creds: dict | None = None
-_token_cache = {"token": None, "expires_at": 0}
+# SharePoint hostname -> the Secret Manager secret holding that tenant's app credentials
+# ({tenant_id, client_id, client_secret}). To add a tenant: one line here + one secret.
+# A hostname NOT listed raises (see _secret_for) -- it must never fall back to another
+# tenant's credentials.
+_TENANT_SECRETS = {
+    "episcopalmaryland.sharepoint.com": "sharepoint-credentials",      # EDOM: DioNet, check-request archives
+    "episcopalmaine.sharepoint.com": "dme-sharepoint-credentials",     # DME: Beacon Documents site (Sites.Selected, write)
+}
+# What get_access_token() uses when called with no hostname: every pre-2026-10-20 caller
+# (check-request attachment archive etc.) was written for the Maryland tenant and is unchanged.
+_DEFAULT_HOST = "episcopalmaryland.sharepoint.com"
+
+_cached_creds: dict[str, dict] = {}                 # hostname -> credentials
+_token_cache: dict[str, dict] = {}                  # hostname -> {"token", "expires_at"}
 
 # Every call to Graph has a timeout (2026-10-09). `requests` has NONE by default, so a hung
 # connection used to wait forever -- and a submission waiting forever froze everything that
@@ -56,20 +71,35 @@ def _read_secret(name: str) -> str:
     return client.access_secret_version(name=path).payload.data.decode("utf-8")
 
 
-def _creds() -> dict:
-    global _cached_creds
-    if _cached_creds is None:
-        _cached_creds = json.loads(_read_secret(_SECRET_NAME))
-    return _cached_creds
+def _secret_for(hostname: str | None) -> tuple[str, str]:
+    """(normalized hostname, secret name) for a SharePoint host. None means the default
+    (Maryland) tenant. An unknown host RAISES -- silently using another tenant's credentials
+    is exactly the mistake this table exists to make impossible."""
+    host = (hostname or _DEFAULT_HOST).strip().lower()
+    secret = _TENANT_SECRETS.get(host)
+    if not secret:
+        raise ValueError(f"No SharePoint credentials are configured for host {host!r}")
+    return host, secret
 
 
-def get_access_token() -> str:
-    """Fetch (and cache) a Graph access token via client_credentials grant."""
+def _creds(hostname: str | None = None) -> dict:
+    host, secret = _secret_for(hostname)
+    if host not in _cached_creds:
+        _cached_creds[host] = json.loads(_read_secret(secret))
+    return _cached_creds[host]
+
+
+def get_access_token(hostname: str | None = None) -> str:
+    """Fetch (and cache, per tenant) a Graph access token via client_credentials grant.
+    `hostname` picks the tenant (e.g. an organization's sp_parish_hostname); with no argument
+    it is the Maryland tenant, exactly as before 2026-10-20."""
+    host, _ = _secret_for(hostname)
     now = time.time()
-    if _token_cache["token"] and now < _token_cache["expires_at"] - 60:
-        return _token_cache["token"]
+    cached = _token_cache.get(host)
+    if cached and now < cached["expires_at"] - 60:
+        return cached["token"]
 
-    c = _creds()
+    c = _creds(host)
     url = f"https://login.microsoftonline.com/{c['tenant_id']}/oauth2/v2.0/token"
     resp = requests.post(url, data={
         "grant_type": "client_credentials",
@@ -80,9 +110,8 @@ def get_access_token() -> str:
     if not resp.ok:
         raise RuntimeError(f"Microsoft token request failed ({resp.status_code}): {resp.text[:500]}")
     data = resp.json()
-    _token_cache["token"] = data["access_token"]
-    _token_cache["expires_at"] = now + int(data.get("expires_in", 3600))
-    return _token_cache["token"]
+    _token_cache[host] = {"token": data["access_token"], "expires_at": now + int(data.get("expires_in", 3600))}
+    return _token_cache[host]["token"]
 
 
 def _headers(token: str, content_type: str | None = "application/json") -> dict:
