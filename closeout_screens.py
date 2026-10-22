@@ -18,6 +18,7 @@ from fastapi.responses import RedirectResponse
 import db
 import org_time
 import payroll_closeout as pc
+import payroll_decisions as pdec
 import payroll_totals as pt
 
 router = APIRouter()
@@ -93,20 +94,27 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
                                        "in this pay date's folder and sends the hours only. Pay stays on the PC.")
     steps.append(s3)
 
+    undecided = var.get("undecided", 0) if var else 0
+    decided = var.get("decided", 0) if var else 0
+    manual_n = counts.get("manual_check", 0)
+    manual_text = (f" {manual_n} line(s) paid by an interpay manual check: kept as entered, due on the next register."
+                   if manual_n else "")
     s4 = {"n": 4, "title": "Tie out: Beacon against the paid hours"}
     if var is None:
         s4.update(state="waiting", detail="Waits for the paid hours.")
     elif differing == 0:
-        s4.update(state="done", detail=f"All {counts.get('match', 0)} lines match the paid hours." + review_text,
-                  **({"link": {"label": "See the lines for review", "url": f"{base}/variance"}} if for_review else {}))
+        s4.update(state="done", detail=f"All {counts.get('match', 0)} lines match the paid hours." + manual_text + review_text,
+                  **({"link": {"label": "See the lines for review", "url": f"{base}/variance"}} if (for_review or manual_n) else {}))
     else:
         s4.update(state="todo", detail=(f"{counts.get('match', 0)} match. {counts.get('differs', 0)} differ, "
                                          f"{counts.get('paid_no_beacon_hours', 0)} were paid with no Beacon hours, "
-                                         f"{counts.get('beacon_hours_not_paid', 0)} Beacon hours were not paid." + review_text),
-                  link={"label": "See each difference", "url": f"{base}/variance"})
+                                         f"{counts.get('beacon_hours_not_paid', 0)} Beacon hours were not paid. "
+                                         f"{decided} decided, {undecided} still need a decision (paid next period, "
+                                         f"manual check, or Beacon wrong)." + manual_text + review_text),
+                  link={"label": "Decide each difference" if undecided else "See each difference", "url": f"{base}/variance"})
     steps.append(s4)
 
-    s5 = {"n": 5, "title": "Actualize: make Beacon match the paid hours"}
+    s5 = {"n": 5, "title": "Actualize: settle the differences and match Beacon to the paid hours"}
     if st["actualized"]:
         s5.update(state="done", detail=f"Actualized {_when(p['actualized_at'], org_id)}"
                                        + (" automatically." if p["actualized_automatically"] else
@@ -115,18 +123,51 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
         s5.update(state="waiting", detail="Needs the period closed and the paid hours loaded.")
     elif differing == 0 and p["register_unmatched"]:
         s5.update(state="waiting", detail="Every line matches, but some paid people are not on the roster (step 3).")
+    elif undecided:
+        s5.update(state="todo", detail=f"Decide the {undecided} remaining line(s) on the tie-out page first. Then this step applies "
+                                       "the decisions." + review_text,
+                  link={"label": "Decide each difference", "url": f"{base}/variance"})
     else:
+        by = {k: [r for r in (var["rows"] if var else []) if r["kind"] in pc.OPEN_KINDS and r["decision"] == k]
+              for k in pdec.DECISIONS}
+        nxt_label = nxt["label"] if nxt else "the next pay period"
+        carry_h = sum(abs(r["difference"]) for r in by[pdec.NEXT_PERIOD])
+        parts = []
+        if by[pdec.BEACON_WRONG]:
+            parts.append(f"{len(by[pdec.BEACON_WRONG])} change to the paid hours")
+        if by[pdec.NEXT_PERIOD]:
+            parts.append(f"{len(by[pdec.NEXT_PERIOD])} paid next period ({carry_h:g} hours move to {nxt_label})")
+        if by[pdec.MANUAL_CHECK]:
+            parts.append(f"{len(by[pdec.MANUAL_CHECK])} manual check (kept as entered)")
         s5.update(state="todo",
-                  detail=((f"{differing} change(s) to make. The old figures stay in the edit history. "
+                  detail=((f"All decided: {', '.join(parts)}. The old figures stay in the edit history. "
                            "Beacon hours that were not paid become 0 with a note.") if differing else
                           "No line needs to change. Press the button to record the period as Actualized.") + review_text,
-                  action={"label": "Make Beacon match the paid hours", "url": f"{base}/closeout/actualize",
-                          "confirm": (f"Change {differing} line(s) to the paid hours?" if differing else
+                  action={"label": "Apply the decisions" if differing else "Record as Actualized",
+                          "url": f"{base}/closeout/actualize",
+                          "confirm": (f"Apply {differing} decision(s) now?" if differing else
                                       "Record this period as Actualized?")})
     steps.append(s5)
 
-    steps.append({"n": 6, "title": "File the reports in the Documents folders", "state": "waiting",
-                  "detail": "Waits for the DME Documents site and the HR Payroll folder. Not connected yet."})
+    s6 = {"n": 6, "title": "File the reports in the Documents folders"}
+    if st["reports_filed"]:
+        how = "in the Phoenix workbook" if p.get("reports_filed_how") == "phoenix" else "another way"
+        s6.update(state="done", detail=f"Filed {how}. Marked {_when(p['reports_filed_at'], org_id)}"
+                                       + (f" by {st['reports_filed_by']}." if st["reports_filed_by"] else "."),
+                  actions=[{"label": "Undo", "url": f"{base}/closeout/reports-unfiled", "confirm": "Take the filed mark back?",
+                            "plain": True}])
+    elif not st["closed"]:
+        s6.update(state="waiting", detail="Needs the pay period closed. Each department's two reports are filed by the Phoenix "
+                                          "workbook's File Reports to Beacon Documents button.")
+    else:
+        s6.update(state="todo",
+                  detail="The Phoenix workbook's File Reports to Beacon Documents button files each department's reports. "
+                         "Say here that it is done. Beacon does not receive the pay PDFs, so it files nothing itself.",
+                  actions=[{"label": "Filed in the Phoenix workbook", "url": f"{base}/closeout/reports-filed?how=phoenix",
+                            "confirm": "Mark the reports as filed in the Phoenix workbook?"},
+                           {"label": "Filed another way", "url": f"{base}/closeout/reports-filed?how=other",
+                            "confirm": "Mark the reports as filed another way?", "plain": True}])
+    steps.append(s6)
 
     s7 = {"n": 7, "title": "Open the next pay period"}
     if nxt is None:
@@ -156,7 +197,7 @@ def closeout_page(period_id: int, request: Request):
     off = [d for d in (var["departments"] if var else []) if d["differing"]]
     return _render(request, "timekeeping_closeout.html", user,
                    {"current_org": org, "period": st["period"], "state": st, "steps": build_steps(org["id"], st),
-                    "departments_off": off})
+                    "departments_off": off, "prior": st["prior"], "manual_missing": var.get("manual_missing", []) if var else []})
 
 
 def _act(request: Request, period_id: int, fn, ok_msg):
@@ -191,12 +232,120 @@ async def closeout_close(period_id: int, request: Request):
 async def closeout_actualize(period_id: int, request: Request):
     def msg(r):
         parts = [f"{r['changed']} changed to the paid hours", f"{r['added']} added", f"{r['zeroed']} set to 0 (not paid)"]
+        if r.get("carried"):
+            parts.append(f"{r['carried']} paid next period ({r['carried_hours']:g} hours carried to the next pay period)")
+        if r.get("manual"):
+            parts.append(f"{r['manual']} kept as entered (manual check)")
         tail = " Beacon now matches the paid hours." if r["tied"] else f" {r['left']} difference(s) left" + (
             f" and {r['unmatched']} paid person(s) not on the roster." if r["unmatched"] else ".")
         if r.get("for_review"):
             tail += f" {r['for_review']} person(s) kept as entered because their total hours match (noted for review)."
         return "Actualized: " + ", ".join(parts) + "." + tail
     return _act(request, period_id, lambda o, u: pc.actualize_period(o, period_id, u), msg)
+
+
+# ---- tie-out decisions (Jay, 2026-10-22): the three ways to settle a difference, per line or per employee
+
+def _back_variance(period_id: int, msg: str | None = None, err: str | None = None) -> RedirectResponse:
+    q = ""
+    if msg:
+        q = "?saved=" + quote_plus(msg)
+    elif err:
+        q = "?error=" + quote_plus(err)
+    return RedirectResponse(f"/admin/timekeeping/status/{period_id}/variance{q}", status_code=303)
+
+
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _set_msg(res: dict, decision: str) -> str:
+    text = f"Saved: {pdec.LABELS[decision]} for {res['set']} line(s)."
+    if res["skipped"]:
+        text += f" {res['skipped']} line(s) left as they were. {res['reason'] or ''}"
+    return text.strip()
+
+
+@router.post("/admin/timekeeping/status/{period_id}/variance/decide")
+async def variance_decide(period_id: int, request: Request):
+    user, org, err = _gate(request)
+    if err:
+        return err
+    form = await request.form()
+    staff_id, category_id = _int(form.get("staff_id")), _int(form.get("category_id"))
+    if staff_id is None or category_id is None:
+        return _back_variance(period_id, err="That line was not understood.")
+    decision = str(form.get("decision") or "").strip()
+    try:
+        if not decision:  # "Decide..." picked again: the decision is taken back
+            pc.clear_decision(org["id"], period_id, staff_id, category_id)
+            return _back_variance(period_id, msg="The decision was taken back. This line needs a decision.")
+        res = pc.set_decision(org["id"], period_id, staff_id, category_id, decision, user["id"], form.get("note"))
+    except pt.PayrollError as e:
+        return _back_variance(period_id, err=e.message)
+    return _back_variance(period_id, msg=_set_msg(res, decision))
+
+
+@router.post("/admin/timekeeping/status/{period_id}/variance/decide-employee")
+async def variance_decide_employee(period_id: int, request: Request):
+    user, org, err = _gate(request)
+    if err:
+        return err
+    form = await request.form()
+    staff_id = _int(form.get("staff_id"))
+    decision = str(form.get("decision") or "").strip()
+    if staff_id is None or not decision:
+        return _back_variance(period_id, err="Pick a decision for this person.")
+    try:
+        res = pc.set_employee_decision(org["id"], period_id, staff_id, decision, user["id"], form.get("note"))
+    except pt.PayrollError as e:
+        return _back_variance(period_id, err=e.message)
+    return _back_variance(period_id, msg=_set_msg(res, decision))
+
+
+@router.post("/admin/timekeeping/status/{period_id}/variance/decide-all")
+async def variance_decide_all(period_id: int, request: Request):
+    user, org, err = _gate(request)
+    if err:
+        return err
+    form = await request.form()
+    decision = str(form.get("decision") or pdec.BEACON_WRONG).strip()
+    try:
+        res = pc.decide_all_remaining(org["id"], period_id, decision, user["id"], form.get("note"))
+    except pt.PayrollError as e:
+        return _back_variance(period_id, err=e.message)
+    if not res["set"] and not res["skipped"]:
+        return _back_variance(period_id, msg="Every differing line already has a decision.")
+    return _back_variance(period_id, msg=_set_msg(res, decision))
+
+
+@router.post("/admin/timekeeping/status/{period_id}/closeout/reports-filed")
+async def closeout_reports_filed(period_id: int, request: Request):
+    user, org, err = _gate(request)
+    if err:
+        return err
+    how = str(request.query_params.get("how") or "")
+    try:
+        pc.mark_reports_filed(org["id"], period_id, user["id"], how)
+    except pt.PayrollError as e:
+        return _back(period_id, err=e.message)
+    return _back(period_id, msg="The reports are marked as filed" +
+                 (" in the Phoenix workbook." if how == "phoenix" else " another way."))
+
+
+@router.post("/admin/timekeeping/status/{period_id}/closeout/reports-unfiled")
+async def closeout_reports_unfiled(period_id: int, request: Request):
+    user, org, err = _gate(request)
+    if err:
+        return err
+    try:
+        pc.clear_reports_filed(org["id"], period_id)
+    except pt.PayrollError as e:
+        return _back(period_id, err=e.message)
+    return _back(period_id, msg="The filed mark was taken back.")
 
 
 @router.post("/admin/timekeeping/status/{period_id}/closeout/open-next")

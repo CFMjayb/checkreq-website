@@ -33,6 +33,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import category_order
 import db
+import payroll_decisions as pdec
 
 MAX_HOURS = Decimal("300")
 QUOTE_MAX = 300
@@ -342,6 +343,16 @@ def record_period_hours(org_id: int, *, period_id: int, parish_code: str, catego
                           (pending_change_id,))
         if not ch or ch["parish_id"] != parish["id"] or ch["change_type"] != "add" or ch["status"] != "pending":
             raise PayrollError("not_found", "That pending new hire was not found for this parish.")
+    # Hours carried into this period from the previous one ("paid next period", payroll_decisions.py) are part of this line:
+    # an EMAILED figure is what the parish reported for THIS period, so it is stored on top of them, never over them. A figure a
+    # person types on a screen (source diocese or parish) is the total they want and is taken as it is.
+    if staff is not None and source == "email":
+        carry = pdec.carried_in(period_id, staff["id"], cat["id"])
+        if carry > 0:
+            h = h + carry
+            if h > MAX_HOURS:
+                raise PayrollError("refused", f"{h} hours (with {carry} carried in from the previous pay period) is more than "
+                                              "the 300 hours one line may hold.")
     new_status = status or "needs_review"
     if new_status not in ("needs_review", "confirmed"):
         raise PayrollError("invalid", "status must be needs_review or confirmed.")
@@ -1850,6 +1861,9 @@ def variance(org_id: int, period_id: int) -> dict:
         "JOIN portal.parishes p ON p.id = sr.parish_id JOIN portal.timekeeping_categories c ON c.id = rh.category_id "
         "WHERE rh.period_id = %s AND p.org_id = %s", (period_id, org_id))
     rmap = {(x["staff_id"], x["category_id"]): x for x in reg if x["captures_hours"]}
+    decisions = pdec.for_period(period_id)      # how each differing line was settled at close-out (26-158, 2026-10-22)
+    manual_exp = pdec.manual_expected(period_id)  # hours the previous period paid by interpay manual check, due on THIS register
+    manual_left = dict(manual_exp)
     rows = []
     tot_b: dict = {}  # per person, ALL categories together: what Beacon counts and what was paid
     tot_g: dict = {}
@@ -1864,7 +1878,14 @@ def variance(org_id: int, period_id: int) -> dict:
     for key in sorted(set(beacon) | set(rmap), key=order_key):
         b, g = beacon.get(key), rmap.get(key)
         bh = None if b is None else b["counted_hours"]
-        gh = None if g is None else Decimal(g["hours"])
+        gh_raw = None if g is None else Decimal(g["hours"])
+        # Hours the previous period paid by an interpay manual check show on THIS register but are not Beacon hours of this
+        # period (they were counted in the earlier one), so they are taken off the register side before comparing.
+        mc = Decimal(0)
+        if gh_raw is not None and key in manual_exp and gh_raw >= manual_exp[key]:
+            mc = manual_exp[key]
+            manual_left.pop(key, None)
+        gh = None if gh_raw is None else gh_raw - mc
         if (g is None and bh == 0) or (b is None and gh == 0):
             continue  # nothing paid and nothing counted is agreement (an actualized "not paid" line holds 0)
         tot_b[key[0]] = tot_b.get(key[0], Decimal(0)) + (bh or Decimal(0))
@@ -1876,7 +1897,14 @@ def variance(org_id: int, period_id: int) -> dict:
         else:
             kind = "beacon_hours_not_paid"
         src = b or g
+        diff = (bh or Decimal(0)) - (gh or Decimal(0))
+        dec = decisions.get(key)
         rows.append({"kind": kind, "staff_id": src["staff_id"], "category_id": src["category_id"],
+                     # the decision made for this line at close-out, if any (stale = made about a different difference)
+                     "decision": dec["decision"] if dec else None, "decision_note": dec["note"] if dec else None,
+                     "decision_applied": bool(dec and dec["applied_at"]),
+                     "decision_stale": bool(dec and pdec.is_stale(dec, diff)),
+                     "manual_check_hours": float(mc),
                      "parish_code": src["parish_code"], "parish_name": src["parish_name"],
                      "dept_name": src.get("dept_name") or src["parish_name"],
                      "employee_number": src["employee_number"], "last_name": src["last_name"],
@@ -1886,8 +1914,8 @@ def variance(org_id: int, period_id: int) -> dict:
                      "std_hours": float(bh) if (b is not None and bh is not None and b["source"] == "standing") else None,
                      "entered_hours": float(bh) if (b is not None and bh is not None and b["source"] != "standing") else None,
                      "beacon_hours": None if bh is None else float(bh),
-                     "register_hours": None if gh is None else float(gh),
-                     "difference": float((bh or Decimal(0)) - (gh or Decimal(0)))})  # Beacon minus paid; a missing side is 0, so a person's rows add up
+                     "register_hours": None if gh_raw is None else float(gh_raw),  # as the register shows it
+                     "difference": float(diff)})  # Beacon minus paid (less any manual-check hours due from the earlier period); a missing side is 0, so a person's rows add up
     # A person whose categories differ but whose TOTAL hours tie to the paid hours is not a difference (Jay, 2026-10-17):
     # for example Holiday or Sick hours Beacon keeps as entered that payroll paid as Regular. Such rows are marked
     # category_only; Actualize leaves them alone and notes them for review.
@@ -1897,20 +1925,47 @@ def variance(org_id: int, period_id: int) -> dict:
         r["person_register_total"] = float(tg)
         if r["kind"] != "match" and abs(tb - tg) < Decimal("0.005"):
             r["kind"] = "category_only"
+    # A line settled as "manual check" and already applied is resolved: Beacon keeps its hours for this period and the
+    # interpay check shows on the NEXT period's register (payroll_decisions.py). It is listed, but it is no longer a difference.
+    for r in rows:
+        if r["kind"] not in ("match", "category_only") and r["decision"] == pdec.MANUAL_CHECK \
+                and r["decision_applied"] and not r["decision_stale"]:
+            r["kind"] = "manual_check"
     counts = {k: sum(1 for r in rows if r["kind"] == k)
-              for k in ("match", "differs", "paid_no_beacon_hours", "beacon_hours_not_paid", "category_only")}
+              for k in ("match", "differs", "paid_no_beacon_hours", "beacon_hours_not_paid", "category_only", "manual_check")}
     category_only_people = len({r["staff_id"] for r in rows if r["kind"] == "category_only"})
+    # lines that still differ: each needs ONE decision before Actualize (a stale decision counts as none)
+    open_kinds = ("differs", "paid_no_beacon_hours", "beacon_hours_not_paid")
+    undecided = sum(1 for r in rows if r["kind"] in open_kinds and (r["decision"] is None or r["decision_stale"]))
+    decided = sum(1 for r in rows if r["kind"] in open_kinds) - undecided
+    # manual-check hours the earlier period said would be on THIS register but are not (or are fewer)
+    manual_missing = []
+    if reg and manual_left:
+        people = {s["id"]: s for s in db.query(
+            "SELECT sr.id, sr.employee_number, sr.first_name, sr.last_name, p.code AS parish_code, "
+            "COALESCE(p.short_name, p.name) AS dept_name FROM portal.staff_roster sr JOIN portal.parishes p ON p.id = sr.parish_id "
+            "WHERE sr.id = ANY(%s)", ([k[0] for k in manual_left],))}
+        cats = {c["id"]: c["label"] for c in db.query(
+            "SELECT id, label FROM portal.timekeeping_categories WHERE org_id = %s", (org_id,))}
+        for (sid, cid), hrs in sorted(manual_left.items()):
+            s = people.get(sid)
+            if s:
+                manual_missing.append({"staff_id": sid, "category_id": cid, "category_label": cats.get(cid, ""),
+                                       "employee_number": s["employee_number"], "first_name": s["first_name"],
+                                       "last_name": s["last_name"], "parish_code": s["parish_code"],
+                                       "dept_name": s["dept_name"], "hours": float(hrs)})
     # per department, hours only: what Beacon counts against what was paid, and how many rows differ
     depts: dict = {}
     for r in rows:
         d = depts.setdefault(r["parish_code"], {"parish_code": r["parish_code"], "dept_name": r["dept_name"],
                                                 "beacon_hours": 0.0, "register_hours": 0.0, "differing": 0})
         d["beacon_hours"] += r["beacon_hours"] or 0.0
-        d["register_hours"] += r["register_hours"] or 0.0
-        if r["kind"] not in ("match", "category_only"):
+        d["register_hours"] += (r["register_hours"] or 0.0) - r["manual_check_hours"]  # less what an earlier period paid by manual check
+        if r["kind"] not in ("match", "category_only", "manual_check"):
             d["differing"] += 1
     departments = sorted(({**d, "beacon_hours": round(d["beacon_hours"], 2), "register_hours": round(d["register_hours"], 2),
                            "difference": round(d["beacon_hours"] - d["register_hours"], 2)} for d in depts.values()),
                          key=lambda d: d["parish_code"] or "~")
     return {"rows": rows, "counts": counts, "register_loaded": bool(reg), "departments": departments,
-            "category_only_people": category_only_people}
+            "category_only_people": category_only_people, "undecided": undecided, "decided": decided,
+            "manual_missing": manual_missing}
