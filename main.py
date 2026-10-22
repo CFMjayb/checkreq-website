@@ -107,6 +107,7 @@ from starlette.concurrency import run_in_threadpool
 
 import psycopg
 import session_guard
+import parish_functions_guard
 import db
 import rbac
 import parish_roles
@@ -276,6 +277,9 @@ if ON_CLOUD_RUN and not _SESSION_SECRET_RAW.strip():
 # racing in an undefined order. See csrf_guard.py's own docstring for the
 # token-replay gotcha this middleware works around.
 app.add_middleware(csrf_guard.CSRFMiddleware)
+# 2026-10-22: the parish staff screens are turned away in an entity with no parish functions (Claggett and any like it) --
+# parish_functions_guard.py. Added right after CSRF so it too sits inside SessionMiddleware (it reads request.session).
+app.add_middleware(parish_functions_guard.ParishFunctionsGuardMiddleware)
 app.add_middleware(session_guard.SessionAbsoluteCapMiddleware)
 # 2026-09-24 (Jay): log every error response (status >= 400) a user sees --
 # see error_log.py. Added AFTER the CSRF/absolute-cap middlewares (so it wraps
@@ -781,7 +785,10 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # entity_roles -- deliberately NOT entity-scoped here, since a parish
     # doesn't belong to "the current entity" the same way a checkreq role
     # does) both count as a reviewer.
-    if "beacon_admin" in entity_roles or parish_roles.get_parish_ids_with_role(user["id"], "parish_admin"):
+    # 2026-10-22, Jay: no parish functions in an entity without parishes (Claggett and any like it) -- org_features.
+    # parish_functions_allowed() is the one answer (a diocese with the switch on, or a Cornerstone-served parish's own entity).
+    if ("beacon_admin" in entity_roles or parish_roles.get_parish_ids_with_role(user["id"], "parish_admin")) \
+            and org_features.parish_functions_allowed(org_id):
         entity_roles = entity_roles | {"parish_reviewer"}
     # 2026-08-17: synthetic gate for the two new diocese Time Review / Time
     # Status tiles. BOTH conditions must hold, which is why this can't be a
@@ -796,7 +803,9 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
         entity_roles = entity_roles | {"hr_menu"}
     # 26-XXX Congregational Vitality: the diocese's pages are for Beacon Admin or Setup Admin at the CURRENT diocese (the same two the
     # parish Finance page accepts for diocesan staff). A served parish's own entity (Cornerstone Mode) is not a diocese.
-    if org_id is not None and entity_roles & {"beacon_admin", "setup_admin"} and not cornerstone_mode.is_cornerstone_org(org_id):
+    # 2026-10-22: and only where the entity has parish functions switched on (never Claggett or an entity like it).
+    if org_id is not None and entity_roles & {"beacon_admin", "setup_admin"} and not cornerstone_mode.is_cornerstone_org(org_id) \
+            and org_features.is_enabled(org_id, org_features.PARISH_FUNCTIONS):
         entity_roles = entity_roles | {"congregational_vitality"}
     # 2026-09-15, Jay's Entity-vs-Parish login split: same synthetic-
     # pseudo-role trick as administrative_tasks/parish_reviewer above, so
@@ -940,6 +949,8 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
         # the dark-red body.parish-mode theme (applies either way).
         "parish_view": _parish_view,
         "parish_mode_preview": _parish_view_is_preview,
+        # 2026-10-22: may this entity have parish functions at all (base.html's Parish Mode link reads it).
+        "parish_functions": org_features.parish_functions_allowed(org_id),
         # Portal tile badges (2026-08-08) -- computed on every render, same
         # as unread_notification_count above; a tile with nothing open
         # simply has no key in this dict (portal.html renders no badge).
@@ -9528,7 +9539,7 @@ cornerstone_mode.register(app, current_user=_current_user, current_org=_current_
 parish_documents.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 cornerstone_documents.register(app, current_user=_current_user, current_org=_current_org)
 announcements.register(app, current_user=_current_user, current_org=_current_org, render=_render)
-parish_requests.register(app, current_user=_current_user, render=_render)
+parish_requests.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 # 2026-08-08 feedback batch: live Databank contact info, replacing the plain
 # Diocese/City/Served Tier/Status card on parish_view.html.
 parish_info.register(app, current_user=_current_user, render=_render)

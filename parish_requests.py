@@ -19,6 +19,11 @@ parish_access.py. This module deliberately re-derives the small page-level
 gate locally rather than importing parish_access.py (the accepted
 small-duplication pattern already used across parish_mode.py/admin_hub.py/
 access_requests.py for their own local `_require_*` guards).
+
+2026-10-22, Jay: "Parish Requests should only show the requests for that entity, not all entities." The queue and the Respond
+action are now limited to the CURRENT entity: the parishes of that diocese (portal.parishes.org_id) or, in Cornerstone Mode, the
+parish linked to that served entity (portal.parishes.linked_org_id). A Beacon Admin at two dioceses sees one diocese's requests at
+a time and switches entity to see the other's. (No entity selected -> the old reach, for a parish administrator with no entity.)
 """
 from __future__ import annotations
 
@@ -34,12 +39,13 @@ import tile_badges
 router = APIRouter()
 
 _current_user = None
+_current_org = None
 _render = None
 
 
-def register(app, *, current_user, render) -> None:
-    global _current_user, _render
-    _current_user, _render = current_user, render
+def register(app, *, current_user, current_org, render) -> None:
+    global _current_user, _current_org, _render
+    _current_user, _current_org, _render = current_user, current_org, render
     app.include_router(router)
 
 
@@ -97,7 +103,17 @@ def get_request(request_id: int) -> dict | None:
     return db.query_one("SELECT * FROM portal.parish_requests WHERE id = %s", (request_id,))
 
 
-def list_for_review(parish_ids: list[int] | None, include_closed: bool = False) -> list[dict]:
+def parish_in_entity(parish_id: int, org_id: int | None) -> bool:
+    """Does this parish belong to the entity (its diocese, or the served entity linked to it)?  No entity -> True (see top)."""
+    if org_id is None:
+        return True
+    return bool(db.query_one(
+        "SELECT 1 FROM portal.parishes WHERE id = %s AND (org_id = %s OR linked_org_id = %s)",
+        (parish_id, org_id, org_id),
+    ))
+
+
+def list_for_review(parish_ids: list[int] | None, include_closed: bool = False, org_id: int | None = None) -> list[dict]:
     sql = (
         "SELECT pr.*, p.name AS parish_name, p.org_id, o.code AS org_code, "
         "u.display_name AS submitter_name, u.email AS submitter_email "
@@ -105,12 +121,13 @@ def list_for_review(parish_ids: list[int] | None, include_closed: bool = False) 
         "JOIN portal.parishes p ON p.id = pr.parish_id "
         "JOIN checkreq.organizations o ON o.id = p.org_id "
         "JOIN checkreq.app_users u ON u.id = pr.user_id "
-        "WHERE (%s::int[] IS NULL OR pr.parish_id = ANY(%s::int[]))"
+        "WHERE (%s::int[] IS NULL OR pr.parish_id = ANY(%s::int[])) "
+        "AND (%s::int IS NULL OR p.org_id = %s OR p.linked_org_id = %s)"
     )
     if not include_closed:
         sql += " AND pr.status != 'Closed'"
     sql += " ORDER BY pr.created_at"
-    return db.query(sql, (parish_ids, parish_ids))
+    return db.query(sql, (parish_ids, parish_ids, org_id, org_id, org_id))
 
 
 def respond(request_id: int, reviewer_user_id: int, status: str, review_note: str | None) -> None:
@@ -168,7 +185,8 @@ def admin_parish_requests_page(request: Request, view: str = "open"):
     tile_badges.mark_viewed(user["id"], "parish_requests_review")
     is_admin = _is_any_beacon_admin(user)
     scoped_ids = parish_roles.get_reviewable_parish_ids(user["id"])
-    rows = list_for_review(scoped_ids, include_closed=(view == "all"))
+    org = _current_org(request)
+    rows = list_for_review(scoped_ids, include_closed=(view == "all"), org_id=(org["id"] if org else None))
     return _render(request, "admin_parish_requests.html", user, {
         "rows": rows, "view": view, "is_beacon_admin_reviewer": is_admin,
     })
@@ -184,6 +202,9 @@ async def admin_parish_requests_respond(request_id: int, request: Request):
         return RedirectResponse("/admin/parish-requests")
     if not parish_roles.is_parish_reviewer(user["id"], req["parish_id"]):
         return JSONResponse({"error": "You don't administer this request's parish."}, status_code=403)
+    org = _current_org(request)
+    if not parish_in_entity(req["parish_id"], org["id"] if org else None):
+        return JSONResponse({"error": "This request belongs to another entity. Switch to that entity to answer it."}, status_code=403)
     form = await request.form()
     status = (form.get("status") or "Reviewed").strip()
     note = (form.get("review_note") or "").strip() or None

@@ -18,8 +18,15 @@ from __future__ import annotations
 
 import db
 
+PARISH_FUNCTIONS = "parish_functions"
+
 KNOWN_FEATURES = [
     ("timekeeping", "Timekeeping / HR"),
+    # 2026-10-22, Jay: Claggett has no parishes, so nothing parish-related (Parish Requests, Congregational Vitality, Parish Mode,
+    # the Parish group of Administrative Tasks) may exist there, and "we could have additional entities like this in the future."
+    # A per-entity switch, OFF unless set: a new entity gets no parish functions until someone turns them on (a new diocese is
+    # switched on here, Setup Tables > Entities & Global Approvers > Diocese Features).
+    (PARISH_FUNCTIONS, "Parish functions"),
 ]
 
 
@@ -31,6 +38,24 @@ def is_enabled(org_id: int | None, feature_key: str) -> bool:
         (org_id, feature_key),
     )
     return bool(row and row["enabled"])
+
+
+def parish_functions_allowed(org_id: int | None) -> bool:
+    """May the parish-related surfaces (Parish Mode, Parish Requests, Congregational Vitality, the Parish group of the
+    Administrative Tasks hub) exist for this entity?  The ONE answer every gate asks, so a tile, its route and the menu can never
+    disagree:
+
+      * no entity selected -> True (nothing to restrict; each screen's own gate still applies);
+      * the entity's `parish_functions` switch is on (a diocese with parishes) -> True;
+      * a Cornerstone-served parish's own entity (Cornerstone Mode) -> True, as before: it IS a parish, the switch lives on the
+        diocese rows, and its screens already scope themselves to that parish;
+      * anything else (Claggett, and any entity like it) -> False."""
+    if not org_id:
+        return True
+    if is_enabled(org_id, PARISH_FUNCTIONS):
+        return True
+    import cornerstone_mode  # lazy: cornerstone_mode must stay free to import this module
+    return cornerstone_mode.is_cornerstone_org(org_id)
 
 
 def enabled_features_for_org(org_id: int | None) -> set[str]:
