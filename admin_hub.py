@@ -104,7 +104,7 @@ _CARDS = [
     # alone -- Jay: Parish Mode should "show up for people with parish mode
     # or the administrative features and functions."
     {"title": "Parish Mode", "desc": "See a specific parish's portal view.",
-     "url": "/admin/parish-mode", "role": "real_parish_mode", "group": "parish"},
+     "url": "/admin/parish-mode", "role": "real_parish_mode", "group": "parish", "parish_function": True},
     # Parish Portal S4+S5 (2026-08-08) -- three new diocesan-side management
     # screens. `role` is a LIST here. Widened 2026-09-14 to also include
     # parish_mode_user, per Jay: these should be usable by "anyone with
@@ -112,16 +112,16 @@ _CARDS = [
     # access, not just visibility (see announcements.py/parish_documents.py
     # for the matching route-level widening).
     {"title": "Announcements", "desc": "Post dated, targeted announcements to parish users.",
-     "url": "/admin/announcements", "role": ["setup_admin", "beacon_admin", "parish_mode_user"], "group": "parish"},
+     "url": "/admin/announcements", "role": ["setup_admin", "beacon_admin", "parish_mode_user"], "group": "parish", "parish_function": True},
     {"title": "Parish Documents", "desc": "Upload documents into a specific parish's read-only archive.",
-     "url": "/admin/parish-documents", "role": ["setup_admin", "beacon_admin", "parish_mode_user"], "group": "parish"},
+     "url": "/admin/parish-documents", "role": ["setup_admin", "beacon_admin", "parish_mode_user"], "group": "parish", "parish_function": True},
     {"title": "Resource Library", "desc": "Manage the diocese-wide shared resource library.",
-     "url": "/admin/resource-library", "role": ["setup_admin", "beacon_admin", "parish_mode_user"], "group": "parish"},
+     "url": "/admin/resource-library", "role": ["setup_admin", "beacon_admin", "parish_mode_user"], "group": "parish", "parish_function": True},
     # Cornerstone Served Parishes Phase A (2026-08-16) -- entity-scoped, same
     # reasoning as Setup Tables (see _ENTITY_SCOPED_TITLES below): this
     # screen only ever shows/acts on the current diocese's own parishes.
     {"title": "Manage Parishes", "desc": "Designate a parish Cornerstone Served, or view its status.",
-     "url": "/admin/manage-parishes", "role": "setup_admin", "group": "parish"},
+     "url": "/admin/manage-parishes", "role": "setup_admin", "group": "parish", "parish_function": True},
     # 2026-10-17: the HR group (HR Activation, Employees, Payroll Periods, Time Categories) moved to the HR & Payroll menu's
     # HR Administrative Tasks submenu -- see hr_hub.py. Time Review and Roster Review are there too.
 
@@ -232,6 +232,10 @@ def admin_hub(request: Request):
         # small set that opts into it).
         if visible and c.get("feature_key"):
             visible = bool(org_id) and org_features.is_enabled(org_id, c["feature_key"])
+        # 2026-10-22, Jay: the Parish group is absent in an entity with no parish functions (Claggett and any like it) --
+        # the same org_features.parish_functions_allowed() the routes' guard (parish_functions_guard.py) asks.
+        if visible and c.get("parish_function"):
+            visible = org_features.parish_functions_allowed(org_id)
         if visible:
             cards.append(c)
 

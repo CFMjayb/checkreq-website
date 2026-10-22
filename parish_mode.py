@@ -173,6 +173,14 @@ def current_parish_view(request: Request) -> dict | None:
         request.session.pop("parish_view_id", None)
         _close_open_parish_mode(real_id)
         return None
+    # 2026-10-22, Jay: no Parish Mode in an entity without parish functions (Claggett and any like it). A preview ends if the
+    # parish's own diocese no longer has them, or if the session has since been switched into such an entity (e.g. a direct
+    # POST to /select-entity): the Parish Mode banner must never sit on top of Claggett.
+    if (not org_features.is_enabled(parish["org_id"], org_features.PARISH_FUNCTIONS)
+            or not org_features.parish_functions_allowed(request.session.get("current_org_id"))):
+        request.session.pop("parish_view_id", None)
+        _close_open_parish_mode(real_id)
+        return None
     return parish
 
 
@@ -291,6 +299,10 @@ def parish_mode_picker(request: Request):
     org = _current_org(request)
     if org and cornerstone_mode.is_cornerstone_org(org["id"]):
         return RedirectResponse("/portal")
+    # 2026-10-22: no Parish Mode where the entity has no parish functions (also turned away earlier by
+    # parish_functions_guard.py; kept here so this module never depends on that middleware alone).
+    if org and not org_features.parish_functions_allowed(org["id"]):
+        return RedirectResponse("/portal")
     parishes = registry.list_parishes(org["id"]) if org else []
     return _render(request, "parish_mode.html", _current_user(request), {
         "parishes": parishes,
@@ -346,10 +358,16 @@ def parish_mode_start(parish_id: int, request: Request):
     org = _current_org(request)
     if org and cornerstone_mode.is_cornerstone_org(org["id"]):
         return RedirectResponse("/portal")
+    # 2026-10-22: not while the CURRENT entity has no parish functions (a crafted POST from a Claggett session for another
+    # diocese's parish id), and not for a parish whose own diocese has them switched off.
+    if org and not org_features.parish_functions_allowed(org["id"]):
+        return RedirectResponse("/portal")
 
     target = db.query_one("SELECT id, org_id FROM portal.parishes WHERE id = %s AND is_active", (parish_id,))
     current = _current_user(request)
     if not target or not current or not rbac.user_has_any_role(current["id"], _PARISH_MODE_ROLES, org_id=target["org_id"]):
+        return RedirectResponse("/admin/parish-mode")
+    if not org_features.is_enabled(target["org_id"], org_features.PARISH_FUNCTIONS):
         return RedirectResponse("/admin/parish-mode")
 
     _close_open_parish_mode(real_id)
