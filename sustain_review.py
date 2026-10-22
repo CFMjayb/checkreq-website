@@ -18,8 +18,9 @@ from __future__ import annotations
 
 from logic.sustain.inputs import InputError, build_inputs
 from logic.sustain.projection import ProjectionError, guideline_salary, project, reserves_summary
+from sustain_defaults import friendly_error
 
-WINDOW = 5                 # filings looked at for deficit years and for the attendance change
+WINDOW = 5                # filings looked at for deficit years and for the attendance change
 STEADY = 0.05              # a change under 5% is called steady
 SPARK_YEARS = 10
 RUNWAY_NOT_NEEDED = 1e9    # sorts after every real runway
@@ -82,7 +83,7 @@ def priest_test(base: dict, defaults: dict, guidelines: list[dict], salary: floa
         inputs = build_inputs(defaults, {"salary": salary} if salary is not None else {}, base,
                               default_salary=guideline_salary(base.get("asa_in_person"), guidelines))
     except InputError as exc:
-        out["status"], out["error"], out["word"] = "error", str(exc), "Cannot test"
+        out["status"], out["error"], out["word"] = "error", friendly_error(str(exc)), "Cannot test"
         return out
     out["salary"] = inputs["salary"]
     if inputs["salary"] is None:

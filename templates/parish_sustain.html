@@ -43,6 +43,12 @@
 </div>
 
 <div class="sv-sec"><h2>Can we afford a priest?</h2><p class="sub">Five-year projection from the {{ latest_year }} parochial report</p></div>
+{% if defaults_missing %}
+<div class="banner banner-info" id="svNoDefaults" role="status">
+  {% if can_set_defaults %}Your diocese has not set its projection defaults yet, so the calculator cannot run. A Beacon Admin or Setup Admin can set them under Congregational Vitality &rsaquo; <a href="/congregational-vitality/sustainability/defaults">Projection defaults</a>. Still to set: {{ defaults_missing|join(", ") }}.
+  {% else %}The diocese has not set its projection defaults yet, so the calculator is not available. Please ask the diocesan office.{% endif %}
+</div>
+{% else %}
 <section class="card sv-calc" id="svCalc" data-spreadsheet-ok="{{ 1 if can_spreadsheet_mode else 0 }}" aria-label="Can we afford a priest?">
   <form id="svForm" class="sv-inputs" autocomplete="off">
     <div class="sv-inp">
@@ -100,6 +106,7 @@
     <div id="svResult">{% if result.ok %}{% include "_sustain_result.html" %}{% endif %}</div>
   </div>
 </section>
+{% endif %}
 
 {% if neighborhood and neighborhood.show %}
 <a class="card sv-link" href="{{ neighborhood.href }}">

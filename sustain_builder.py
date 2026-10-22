@@ -18,6 +18,7 @@ from logic.sustain.narrative import answer_sentence, dollars
 from logic.sustain.projection import ProjectionError, guideline_salary, project, reserves_summary
 from logic.sustain.takeaways import trend_takeaways
 import sustain_data
+import sustain_defaults
 import sustain_viz as viz
 
 OLD_FILING_YEARS = 2  # a latest filing this many years behind the newest anywhere gets a notice
@@ -116,7 +117,8 @@ def calc_result(base: dict, defaults: dict, guidelines: list[dict], overrides: d
         inputs = build_inputs(defaults, overrides, base, default_salary=guideline_salary(base.get("asa_in_person"), guidelines),
                               spreadsheet_mode=spreadsheet_mode)
     except InputError as exc:
-        return {"ok": False, "error": str(exc), "inputs": None}
+        # a diocese that has not set its defaults gets one plain sentence, not a list of field names (sustain_defaults)
+        return {"ok": False, "error": sustain_defaults.friendly_error(str(exc)), "inputs": None}
     try:
         rows = project(base, inputs)
     except ProjectionError as exc:
