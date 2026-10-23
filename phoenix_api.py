@@ -68,13 +68,15 @@ def find_user(payload: dict) -> dict | None:
     """The active Beacon user this Microsoft sign-in stands for: by the token's own addresses, then through the alias setting."""
     cands = entra_token.candidate_emails(payload)
     aliases = _aliases()
-    for c in list(cands):
-        if c in aliases and aliases[c] not in cands:
-            cands.append(aliases[c])
+    linked = [aliases[c] for c in cands if c in aliases]   # an administrator said these addresses are the same person
+    for a in linked:
+        if a not in cands:
+            cands.append(a)
     if not cands:
         return None
+    # the linked Beacon login wins over a same-looking address that happens to exist as a separate user
     return db.query_one("SELECT id, email, display_name FROM checkreq.app_users WHERE lower(email) = ANY(%s) AND is_active "
-                        "ORDER BY id LIMIT 1", (cands,))
+                        "ORDER BY (lower(email) = ANY(%s)) DESC, id LIMIT 1", (cands, linked or [""]))
 
 
 def _identity(request: Request):
