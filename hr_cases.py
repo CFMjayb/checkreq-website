@@ -119,8 +119,9 @@ def board_page(request: Request):
     rows = [r for r in b["rows"] if (f == "all" or r["flags"].get(f)) and (not kind or r["kind"] == kind)]
     view = request.query_params.get("view") or "cases"
     multi = len(allowed_org_ids(user["id"])) > 1
+    closed_rows = [r for r in board_mod.closed(org_ids) if not kind or r["kind_label"] == templates.KINDS.get(kind)] if view == "closed" else []
     return _render(request, "hr_board.html", user, {
-        "board": b, "rows": rows, "f": f, "kind": kind, "view": view, "owners": board_mod.by_owner(b),
+        "board": b, "rows": rows, "f": f, "kind": kind, "view": view, "owners": board_mod.by_owner(b), "closed_rows": closed_rows,
         "scope": request.query_params.get("scope") or "", "multi_entity": multi, "current_org": org,
         "kinds": templates.KINDS, "has_templates": bool(templates.list_templates(org["code"])),
     })

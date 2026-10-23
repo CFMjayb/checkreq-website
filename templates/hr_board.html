@@ -28,8 +28,9 @@
       </span>
       {% endif %}
       <span class="hr-viewtabs" role="group" aria-label="View">
-        <a href="{{ qs({'view': ''}) }}" class="{{ '' if view == 'owners' else 'is-on' }}">By person</a>
+        <a href="{{ qs({'view': ''}) }}" class="{{ '' if view in ('owners', 'closed') else 'is-on' }}">By person</a>
         <a href="{{ qs({'view': 'owners'}) }}" class="{{ 'is-on' if view == 'owners' else '' }}">By who it is waiting on</a>
+        <a href="{{ qs({'view': 'closed'}) }}" class="{{ 'is-on' if view == 'closed' else '' }}">Closed cases</a>
       </span>
       <div class="ff-dropdown">
         <button type="button" class="btn btn-sm btn-primary" data-ff-dropdown aria-haspopup="menu" aria-expanded="false">New &#9662;</button>
@@ -46,6 +47,7 @@
   {% if request.query_params.get('saved') %}<div class="banner banner-success ff-banner">{{ request.query_params.get('saved') }}</div>{% endif %}
   {% if not has_templates %}<div class="banner banner-info ff-banner">No checklist templates are loaded for {{ current_org.code }} yet, so a case cannot be opened. Ask Jay Boggs to load them.</div>{% endif %}
 
+  {% if view != 'closed' %}
   <div class="hr-tiles" role="navigation" aria-label="Filters">
     {% set s = board.summary %}
     {% for key, label in board.filters.items() %}
@@ -55,6 +57,7 @@
     </a>
     {% endfor %}
   </div>
+  {% endif %}
 
   <div class="ff-filters">
     <label>Search <input type="text" data-ff-search placeholder="name, case number or entity"></label>
@@ -80,6 +83,33 @@
         {% else %}
           <tr class="ff-empty"><td colspan="4">Nothing is waiting on anyone.</td></tr>
         {% endfor %}
+        </tbody>
+      </table>
+      {% elif view == 'closed' %}
+      <table class="ff-table">
+        <colgroup><col style="width:34%"><col style="width:18%"><col style="width:16%"><col style="width:16%"><col style="width:16%"></colgroup>
+        <thead>
+          <tr>
+            <th data-sort="1">Person<span class="arrow"></span></th>
+            <th data-sort="1">Entity / unit<span class="arrow"></span></th>
+            <th data-sort="1">Type<span class="arrow"></span></th>
+            <th data-sort="1">Outcome<span class="arrow"></span></th>
+            <th data-sort="1" data-dir="desc">Closed<span class="arrow">&#9660;</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in closed_rows %}
+          <tr class="ff-row">
+            <td data-v="{{ r.name }}"><a href="/hr/onboarding/case/{{ r.id }}">{{ r.name }}</a>
+              <div class="hr-muted" style="font-size:0.76rem">{{ r.case_number }}{% if r.position %} &middot; {{ r.position }}{% endif %}</div></td>
+            <td>{{ r.org_code }}{% if r.unit and r.unit != r.org_code %}<div class="hr-muted" style="font-size:0.76rem">{{ r.unit }}</div>{% endif %}</td>
+            <td>{{ r.kind_label }}</td>
+            <td>{{ r.outcome }}</td>
+            <td data-v="{{ r.closed_on.isoformat() if r.closed_on else '' }}">{% if r.closed_on %}{{ dt(r.closed_on) }}{% else %}<span class="hr-muted">no date</span>{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr class="ff-empty"><td colspan="5">No closed cases{% if kind %} of this type{% endif %}.</td></tr>
+          {% endfor %}
         </tbody>
       </table>
       {% else %}
@@ -134,8 +164,9 @@
       {% endif %}
     </div>
     <div class="ff-foot">
-      <span class="ff-count" data-ff-count>{{ rows|length }} shown</span>
-      <span class="ff-count">{{ board.summary.all }} open &middot; {{ board.summary.late }} item{{ '' if board.summary.late == 1 else 's' }} past due &middot; {{ board.summary.deadline }} hard deadline{{ '' if board.summary.deadline == 1 else 's' }} in 10 days &middot; {{ board.summary.ready }} ready to close</span>
+      <span class="ff-count" data-ff-count>{{ closed_rows|length if view == 'closed' else rows|length }} shown</span>
+      {% if view == 'closed' %}<span class="ff-count">{{ closed_rows|length }} closed case{{ '' if closed_rows|length == 1 else 's' }}</span>{% else %}
+      <span class="ff-count">{{ board.summary.all }} open &middot; {{ board.summary.late }} item{{ '' if board.summary.late == 1 else 's' }} past due &middot; {{ board.summary.deadline }} hard deadline{{ '' if board.summary.deadline == 1 else 's' }} in 10 days &middot; {{ board.summary.ready }} ready to close</span>{% endif %}
     </div>
   </div>
 

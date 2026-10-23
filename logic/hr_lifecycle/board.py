@@ -110,6 +110,26 @@ def build(org_ids: list[int], today: dt.date | None = None, now: dt.datetime | N
             "sections": cases_mod.BOARD_SECTIONS}
 
 
+def closed(org_ids: list[int]) -> list[dict]:
+    """Cases that are finished: completed, withdrawn or not hired (and a parish request that was cancelled). Newest first.
+    The board proper lists only open cases, so this is how a person finds a case once it has closed."""
+    rows = db.query(
+        "SELECT c.id, c.case_number, c.case_kind, c.status, c.close_outcome, c.first_name, c.last_name, c.preferred_name, "
+        "       c.position, c.closed_at, o.code AS org_code, coalesce(p.short_name, p.name) AS unit "
+        "  FROM hr.cases c JOIN checkreq.organizations o ON o.id = c.org_id LEFT JOIN portal.parishes p ON p.id = c.parish_id "
+        " WHERE c.org_id = ANY(%s) AND NOT (c.status = ANY(%s)) "
+        " ORDER BY c.closed_at DESC NULLS LAST, c.id DESC", (list(org_ids), list(cases_mod.OPEN_STATUSES)))
+    out = []
+    for r in rows:
+        r = dict(r)
+        outcome = cases_mod.OUTCOMES.get(r["close_outcome"]) or ("Cancelled" if r["status"] == "cancelled" else "Completed")
+        out.append({"id": r["id"], "case_number": r["case_number"], "kind_label": templates.KINDS.get(r["case_kind"], r["case_kind"]),
+                    "name": f"{r['last_name']}, {r['preferred_name'] or r['first_name']}", "position": r["position"],
+                    "org_code": r["org_code"], "unit": r["unit"], "outcome": outcome,
+                    "closed_on": clock.local_date(r["closed_at"], org_ids[0] if org_ids else None) if r["closed_at"] else None})
+    return out
+
+
 def by_owner(board: dict) -> list[dict]:
     """Regroup the board by who the work is waiting on (HR Cloud's assignee view): one row per owner group with the
     number of open cases waiting on it and how many of its items are late."""
