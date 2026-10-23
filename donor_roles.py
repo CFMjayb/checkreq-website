@@ -59,6 +59,8 @@ SETTING_DEFAULTS = {
     # added by migration 083: the parish's member sign-in link name (/my/<portal_slug>), made from its name when the portal is switched on.
     "portal_slug": None,
 }
+STATEMENT_SETTING_DEFAULTS = {"statement_template_id": None, "statement_min_total": 0, "statement_allow_no_address": False, "statement_include_nondeductible": False,
+                              "statement_show_check_numbers": True, "member_statements_enabled": False}
 # Which settings need which capability to change.
 _DIOCESAN_SETTINGS = {"people_enabled", "giving_enabled", "allow_single_person_batch", "qbo_posting_enabled", "portal_enabled", "portal_slug"}
 _ACCOUNT_SETTINGS = {"qbo_company_key", "default_cash_account", "processing_fee_account", "due_from_diocese_account",
@@ -93,6 +95,11 @@ def settings_get(parish_id: int) -> dict:
     if row:
         for k in SETTING_DEFAULTS:
             out[k] = row.get(k, out[k])          # a column that migration 077 adds may not exist yet
+    # The giving-statement settings (migration 091). Read here so every screen and the statement runs see the parish's real choices; they are NOT in SETTING_DEFAULTS
+    # because settings_update (activation) must not be able to change them: statement_profile.settings_save is their one writer (Finance only, logged).
+    for k, default in STATEMENT_SETTING_DEFAULTS.items():
+        value = row.get(k) if row else None
+        out[k] = default if value is None else value
     return out
 
 

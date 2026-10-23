@@ -1,0 +1,36 @@
+{#
+donor_statement_changed.html -- Giving statements, "Changed since issued": built statements whose gifts are no longer the gifts the statement printed (a late gift, a correction,
+a reopened deposit). Re-issuing builds a NEW corrected statement; the old one is kept and marked replaced. Nothing is sent.
+Variables: rows (statement_runs.changed_since_issued), year.
+#}
+{% extends "base.html" %}
+{% from "donor_macros.html" import csrf with context %}
+{% block title %}Statements changed since issued — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}"><link rel="stylesheet" href="/static/css/donor_statements.css?v={{ asset_version('css/donor_statements.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/giving/statements/run">&larr; Run statements</a></p>
+  <div class="dm-head"><h1>Changed since issued</h1></div>
+  <p class="dm-muted">A built statement is compared with the donor's gifts as they are now. A statement listed here no longer matches the books. Re-issue it to build a corrected statement (it says it is corrected and the date it replaces); the old statement is kept and stays downloadable.</p>
+  <form method="get" action="/giving/statements/changed" class="dm-form" role="search">
+    <label for="ch-year">Year</label> <input id="ch-year" name="year" size="6" value="{{ year or '' }}" placeholder="all">
+    <button type="submit" class="btn btn-secondary btn-sm">Show</button>
+  </form>
+  <div class="card dm-card">
+    {% if rows %}
+    <div class="table-scroll"><table class="simple-table dm-table">
+      <thead><tr><th>Donor</th><th>Year</th><th>Built</th><th class="dm-num">Gifts then</th><th class="dm-num">Gifts now</th><th class="dm-num">Total then</th><th class="dm-num">Total now</th><th></th></tr></thead>
+      <tbody>{% for r in rows %}
+        <tr><td>{{ r.name }}{% if r.kind == 'corrected' %} <span class="dm-muted dm-small">(a corrected statement)</span>{% endif %}</td><td>{{ r.period_to.year }}</td><td>{{ when(r.built_at) }}</td>
+          <td class="dm-num">{{ r.old_count }}</td><td class="dm-num">{{ r.new_count }}</td><td class="dm-num">{{ money(r.old_total) }}</td><td class="dm-num">{{ money(r.new_total) }}</td>
+          <td><a href="/giving/statements/file/{{ r.statement_id }}.pdf">The one issued</a>
+            {% if r.can_reissue %}<form method="post" action="/giving/statements/file/{{ r.statement_id }}/reissue" class="dm-inline" data-confirm="Build a corrected statement for this donor? The old one is kept and marked as replaced.">
+              {{ csrf() }}<button type="submit" class="btn btn-secondary btn-sm">Re-issue</button></form>
+            {% else %}<span class="dm-muted dm-small">nothing left to report</span>{% endif %}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    {% else %}<p class="doc-empty">Every built statement still matches the donor's gifts.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}

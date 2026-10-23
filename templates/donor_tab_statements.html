@@ -1,0 +1,24 @@
+{#
+donor_tab_statements.html -- the parishioner's own Giving > Statements (self mode of the shared person screen). `stmts` is donor_portal_statements.member_years:
+{years: [{year, count, total, to_date}], available, reason}. Only the person's own years, nothing to choose but a year: a click builds that year's statement as a PDF on the
+spot (the browser's PDF viewer shows it) and nothing is stored. Nothing here is a date box, a template choice or a way to see anyone else's giving.
+#}
+<div class="pp-giving-top"><div class="pp-giving-title"><h3>Your statements</h3></div>{{ pp_pills() }}</div>
+{% if not stmts.available %}
+  <p class="doc-empty">{{ stmts.reason }}</p>
+{% elif not stmts.years %}
+  <p class="doc-empty">No gifts are recorded for you yet.</p>
+{% else %}
+<div class="table-scroll">
+<table class="simple-table dm-table pp-table">
+  <thead><tr><th>Year</th><th class="dm-num pp-num">Gifts</th><th class="dm-num pp-num">Tax deductible</th><th></th></tr></thead>
+  <tbody>
+  {% for y in stmts.years %}
+    <tr><td data-label="Year">{{ y.year }}{{ ' (so far)' if y.to_date }}</td><td data-label="Gifts" class="dm-num pp-num">{{ y.count }}</td><td data-label="Tax deductible" class="dm-num pp-num">{{ money(y.total) }}</td>
+      <td data-label=""><a href="/my/statements/{{ y.year }}.pdf">Statement for {{ y.year }}{{ ' to date' if y.to_date }}</a></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="pp-hint">Opens as a PDF. It lists the gifts recorded for you; a gift appears once its deposit has been closed.</p>
+{% endif %}

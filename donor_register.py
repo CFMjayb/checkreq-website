@@ -67,6 +67,12 @@ def register(app, *, current_user, render, templates=None, current_org=None) -> 
     import donor_routes_admin
     import donor_routes_people
     if templates is not None:              # Parishioner Self-Service (/my/...) and the staff answers under /pledges/requests and /people/messages
+        try:                               # the member's own statements: registered BEFORE the generic /my/{slug} route below
+            import donor_routes_portal_statements
+        except ImportError:
+            donor_routes_portal_statements = None
+        if donor_routes_portal_statements is not None:
+            donor_routes_portal_statements.register(app)
         import donor_routes_portal
         donor_routes_portal.register(app, templates)
     donor_routes_admin.register(app)
@@ -76,6 +82,17 @@ def register(app, *, current_user, render, templates=None, current_org=None) -> 
         donor_routes_giving = None
     if donor_routes_giving is not None:
         donor_routes_giving.register(app)
+    try:                                   # giving statements (migration 091 and the statement modules)
+        import donor_routes_statements
+    except ImportError:
+        donor_routes_statements = None
+    if donor_routes_statements is not None:
+        donor_routes_statements.register(app)
+        try:                               # the staff run of statements (migration 092 and statement_runs)
+            import donor_routes_statement_runs
+            donor_routes_statement_runs.register(app)
+        except ImportError:
+            pass
     donor_routes_people.register(app)
     if templates is not None:
         templates.env.globals["donor_tile"] = donor_tile

@@ -1,0 +1,29 @@
+{#
+donor_statement_preview.html -- one person's statement for one year, as it would print, for staff (statements.run). Builds and stores nothing and
+sends nothing. The statement itself is the shared statement_sheet.html. The fixed wording here is a draft, reviewed before any real statement goes out.
+#}
+{% extends "base.html" %}
+{% block title %}Statement preview — {{ parish.name }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}"><link rel="stylesheet" href="/static/css/donor_statements.css?v={{ asset_version('css/donor_statements.css') }}">{% endblock %}
+{% block content %}
+<div class="page-shell-wide dm-page">
+  {% include "donor_nav.html" %}
+  <p class="back-link"><a href="/giving/statements">&larr; Giving statements</a></p>
+  <div class="dm-head"><h1>Statement preview: {{ donor.name }}, {{ year }}</h1></div>
+  <p class="dm-muted dm-small">The statement as it would print. Nothing is built, stored or sent. The wording is a draft that the diocese reviews before real statements go out.</p>
+
+  <div class="stm-bar">
+    <span>Year:</span>
+    {% for y in years %}<a class="{{ 'stm-year-on' if y == year else '' }}" href="/giving/statements/preview?person_id={{ donor.person_id }}&amp;year={{ y }}">{{ y }}</a>{% else %}<em>no posted gifts</em>{% endfor %}
+  </div>
+
+  {% if decision.build %}<div class="banner banner-success">A statement would be built for this donor.</div>
+  {% else %}<div class="banner banner-error">No statement would be built: {{ decision.reason }}.</div>{% endif %}
+  {% if not profile_ready %}<div class="banner banner-error">Real statements are blocked until the parish profile is complete and confirmed (missing: {{ profile_gaps|join(', ') }}).</div>{% endif %}
+  {% if open_batches %}<div class="banner banner-info">{{ open_batches }} deposit{{ '' if open_batches == 1 else 's' }} {{ 'is' if open_batches == 1 else 'are' }} still open. Gifts in an open deposit are not on a statement until it is closed.</div>{% endif %}
+  {% for w in decision.warnings %}<div class="banner banner-info">{{ w }}</div>{% endfor %}
+  <p class="dm-muted dm-small">Delivery: {{ label(donor.delivery) }}. Statement choice: {{ label(donor.statement_option) }}.{% if donor.envelope_number %} Envelope number: {{ donor.envelope_number }} (not printed).{% endif %}</p>
+
+  {% include "statement_sheet.html" %}
+</div>
+{% endblock %}

@@ -1,0 +1,46 @@
+/* donor_statements.css -- giving statements: the statement sheet (shared by the staff preview, the PDF and the member's own statement) and its preview bar. */
+.stm-bar { display: flex; gap: .75rem; align-items: baseline; margin: .5rem 0 1rem; flex-wrap: wrap; }
+.stm-bar a { padding: .15rem .6rem; border: 1px solid var(--color-border); border-radius: 4px; text-decoration: none; }
+.stm-bar a.stm-year-on { background: var(--color-franciscan-green); color: #fff; border-color: var(--color-franciscan-green); }
+
+.stm-sheet { background: #fff; color: #111; max-width: 8.5in; margin: 1rem auto; padding: .6in .7in; border: 1px solid var(--color-border); box-shadow: 0 1px 4px rgba(0,0,0,.12); font-family: Arial, Helvetica, sans-serif; font-size: 11pt; line-height: 1.35; }
+.stm-head { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: 1.2rem; }
+.stm-head-right { text-align: right; font-size: 10.5pt; }
+.stm-donor { margin: 0 0 1rem; }
+.stm-period { display: flex; justify-content: space-between; margin: .5rem 0 1rem; }
+.stm-asof { font-size: 9.5pt; color: #444; }
+.stm-h { font-size: 11.5pt; margin: 1rem 0 .3rem; border-bottom: 1px solid #999; padding-bottom: .15rem; }
+.stm-table { width: 100%; border-collapse: collapse; font-size: 10.5pt; }
+.stm-table th { text-align: left; border-bottom: 1px solid #666; padding: .2rem .4rem; font-weight: 700; }
+.stm-table td { padding: .18rem .4rem; border-bottom: 1px solid #e3e3e3; vertical-align: top; }
+.stm-table .stm-num { text-align: right; white-space: nowrap; }
+.stm-table.stm-narrow { width: 60%; }
+.stm-table tr.stm-total td { font-weight: 700; border-top: 1px solid #666; border-bottom: none; }
+.stm-table tr.stm-sub td { font-size: 9.5pt; color: #333; border-bottom: none; padding-top: 0; }
+.stm-note { font-size: 9.5pt; color: #333; margin: .4rem 0; }
+.stm-closing { margin-top: 1.4rem; font-size: 10.5pt; }
+@media print { .stm-sheet { border: none; box-shadow: none; padding: 0; } }
+
+/* the template's look: an accent colour and a type size from fixed lists, never free CSS */
+.stm-accent-green { --stm-accent: #1f3d2e; }
+.stm-accent-navy { --stm-accent: #1f3a5f; }
+.stm-accent-burgundy { --stm-accent: #6d1f2f; }
+.stm-accent-gray { --stm-accent: #444444; }
+.stm-sheet .stm-h { border-bottom-color: var(--stm-accent, #1f3d2e); color: var(--stm-accent, #1f3d2e); }
+.stm-sheet .stm-table th { border-bottom-color: var(--stm-accent, #1f3d2e); }
+.stm-sheet .stm-table tr.stm-total td { border-top-color: var(--stm-accent, #1f3d2e); }
+.stm-size-small { font-size: 10pt; }
+.stm-size-small .stm-table { font-size: 9.5pt; }
+.stm-logo { max-height: 72px; max-width: 220px; }
+.stm-words p { margin: 0 0 .6rem; }
+.stm-notice { font-style: italic; font-size: 9.5pt; margin-top: .4rem; }
+
+/* the template editor: the form on the left, the made-up preview on the right (stacked on a narrow screen) */
+.stm-two { display: grid; grid-template-columns: minmax(320px, 5fr) minmax(360px, 6fr); gap: 1rem; align-items: start; }
+.stm-edit textarea { width: 100%; font-family: inherit; }
+.stm-preview .stm-sheet { margin: 0 auto; transform-origin: top center; }
+@media (max-width: 1100px) { .stm-two { grid-template-columns: 1fr; } }
+.stm-correction { margin: .4rem 0 .8rem; padding: .3rem .5rem; border: 1px solid var(--stm-accent, #1f3d2e); font-size: 10pt; }
+.dm-cards { display: flex; gap: .75rem; flex-wrap: wrap; margin: .75rem 0 1rem; }
+.dm-cards .dm-box { flex: 1 1 140px; min-width: 120px; }
+progress#stm-bar { width: 100%; max-width: 28rem; height: 1rem; display: block; margin: .4rem 0; }

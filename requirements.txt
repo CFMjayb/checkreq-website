@@ -15,3 +15,4 @@ requests
 argon2-cffi
 openpyxl
 Pillow
+pypdf
