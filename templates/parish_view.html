@@ -114,10 +114,12 @@
      Cornerstone-served status. `timekeeping_enabled` is computed by
      parish_mode.py's parish_view_page(), matching timekeeping.py's own
      timekeeping_context() check. #}
-  {% if timekeeping_enabled %}
-  <a class="module-tile" href="/timekeeping">
-    <h3>Timekeeping</h3>
-    <p class="desc">Enter and submit staff hours for the current payroll period.</p>
+  {# 2026-10-23 (Jay): Timekeeping is now one card under a single "HR & Payroll" tile (parish_hr_hub.py), next to Staff and the
+     screens still to come. The tile shows only when at least one of its cards would open for this person (hr_menu_show). #}
+  {% if hr_menu_show %}
+  <a class="module-tile" href="/parish-hr">
+    <h3>HR &amp; Payroll</h3>
+    <p class="desc">Staff, timekeeping and the other payroll screens you have access to.</p>
   </a>
   {% endif %}
   <a class="module-tile" href="/parish-requests">
