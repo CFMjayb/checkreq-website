@@ -18,6 +18,7 @@ import datetime as dt
 from decimal import Decimal
 
 import db
+import payroll_decisions as pdec
 import payroll_totals as pt
 from payroll_totals import PayrollError
 
@@ -161,15 +162,175 @@ def load_register_batch(org_id: int, *, pay_date, lines: list, source_ref: str |
     return out
 
 
+# ------------------------------------------------------------------ tie-out decisions (Jay, 2026-10-22)
+
+OPEN_KINDS = ("differs", "paid_no_beacon_hours", "beacon_hours_not_paid")
+
+
+def _need_closed_unactualized(period: dict) -> None:
+    if period["status"] == "open":
+        raise PayrollError("refused", "Close the pay period first, then settle the differences.")
+    if period["status"] == "future":
+        raise PayrollError("refused", "That pay period has not started.")
+    if period["register_loaded_at"] is None:
+        raise PayrollError("refused", "The paid hours have not been loaded for this period yet.")
+    if period["actualized_at"] is not None:
+        raise PayrollError("refused", "This pay period is already actualized, so its decisions are locked.")
+
+
+def _target_for(org_id: int, period: dict, decision: str) -> int | None:
+    """The pay period a 'paid next period' or 'manual check' decision points at: the one after this."""
+    if decision == pdec.BEACON_WRONG:
+        return None
+    nxt = next_period(org_id, period)
+    if nxt is None:
+        raise PayrollError("refused", "No later pay period is set up, so there is nowhere to carry these hours. "
+                                      "Add the next pay period under Payroll Periods first.")
+    if nxt["status"] == "closed":
+        raise PayrollError("refused", f"The next pay period ({nxt['label']}) is already closed, so these hours cannot be "
+                                      "carried into it.")
+    return nxt["id"]
+
+
+def _decide_rows(org_id: int, period: dict, rows: list, decision: str, user_id: int, note) -> dict:
+    """Stores `decision` for each of these tie-out rows that it fits. Rows already applied are left alone. A row it does not fit
+    (next period / manual check on a line where Beacon has FEWER hours than were paid) is skipped and counted."""
+    if decision not in pdec.DECISIONS:
+        raise PayrollError("invalid", "That is not one of the three decisions.")
+    note = pdec.clean_note(note)
+    existing = pdec.for_period(period["id"])
+    target = None
+    n_set = n_skipped = 0
+    first_reason = None
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            for r in rows:
+                key = (r["staff_id"], r["category_id"])
+                if existing.get(key) and existing[key]["applied_at"]:
+                    n_skipped += 1
+                    first_reason = first_reason or "A decision that was already applied cannot be changed."
+                    continue
+                why = pdec.valid_for(decision, r["difference"])
+                if why:
+                    n_skipped += 1
+                    first_reason = first_reason or why
+                    continue
+                if target is None and decision != pdec.BEACON_WRONG:
+                    target = _target_for(org_id, period, decision)
+                cur.execute(
+                    "INSERT INTO portal.time_variance_decisions (period_id, staff_id, category_id, decision, hours, note, "
+                    "target_period_id, decided_by_user_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+                    "ON CONFLICT (period_id, staff_id, category_id) DO UPDATE SET decision = EXCLUDED.decision, "
+                    "hours = EXCLUDED.hours, note = EXCLUDED.note, target_period_id = EXCLUDED.target_period_id, "
+                    "decided_by_user_id = EXCLUDED.decided_by_user_id, decided_at = now(), applied_at = NULL, "
+                    "applied_by_user_id = NULL",
+                    (period["id"], r["staff_id"], r["category_id"], decision, pdec.d2(r["difference"]), note,
+                     None if decision == pdec.BEACON_WRONG else target, user_id))
+                n_set += 1
+        conn.commit()
+    return {"set": n_set, "skipped": n_skipped, "reason": first_reason}
+
+
+def _differing_rows(org_id: int, period_id: int):
+    period = pt.get_period(org_id, period_id)
+    _need_closed_unactualized(period)
+    rep = pt.variance(org_id, period_id)
+    return period, [r for r in rep["rows"] if r["kind"] in OPEN_KINDS]
+
+
+def set_decision(org_id: int, period_id: int, staff_id: int, category_id: int, decision: str, user_id: int, note=None) -> dict:
+    """One decision for one line (an employee and a category) that differs from the paid hours."""
+    period, rows = _differing_rows(org_id, period_id)
+    mine = [r for r in rows if r["staff_id"] == staff_id and r["category_id"] == category_id]
+    if not mine:
+        raise PayrollError("not_found", "That line no longer differs from the paid hours.")
+    res = _decide_rows(org_id, period, mine, decision, user_id, note)
+    if not res["set"]:
+        raise PayrollError("refused", res["reason"] or "Nothing was changed.")
+    return res
+
+
+def set_employee_decision(org_id: int, period_id: int, staff_id: int, decision: str, user_id: int, note=None) -> dict:
+    """The same decision for every differing line of one employee where it fits; the others are left as they were."""
+    period, rows = _differing_rows(org_id, period_id)
+    mine = [r for r in rows if r["staff_id"] == staff_id]
+    if not mine:
+        raise PayrollError("not_found", "That person has no line that differs from the paid hours.")
+    res = _decide_rows(org_id, period, mine, decision, user_id, note)
+    if not res["set"]:
+        raise PayrollError("refused", res["reason"] or "Nothing was changed.")
+    return res
+
+
+def decide_all_remaining(org_id: int, period_id: int, decision: str, user_id: int, note=None) -> dict:
+    """The same decision for every differing line that has none yet (or whose decision went stale)."""
+    period, rows = _differing_rows(org_id, period_id)
+    todo = [r for r in rows if r["decision"] is None or r["decision_stale"]]
+    if not todo:
+        return {"set": 0, "skipped": 0, "reason": None}
+    return _decide_rows(org_id, period, todo, decision, user_id, note)
+
+
+def clear_decision(org_id: int, period_id: int, staff_id: int, category_id: int) -> dict:
+    """Takes a decision back (back to "needs a decision"). Not once Actualize has applied it."""
+    period = pt.get_period(org_id, period_id)
+    _need_closed_unactualized(period)
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM portal.time_variance_decisions WHERE period_id = %s AND staff_id = %s AND category_id = %s "
+                        "AND applied_at IS NULL", (period_id, staff_id, category_id))
+            n = cur.rowcount
+        conn.commit()
+    return {"cleared": n}
+
+
 # ------------------------------------------------------------------ actualize
 
+def _carry_into(cur, target_id: int, staff_id: int, category_id: int, hours: Decimal, actor, from_label: str) -> None:
+    """Adds `hours` (paid in the following pay period) to this person's line in the same category of that period, so it shows
+    in Time Review and on the Checkwriters Excel to be keyed. A line that does not exist yet is created, confirmed, source
+    diocese. Every change is in the edit history. An emailed figure arriving later is stored on top (payroll_totals)."""
+    note = f"Carried in from {from_label}: {hours} hours to be paid in this pay period"
+    cur.execute("SELECT id, hours, review_status, proposed_hours FROM portal.time_period_totals "
+                "WHERE period_id = %s AND staff_id = %s AND category_id = %s FOR UPDATE", (target_id, staff_id, category_id))
+    line = cur.fetchone()
+    if line is None:
+        cur.execute(
+            "INSERT INTO portal.time_period_totals (period_id, staff_id, category_id, hours, source, source_ref, source_quote, "
+            "review_status, flags, reviewed_by_user_id, reviewed_at, created_by_user_id) "
+            "VALUES (%s,%s,%s,%s,'diocese',%s,%s,'confirmed',ARRAY['carried_in'],%s,now(),%s) RETURNING id",
+            (target_id, staff_id, category_id, hours, f"Carried from {from_label}", note[:300], actor, actor))
+        pt._log_edit(cur, cur.fetchone()["id"], None, hours, None, "confirmed", actor, "diocese", note)
+    else:
+        old = Decimal(line["hours"])
+        rejected = line["review_status"] == "rejected"
+        new = hours if rejected else old + hours  # a rejected figure is not wanted: the carried hours stand alone
+        if new > pt.MAX_HOURS:
+            raise PayrollError("refused", f"{new} hours would be more than the 300 hours one line may hold in the next pay period.")
+        proposed = line["proposed_hours"]
+        new_prop = None if rejected or proposed is None else Decimal(proposed) + hours  # an open proposal keeps the carried hours too
+        cur.execute(
+            "UPDATE portal.time_period_totals SET hours = %s, proposed_hours = %s, review_status = %s, "
+            "reviewed_by_user_id = CASE WHEN %s THEN %s ELSE reviewed_by_user_id END, "
+            "reviewed_at = CASE WHEN %s THEN now() ELSE reviewed_at END, "
+            "flags = (SELECT COALESCE(array_agg(DISTINCT f), '{}') FROM unnest(flags || ARRAY['carried_in']) f), "
+            "updated_at = now() WHERE id = %s",
+            (new, new_prop, "confirmed" if rejected else line["review_status"], rejected, actor, rejected, line["id"]))
+        pt._log_edit(cur, line["id"], old, new, line["review_status"], "confirmed" if rejected else line["review_status"],
+                     actor, "diocese", note)
+    pt._unfinalize(cur, target_id)
+
+
 def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: bool = False) -> dict:
-    """Makes Beacon's hours for a CLOSED period match the paid hours, hours only:
-      differs                the line takes the paid hours (confirmed, source register); the old figure stays in the edit history
-      paid, no Beacon hours  the person gets a line with the paid hours
-      Beacon hours not paid  the hours become 0 with a note (the line is kept, never deleted)
-    A line the parish's daily grid also covers is marked 'resolved_total' so the paid figure is the one that counts.
-    When nothing differs afterwards, and every paid person was found on the roster, the period is stamped Actualized."""
+    """Settles every differing line of a CLOSED period, hours only, each by its decision (payroll_decisions.py):
+      beacon_wrong   the line takes the paid hours (confirmed, source register); the old figure stays in the edit history
+                     (paid, no Beacon hours: the person gets a line; Beacon hours not paid: the hours become 0 with a note)
+      next_period    the same, and the extra hours are added to the next period's line to be keyed there
+      manual_check   the line STAYS as entered (the interpay check shows on the next period's register); a note is left
+    Every differing line needs a decision first, unless the diocese's automatic switch is doing this: then a line nobody
+    decided is treated as beacon_wrong. A line the parish's daily grid also covers is marked 'resolved_total' so the paid figure
+    is the one that counts. When nothing differs afterwards, and every paid person was found on the roster, the period is
+    stamped Actualized."""
     period = pt.get_period(org_id, period_id)
     if period["status"] == "open":
         raise PayrollError("refused", "Close the pay period first, then make Beacon match the paid hours.")
@@ -179,11 +340,32 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
         raise PayrollError("refused", "The paid hours have not been loaded for this period yet.")
     actor = user_id if user_id is not None else pt.service_user_id()
     rep = pt.variance(org_id, period_id)
-    todo = [r for r in rep["rows"] if r["kind"] not in ("match", "category_only")]
+    todo = [r for r in rep["rows"] if r["kind"] in OPEN_KINDS]
     # a person whose TOTAL hours tie to the paid total keeps their lines as entered; only a note is left for review
     review = [r for r in rep["rows"] if r["kind"] == "category_only"]
+    decs = pdec.for_period(period_id)
+
+    def dec_of(r):
+        d = decs.get((r["staff_id"], r["category_id"]))
+        return d if d and not pdec.is_stale(d, r["difference"]) else None
+
+    if not auto:
+        waiting = [r for r in todo if dec_of(r) is None]
+        if waiting:
+            raise PayrollError("refused", f"{len(waiting)} line(s) still need a decision: Paid next period, Manual check or "
+                                          "Beacon wrong. Settle them on the tie-out page first.")
+    targets = {dec_of(r)["target_period_id"] for r in todo
+               if dec_of(r) and dec_of(r)["decision"] in (pdec.NEXT_PERIOD, pdec.MANUAL_CHECK)}
+    for tid in targets:
+        t = db.query_one("SELECT label, status FROM portal.payroll_periods WHERE id = %s AND org_id = %s", (tid, org_id))
+        if not t or t["status"] == "closed":
+            raise PayrollError("refused", f"The next pay period ({t['label'] if t else 'unknown'}) is closed, so hours cannot "
+                                          "be carried into it. Change those decisions first.")
+    nxt = next_period(org_id, period)
+    nxt_label = nxt["label"] if nxt else "the next pay period"
     ref = period["register_source_ref"] or f"LaborDist {period['pay_date'].strftime('%Y.%m.%d')}"
-    n_diff = n_new = n_zero = n_noted = 0
+    n_diff = n_new = n_zero = n_noted = n_carried = n_manual = 0
+    carried_hours = Decimal(0)
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT staff_id, category_id FROM portal.time_entries WHERE period_id = %s "
@@ -191,12 +373,26 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
             grid = {(r["staff_id"], r["category_id"]) for r in cur.fetchall()}
             for r in todo:
                 key = (r["staff_id"], r["category_id"])
+                dec = dec_of(r)
+                mode = dec["decision"] if dec else pdec.BEACON_WRONG
+                extra = f" Note: {dec['note']}" if dec and dec["note"] else ""
                 paid = Decimal(str(r["register_hours"])) if r["register_hours"] is not None else Decimal(0)
                 flags = ["actualized"] + (["resolved_total"] if key in grid else [])
                 cur.execute("SELECT id, hours, review_status FROM portal.time_period_totals "
                             "WHERE period_id = %s AND staff_id = %s AND category_id = %s FOR UPDATE",
                             (period_id, r["staff_id"], r["category_id"]))
                 line = cur.fetchone()
+                if mode == pdec.MANUAL_CHECK:
+                    # the hours are right for THIS period: nothing changes except a note (when there is a line to put it on)
+                    if line:
+                        note = (f"Paid by an interpay manual check: Beacon's {r['beacon_hours']} hours stand for this pay period; "
+                                f"this register paid {paid}, and the check will show on {nxt_label}'s register ({ref}).{extra}")
+                        pt._log_edit(cur, line["id"], line["hours"], line["hours"], line["review_status"], line["review_status"],
+                                     actor, "register", note[:1000])
+                    n_manual += 1
+                    cur.execute("UPDATE portal.time_variance_decisions SET applied_at = now(), applied_by_user_id = %s "
+                                "WHERE id = %s", (actor, dec["id"]))
+                    continue
                 if r["kind"] == "beacon_hours_not_paid":
                     note = f"Actualized: Beacon had {r['beacon_hours']} hours, nothing was paid ({ref})"
                     n_zero += 1
@@ -206,6 +402,9 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
                 else:
                     note = f"Actualized: Beacon had {r['beacon_hours']} hours, paid {paid} ({ref})"
                     n_diff += 1
+                if mode == pdec.NEXT_PERIOD:
+                    note += f". The {pdec.d2(dec['hours'])} extra hours are paid in {nxt_label} and carried there"
+                note += extra
                 if line:
                     cur.execute(
                         "UPDATE portal.time_period_totals SET hours = %s, source = 'register', review_status = 'confirmed', "
@@ -214,14 +413,22 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
                         "reviewed_by_user_id = %s, reviewed_at = now(), updated_at = now() WHERE id = %s",
                         (paid, flags, actor, line["id"]))
                     pt._log_edit(cur, line["id"], line["hours"], paid, line["review_status"], "confirmed", actor,
-                                 "register", note)
+                                 "register", note[:1000])
                 else:
                     cur.execute(
                         "INSERT INTO portal.time_period_totals (period_id, staff_id, category_id, hours, source, source_ref, "
                         "review_status, flags, reviewed_by_user_id, reviewed_at, created_by_user_id) "
                         "VALUES (%s,%s,%s,%s,'register',%s,'confirmed',%s,%s,now(),%s) RETURNING id",
                         (period_id, r["staff_id"], r["category_id"], paid, ref, flags, actor, actor))
-                    pt._log_edit(cur, cur.fetchone()["id"], None, paid, None, "confirmed", actor, "register", note)
+                    pt._log_edit(cur, cur.fetchone()["id"], None, paid, None, "confirmed", actor, "register", note[:1000])
+                if mode == pdec.NEXT_PERIOD:
+                    carry = pdec.d2(dec["hours"])
+                    _carry_into(cur, dec["target_period_id"], r["staff_id"], r["category_id"], carry, actor, period["label"])
+                    n_carried += 1
+                    carried_hours += carry
+                if dec:
+                    cur.execute("UPDATE portal.time_variance_decisions SET applied_at = now(), applied_by_user_id = %s "
+                                "WHERE id = %s", (actor, dec["id"]))
             for r in review:
                 if r["beacon_hours"] is None:
                     continue  # nothing of Beacon's in this category to put a note on
@@ -243,7 +450,7 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
                 n_noted += 1
             conn.commit()
     after = pt.variance(org_id, period_id)
-    left = sum(1 for r in after["rows"] if r["kind"] not in ("match", "category_only"))
+    left = sum(1 for r in after["rows"] if r["kind"] in OPEN_KINDS)
     tied = left == 0 and not period["register_unmatched"]
     if tied:
         with db.connect() as conn:
@@ -252,7 +459,8 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
                             "actualized_automatically = %s, updated_at = now() WHERE id = %s", (actor, bool(auto), period_id))
                 conn.commit()
     return {"changed": n_diff, "added": n_new, "zeroed": n_zero, "left": left, "unmatched": period["register_unmatched"],
-            "tied": tied, "automatic": bool(auto), "for_review": after.get("category_only_people", 0), "noted": n_noted}
+            "tied": tied, "automatic": bool(auto), "for_review": after.get("category_only_people", 0), "noted": n_noted,
+            "carried": n_carried, "carried_hours": float(carried_hours), "manual": n_manual}
 
 
 # ------------------------------------------------------------------ opening the next period, and the checklist's facts
@@ -295,9 +503,182 @@ def closeout_state(org_id: int, period_id: int) -> dict:
     if period["actualized_by_user_id"]:
         u = db.query_one("SELECT display_name, email FROM checkreq.app_users WHERE id = %s", (period["actualized_by_user_id"],))
         who = (u["display_name"] or u["email"]) if u else None
+    loaded_by = None
+    if period.get("register_loaded_by_user_id"):
+        u = db.query_one("SELECT display_name, email FROM checkreq.app_users WHERE id = %s", (period["register_loaded_by_user_id"],))
+        loaded_by = (u["display_name"] or u["email"]) if u else None
+    filed_by = None
+    if period.get("reports_filed_by_user_id"):
+        u = db.query_one("SELECT display_name, email FROM checkreq.app_users WHERE id = %s", (period["reports_filed_by_user_id"],))
+        filed_by = (u["display_name"] or u["email"]) if u else None
     return {"period": period, "final": period["hours_finalized_at"] is not None, "closed": period["status"] == "closed",
             "register_loaded": period["register_loaded_at"] is not None,
             "register_lines": db.query_one("SELECT count(*) AS n FROM portal.time_register_hours WHERE period_id = %s",
                                            (period_id,))["n"],
             "variance": rep, "actualized": period["actualized_at"] is not None, "actualized_by": who,
-            "auto": auto_actualize_enabled(org_id), "next": next_period(org_id, period)}
+            "auto": auto_actualize_enabled(org_id), "next": next_period(org_id, period),
+            # step 6: who marked the department reports as filed, and how (the Phoenix workbook or another way)
+            "reports_filed": period.get("reports_filed_at") is not None, "reports_filed_by": filed_by, "register_loaded_by": loaded_by,
+            # what the PREVIOUS period's decisions mean here: hours carried in (to key) and manual checks (already paid, do not key)
+            "prior": pdec.prior_period_notes(period_id)}
+
+
+REPORTS_FILED_HOW = ("phoenix", "beacon", "other")
+
+
+def mark_reports_filed(org_id: int, period_id: int, user_id: int, how: str, note: str | None = None) -> dict:
+    """Step 6 of the checklist: someone says the department payroll reports are filed in the Documents folders, either by the
+    Phoenix workbook's "File Reports to Beacon Documents" button ('phoenix'), by Beacon itself ("File Reports Now Here",
+    payroll_report_filing.py, 'beacon') or another way. This only records who and when, and a short note of what was filed."""
+    if how not in REPORTS_FILED_HOW:
+        raise PayrollError("invalid", "Say how the reports were filed: in the Phoenix workbook or another way.")
+    period = pt.get_period(org_id, period_id)
+    if period["status"] != "closed":
+        raise PayrollError("refused", "Close the pay period first. The reports are filed after payroll has been processed.")
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE portal.payroll_periods SET reports_filed_at = now(), reports_filed_by_user_id = %s, "
+                        "reports_filed_how = %s, reports_filed_note = %s, updated_at = now() WHERE id = %s AND org_id = %s",
+                        (user_id, how, (note or None) and note[:500], period_id, org_id))
+        conn.commit()
+    return {"how": how}
+
+
+def clear_reports_filed(org_id: int, period_id: int) -> None:
+    pt.get_period(org_id, period_id)
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE portal.payroll_periods SET reports_filed_at = NULL, reports_filed_by_user_id = NULL, "
+                        "reports_filed_how = NULL, reports_filed_note = NULL, updated_at = now() WHERE id = %s AND org_id = %s",
+                        (period_id, org_id))
+        conn.commit()
+
+
+# ------------------------------------------------------------------ closing a period and finishing it from the Phoenix workbook (Jay, 2026-10-22)
+
+def close_period(org_id: int, period_id: int, user_id: int) -> dict:
+    """Closes an OPEN pay period (hours stop landing in it) and records who and when. Closed already: nothing changes."""
+    period = pt.get_period(org_id, period_id)
+    if period["status"] == "closed":
+        return {"already": True}
+    if period["status"] != "open":
+        raise PayrollError("refused", "Only an open pay period can be closed here.")
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE portal.payroll_periods SET status = 'closed', processed_by_user_id = %s, processed_at = now(), "
+                        "updated_at = now() WHERE id = %s AND org_id = %s", (user_id, period_id, org_id))
+        conn.commit()
+    return {"already": False}
+
+
+def final_blockers(org_id: int, period_id: int) -> list[str]:
+    """Why the hours cannot be marked Final yet (the same rules as payroll_totals.finalize_period), as plain sentences."""
+    out = []
+    left = pt.unresolved(pt._period_rows(org_id, period_id))
+    unentered = sum(pt.count_unentered(org_id, period_id).values())
+    if left:
+        out.append(f"{len(left)} line(s) still need a decision on Time Review")
+    if unentered:
+        out.append(f"{unentered} person(s) named in emails were not entered")
+    notdone = pt.parishes_not_done(org_id, period_id)
+    if notdone:
+        codes = ", ".join(p["code"] or p["name"] for p in notdone[:8]) + (" and more" if len(notdone) > 8 else "")
+        out.append(f"{len(notdone)} department(s) are not approved yet ({codes})")
+    return out
+
+
+def finish_blockers(org_id: int, period: dict, rep: dict | None = None) -> dict:
+    """Can this period be finished in one step (Final, Close, Actualize)? Only when the hours tie out PERFECTLY: nothing differs, every
+    paid person is on the roster, and every department is approved. People whose total hours tie but whose categories differ do not
+    block (they are left as entered and noted for review). Returns {ready, already, blockers}."""
+    pid = period["id"]
+    if period["hours_finalized_at"] and period["status"] == "closed" and period["actualized_at"]:
+        return {"ready": False, "already": True, "blockers": []}
+    blockers = []
+    if period["status"] == "future":
+        blockers.append("This pay period has not started")
+    if period["register_loaded_at"] is None:
+        blockers.append("The paid hours have not been loaded yet")
+    else:
+        rep = rep or pt.variance(period["org_id"], pid)
+        n = sum(1 for r in rep["rows"] if r["kind"] in OPEN_KINDS)
+        if n:
+            blockers.append(f"{n} line(s) differ from the paid hours")
+        if period["register_unmatched"]:
+            blockers.append(f"{period['register_unmatched']} paid person(s) are not on the roster")
+    if not period["hours_finalized_at"] and period["status"] in ("open", "closed"):
+        blockers.extend(final_blockers(period["org_id"], pid))
+    return {"ready": not blockers, "already": False, "blockers": blockers}
+
+
+def finish_period(org_id: int, period_id: int, user_id: int, open_next: bool = False) -> dict:
+    """Marks the hours Final, closes the period, records it as Actualized and (when asked) opens the next period, but ONLY when
+    finish_blockers() is empty. Each step is the normal one, stamped with this person, and safe to repeat. Returns what was done."""
+    period = pt.get_period(org_id, period_id)
+    fb = finish_blockers(org_id, period)
+    if fb["already"]:
+        return {"done": [], "already": True, "next": None}
+    if fb["blockers"]:
+        raise PayrollError("refused", "Not ready to finish: " + "; ".join(fb["blockers"]) + ". Nothing was changed.")
+    done = []
+    if not period["hours_finalized_at"]:
+        pt.finalize_period(org_id, period_id, user_id)
+        done.append("Marked the hours Final")
+    if period["status"] != "closed":
+        close_period(org_id, period_id, user_id)
+        done.append("Closed the pay period")
+    res = actualize_period(org_id, period_id, user_id)
+    if not res["tied"]:
+        raise PayrollError("refused", "The hours were marked Final and the period closed, but Actualize found something that no longer "
+                                      f"ties out ({res['left']} line(s) differ). Open the close-out page in Beacon.")
+    done.append("Recorded the period as Actualized")
+    nxt = None
+    if open_next:
+        try:
+            r = open_next_period(org_id, period_id, user_id)
+            nxt = {"label": r["label"], "opened": not r["already"], "message": None}
+            done.append(f"{r['label']} was already open" if r["already"] else f"Opened {r['label']}")
+        except PayrollError as e:
+            nxt = {"label": None, "opened": False, "message": e.message}
+    return {"done": done, "already": False, "next": nxt, "for_review": res.get("for_review", 0)}
+
+
+def tie_out_report(org_id: int, period_id: int) -> dict:
+    """Everything the Phoenix workbook's Beacon Tie-Out tab shows for one pay period, hours only: the period's state, counts, each
+    department's Beacon and paid hours, each line that is not a plain match (with its decision), and whether the period can be finished
+    in one step. Read-only."""
+    period = pt.get_period(org_id, period_id)
+    loaded = period["register_loaded_at"] is not None
+    rep = pt.variance(org_id, period_id) if loaded else None
+    fin = finish_blockers(org_id, period, rep)
+    # paid lines for people Beacon's roster does not mark as reporting hours are not compared (say so, so the totals make sense)
+    nc = db.query_one("SELECT count(*) AS n, COALESCE(sum(rh.hours), 0) AS h FROM portal.time_register_hours rh "
+                      "JOIN portal.staff_roster sr ON sr.id = rh.staff_id JOIN portal.parishes p ON p.id = sr.parish_id "
+                      "WHERE rh.period_id = %s AND p.org_id = %s AND NOT sr.captures_hours", (period_id, org_id))
+    out = {"not_compared": {"lines": int(nc["n"]), "hours": float(nc["h"])}, "period": {"id": period["id"], "label": period["label"], "pay_date": period["pay_date"].isoformat() if period["pay_date"] else None,
+                      "period_start": period["period_start"].isoformat(), "period_end": period["period_end"].isoformat(),
+                      "status": period["status"], "final": period["hours_finalized_at"] is not None,
+                      "closed": period["status"] == "closed", "actualized": period["actualized_at"] is not None,
+                      "register_loaded": loaded, "reports_filed": period.get("reports_filed_at") is not None},
+           "finish": fin, "register_loaded": loaded}
+    if not loaded:
+        out.update(counts={}, undecided=0, decided=0, departments=[], lines=[], manual_missing=[], totals={"beacon": 0.0, "paid": 0.0})
+        return out
+    lines = []
+    for r in rep["rows"]:
+        if r["kind"] == "match":
+            continue
+        lines.append({"dept_code": r["parish_code"], "dept_name": r["dept_name"], "employee_number": r["employee_number"],
+                      "name": f"{r['last_name']}, {r['first_name']}", "category": r["category_label"],
+                      "beacon_hours": r["beacon_hours"], "paid_hours": r["register_hours"], "difference": r["difference"],
+                      "kind": r["kind"], "decision": pdec.LABELS.get(r["decision"]) if r["decision"] else None,
+                      "decision_stale": r["decision_stale"], "decision_note": r["decision_note"],
+                      "manual_check_hours": r["manual_check_hours"]})
+    out.update(counts=rep["counts"], undecided=rep["undecided"], decided=rep["decided"], category_only_people=rep["category_only_people"],
+               departments=[{"code": d["parish_code"], "name": d["dept_name"], "beacon_hours": d["beacon_hours"],
+                             "paid_hours": d["register_hours"], "difference": d["difference"], "differing": d["differing"]}
+                            for d in rep["departments"]],
+               lines=lines, manual_missing=rep["manual_missing"],
+               totals={"beacon": round(sum(d["beacon_hours"] for d in rep["departments"]), 2),
+                       "paid": round(sum(d["register_hours"] for d in rep["departments"]), 2)})
+    return out

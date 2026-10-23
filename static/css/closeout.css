@@ -12,3 +12,8 @@
 .co-depts .co-num { text-align: right; font-variant-numeric: tabular-nums; }
 .co-auto { margin-top: 24px; padding: 14px 16px; border: 1px solid var(--color-border, #ddd4c0); border-radius: 8px; max-width: 62rem; }
 .co-auto p { margin: 0 0 10px; }
+
+/* Previous-period hand-over (26-158, 2026-10-22) */
+.co-note { margin: 0 0 8px; max-width: 62rem; }
+.co-prior .co-num { text-align: right; font-variant-numeric: tabular-nums; }
+.co-steps .co-act form + form { margin-left: 6px; }

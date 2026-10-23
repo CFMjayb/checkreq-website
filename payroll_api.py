@@ -44,6 +44,8 @@ _cache: dict = {"at": 0.0, "keys": {}}
 
 def register(app) -> None:
     app.include_router(router)
+    import phoenix_api  # the Phoenix workbook's signed-in calls (Microsoft token, no shared key), 2026-10-22
+    phoenix_api.register(app)
 
 
 def _load_keys() -> dict[str, str]:

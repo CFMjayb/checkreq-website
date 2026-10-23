@@ -29,6 +29,7 @@ import cornerstone_mode
 import db
 import email_pdf
 import org_time
+import payroll_decisions as pdec
 import payroll_totals as pt
 import rbac
 import registry
@@ -167,6 +168,7 @@ def people_view(rows: list[dict]) -> tuple[list[dict], list[dict]]:
         g["tip"] = "\n\n".join(g["tips"])
         g["auto_accepted"] = "auto_accepted" in flags
         g["jump"] = "jump" in flags
+        g["carried_in"] = "carried_in" in flags
         g["inactive"] = "inactive_employee" in flags
         g["not_hourly"] = "not_hourly" in flags
         g["by_elimination"] = any((ln.get("quote") or "").startswith("(written as") for ln in g["lines"])
@@ -657,8 +659,13 @@ def variance_page(period_id: int, request: Request):
         report = pt.variance(org["id"], period_id)
     except pt.PayrollError as e:
         return _status_back(period_id, err=e.message)
+    # decisions (paid next period / manual check / Beacon wrong) can be made only on a closed period whose paid hours are loaded
+    # and which is not actualized yet (payroll_closeout.py)
+    can_decide = (period["status"] == "closed" and period["register_loaded_at"] is not None
+                  and period["actualized_at"] is None)
     return _render(request, "timekeeping_variance.html", user,
-                   {"current_org": org, "period": period, "report": report})
+                   {"current_org": org, "period": period, "report": report, "can_decide": can_decide,
+                    "decision_labels": pdec.LABELS, "decision_explain": pdec.EXPLAIN, "decision_order": pdec.DECISIONS})
 
 
 # ------------------------------------------------------------------ parish profile

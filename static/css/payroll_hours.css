@@ -13,3 +13,13 @@
 .ph-tight td, .ph-tight th { padding: 4px 8px; vertical-align: top; }
 .ph-final { border-left: 4px solid #1f6b3a; padding-left: 10px; }
 .ph-notfinal { border-left: 4px solid #9c0006; padding-left: 10px; }
+
+/* Tie-out decisions on the Variance page (26-158, 2026-10-22) */
+.vd-form { display: flex; flex-direction: column; gap: 3px; margin: 0; }
+.vd-form.vd-emp { margin-top: 4px; }
+.vd-select { height: 26px; padding: 2px 6px; font-size: 0.85rem; margin: 0; width: 100%; max-width: 15rem; }
+.vd-select.is-set { border-color: #1f6b3a; background: #eef7f0; }
+.vd-note { height: 24px; padding: 2px 6px; font-size: 0.8rem; margin: 0; width: 100%; max-width: 15rem; }
+.vd-sub { font-size: 0.75rem; line-height: 1.25; }
+.vd-help span { line-height: 1.35; }
+.ff-foot .vd-all { margin-left: auto; }

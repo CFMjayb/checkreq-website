@@ -173,6 +173,7 @@
       <td>{% for s in p.sources %}<span class="te-src"{% if p.tip %} data-tip="{{ p.tip }}"{% endif %}>{{ s|capitalize }}</span>{% if not loop.last %}, {% endif %}{% endfor %}{% for u in p.pdfs %}<button type="button" class="te-pdf" data-pdf-pop data-pdf-src="{{ u }}" aria-label="Open the email PDF">PDF</button>{% endfor %}</td>
       <td><span class="{{ 'ph-state-ok' if not p.attn else 'ph-state-attn' }}">{{ p.state_label }}</span>
         {% if p.auto_accepted %}<span class="te-flag sub">Accepted automatically</span>{% endif %}
+        {% if p.carried_in %}<span class="te-flag sub" data-tip="Hours from the previous pay period that are paid in this one are part of this line (set at close-out).">Includes hours carried in</span>{% endif %}
         {% if p.jump %}<span class="te-flag ph-state-attn">Much higher than usual</span>{% endif %}
         {% if p.inactive %}<span class="te-flag ph-state-attn">Inactive employee</span>{% endif %}
         {% if p.not_hourly %}<span class="te-flag sub">Not an hourly employee (information only)</span>{% endif %}

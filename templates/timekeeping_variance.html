@@ -23,6 +23,16 @@
     {% if period.pay_date %}<span>pay date {{ dt(period.pay_date) }}</span>{% endif %}
     <span>Hours only, for employees who report hours. The register's hours are loaded after payroll runs.</span>
   </div>
+  {% if request.query_params.get('error') %}<div class="banner banner-error ff-banner">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% if request.query_params.get('saved') %}<div class="banner banner-success ff-banner">{{ request.query_params.get('saved') }}</div>{% endif %}
+  {% if can_decide and report.register_loaded and (report.undecided or report.decided) %}
+  <div class="ff-info vd-help">
+    <span><strong>Settle each difference:</strong>
+      <em>Paid next period</em>: the extra hours move to the next pay period to be keyed there.
+      <em>Manual check</em>: already paid by an interpay check, kept here, not keyed again.
+      <em>Beacon wrong</em>: Beacon takes the paid hours.</span>
+  </div>
+  {% endif %}
   {% if not report.register_loaded %}
   <div class="banner banner-info ff-banner">No register hours have been loaded for this period yet, so nothing can be compared.</div>
   {% else %}
@@ -30,7 +40,7 @@
     <div class="ff-scroll">
       <table class="ff-table">
         <colgroup>
-          <col style="width:17%"><col style="width:19%"><col style="width:10%"><col style="width:7%"><col style="width:7%"><col style="width:8%"><col style="width:8%"><col style="width:9%"><col style="width:15%">
+          <col style="width:11%"><col style="width:16%"><col style="width:8%"><col style="width:5%"><col style="width:6%"><col style="width:6%"><col style="width:7%"><col style="width:7%"><col style="width:12%"><col style="width:22%">
         </colgroup>
         <thead>
           <tr>
@@ -43,25 +53,59 @@
             <th data-sort="1" class="c-num">Register<span class="arrow"></span></th>
             <th data-sort="1" class="c-num">Difference<span class="arrow"></span></th>
             <th data-sort="1">Result<span class="arrow"></span></th>
+            <th data-sort="1">Decision<span class="arrow"></span></th>
           </tr>
         </thead>
         <tbody>
           {% for r in bad %}
-          <tr class="ff-row{% if r.kind != 'category_only' %} is-attn{% endif %}" data-kind="{{ r.kind }}">
+          {% set open_lines = bad|selectattr('staff_id', 'equalto', r.staff_id)|selectattr('kind', 'in', ['differs', 'paid_no_beacon_hours', 'beacon_hours_not_paid'])|list %}
+          <tr class="ff-row{% if r.kind not in ['category_only', 'manual_check'] %} is-attn{% endif %}" data-kind="{{ r.kind }}">
             <td data-v="{{ r.parish_code or '~' }}" data-tip="{{ r.parish_name }}">{% if r.parish_code %}{{ r.parish_code }} {% endif %}{{ r.dept_name or r.parish_name }}</td>
-            <td data-v="{{ (r.last_name ~ ' ' ~ r.first_name)|lower }}">{{ r.last_name }}, {{ r.first_name }}{% if r.employee_number %} <span class="c-muted">#{{ r.employee_number }}</span>{% endif %}</td>
+            <td data-v="{{ (r.last_name ~ ' ' ~ r.first_name)|lower }}">{{ r.last_name }}, {{ r.first_name }}{% if r.employee_number %} <span class="c-muted">#{{ r.employee_number }}</span>{% endif %}
+              {% if can_decide and open_lines|length > 1 and open_lines[0].category_id == r.category_id and r.kind in ['differs', 'paid_no_beacon_hours', 'beacon_hours_not_paid'] %}
+              <form method="post" action="/admin/timekeeping/status/{{ period.id }}/variance/decide-employee" class="vd-form vd-emp">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <input type="hidden" name="staff_id" value="{{ r.staff_id }}">
+                <select name="decision" class="vd-select vd-auto" aria-label="Set every differing line of this person">
+                  <option value="">All {{ open_lines|length }} lines...</option>
+                  {% for k in decision_order %}<option value="{{ k }}" title="{{ decision_explain[k] }}">{{ decision_labels[k] }}</option>{% endfor %}
+                </select>
+              </form>
+              {% endif %}
+            </td>
             <td>{{ r.category_label }}</td>
             <td class="c-num" data-v="{{ r.std_hours if r.std_hours is not none else '' }}">{{ "%.2f"|format(r.std_hours) if r.std_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.entered_hours if r.entered_hours is not none else '' }}">{{ "%.2f"|format(r.entered_hours) if r.entered_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.beacon_hours if r.beacon_hours is not none else '' }}">{{ "%.2f"|format(r.beacon_hours) if r.beacon_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.register_hours if r.register_hours is not none else '' }}">{{ "%.2f"|format(r.register_hours) if r.register_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.difference if r.difference is not none else '' }}">{{ "%+.2f"|format(r.difference) if r.difference is not none else "—" }}</td>
-            <td>{% if r.kind == 'category_only' %}<span class="c-muted" data-tip="This person's total hours are the same as paid ({{ '%.2f'|format(r.person_beacon_total) }}). Only the categories differ. Left as entered, for review.">Total matches, categories differ</span>{% else %}<span class="ph-state-attn">{{ {'differs': 'Hours differ', 'paid_no_beacon_hours': 'Paid, no Beacon hours', 'beacon_hours_not_paid': 'Beacon hours, none paid'}[r.kind] }}</span>{% endif %}</td>
+            <td>{% if r.kind == 'category_only' %}<span class="c-muted" data-tip="This person's total hours are the same as paid ({{ '%.2f'|format(r.person_beacon_total) }}). Only the categories differ. Left as entered, for review.">Total matches, categories differ</span>{% elif r.kind == 'manual_check' %}<span class="c-muted" data-tip="Paid by an interpay manual check. Beacon keeps its hours for this period and the check is expected on the next period's register.">Manual check, kept as entered</span>{% else %}<span class="ph-state-attn">{{ {'differs': 'Hours differ', 'paid_no_beacon_hours': 'Paid, no Beacon hours', 'beacon_hours_not_paid': 'Beacon hours, none paid'}[r.kind] }}</span>{% endif %}{% if r.manual_check_hours %}<div class="c-muted vd-sub">includes {{ "%.2f"|format(r.manual_check_hours) }} hours paid by manual check last period</div>{% endif %}</td>
+            <td data-v="{{ r.decision or '~' }}">
+              {% if r.kind == 'category_only' %}<span class="c-muted">None needed</span>
+              {% elif r.kind == 'manual_check' %}<span>{{ decision_labels['manual_check'] }}</span>{% if r.decision_note %}<div class="c-muted vd-sub">{{ r.decision_note }}</div>{% endif %}
+              {% elif can_decide %}
+              <form method="post" action="/admin/timekeeping/status/{{ period.id }}/variance/decide" class="vd-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <input type="hidden" name="staff_id" value="{{ r.staff_id }}">
+                <input type="hidden" name="category_id" value="{{ r.category_id }}">
+                {% set live = r.decision and not r.decision_stale %}
+                <select name="decision" class="vd-select vd-auto{{ ' is-set' if live }}" aria-label="Decision for this line">
+                  <option value="">{{ 'Take back' if live else 'Decide...' }}</option>
+                  {% for k in decision_order %}
+                  <option value="{{ k }}" title="{{ decision_explain[k] }}" {{ 'selected' if live and r.decision == k }} {{ 'disabled' if k != 'beacon_wrong' and r.difference <= 0 }}>{{ decision_labels[k] }}</option>
+                  {% endfor %}
+                </select>
+                <input type="text" name="note" class="vd-note" maxlength="300" placeholder="Note (check number, date)" value="{{ r.decision_note or '' }}" aria-label="Note for this decision"{{ '' if live else ' hidden' }}>
+                {% if r.decision and r.decision_stale %}<div class="ph-state-attn vd-sub">The paid hours changed since this was decided. Decide again.</div>{% endif %}
+              </form>
+              {% elif r.decision %}<span>{{ decision_labels[r.decision] }}</span>{% if r.decision_note %}<div class="c-muted vd-sub">{{ r.decision_note }}</div>{% endif %}
+              {% else %}<span class="c-muted">&mdash;</span>{% endif %}
+            </td>
           </tr>
           {% else %}
-          <tr class="ff-empty"><td colspan="9">Every line matches.</td></tr>
+          <tr class="ff-empty"><td colspan="10">Every line matches.</td></tr>
           {% endfor %}
-          {% if bad %}<tr class="ff-empty" data-v-none hidden><td colspan="9">No lines to show with the boxes at the bottom as they are.</td></tr>{% endif %}
+          {% if bad %}<tr class="ff-empty" data-v-none hidden><td colspan="10">No lines to show with the boxes at the bottom as they are.</td></tr>{% endif %}
         </tbody>
       </table>
     </div>
@@ -72,8 +116,17 @@
         {# A box before each of the three kinds of line on the right: ticked = those lines are listed above, unticked = hidden (static/js/timekeeping_variance.js). #}
         <label class="ph-foot-check" data-tip="Tick to list the lines that are paid with no Beacon hours; untick to hide them"><input type="checkbox" data-vkind="paid_no_beacon_hours" checked> <strong class="{{ 'ph-state-attn' if report.counts.paid_no_beacon_hours else '' }}">{{ report.counts.paid_no_beacon_hours }}</strong> paid with no Beacon hours</label> &middot;
         <label class="ph-foot-check" data-tip="Tick to list the lines where Beacon has hours that were not paid; untick to hide them"><input type="checkbox" data-vkind="beacon_hours_not_paid" checked> <strong class="{{ 'ph-state-attn' if report.counts.beacon_hours_not_paid else '' }}">{{ report.counts.beacon_hours_not_paid }}</strong> Beacon hours with no pay</label>
+        {% if report.counts.manual_check %}&middot; <strong>{{ report.counts.manual_check }}</strong> manual check{% endif %}
+        {% if report.undecided or report.decided %}&middot; <strong class="{{ 'ph-state-attn' if report.undecided else '' }}">{{ report.undecided }}</strong> need a decision, <strong>{{ report.decided }}</strong> decided{% endif %}
         {% if report.category_only_people %}&middot; <label class="ph-foot-check" data-tip="Tick to list the people whose total hours match but whose categories differ; untick to hide them"><input type="checkbox" data-vkind="category_only" checked> <strong>{{ report.category_only_people }}</strong> {{ 'person' if report.category_only_people == 1 else 'people' }}: total matches, categories differ (for review)</label>{% endif %}
       </span>
+      {% if can_decide and report.undecided %}
+      <form method="post" action="/admin/timekeeping/status/{{ period.id }}/variance/decide-all" class="vd-all" data-confirm="Mark every line that has no decision as Beacon wrong, so Beacon takes the paid hours?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="decision" value="beacon_wrong">
+        <button type="submit" class="btn btn-sm">Beacon wrong for all {{ report.undecided }} remaining</button>
+      </form>
+      {% endif %}
     </div>
   </div>
   {% endif %}
@@ -83,4 +136,5 @@
 {% block extra_js %}
 <script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
 <script src="/static/js/timekeeping_variance.js?v={{ asset_version('js/timekeeping_variance.js') }}"></script>
+<script src="/static/js/variance_decisions.js?v={{ asset_version('js/variance_decisions.js') }}"></script>
 {% endblock %}
