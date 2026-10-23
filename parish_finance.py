@@ -87,17 +87,35 @@ _STATEMENT_BRANDING = {
         "header_image": "edom_statement_header.png",
         "footer_image": "edom_statement_footer.png",
     },
+    # 2026-10-23 (Jay): DME's statement line reads "Assessment and Episcopate -
+    # {year}" (their invoice carries both an Assessment and an Episcopate line),
+    # and the downloaded file is named "{church}, {city} SMA Statement {year}.pdf"
+    # -- the same "church, city" form Parish Mode shows. EDOM keeps "Congregational
+    # Allocation" and the plain church name; a diocese not listed gets the same.
     "DME": {
         "business_office_email": "accounting@episcopalmaine.org",
         "header_image": "dme_statement_header.png",
         "footer_image": None,
+        "line_description": "Assessment and Episcopate",
+        "filename_includes_city": True,
     },
 }
 _DEFAULT_STATEMENT_BRANDING = {"business_office_email": None, "header_image": None, "footer_image": None}
+_DEFAULT_STATEMENT_LINE_DESCRIPTION = "Congregational Allocation"
 
 
 def _statement_branding(org: dict) -> dict:
     return _STATEMENT_BRANDING.get((org or {}).get("code") or "", _DEFAULT_STATEMENT_BRANDING)
+
+
+def _statement_filename(parish: dict, year: str, diocese_org: dict) -> str:
+    """Download name of the SMA statement PDF. A diocese that asks for it
+    (branding key filename_includes_city) gets "{church}, {city}" the way
+    Parish Mode shows it; a parish with no city on file just gets its name."""
+    name = parish["name"]
+    if _statement_branding(diocese_org).get("filename_includes_city") and parish.get("city"):
+        name = f"{name}, {parish['city']}"
+    return f"{name} SMA Statement {year}.pdf".replace("/", "-")
 
 
 def _sma_year(inv: dict) -> str | None:
@@ -393,7 +411,7 @@ def sma_statement_pdf(request: Request):
         customer, _cust_error = qbo_mcp_client.get_customer_raw(company, parish["qbo_ar_customer_id"])
 
     pdf_bytes = render_sma_statement_pdf(parish, diocese_org, year_row, payment_rows, customer)
-    filename = f"{parish['name']} SMA Statement {year_row['year']}.pdf".replace("/", "-")
+    filename = _statement_filename(parish, year_row["year"], diocese_org)
     return Response(
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
@@ -463,6 +481,7 @@ def render_sma_statement_pdf(
         total_paid=year_row["paid_to_date"], total_due=year_row["current_balance"],
         statement_date=datetime.date.today().strftime("%m/%d/%Y"),
         business_office_email=branding["business_office_email"] or "",
+        line_description=branding.get("line_description") or _DEFAULT_STATEMENT_LINE_DESCRIPTION,
         customer_address_line1=address_line1, customer_city_state_zip=city_state_zip,
         customer_email=customer_email,
         header_data_uri=_image_data_uri(branding["header_image"]) if branding["header_image"] else "",
