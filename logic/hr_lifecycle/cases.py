@@ -22,6 +22,7 @@ from decimal import Decimal
 import psycopg
 
 import db
+import org_features
 
 from . import clock, conditions, dates, eligibility, privacy, roster_link, templates
 from .errors import HrError
@@ -218,7 +219,8 @@ def _check_unit(org_id: int, parish_id: int | None, kind: str) -> None:
                        (parish_id, org_id))
     if not row:
         raise HrError("invalid", "That employing unit or parish is not part of this entity.")
-    if kind in ("onboard", "offboard") and row["cong"]:
+    if kind in ("onboard", "offboard") and row["cong"] and not org_features.is_enabled(org_id, "hr_staff_by_department"):
+        # an entity whose staff are filed by department (DME: Phoenix payroll, one department per parish) switches this on
         raise HrError("invalid", "Diocesan staff go under an employing unit (such as Diocesan Office), not a parish.")
 
 

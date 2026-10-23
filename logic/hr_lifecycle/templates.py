@@ -33,6 +33,8 @@ BASES = ["start_date", "separation_date", "benefits_effective", "opened"]
 TEMPLATE_LABELS = {
     "diocesan_onboard": ("onboard", "Diocesan staff onboarding (EDOM and Claggett)"),
     "diocesan_offboard": ("offboard", "Diocesan staff offboarding (EDOM and Claggett)"),
+    "dme_onboard": ("onboard", "DME staff onboarding (Phoenix payroll, by department)"),
+    "dme_offboard": ("offboard", "DME staff offboarding (Phoenix payroll, by department)"),
     "parish_benefits_enroll": ("benefits_enroll", "Parish request: enroll clergy or staff in benefits"),
     "parish_benefits_end": ("benefits_end", "Parish request: end benefits coverage"),
 }

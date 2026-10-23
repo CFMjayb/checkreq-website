@@ -96,7 +96,12 @@ async def _form(request: Request) -> dict:
 
 
 def _units(org_id: int, kind: str) -> list[dict]:
-    """Employing units for types 1-2: the entity's non-congregation records (Diocesan Office, Claggett Center)."""
+    """Employing units for types 1-2: the entity's non-congregation records (Diocesan Office, Claggett Center). An entity whose
+    staff are filed by department (DME) lists every department instead: the active parishes with a payroll code, as '002 Wilton'."""
+    if kind in ("onboard", "offboard") and org_features.is_enabled(org_id, "hr_staff_by_department"):
+        return [dict(r) for r in db.query(
+            "SELECT id, code, coalesce(short_name, name) AS label FROM portal.parishes "
+            "WHERE org_id = %s AND is_active AND coalesce(code, '') <> '' ORDER BY code", (org_id,))]
     return [dict(r) for r in db.query(
         "SELECT id, code, coalesce(short_name, name) AS label FROM portal.parishes "
         "WHERE org_id = %s AND is_active AND NOT coalesce(is_congregation, true) "
