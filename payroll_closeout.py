@@ -651,7 +651,11 @@ def tie_out_report(org_id: int, period_id: int) -> dict:
     loaded = period["register_loaded_at"] is not None
     rep = pt.variance(org_id, period_id) if loaded else None
     fin = finish_blockers(org_id, period, rep)
-    out = {"period": {"id": period["id"], "label": period["label"], "pay_date": period["pay_date"].isoformat() if period["pay_date"] else None,
+    # paid lines for people Beacon's roster does not mark as reporting hours are not compared (say so, so the totals make sense)
+    nc = db.query_one("SELECT count(*) AS n, COALESCE(sum(rh.hours), 0) AS h FROM portal.time_register_hours rh "
+                      "JOIN portal.staff_roster sr ON sr.id = rh.staff_id JOIN portal.parishes p ON p.id = sr.parish_id "
+                      "WHERE rh.period_id = %s AND p.org_id = %s AND NOT sr.captures_hours", (period_id, org_id))
+    out = {"not_compared": {"lines": int(nc["n"]), "hours": float(nc["h"])}, "period": {"id": period["id"], "label": period["label"], "pay_date": period["pay_date"].isoformat() if period["pay_date"] else None,
                       "period_start": period["period_start"].isoformat(), "period_end": period["period_end"].isoformat(),
                       "status": period["status"], "final": period["hours_finalized_at"] is not None,
                       "closed": period["status"] == "closed", "actualized": period["actualized_at"] is not None,
