@@ -89,7 +89,7 @@ _STATEMENT_BRANDING = {
     },
     # 2026-10-23 (Jay): DME's statement line reads "Assessment and Episcopate -
     # {year}" (their invoice carries both an Assessment and an Episcopate line),
-    # and the downloaded file is named "{church}, {city} SMA Statement {year}.pdf"
+    # and the downloaded file is named "{church}, {city} A&E Statement {year}.pdf"
     # -- the same "church, city" form Parish Mode shows. EDOM keeps "Congregational
     # Allocation" and the plain church name; a diocese not listed gets the same.
     "DME": {
@@ -98,6 +98,7 @@ _STATEMENT_BRANDING = {
         "footer_image": None,
         "line_description": "Assessment and Episcopate",
         "filename_includes_city": True,
+        "filename_label": "A&E",       # the file reads "... A&E Statement 2026.pdf" (Jay, 2026-10-23: no "SMA" for DME)
     },
 }
 _DEFAULT_STATEMENT_BRANDING = {"business_office_email": None, "header_image": None, "footer_image": None}
@@ -111,11 +112,15 @@ def _statement_branding(org: dict) -> dict:
 def _statement_filename(parish: dict, year: str, diocese_org: dict) -> str:
     """Download name of the SMA statement PDF. A diocese that asks for it
     (branding key filename_includes_city) gets "{church}, {city}" the way
-    Parish Mode shows it; a parish with no city on file just gets its name."""
+    Parish Mode shows it; a parish with no city on file just gets its name.
+    The word before "Statement" is the diocese's filename_label ("SMA" unless
+    its branding says otherwise -- Maine's is "A&E")."""
+    branding = _statement_branding(diocese_org)
     name = parish["name"]
-    if _statement_branding(diocese_org).get("filename_includes_city") and parish.get("city"):
+    if branding.get("filename_includes_city") and parish.get("city"):
         name = f"{name}, {parish['city']}"
-    return f"{name} SMA Statement {year}.pdf".replace("/", "-")
+    label = branding.get("filename_label") or "SMA"
+    return f"{name} {label} Statement {year}.pdf".replace("/", "-")
 
 
 def _sma_year(inv: dict) -> str | None:
