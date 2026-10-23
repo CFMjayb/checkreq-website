@@ -1,0 +1,91 @@
+/* 26-162 Onboarding & Offboarding (hr_cases.py). Builds on fixed_frame.css for the board; the case page is two panes.
+   Status always carries a word as well as a color (WCAG 1.4.1); chips are plain text boxes, not buttons. */
+
+/* ---- summary tiles (each one is a filter link) ---- */
+.hr-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; flex: 0 0 auto; }
+.hr-tile { display: block; text-decoration: none; color: inherit; background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #ddd4c0); border-radius: 8px; padding: 7px 10px; }
+.hr-tile:hover, .hr-tile:focus-visible { border-color: var(--color-franciscan-green, #2f5d50); }
+.hr-tile.is-on { border-color: var(--color-franciscan-green, #2f5d50); box-shadow: inset 0 0 0 1px var(--color-franciscan-green, #2f5d50); }
+.hr-tile b { display: block; font-size: 1.35rem; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.hr-tile span { font-size: 0.78rem; color: var(--color-text-muted, #6b645a); }
+.hr-tile.late b { color: var(--color-danger, #a3352b); }
+.hr-tile.due b { color: #8a5a00; }
+
+/* ---- section chips ---- */
+.hr-chip { display: inline-flex; gap: 5px; align-items: baseline; padding: 1px 7px; border-radius: 5px; font-size: 0.76rem;
+  white-space: nowrap; font-variant-numeric: tabular-nums; text-decoration: none; }
+.hr-chip .n { font-weight: 700; }
+.hr-chip.ok { background: #e0f0e6; color: var(--color-success, #2f6b3c); }
+.hr-chip.late { background: #fbe6e6; color: var(--color-danger, #a3352b); }
+.hr-chip.due { background: #fdf0d6; color: #8a5a00; }
+.hr-chip.open { background: #eef1ee; color: var(--color-text, #2b2b2b); }
+.hr-chip.na { background: transparent; color: var(--color-text-muted, #6b645a); }
+a.hr-chip:hover { text-decoration: underline; }
+
+.hr-tag { font-size: 0.72rem; padding: 0 6px; border-radius: 4px; background: #eef1ee; color: var(--color-text-muted, #6b645a); white-space: nowrap; }
+.hr-tag.stalled { background: #fdf0d6; color: #8a5a00; }
+.hr-tag.ready { background: #e0f0e6; color: var(--color-success, #2f6b3c); }
+.hr-late-text { color: var(--color-danger, #a3352b); font-weight: 600; }
+.hr-soon-text { color: #8a5a00; font-weight: 600; }
+.hr-muted { color: var(--color-text-muted, #6b645a); }
+.hr-viewtabs { display: inline-flex; gap: 2px; border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; overflow: hidden; }
+.hr-viewtabs a { padding: 2px 10px; font-size: 0.82rem; text-decoration: none; color: inherit; }
+.hr-viewtabs a.is-on { background: var(--color-franciscan-green, #2f5d50); color: #fff; }
+
+/* ---- the case page: on the shared fixed frame. The title row, banners and section chips stay put; the checklist (left) and
+   the person / coverage / history (right) each scroll on their own, so a 50-item checklist never scrolls the whole page. ---- */
+.hr-panes { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); gap: 14px; }
+.hr-pane { min-height: 0; overflow: auto; padding-right: 4px; scroll-behavior: smooth; }
+@media (max-width: 960px) {
+  .hr-panes { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+  .hr-pane { overflow: visible; }
+}
+.ff-shell .hr-secnav { flex: 0 0 auto; }
+.hr-case-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 14px; margin-bottom: 8px; }
+.hr-case-head h1 { margin: 0; font-size: 1.45rem; }
+.hr-case-head .hr-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.hr-panel { background: var(--color-surface, #fff); border: 1px solid var(--color-border, #ddd4c0); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; }
+.hr-panel h2 { font-size: 1.02rem; margin: 0 0 6px; display: flex; align-items: baseline; gap: 8px; }
+.hr-panel h2 .hr-count { margin-left: auto; font-weight: 400; font-size: 0.82rem; }
+.hr-bucket { font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-muted, #6b645a); margin: 10px 0 2px; }
+.hr-items { list-style: none; margin: 0; padding: 0; }
+.hr-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 6px 0; border-top: 1px solid var(--color-border-soft, #eee8da); }
+.hr-item:first-child { border-top: 0; }
+.hr-item .lbl { min-width: 0; }
+.hr-item .lbl .meta { display: block; font-size: 0.78rem; color: var(--color-text-muted, #6b645a); }
+.hr-item.is-done .lbl > span.t { color: var(--color-text-muted, #6b645a); }
+.hr-item.is-na .lbl > span.t { color: var(--color-text-muted, #6b645a); text-decoration: line-through; }
+.hr-item .st { font-size: 0.76rem; font-weight: 600; white-space: nowrap; }
+.hr-item .st.done { color: var(--color-success, #2f6b3c); }
+.hr-item .st.late { color: var(--color-danger, #a3352b); }
+.hr-item .st.due { color: #8a5a00; }
+.hr-item .st.open { color: var(--color-text, #2b2b2b); }
+.hr-item .st.na { color: var(--color-text-muted, #6b645a); font-weight: 400; }
+.hr-secnav { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.hr-secnav .hr-chip { font-size: 0.8rem; padding: 2px 9px; }
+.hr-reopen { display: inline; margin: 0 0 0 6px; }
+.hr-linkbtn { background: none; border: 0; padding: 0; font: inherit; font-size: 0.74rem; font-weight: 400; color: var(--color-franciscan-green, #2f5d50); text-decoration: underline; cursor: pointer; }
+.hr-item-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.hr-item-actions form { display: inline-flex; gap: 6px; align-items: center; margin: 0; }
+.hr-item-actions input[type=text] { height: 26px; padding: 2px 6px; font-size: 0.82rem; margin: 0; width: 220px; max-width: 100%; }
+.hr-item-actions .btn { padding: 2px 10px; font-size: 0.8rem; }
+.hr-req { font-size: 0.7rem; color: var(--color-text-muted, #6b645a); }
+.hr-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; font-size: 0.88rem; margin: 0; }
+.hr-dl dt { color: var(--color-text-muted, #6b645a); }
+.hr-dl dd { margin: 0; overflow-wrap: anywhere; }
+.hr-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+.hr-table th, .hr-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--color-border-soft, #eee8da); vertical-align: top; }
+.hr-table th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-muted, #6b645a); }
+.hr-events { list-style: none; padding: 0; margin: 0; font-size: 0.8rem; }
+.hr-events li { padding: 3px 0; border-top: 1px solid var(--color-border-soft, #eee8da); }
+.hr-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; }
+@media (max-width: 640px) { .hr-form-grid { grid-template-columns: minmax(0, 1fr); } }
+.hr-form-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 0.85rem; }
+.hr-form-grid .wide { grid-column: 1 / -1; }
+.hr-form-grid input, .hr-form-grid select, .hr-form-grid textarea { margin: 0; }
+.hr-preview td.na { color: var(--color-text-muted, #6b645a); }
+dialog.hr-dialog { border: 1px solid var(--color-border, #ddd4c0); border-radius: 8px; padding: 14px 18px; width: min(560px, 94vw); }
+dialog.hr-dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+dialog.hr-dialog h2 { margin: 0 0 10px; font-size: 1.12rem; }
+.hr-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }

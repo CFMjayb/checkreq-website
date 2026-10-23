@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Checklist templates — Onboarding &amp; Offboarding{% endblock %}
+{#
+  26-162: the checklist templates, read only. To change one, edit 26-162 templates\checklist_templates.csv and run
+  migrations\seed_hr_templates_from_csv.py: a changed template is published as a new version; open cases keep their copy.
+#}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/hr_lifecycle.css?v={{ asset_version('css/hr_lifecycle.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide hr-page">
+  <div class="hr-case-head">
+    <h1>Checklist templates</h1>
+    <a href="/hr/onboarding">&larr; Back to Onboarding &amp; Offboarding</a>
+  </div>
+  <p class="hr-muted" style="font-size:0.86rem">Read only. To change a checklist, ask Jay Boggs. A changed template becomes a new version, and cases already open keep the version they started with.</p>
+  <div class="hr-panel">
+    {% for t in templates %}
+    <a class="hr-chip {{ 'ok' if chosen and chosen.id == t.id else 'open' }}" href="?id={{ t.id }}">{{ t.label }} &middot; v{{ t.version }} &middot; {{ t.item_count }} items</a>
+    {% else %}<p class="hr-muted">No templates are loaded for {{ current_org.code }} yet.</p>{% endfor %}
+  </div>
+  {% if chosen %}
+  <div class="hr-panel">
+    <h2>{{ chosen.label }} <span class="hr-count">{{ kinds[chosen.case_kind] }} &middot; v{{ chosen.version }} &middot; {{ chosen.applies_to|join(', ') }}</span></h2>
+    <table class="hr-table">
+      <thead><tr><th>Section</th><th>Item</th><th>Owner</th><th>Due</th><th>Hard</th><th>Applies when</th></tr></thead>
+      <tbody>
+      {% for it in chosen['items'] %}
+        <tr><td>{{ section_labels[it.section] }}</td>
+          <td>{{ it.label }}{% if not it.required %} <span class="hr-req">(optional)</span>{% endif %}{% if it.help_text %}<div class="hr-muted" style="font-size:0.78rem">{{ it.help_text }}</div>{% endif %}</td>
+          <td>{{ it.owner_group }}</td>
+          <td>{{ {'start_date': 'hire', 'separation_date': 'last day', 'benefits_effective': 'benefits start', 'opened': 'opened'}[it.due_basis] }}{% if it.due_offset_days %} {{ '+' if it.due_offset_days > 0 else '−' }} {{ it.due_offset_days|abs }}{% endif %}{% if it.business_days %} business days{% endif %}</td>
+          <td>{% if it.hard_deadline_days is not none %}+{{ it.hard_deadline_days }}{% endif %}</td>
+          <td>{{ describe(it.condition) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

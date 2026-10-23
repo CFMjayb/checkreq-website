@@ -27,6 +27,9 @@ KNOWN_FEATURES = [
     # A per-entity switch, OFF unless set: a new entity gets no parish functions until someone turns them on (a new diocese is
     # switched on here, Setup Tables > Entities & Global Approvers > Diocese Features).
     (PARISH_FUNCTIONS, "Parish functions"),
+    # 26-162 (2026-10-22): Onboarding & Offboarding (HR & Payroll), and the parish Staff Benefits requests (Phase 3).
+    ("hr_lifecycle", "Onboarding & Offboarding"),
+    ("benefits_enrollment", "Parish benefits enrollment"),
 ]
 
 
