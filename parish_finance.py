@@ -86,6 +86,7 @@ _STATEMENT_BRANDING = {
         "business_office_email": "businessoffice@episcopalmaryland.org",
         "header_image": "edom_statement_header.png",
         "footer_image": "edom_statement_footer.png",
+        "filename_label": "SMA",       # Maryland is the only diocese whose file name says SMA (Jay, 2026-10-23)
     },
     # 2026-10-23 (Jay): DME's statement line reads "Assessment and Episcopate -
     # {year}" (their invoice carries both an Assessment and an Episcopate line),
@@ -113,14 +114,14 @@ def _statement_filename(parish: dict, year: str, diocese_org: dict) -> str:
     """Download name of the SMA statement PDF. A diocese that asks for it
     (branding key filename_includes_city) gets "{church}, {city}" the way
     Parish Mode shows it; a parish with no city on file just gets its name.
-    The word before "Statement" is the diocese's filename_label ("SMA" unless
-    its branding says otherwise -- Maine's is "A&E")."""
+    The word before "Statement" is the diocese's filename_label (Maryland's is
+    "SMA", Maine's "A&E"); a diocese with none gets no word there at all."""
     branding = _statement_branding(diocese_org)
     name = parish["name"]
     if branding.get("filename_includes_city") and parish.get("city"):
         name = f"{name}, {parish['city']}"
-    label = branding.get("filename_label") or "SMA"
-    return f"{name} {label} Statement {year}.pdf".replace("/", "-")
+    label = branding.get("filename_label")
+    return (f"{name} {label} Statement {year}.pdf" if label else f"{name} Statement {year}.pdf").replace("/", "-")
 
 
 def _sma_year(inv: dict) -> str | None:
