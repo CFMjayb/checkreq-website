@@ -503,6 +503,10 @@ def closeout_state(org_id: int, period_id: int) -> dict:
     if period["actualized_by_user_id"]:
         u = db.query_one("SELECT display_name, email FROM checkreq.app_users WHERE id = %s", (period["actualized_by_user_id"],))
         who = (u["display_name"] or u["email"]) if u else None
+    loaded_by = None
+    if period.get("register_loaded_by_user_id"):
+        u = db.query_one("SELECT display_name, email FROM checkreq.app_users WHERE id = %s", (period["register_loaded_by_user_id"],))
+        loaded_by = (u["display_name"] or u["email"]) if u else None
     filed_by = None
     if period.get("reports_filed_by_user_id"):
         u = db.query_one("SELECT display_name, email FROM checkreq.app_users WHERE id = %s", (period["reports_filed_by_user_id"],))
@@ -514,7 +518,7 @@ def closeout_state(org_id: int, period_id: int) -> dict:
             "variance": rep, "actualized": period["actualized_at"] is not None, "actualized_by": who,
             "auto": auto_actualize_enabled(org_id), "next": next_period(org_id, period),
             # step 6: who marked the department reports as filed, and how (the Phoenix workbook or another way)
-            "reports_filed": period.get("reports_filed_at") is not None, "reports_filed_by": filed_by,
+            "reports_filed": period.get("reports_filed_at") is not None, "reports_filed_by": filed_by, "register_loaded_by": loaded_by,
             # what the PREVIOUS period's decisions mean here: hours carried in (to key) and manual checks (already paid, do not key)
             "prior": pdec.prior_period_notes(period_id)}
 
@@ -548,3 +552,129 @@ def clear_reports_filed(org_id: int, period_id: int) -> None:
                         "reports_filed_how = NULL, reports_filed_note = NULL, updated_at = now() WHERE id = %s AND org_id = %s",
                         (period_id, org_id))
         conn.commit()
+
+
+# ------------------------------------------------------------------ closing a period and finishing it from the Phoenix workbook (Jay, 2026-10-22)
+
+def close_period(org_id: int, period_id: int, user_id: int) -> dict:
+    """Closes an OPEN pay period (hours stop landing in it) and records who and when. Closed already: nothing changes."""
+    period = pt.get_period(org_id, period_id)
+    if period["status"] == "closed":
+        return {"already": True}
+    if period["status"] != "open":
+        raise PayrollError("refused", "Only an open pay period can be closed here.")
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE portal.payroll_periods SET status = 'closed', processed_by_user_id = %s, processed_at = now(), "
+                        "updated_at = now() WHERE id = %s AND org_id = %s", (user_id, period_id, org_id))
+        conn.commit()
+    return {"already": False}
+
+
+def final_blockers(org_id: int, period_id: int) -> list[str]:
+    """Why the hours cannot be marked Final yet (the same rules as payroll_totals.finalize_period), as plain sentences."""
+    out = []
+    left = pt.unresolved(pt._period_rows(org_id, period_id))
+    unentered = sum(pt.count_unentered(org_id, period_id).values())
+    if left:
+        out.append(f"{len(left)} line(s) still need a decision on Time Review")
+    if unentered:
+        out.append(f"{unentered} person(s) named in emails were not entered")
+    notdone = pt.parishes_not_done(org_id, period_id)
+    if notdone:
+        codes = ", ".join(p["code"] or p["name"] for p in notdone[:8]) + (" and more" if len(notdone) > 8 else "")
+        out.append(f"{len(notdone)} department(s) are not approved yet ({codes})")
+    return out
+
+
+def finish_blockers(org_id: int, period: dict, rep: dict | None = None) -> dict:
+    """Can this period be finished in one step (Final, Close, Actualize)? Only when the hours tie out PERFECTLY: nothing differs, every
+    paid person is on the roster, and every department is approved. People whose total hours tie but whose categories differ do not
+    block (they are left as entered and noted for review). Returns {ready, already, blockers}."""
+    pid = period["id"]
+    if period["hours_finalized_at"] and period["status"] == "closed" and period["actualized_at"]:
+        return {"ready": False, "already": True, "blockers": []}
+    blockers = []
+    if period["status"] == "future":
+        blockers.append("This pay period has not started")
+    if period["register_loaded_at"] is None:
+        blockers.append("The paid hours have not been loaded yet")
+    else:
+        rep = rep or pt.variance(period["org_id"], pid)
+        n = sum(1 for r in rep["rows"] if r["kind"] in OPEN_KINDS)
+        if n:
+            blockers.append(f"{n} line(s) differ from the paid hours")
+        if period["register_unmatched"]:
+            blockers.append(f"{period['register_unmatched']} paid person(s) are not on the roster")
+    if not period["hours_finalized_at"] and period["status"] in ("open", "closed"):
+        blockers.extend(final_blockers(period["org_id"], pid))
+    return {"ready": not blockers, "already": False, "blockers": blockers}
+
+
+def finish_period(org_id: int, period_id: int, user_id: int, open_next: bool = False) -> dict:
+    """Marks the hours Final, closes the period, records it as Actualized and (when asked) opens the next period, but ONLY when
+    finish_blockers() is empty. Each step is the normal one, stamped with this person, and safe to repeat. Returns what was done."""
+    period = pt.get_period(org_id, period_id)
+    fb = finish_blockers(org_id, period)
+    if fb["already"]:
+        return {"done": [], "already": True, "next": None}
+    if fb["blockers"]:
+        raise PayrollError("refused", "Not ready to finish: " + "; ".join(fb["blockers"]) + ". Nothing was changed.")
+    done = []
+    if not period["hours_finalized_at"]:
+        pt.finalize_period(org_id, period_id, user_id)
+        done.append("Marked the hours Final")
+    if period["status"] != "closed":
+        close_period(org_id, period_id, user_id)
+        done.append("Closed the pay period")
+    res = actualize_period(org_id, period_id, user_id)
+    if not res["tied"]:
+        raise PayrollError("refused", "The hours were marked Final and the period closed, but Actualize found something that no longer "
+                                      f"ties out ({res['left']} line(s) differ). Open the close-out page in Beacon.")
+    done.append("Recorded the period as Actualized")
+    nxt = None
+    if open_next:
+        try:
+            r = open_next_period(org_id, period_id, user_id)
+            nxt = {"label": r["label"], "opened": not r["already"], "message": None}
+            done.append(f"{r['label']} was already open" if r["already"] else f"Opened {r['label']}")
+        except PayrollError as e:
+            nxt = {"label": None, "opened": False, "message": e.message}
+    return {"done": done, "already": False, "next": nxt, "for_review": res.get("for_review", 0)}
+
+
+def tie_out_report(org_id: int, period_id: int) -> dict:
+    """Everything the Phoenix workbook's Beacon Tie-Out tab shows for one pay period, hours only: the period's state, counts, each
+    department's Beacon and paid hours, each line that is not a plain match (with its decision), and whether the period can be finished
+    in one step. Read-only."""
+    period = pt.get_period(org_id, period_id)
+    loaded = period["register_loaded_at"] is not None
+    rep = pt.variance(org_id, period_id) if loaded else None
+    fin = finish_blockers(org_id, period, rep)
+    out = {"period": {"id": period["id"], "label": period["label"], "pay_date": period["pay_date"].isoformat() if period["pay_date"] else None,
+                      "period_start": period["period_start"].isoformat(), "period_end": period["period_end"].isoformat(),
+                      "status": period["status"], "final": period["hours_finalized_at"] is not None,
+                      "closed": period["status"] == "closed", "actualized": period["actualized_at"] is not None,
+                      "register_loaded": loaded, "reports_filed": period.get("reports_filed_at") is not None},
+           "finish": fin, "register_loaded": loaded}
+    if not loaded:
+        out.update(counts={}, undecided=0, decided=0, departments=[], lines=[], manual_missing=[], totals={"beacon": 0.0, "paid": 0.0})
+        return out
+    lines = []
+    for r in rep["rows"]:
+        if r["kind"] == "match":
+            continue
+        lines.append({"dept_code": r["parish_code"], "dept_name": r["dept_name"], "employee_number": r["employee_number"],
+                      "name": f"{r['last_name']}, {r['first_name']}", "category": r["category_label"],
+                      "beacon_hours": r["beacon_hours"], "paid_hours": r["register_hours"], "difference": r["difference"],
+                      "kind": r["kind"], "decision": pdec.LABELS.get(r["decision"]) if r["decision"] else None,
+                      "decision_stale": r["decision_stale"], "decision_note": r["decision_note"],
+                      "manual_check_hours": r["manual_check_hours"]})
+    out.update(counts=rep["counts"], undecided=rep["undecided"], decided=rep["decided"], category_only_people=rep["category_only_people"],
+               departments=[{"code": d["parish_code"], "name": d["dept_name"], "beacon_hours": d["beacon_hours"],
+                             "paid_hours": d["register_hours"], "difference": d["difference"], "differing": d["differing"]}
+                            for d in rep["departments"]],
+               lines=lines, manual_missing=rep["manual_missing"],
+               totals={"beacon": round(sum(d["beacon_hours"] for d in rep["departments"]), 2),
+                       "paid": round(sum(d["register_hours"] for d in rep["departments"]), 2)})
+    return out

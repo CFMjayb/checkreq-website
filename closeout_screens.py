@@ -87,12 +87,13 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
         un = p["register_unmatched"]
         s3.update(state="done" if not un else "todo",
                   detail=(f"{st['register_lines']} paid line(s) loaded {_when(p['register_loaded_at'], org_id)}"
+                          + (f" by {st['register_loaded_by']}" if st.get("register_loaded_by") else "")
                           + (f" ({p['register_source_ref']})" if p["register_source_ref"] else "") + "."
                           + (f" {un} paid person(s) are not on the roster: refresh the roster from the register, then load again."
                              if un else "")))
     else:
-        s3.update(state="todo", detail="On the payroll PC, double-click Close Out Pay Period.bat. It reads the labor distribution "
-                                       "in this pay date's folder and sends the hours only. Pay stays on the PC.")
+        s3.update(state="todo", detail="The Phoenix workbook sends the paid hours (hours only, never pay): after it generates the reports, "
+                                       "press Send Paid Hours to Beacon, then review the Beacon Tie-Out tab before sending the reports.")
     steps.append(s3)
 
     undecided = var.get("undecided", 0) if var else 0
@@ -223,19 +224,8 @@ def _act(request: Request, period_id: int, fn, ok_msg):
 
 @router.post("/admin/timekeeping/status/{period_id}/closeout/close")
 async def closeout_close(period_id: int, request: Request):
-    def do(org_id, user_id):
-        period = pt.get_period(org_id, period_id)
-        if period["status"] == "closed":
-            return {"already": True}
-        if period["status"] != "open":
-            raise pt.PayrollError("refused", "Only an open pay period can be closed here.")
-        with db.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("UPDATE portal.payroll_periods SET status = 'closed', processed_by_user_id = %s, processed_at = now(), "
-                            "updated_at = now() WHERE id = %s AND org_id = %s", (user_id, period_id, org_id))
-                conn.commit()
-        return {"already": False}
-    return _act(request, period_id, do, lambda r: "Already closed." if r["already"] else "The pay period is closed.")
+    return _act(request, period_id, lambda o, u: pc.close_period(o, period_id, u),
+                lambda r: "Already closed." if r["already"] else "The pay period is closed.")
 
 
 @router.post("/admin/timekeeping/status/{period_id}/closeout/actualize")
