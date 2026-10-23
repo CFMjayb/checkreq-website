@@ -11,7 +11,11 @@ Obviously, if they have no access, they don't see the menu option." This is the 
 Parish Home shows ONE tile for all of it, and only when at least one card below would open for this person. The page only LINKS to
 screens that already exist; every one of them still enforces its own gate. A card's visibility must match its route's gate (the
 standing rule): both screens above open through timekeeping.timekeeping_context(), which needs Timekeeping on for the diocese
-(org_features "timekeeping") AND HR-activated for the parish (timekeeping_activation). Nothing here widens or narrows that.
+(org_features "timekeeping"), HR-activated for the parish (timekeeping_activation) AND, since 2026-10-23 (Jay: "the HR & Payroll tile
+and both screens show only to people with Timekeeping, Parish Finance or Parish Admin"), timekeeping.can_manage_timekeeping(): the
+parish_time, parish_finance or parish_admin role at this parish, or at the parish's diocese hr_admin (the diocesan HR role),
+beacon_admin, setup_admin, or a Cornerstone employee of the linked entity. A bare Parish Member sees no tile and gets a plain
+"ask your parish administrator" page if they open a screen by address.
 
 To add a card later (Staff Benefits and Onboarding & Offboarding for parishes, 26-162): add an entry to _CARDS with a `visible(user,
 parish)` check that copies the new screen's own gate, and its link. Parish Home and this page pick it up with no other change.
@@ -38,8 +42,11 @@ def register(app, *, current_user, current_org, render) -> None:
 
 
 def _timekeeping_on(user, parish) -> bool:
-    """The same two checks timekeeping.timekeeping_context() makes: the diocese's feature and the parish's own HR switch."""
-    return bool(org_features.is_enabled(parish["org_id"], "timekeeping") and timekeeping_activation.parish_hr_enabled(parish))
+    """The same three checks timekeeping.timekeeping_context() makes: the diocese's feature, the parish's own HR switch, and the
+    person's role (timekeeping.can_manage_timekeeping)."""
+    import timekeeping                      # loaded here: timekeeping imports parish_mode, which imports this module
+    return bool(org_features.is_enabled(parish["org_id"], "timekeeping") and timekeeping_activation.parish_hr_enabled(parish)
+                and timekeeping.can_manage_timekeeping(user, parish))
 
 
 _CARDS = [

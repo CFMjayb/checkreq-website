@@ -15,6 +15,9 @@
   {% if reason == 'parish' %}
     Timekeeping isn't turned on for {{ parish.name }}. It's enabled per parish — ask your diocese to
     activate it (HR &amp; Payroll &rarr; HR Administrative Tasks &rarr; HR Activation).
+  {% elif reason == 'role' %}
+    Staff and Timekeeping at {{ parish.name }} are open to people who hold the Timekeeping, Parish Finance or Parish
+    Admin role. Ask your parish administrator to give you the Timekeeping role (User Access).
   {% elif reason == 'diocese' %}
     Timekeeping isn't available for {{ parish.name }} yet — it's a diocese-wide feature that hasn't
     been turned on. Ask your diocese to enable it (Administrative Tasks &rarr; Diocese Features).
