@@ -360,6 +360,7 @@ def apply_hours_from_form(period: dict, parish: dict, diocese_org_id: int, user:
     return saved
 
 
+@pt.shares_one_connection
 def apply_totals_from_form(period: dict, parish: dict, org_id: int, user: dict, form,
                            *, diocese_mode: bool) -> tuple[int, list[str]]:
     """Writes the total_<staff>_<category> fields a submitted entry form carries as PERIOD TOTALS

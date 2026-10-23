@@ -2186,10 +2186,11 @@ def _send_daily_digest_email(approver: dict, rows: list[dict], request: Request)
     sign_in_url = f"{base}/my-approvals"
     items_html = ""
     text_lines = []
-    for r in rows:
-        with db.connect() as conn:
-            with conn.cursor() as cur:
-                token = _mint_approval_email_token(cur, r["pr_id"], approver["id"], r["serial_group"])
+    # one connection for every row's token (2026-10-23: it was one connection per pending row, 30 for 5 approvers x 6 rows)
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            tokens = [_mint_approval_email_token(cur, r["pr_id"], approver["id"], r["serial_group"]) for r in rows]
+    for r, token in zip(rows, tokens):
         action_url = f"{base}/email-action/{token}"
         needed_by = r["requested_pay_date"].strftime("%Y-%m-%d") if r.get("requested_pay_date") else "—"
         items_html += f"""
@@ -2256,10 +2257,13 @@ def _notify_approvers_for_group(payment_request_id: int, serial_group: int | Non
         "WHERE aa.payment_request_id = %s AND aa.serial_group = %s AND aa.status = 'pending'",
         (payment_request_id, serial_group),
     )
-    for a in approvers:
-        with db.connect() as conn:
-            with conn.cursor() as cur:
-                token = _mint_approval_email_token(cur, payment_request_id, a["user_id"], serial_group)
+    if not approvers:
+        return
+    # one connection for the whole group's tokens (it was one per approver)
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            group_tokens = [_mint_approval_email_token(cur, payment_request_id, a["user_id"], serial_group) for a in approvers]
+    for a, token in zip(approvers, group_tokens):
         try:
             _send_approval_needed_email(ctx, a["email"], a["display_name"], token, request)
         except Exception as exc:

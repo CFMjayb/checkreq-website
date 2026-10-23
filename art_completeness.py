@@ -250,29 +250,27 @@ def check_one(art_id: int, *, today: date | None = None) -> dict:
         matched_txn_id = None
         matched_amount = None
 
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO checkreq.art_period_status
-                    (art_list_id, period_label, expected_date, status, posted_date,
-                     matched_qbo_txn_id, matched_amount, checked_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (art_list_id, period_label) DO UPDATE SET
-                    expected_date = EXCLUDED.expected_date,
-                    -- Never downgrade a human's manual_resolved call with an
-                    -- automated re-check -- that status only ever changes via
-                    -- the admin's own "Mark Resolved" action.
-                    status = CASE WHEN checkreq.art_period_status.status = 'manually_resolved'
-                                   THEN checkreq.art_period_status.status ELSE EXCLUDED.status END,
-                    posted_date = EXCLUDED.posted_date,
-                    matched_qbo_txn_id = EXCLUDED.matched_qbo_txn_id,
-                    matched_amount = EXCLUDED.matched_amount,
-                    checked_at = NOW()
-                """,
-                (art_id, period_label, expected, status, posted_date,
-                 matched_txn_id, matched_amount),
-            )
+    db.execute(
+        """
+        INSERT INTO checkreq.art_period_status
+            (art_list_id, period_label, expected_date, status, posted_date,
+             matched_qbo_txn_id, matched_amount, checked_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (art_list_id, period_label) DO UPDATE SET
+            expected_date = EXCLUDED.expected_date,
+            -- Never downgrade a human's manual_resolved call with an
+            -- automated re-check -- that status only ever changes via
+            -- the admin's own "Mark Resolved" action.
+            status = CASE WHEN checkreq.art_period_status.status = 'manually_resolved'
+                           THEN checkreq.art_period_status.status ELSE EXCLUDED.status END,
+            posted_date = EXCLUDED.posted_date,
+            matched_qbo_txn_id = EXCLUDED.matched_qbo_txn_id,
+            matched_amount = EXCLUDED.matched_amount,
+            checked_at = NOW()
+        """,
+        (art_id, period_label, expected, status, posted_date,
+         matched_txn_id, matched_amount),
+    )
 
     return {
         "art_id": art_id, "ok": True, "skipped": False, "reason": None,

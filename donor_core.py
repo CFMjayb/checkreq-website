@@ -16,6 +16,7 @@ Pure Python plus db.py. Compatible with Python 3.11 (the Cloud Run image).
 """
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 import re
 import uuid
@@ -232,17 +233,37 @@ def make_ctx(user_id: int, parish_id: int, roles=(), *, user_label: str = "", pa
 
 
 # ── Transactions ────────────────────────────────────────────────────────────────────────────────
+_tx_depth: contextvars.ContextVar = contextvars.ContextVar("donor_tx_depth", default=0)
+
+
 @contextmanager
 def tx(cur=None):
     """Yield a dict-row cursor. If `cur` is given the caller owns the transaction (used by merge and
-    import so a whole operation commits or rolls back together). Otherwise open a connection, commit on
-    success, roll back on any exception."""
+    import so a whole operation commits or rolls back together). Otherwise commit on success and roll
+    back on any exception.
+
+    2026-10-23 (Jay: never re-open connections): a TOP-LEVEL tx() runs as one transaction on the request's shared
+    connection (db.shared_transaction) instead of opening a brand-new connection, so a donor page that makes 3 to 8
+    of them opens none. A tx() nested INSIDE another tx() (the statement-run build holds an advisory lock in an outer
+    tx() while each statement commits in an inner one) still gets its OWN connection and its own transaction, exactly
+    as before: sharing it would turn the inner commits into savepoints that only land when the outer one ends.
+    Backup of the prior version: donor_core_pre_connection_reuse.py."""
     if cur is not None:
         yield cur
         return
-    with db.connect() as conn:
-        with conn.cursor() as c:
-            yield c
+    depth = _tx_depth.get()
+    token = _tx_depth.set(depth + 1)
+    try:
+        if depth == 0:
+            with db.shared_transaction() as conn:
+                with conn.cursor() as c:
+                    yield c
+        else:
+            with db.connect() as conn:
+                with conn.cursor() as c:
+                    yield c
+    finally:
+        _tx_depth.reset(token)
 
 
 # ── Validators ──────────────────────────────────────────────────────────────────────────────────

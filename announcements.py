@@ -326,8 +326,7 @@ def _notify_new_announcement(row: dict) -> None:
         return
     try:
         link = None if row.get("target_scope") == "all_employees" else "/parish-view"
-        for user_id in _resolve_notification_user_ids(row):
-            notifications.create_notification(user_id, "announcement", row["title"], link)
+        notifications.create_notifications(_resolve_notification_user_ids(row), "announcement", row["title"], link)
     except Exception as exc:
         print(f"[announcements] bell notify failed for announcement {row.get('id')}: {exc}")
 

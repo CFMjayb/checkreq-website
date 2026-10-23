@@ -198,9 +198,11 @@ def _event(cur, campaign_id: int, recipient_id, event_type: str, *, ip=None, ua=
 
 def add_event(campaign_id: int, event_type: str, *, recipient_id: int | None = None, detail: dict | None = None) -> None:
     """Public writer for events the admin screens record (edited, reminder batch, ...)."""
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            _event(cur, campaign_id, recipient_id, event_type, detail=detail)
+    db.execute(
+        "INSERT INTO portal.outreach_events (campaign_id, recipient_id, event_type, ip, user_agent, detail) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (campaign_id, recipient_id, event_type, None, None, Jsonb(strip_nul(detail or {}))),
+    )
 
 
 def respond_url(base_url: str, token: str) -> str:

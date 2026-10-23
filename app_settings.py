@@ -27,12 +27,10 @@ def get_setting(key: str, default: str | None = None) -> str | None:
 
 
 def set_setting(key: str, value: str, updated_by_user_id: int | None = None) -> None:
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO checkreq.app_settings (key, value, updated_by_user_id, updated_at) "
-                "VALUES (%s, %s, %s, NOW()) "
-                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "
-                "updated_by_user_id = EXCLUDED.updated_by_user_id, updated_at = NOW()",
-                (key, value, updated_by_user_id),
-            )
+    db.execute(
+        "INSERT INTO checkreq.app_settings (key, value, updated_by_user_id, updated_at) "
+        "VALUES (%s, %s, %s, NOW()) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "
+        "updated_by_user_id = EXCLUDED.updated_by_user_id, updated_at = NOW()",
+        (key, value, updated_by_user_id),
+    )
