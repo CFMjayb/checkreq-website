@@ -519,13 +519,13 @@ def closeout_state(org_id: int, period_id: int) -> dict:
             "prior": pdec.prior_period_notes(period_id)}
 
 
-REPORTS_FILED_HOW = ("phoenix", "other")
+REPORTS_FILED_HOW = ("phoenix", "beacon", "other")
 
 
-def mark_reports_filed(org_id: int, period_id: int, user_id: int, how: str) -> dict:
+def mark_reports_filed(org_id: int, period_id: int, user_id: int, how: str, note: str | None = None) -> dict:
     """Step 6 of the checklist: someone says the department payroll reports are filed in the Documents folders, either by the
-    Phoenix workbook's "File Reports to Beacon Documents" button or another way. Beacon never receives the pay PDFs, so it
-    files nothing itself: this only records who said so and when."""
+    Phoenix workbook's "File Reports to Beacon Documents" button ('phoenix'), by Beacon itself ("File Reports Now Here",
+    payroll_report_filing.py, 'beacon') or another way. This only records who and when, and a short note of what was filed."""
     if how not in REPORTS_FILED_HOW:
         raise PayrollError("invalid", "Say how the reports were filed: in the Phoenix workbook or another way.")
     period = pt.get_period(org_id, period_id)
@@ -534,7 +534,8 @@ def mark_reports_filed(org_id: int, period_id: int, user_id: int, how: str) -> d
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE portal.payroll_periods SET reports_filed_at = now(), reports_filed_by_user_id = %s, "
-                        "reports_filed_how = %s, updated_at = now() WHERE id = %s AND org_id = %s", (user_id, how, period_id, org_id))
+                        "reports_filed_how = %s, reports_filed_note = %s, updated_at = now() WHERE id = %s AND org_id = %s",
+                        (user_id, how, (note or None) and note[:500], period_id, org_id))
         conn.commit()
     return {"how": how}
 
@@ -544,5 +545,6 @@ def clear_reports_filed(org_id: int, period_id: int) -> None:
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE portal.payroll_periods SET reports_filed_at = NULL, reports_filed_by_user_id = NULL, "
-                        "reports_filed_how = NULL, updated_at = now() WHERE id = %s AND org_id = %s", (period_id, org_id))
+                        "reports_filed_how = NULL, reports_filed_note = NULL, updated_at = now() WHERE id = %s AND org_id = %s",
+                        (period_id, org_id))
         conn.commit()

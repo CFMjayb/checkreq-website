@@ -19,6 +19,7 @@ import db
 import org_time
 import payroll_closeout as pc
 import payroll_decisions as pdec
+import payroll_report_filing as prf
 import payroll_totals as pt
 
 router = APIRouter()
@@ -150,23 +151,32 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
     steps.append(s5)
 
     s6 = {"n": 6, "title": "File the reports in the Documents folders"}
+    here = prf.enabled_for(org_id)
     if st["reports_filed"]:
-        how = "in the Phoenix workbook" if p.get("reports_filed_how") == "phoenix" else "another way"
-        s6.update(state="done", detail=f"Filed {how}. Marked {_when(p['reports_filed_at'], org_id)}"
-                                       + (f" by {st['reports_filed_by']}." if st["reports_filed_by"] else "."),
+        how = {"phoenix": "Posted via the Phoenix workbook", "beacon": "Filed by Beacon"}.get(p.get("reports_filed_how"), "Filed another way")
+        s6.update(state="done", detail=f"{how}. Marked {_when(p['reports_filed_at'], org_id)}"
+                                       + (f" by {st['reports_filed_by']}." if st["reports_filed_by"] else ".")
+                                       + (f" {p['reports_filed_note']}." if p.get("reports_filed_note") else ""),
                   actions=[{"label": "Undo", "url": f"{base}/closeout/reports-unfiled", "confirm": "Take the filed mark back?",
                             "plain": True}])
     elif not st["closed"]:
-        s6.update(state="waiting", detail="Needs the pay period closed. Each department's two reports are filed by the Phoenix "
-                                          "workbook's File Reports to Beacon Documents button.")
+        s6.update(state="waiting", detail="Needs the pay period closed. Each department's two reports are posted by the Phoenix "
+                                          "workbook's File Reports to Beacon Documents button"
+                                          + (", or filed from here once payroll is processed." if here else "."))
     else:
+        acts = [{"label": "Reports Posted via Phoenix", "url": f"{base}/closeout/reports-filed?how=phoenix",
+                 "confirm": "Mark the reports as posted via the Phoenix workbook?"}]
+        if here:
+            acts.append({"label": "File Reports Now Here", "url": f"{base}/closeout/file-reports",
+                         "confirm": "Beacon will copy this pay date's department reports from the Accounting library into each "
+                                    "department's HRPayroll folder on the Documents site. It copies only and never overwrites a "
+                                    "different file. Continue?", "plain": True})
         s6.update(state="todo",
-                  detail="The Phoenix workbook's File Reports to Beacon Documents button files each department's reports. "
-                         "Say here that it is done. Beacon does not receive the pay PDFs, so it files nothing itself.",
-                  actions=[{"label": "Filed in the Phoenix workbook", "url": f"{base}/closeout/reports-filed?how=phoenix",
-                            "confirm": "Mark the reports as filed in the Phoenix workbook?"},
-                           {"label": "Filed another way", "url": f"{base}/closeout/reports-filed?how=other",
-                            "confirm": "Mark the reports as filed another way?", "plain": True}])
+                  detail=("If the Phoenix workbook already posted each department's reports, say so with Reports Posted via Phoenix. "
+                          + ("Otherwise File Reports Now Here copies this pay date's department reports from the Accounting library "
+                             "into each department's HRPayroll > Payroll Reports folder (copy only, nothing overwritten, never the "
+                             "all-department reports)." if here else "")).strip(),
+                  actions=acts)
     steps.append(s6)
 
     s7 = {"n": 7, "title": "Open the next pay period"}
@@ -332,8 +342,28 @@ async def closeout_reports_filed(period_id: int, request: Request):
         pc.mark_reports_filed(org["id"], period_id, user["id"], how)
     except pt.PayrollError as e:
         return _back(period_id, err=e.message)
-    return _back(period_id, msg="The reports are marked as filed" +
-                 (" in the Phoenix workbook." if how == "phoenix" else " another way."))
+    return _back(period_id, msg="The reports are marked as posted via the Phoenix workbook." if how == "phoenix"
+                 else "The reports are marked as filed another way.")
+
+
+@router.post("/admin/timekeeping/status/{period_id}/closeout/file-reports")
+async def closeout_file_reports(period_id: int, request: Request):
+    """File Reports Now Here: Beacon copies this pay date's department reports from the Accounting library into each department's
+    folder on the Documents site (payroll_report_filing.py)."""
+    user, org, err = _gate(request)
+    if err:
+        return err
+    try:
+        res = prf.file_period(org["id"], period_id, user["id"])
+    except pt.PayrollError as e:
+        return _back(period_id, err=e.message)
+    if not res["filed"]:
+        bad = sorted({c for c, _ in res["problems"]})
+        return _back(period_id, err=(f"Not everything could be filed: {res['conflicts']} file(s) already there with a different size, "
+                                     f"{res['errors']} that could not be copied (departments {', '.join(bad)}). {res['copied']} copied so far. "
+                                     "Nothing was overwritten. Fix those and press the button again: it skips what is already there."))
+    return _back(period_id, msg=f"Filed {res['files']} reports for {res['departments']} departments in {res['folder']}: "
+                                f"{res['copied']} copied, {res['already_there']} already there.")
 
 
 @router.post("/admin/timekeeping/status/{period_id}/closeout/reports-unfiled")
