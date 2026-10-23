@@ -63,15 +63,42 @@ def create_notification(user_id: int, notification_type: str, message: str, link
        silently no-ops if checkreq.notifications doesn't exist yet in a
        given environment rather than raising."""
     try:
-        with db.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO checkreq.notifications "
-                    "(user_id, notification_type, message, link_url) VALUES (%s, %s, %s, %s)",
-                    (user_id, notification_type, message, link_url),
-                )
+        db.execute(
+            "INSERT INTO checkreq.notifications "
+            "(user_id, notification_type, message, link_url) VALUES (%s, %s, %s, %s)",
+            (user_id, notification_type, message, link_url),
+        )
     except Exception as exc:
         print(f"[notifications] create_notification failed for user {user_id}: {exc}")
+
+
+def create_notifications(user_ids, notification_type: str, message: str, link_url: str | None) -> int:
+    """The same notification for many people in ONE statement (2026-10-23: an all-parishes announcement used to open one
+    connection per recipient, about 500, roughly 200 seconds). Fails open like create_notification. If the single
+    statement fails (one bad user id would fail all of it), fall back to one insert per person so a good recipient is
+    never lost to a bad one. Returns how many notifications were written."""
+    ids = sorted({int(u) for u in user_ids if u is not None})
+    if not ids:
+        return 0
+    try:
+        return db.execute(
+            "INSERT INTO checkreq.notifications (user_id, notification_type, message, link_url) "
+            "SELECT u, %s, %s, %s FROM unnest(%s::int[]) AS u",
+            (notification_type, message, link_url, ids),
+        )
+    except Exception as exc:
+        print(f"[notifications] bulk create_notifications failed ({len(ids)} users), falling back one by one: {exc}")
+    written = 0
+    for user_id in ids:
+        try:
+            written += db.execute(
+                "INSERT INTO checkreq.notifications "
+                "(user_id, notification_type, message, link_url) VALUES (%s, %s, %s, %s)",
+                (user_id, notification_type, message, link_url),
+            )
+        except Exception as exc:
+            print(f"[notifications] create_notification failed for user {user_id}: {exc}")
+    return written
 
 
 def get_unread_count(user_id: int) -> int:
@@ -127,16 +154,14 @@ async def api_notification_read(notification_id: int, request: Request):
     if not user:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     try:
-        with db.connect() as conn:
-            with conn.cursor() as cur:
-                # Scoped to user_id -- a notification can only ever be
-                # marked read by the person it belongs to, same ownership
-                # discipline as every other mutation in this codebase.
-                cur.execute(
-                    "UPDATE checkreq.notifications SET read_at = NOW() "
-                    "WHERE id = %s AND user_id = %s AND read_at IS NULL",
-                    (notification_id, user["id"]),
-                )
+        # Scoped to user_id -- a notification can only ever be
+        # marked read by the person it belongs to, same ownership
+        # discipline as every other mutation in this codebase.
+        db.execute(
+            "UPDATE checkreq.notifications SET read_at = NOW() "
+            "WHERE id = %s AND user_id = %s AND read_at IS NULL",
+            (notification_id, user["id"]),
+        )
     except Exception as exc:
         print(f"[notifications] mark-read failed for notification {notification_id}: {exc}")
         return JSONResponse({"ok": False}, status_code=500)

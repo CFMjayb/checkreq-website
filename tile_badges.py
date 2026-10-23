@@ -37,14 +37,12 @@ def _last_viewed(user_id: int, tile_key: str):
 
 
 def mark_viewed(user_id: int, tile_key: str) -> None:
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO checkreq.tile_badge_state (user_id, tile_key, last_viewed_at) "
-                "VALUES (%s, %s, NOW()) "
-                "ON CONFLICT (user_id, tile_key) DO UPDATE SET last_viewed_at = NOW()",
-                (user_id, tile_key),
-            )
+    db.execute(
+        "INSERT INTO checkreq.tile_badge_state (user_id, tile_key, last_viewed_at) "
+        "VALUES (%s, %s, NOW()) "
+        "ON CONFLICT (user_id, tile_key) DO UPDATE SET last_viewed_at = NOW()",
+        (user_id, tile_key),
+    )
 
 
 def _badge(count: int, newest_at, last_viewed) -> dict | None:

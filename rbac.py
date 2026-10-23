@@ -301,14 +301,12 @@ def grant_role(user_id: int, org_id: int, role_key: str,
         (user_id, org_id, role_key),
     )
     if not existing:
-        with db.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO checkreq.user_roles "
-                    "(user_id, org_id, role_key, granted_by_user_id, note) "
-                    "VALUES (%s, %s, %s, %s, %s)",
-                    (user_id, org_id, role_key, granted_by_user_id, note),
-                )
+        db.execute(
+            "INSERT INTO checkreq.user_roles "
+            "(user_id, org_id, role_key, granted_by_user_id, note) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (user_id, org_id, role_key, granted_by_user_id, note),
+        )
     if role_key != ENTITY_BASE_ROLE:
         grant_role(user_id, org_id, ENTITY_BASE_ROLE, granted_by_user_id,
                    f"Baseline access, auto-granted alongside {role_key}")
@@ -361,14 +359,12 @@ def revoke_role(user_id: int, org_id: int, role_key: str,
                 "someone else first."
             )
 
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE checkreq.user_roles SET revoked_at = NOW(), "
-                "revoked_by_user_id = %s, note = COALESCE(%s, note) "
-                "WHERE user_id = %s AND org_id = %s AND role_key = %s AND revoked_at IS NULL",
-                (revoked_by_user_id, note, user_id, org_id, role_key),
-            )
+    db.execute(
+        "UPDATE checkreq.user_roles SET revoked_at = NOW(), "
+        "revoked_by_user_id = %s, note = COALESCE(%s, note) "
+        "WHERE user_id = %s AND org_id = %s AND role_key = %s AND revoked_at IS NULL",
+        (revoked_by_user_id, note, user_id, org_id, role_key),
+    )
 
 
 # ── Self-service access requests (Plan §9) ──────────────────────────────────

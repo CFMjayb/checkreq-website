@@ -25,10 +25,13 @@ THE RULES (plan A5) in one place:
 """
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
+import functools
 import hashlib
 import json
 import re
+from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import category_order
@@ -302,6 +305,67 @@ def get_senders(org_id: int, parish_code: str | None = None) -> list[dict]:
 
 # ------------------------------------------------------------- B2: record hours
 
+# --------------------------------------------- one connection for a loop of line writes (2026-10-23)
+# record_period_hours / review_line / retract_line each open a connection of their own, so Approve all, Accept all, carry-forward
+# and the entry screen's Save cost one connection per line (10 to 40 a click, about 0.4 s each). A function marked
+# @shares_one_connection gives every line write inside it ONE connection, opened on first use and closed at the end. Each line
+# still commits by itself exactly as before (the line functions call commit), so a failure part-way keeps the lines already
+# written and a FOR UPDATE lock is released at every line. Without the marker nothing changes. Backup: payroll_totals_pre_connection_reuse.py
+_loop: contextvars.ContextVar = contextvars.ContextVar("payroll_loop_conn", default=None)
+
+
+class _LoopConn:
+    def __init__(self):
+        self._cm = None
+        self.conn = None
+
+    def get(self):
+        if self.conn is None:
+            self._cm = db.connect()
+            self.conn = self._cm.__enter__()
+        return self.conn
+
+    def close(self, exc_type=None, exc=None, tb=None):
+        if self._cm is not None:
+            cm, self._cm, self.conn = self._cm, None, None
+            cm.__exit__(exc_type, exc, tb)
+
+
+@contextmanager
+def _use_conn():
+    """The connection one line write works on: the loop's shared one when a marked function is running, else its own."""
+    loop = _loop.get()
+    if loop is None:
+        with db.connect() as own:
+            yield own
+        return
+    conn = loop.get()
+    try:
+        yield conn
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def shares_one_connection(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if _loop.get() is not None:  # nested (approve_all -> confirm_standing -> carry_forward_standing): join the outer one
+            return fn(*args, **kwargs)
+        loop = _LoopConn()
+        token = _loop.set(loop)
+        try:
+            result = fn(*args, **kwargs)
+        except BaseException as exc:
+            _loop.reset(token)
+            loop.close(type(exc), exc, exc.__traceback__)
+            raise
+        _loop.reset(token)
+        loop.close()
+        return result
+    return wrapper
+
+
 def record_period_hours(org_id: int, *, period_id: int, parish_code: str, category_key: str, hours,
                         source: str = "email", source_ref: str | None = None, quote: str | None = None,
                         confidence=None, employee_number: str | None = None,
@@ -347,7 +411,7 @@ def record_period_hours(org_id: int, *, period_id: int, parish_code: str, catego
         raise PayrollError("invalid", "status must be needs_review or confirmed.")
     actor = actor_user_id if actor_user_id is not None else service_user_id()
 
-    with db.connect() as conn:
+    with _use_conn() as conn:
         with conn.cursor() as cur:
             subject_sql = "staff_id = %s" if staff else "pending_change_id = %s"
             subject_val = staff["id"] if staff else pending_change_id
@@ -1065,7 +1129,7 @@ def review_line(org_id: int, line_id: int, action: str, user_id: int, hours=None
     """An hr_admin's decision on one line. action: accept | reject | reopen | edit | accept_proposal |
     dismiss_proposal | use_total | use_grid. Every change writes a time_period_total_edits row."""
     note = (note or "").strip()[:300] or None
-    with db.connect() as conn:
+    with _use_conn() as conn:
         with conn.cursor() as cur:
             line, _ = _line_for_review(cur, org_id, line_id)
             old_h, old_s = Decimal(line["hours"]), line["review_status"]
@@ -1144,7 +1208,7 @@ def retract_line(org_id: int, line_id: int, user_id: int, source: str, note: str
     still waiting for review; anything else is refused. The line becomes rejected, never deleted."""
     if source not in SOURCES:
         raise PayrollError("invalid", f"Unknown source {source!r}.")
-    with db.connect() as conn:
+    with _use_conn() as conn:
         with conn.cursor() as cur:
             line, _ = _line_for_review(cur, org_id, line_id)
             if line["source"] != source or line["review_status"] != "needs_review":
@@ -1159,6 +1223,7 @@ def retract_line(org_id: int, line_id: int, user_id: int, source: str, note: str
     return {"line_id": line_id, "review_status": "rejected"}
 
 
+@shares_one_connection
 def accept_all(org_id: int, period_id: int, parish_id: int, user_id: int) -> dict:
     """Confirms every plain needs_review line of one parish. Skips lines that need a person to look
     at them: a waiting proposal, a conflict with the daily grid, a pending new hire, or a flag
@@ -1273,6 +1338,7 @@ def _person_for_review(org_id: int, parish_id: int, staff_id: int) -> dict:
     return st
 
 
+@shares_one_connection
 def review_person(org_id: int, period_id: int, parish_id: int, staff_id: int, action: str, user_id: int,
                   figures: dict | None = None, new_figures: dict | None = None) -> dict:
     """ONE decision for an employee's whole row on the Period totals (Jay, 2026-10-11: one Accept and one Reject per
@@ -1371,6 +1437,7 @@ def parish_email_choices(org_id: int, period_id: int, parish_id: int) -> list[di
         "ORDER BY 2 NULLS LAST", (period_id, parish_id, period_id, parish_id, period_id, parish_id))
 
 
+@shares_one_connection
 def carry_forward_standing(org_id: int, period_id: int, user_id: int, parish_id: int | None = None) -> dict:
     """For every active employee whose hours_basis is standing, records their standing_hours as a
     source=standing line in the Regular category. The line is confirmed on the spot when the
@@ -1727,14 +1794,11 @@ def _parish_extras(org_id: int, period_id: int, parish_id: int) -> dict:
 
 
 def _store_approval(period_id: int, parish_id: int, kind: str, user_id: int, ex: dict) -> None:
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO portal.time_parish_approval (period_id, parish_id, kind, fingerprint, approved_by_user_id) "
-                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (period_id, parish_id) DO UPDATE SET kind = EXCLUDED.kind, "
-                "fingerprint = EXCLUDED.fingerprint, approved_by_user_id = EXCLUDED.approved_by_user_id, approved_at = now()",
-                (period_id, parish_id, kind, ex.get("fingerprint", EMPTY_FINGERPRINT), user_id))
-            conn.commit()
+    db.execute(
+        "INSERT INTO portal.time_parish_approval (period_id, parish_id, kind, fingerprint, approved_by_user_id) "
+        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (period_id, parish_id) DO UPDATE SET kind = EXCLUDED.kind, "
+        "fingerprint = EXCLUDED.fingerprint, approved_by_user_id = EXCLUDED.approved_by_user_id, approved_at = now()",
+        (period_id, parish_id, kind, ex.get("fingerprint", EMPTY_FINGERPRINT), user_id))
 
 
 def approve_parish(org_id: int, period_id: int, parish_id: int, user_id: int) -> dict:
@@ -1787,14 +1851,11 @@ def confirm_standing(org_id: int, period_id: int, user_id: int, parish_id: int |
 def undo_approval(org_id: int, period_id: int, parish_id: int) -> dict:
     _open_period(org_id, period_id)
     _parish_extras(org_id, period_id, parish_id)
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM portal.time_parish_approval WHERE period_id = %s AND parish_id = %s", (period_id, parish_id))
-            n = cur.rowcount
-            conn.commit()
+    n = db.execute("DELETE FROM portal.time_parish_approval WHERE period_id = %s AND parish_id = %s", (period_id, parish_id))
     return {"removed": n}
 
 
+@shares_one_connection
 def approve_all(org_id: int, period_id: int, user_id: int) -> dict:
     """Actions > Approve all. Approves every department that is ready: hours recorded and nothing waiting for a decision
     (a department that only has standing hours gets them confirmed first). It NEVER approves over something that needs a

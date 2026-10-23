@@ -139,16 +139,13 @@ def list_parishes_with_hr(org_id: int) -> list[dict]:
 def set_parish_hr(parish_id: int, org_id: int, enabled: bool) -> None:
     """JSONB merge, org-scoped. org_id in the WHERE clause is the choke point
     that stops a crafted parish_id from another diocese being toggled."""
-    with db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE portal.parishes "
-                "SET modules = modules || jsonb_build_object(%s::text, %s::boolean), "
-                "    updated_at = now() "
-                "WHERE id = %s AND org_id = %s",
-                (FEATURE_KEY, enabled, parish_id, org_id),
-            )
-        conn.commit()
+    db.execute(
+        "UPDATE portal.parishes "
+        "SET modules = modules || jsonb_build_object(%s::text, %s::boolean), "
+        "    updated_at = now() "
+        "WHERE id = %s AND org_id = %s",
+        (FEATURE_KEY, enabled, parish_id, org_id),
+    )
 
 
 @router.get("/admin/timekeeping/parishes")
