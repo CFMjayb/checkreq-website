@@ -9662,6 +9662,12 @@ import donor_register
 
 donor_register.register(app, current_user=_current_user, render=_render, templates=templates, current_org=_current_org)
 
+# ── 26-129: Allocation Statements board (Diocese Mode) -- every church's allocation, Generate and Email buttons ──
+# See allocation_statements.py. Thin wiring only.
+import allocation_statements
+
+allocation_statements.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+
 # ── Per-hostname favicon (2026-10-01, Jay) ──
 # See favicon.py. Thin wiring only: the host -> diocese lookup is the login
 # page's own resolver, so the tab icon and the login screen always agree.

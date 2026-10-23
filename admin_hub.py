@@ -132,6 +132,12 @@ _CARDS = [
     {"title": "SMA Letters", "desc": "Build each parish's Shared Ministry Allocation letter from the Task Force model, and check them on one sheet.",
      "url": "/admin/sma-letters", "role": ["setup_admin", "beacon_admin"], "group": "parish", "entity_codes": ["EDOM"],
      "guide": "sma-letters"},
+
+    # 26-129 (2026-10-23): the Allocation Statements board -- every church's allocation for a year, with Generate and Email buttons.
+    # Entity-scoped (Setup Admin or Beacon Admin at the CURRENT entity), matching allocation_statements._guard -- so it is in
+    # _ENTITY_SCOPED_TITLES below. Parish-facing, so the per-entity parish_functions switch applies (not offered where there are no parishes).
+    {"title": "Allocation Statements", "desc": "Every church's allocation for a year: balances, then generate or email the statements.",
+     "url": "/admin/allocation-statements", "role": ["setup_admin", "beacon_admin"], "group": "parish", "parish_function": True},
 ]
 
 # Fixed display order + section headings -- per Jay's explicit request,
@@ -149,7 +155,7 @@ _CARD_GROUPS = [
 # by design/necessity like everything else in this hub) -- see admin_hub()'s
 # own docstring for why this distinction matters.
 _ENTITY_SCOPED_TITLES = {"Setup Tables", "Manage Parishes", "Report Templates", "Polls & Surveys",
-                          "SMA Letters"}
+                          "SMA Letters", "Allocation Statements"}
 
 
 @router.get("/admin", response_class=HTMLResponse)

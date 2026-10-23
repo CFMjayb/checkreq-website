@@ -92,6 +92,7 @@ def send_email(
     sender: str = "",
     attachments: list | None = None,
     timeout: int = 30,
+    reply_to: str = "",
 ) -> dict:
     """POST to 26-122's /api/send-email. Returns the parsed JSON response
     ({"status": "sent"} on success, {"error": "..."} otherwise) -- never
@@ -118,6 +119,7 @@ def send_email(
                 "body_text": body_text,
                 "sender": sender,
                 "attachments": attachments or None,
+                "reply_to": reply_to,
             },
             timeout=timeout,
         )

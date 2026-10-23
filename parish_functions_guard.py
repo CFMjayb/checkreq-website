@@ -29,6 +29,7 @@ GUARDED_PREFIXES = (
     "/admin/announcements",
     "/admin/parish-documents",
     "/admin/resource-library",
+    "/admin/allocation-statements",
     "/congregational-vitality",
 )
 

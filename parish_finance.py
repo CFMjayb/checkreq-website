@@ -87,6 +87,7 @@ _STATEMENT_BRANDING = {
         "header_image": "edom_statement_header.png",
         "footer_image": "edom_statement_footer.png",
         "filename_label": "SMA",       # Maryland is the only diocese whose file name says SMA (Jay, 2026-10-23)
+        "email_sender": "businessoffice@episcopalmaryland.org",
     },
     # 2026-10-23 (Jay): DME's statement line reads "Assessment and Episcopate -
     # {year}" (their invoice carries both an Assessment and an Episcopate line),
@@ -100,6 +101,10 @@ _STATEMENT_BRANDING = {
         "line_description": "Assessment and Episcopate",
         "filename_includes_city": True,
         "filename_label": "A&E",       # the file reads "... A&E Statement 2026.pdf" (Jay, 2026-10-23: no "SMA" for DME)
+        # The email server can only send AS cfmins.org or episcopalmaryland.org addresses (26-122 sender
+        # registry), so a Maine statement email goes out from the default notifications address and
+        # replies come back to accounting@ (the reply-to is always business_office_email).
+        "email_sender": None,
     },
 }
 _DEFAULT_STATEMENT_BRANDING = {"business_office_email": None, "header_image": None, "footer_image": None}
@@ -422,6 +427,59 @@ def sma_statement_pdf(request: Request):
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+_EMAIL_ADDRESS_RE = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+
+
+def customer_email_addresses(customer: dict | None) -> list[str]:
+    """The addresses a statement is emailed to: the parish's QuickBooks Customer
+    email, the same field the statement's own mailing block prints. QuickBooks
+    keeps several in one box ("a@x.org,b@x.org"), so this splits on commas,
+    semicolons and spaces and keeps only what looks like one address, once each."""
+    raw = ((customer or {}).get("PrimaryEmailAddr") or {}).get("Address") or ""
+    seen: list[str] = []
+    for part in re.split(r"[,;\s]+", raw):
+        part = part.strip()
+        if part and _EMAIL_ADDRESS_RE.match(part) and part.lower() not in [s.lower() for s in seen]:
+            seen.append(part)
+    return seen
+
+
+def build_sma_statement(parish: dict, diocese_org: dict, year: str) -> tuple[dict | None, str | None]:
+    """One parish's SMA statement for one year, for the Allocation Statements board
+    (allocation_statements.py) -- the same pieces sma_statement_pdf() above puts
+    together, with ONE difference on purpose: every QuickBooks step must succeed.
+    The download route above tolerates a failed payment lookup (it prints an empty
+    payment list); a statement that is saved or emailed to a church must never be
+    printed with payments missing, so here that is an error instead.
+
+    Returns ({pdf, filename, year_row, customer, emails}, None) or (None, "plain reason")."""
+    customer_id = parish.get("qbo_ar_customer_id")
+    if not customer_id:
+        return None, "No QuickBooks customer is linked to this church."
+    company = _company_code(diocese_org)
+    sma_years, years_error = get_sma_years(company, customer_id)
+    if years_error:
+        return None, f"QuickBooks did not answer: {years_error}"
+    year_row = next((y for y in sma_years if y["year"] == str(year)), None)
+    if not year_row:
+        return None, f"No {year} allocation invoice was found in QuickBooks."
+    payments, pay_error = get_sma_year_payments(company, customer_id, year_row["invoice_txn_ids"])
+    if pay_error:
+        return None, f"QuickBooks did not give the payments: {pay_error}"
+    customer, customer_error = qbo_mcp_client.get_customer_raw(company, customer_id)
+    if customer_error:
+        return None, f"QuickBooks did not give the customer record: {customer_error}"
+    payment_rows = _payments_with_running_balance(year_row["original_amount"], payments)
+    pdf_bytes = render_sma_statement_pdf(parish, diocese_org, year_row, payment_rows, customer)
+    return {
+        "pdf": pdf_bytes,
+        "filename": _statement_filename(parish, year_row["year"], diocese_org),
+        "year_row": year_row,
+        "customer": customer,
+        "emails": customer_email_addresses(customer),
+    }, None
 
 
 def _image_data_uri(filename: str) -> str:
