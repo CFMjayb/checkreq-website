@@ -123,7 +123,7 @@ def normalize_fields(raw: dict, *, for_update: bool = False) -> dict:
             v = v or None
             if v and len(v) > 120:
                 raise HrError("invalid", f"{k.replace('_', ' ').capitalize()} is too long.")
-            if v:
+            if v and k != "payroll_employee_ref":  # a payroll employee ID is not personal data (Jay, 2026-10-22)
                 privacy.check_text(v, k.replace("_", " ").capitalize())
         elif k in ("is_clergy", "housing_provided"):
             if v in ("", None):
