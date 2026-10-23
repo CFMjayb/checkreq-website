@@ -69,6 +69,7 @@ import org_features
 # timekeeping_activation.py imports only cornerstone_mode/db/rbac, never this
 # module, so there is no cycle.
 import timekeeping_activation
+import parish_hr_hub    # the HR & Payroll menu (2026-10-23); imports only org_features/timekeeping_activation, so no cycle
 
 router = APIRouter()
 
@@ -432,6 +433,10 @@ def parish_view_page(request: Request):
             org_features.is_enabled(parish["org_id"], "timekeeping")
             and timekeeping_activation.parish_hr_enabled(parish)
         ),
+        # 2026-10-23, Jay: ONE "HR & Payroll" tile on Parish Home with whatever the person has access to underneath (Staff,
+        # Timekeeping, later Staff Benefits and Onboarding & Offboarding); no tile when nothing would open. The cards and their
+        # gates live in parish_hr_hub.py.
+        "hr_menu_show": bool(parish_hr_hub.cards_for(user, parish)),
         # 2026-09-16, Jay: caught the Finance tile showing for a bare
         # parish_member with no Parish Finance role -- it was always-shown
         # by a deliberate 2026-08-16 design (the destination page,

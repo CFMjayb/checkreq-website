@@ -139,6 +139,7 @@ import timekeeping_employees
 import timekeeping_entries
 import timekeeping_review
 import hr_hub  # the HR & Payroll menu (2026-10-17)
+import parish_hr_hub  # the same menu in Parish Mode (2026-10-23)
 import timekeeping_status
 import payroll_api
 import payroll_screens
@@ -9581,6 +9582,7 @@ timekeeping_roster.register(app, render=_render)
 timekeeping_entries.register(app, render=_render)
 timekeeping_review.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 hr_hub.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+parish_hr_hub.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 # Diocese status board / "enter missing data" backfill / Excel export
 # (2026-08-16, per Jay's direct request) -- new sibling module, same
 # current_user/current_org/render signature as timekeeping.py/

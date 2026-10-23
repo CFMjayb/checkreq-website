@@ -16,7 +16,7 @@
     {% if diocese_mode %}
     <a class="ff-back" href="{{ back_link_url or '/admin/timekeeping/periods' }}">&larr; {{ back_link_label or "Back to Status Board" }}</a>
     {% else %}
-    <a class="ff-back" href="/parish-view">&larr; Back to {{ parish.name }}</a>
+    <a class="ff-back" href="/parish-hr">&larr; Back to HR &amp; Payroll</a>
     {% endif %}
     <div class="ff-actions">
       {% if have_grid %}<span class="te-grand">Total <strong data-te-grand>{{ '%.2f'|format(grand_total) }}</strong> hours</span>{% endif %}
