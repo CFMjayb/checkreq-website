@@ -102,10 +102,12 @@ def get_badges(user_id: int, org_id: int | None) -> dict[str, dict]:
     if is_beacon_admin or parish_admin_ids:
         scoped_ids = parish_roles.get_reviewable_parish_ids(user_id)
         row = db.query_one(
-            "SELECT count(*) AS n, max(requested_at) AS newest "
-            "FROM portal.parish_access_requests "
-            "WHERE status = 'Pending' AND (%s::int[] IS NULL OR parish_id = ANY(%s::int[]))",
-            (scoped_ids, scoped_ids),
+            "SELECT count(*) AS n, max(par.requested_at) AS newest "
+            "FROM portal.parish_access_requests par JOIN portal.parishes p ON p.id = par.parish_id "
+            "WHERE par.status = 'Pending' AND (%s::int[] IS NULL OR par.parish_id = ANY(%s::int[])) "
+            # 2026-10-22: the count matches the queue, which shows only the CURRENT entity's requests.
+            "AND (%s::int IS NULL OR p.org_id = %s OR p.linked_org_id = %s)",
+            (scoped_ids, scoped_ids, org_id, org_id, org_id),
         )
         b = _badge(row["n"], row["newest"], _last_viewed(user_id, "request_parish_access"))
         if b:
