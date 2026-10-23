@@ -68,7 +68,7 @@ tr.stmt-total-paid td { font-weight: 700; border-top: 2px solid #1a1a1a; padding
     </tr>
     <tr>
       <td class="qty">1</td>
-      <td>Congregational Allocation - {{ year }}</td>
+      <td>{{ line_description or "Congregational Allocation" }} - {{ year }}</td>
       <td class="check"></td>
       <td class="amt">${{ "{:,.2f}".format(monthly_amount) }}</td>
       <td class="amt">${{ "{:,.2f}".format(year_row.original_amount) }}</td>
