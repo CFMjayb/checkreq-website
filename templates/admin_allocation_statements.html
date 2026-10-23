@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Allocation Statements — {{ current_org.name }}{% endblock %}
+{#
+  Allocation Statements -- the status board of every church's allocation, with Generate and Email buttons
+  (allocation_statements.py). Built on the shared fixed frame (static/css/fixed_frame.css + js/fixed_frame.js):
+  the title row, year and filters stay at the top, the column headers stay under them, the counts stay at the
+  bottom, and ONLY the church rows scroll. The rows are listed at once; static/js/allocation_statements.js asks
+  QuickBooks for each church's figures and fills the row in as the answer arrives.
+
+  Row colour: green = paid in full, amber = a balance is due, red = QuickBooks gave a problem, grey = nothing to do
+  (no allocation invoice for the year, or no QuickBooks customer linked).
+#}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<div class="ff-shell">
+
+  <div class="ff-title-row">
+    <h1>Allocation Statements</h1>
+    <a class="ff-back" href="/admin">&larr; Back to Administrative Tasks</a>
+    <div class="ff-actions">
+      <button type="button" class="btn btn-sm btn-secondary" id="asGenerateAll" disabled data-tip="Builds a statement for every church that has an allocation for {{ year }}, then downloads them together in one zip.">Generate all statements</button>
+      <button type="button" class="btn btn-sm btn-secondary" id="asGenerateChecked" disabled data-tip="Builds a statement for each church you ticked, then downloads them in one zip.">Generate checked</button>
+      <button type="button" class="btn btn-sm btn-primary" id="asEmailChecked" disabled data-tip="Emails the statement to each church you ticked, using the email address on its QuickBooks customer record.">Email checked</button>
+    </div>
+  </div>
+
+  <div class="ff-info">
+    <form method="get" action="/admin/allocation-statements">
+      <label>Year
+        <select name="year" id="asYear" aria-label="Allocation year">
+          {% for y in years %}<option value="{{ y }}"{% if y == year %} selected{% endif %}>{{ y }}</option>{% endfor %}
+        </select>
+      </label>
+      <noscript><button type="submit" class="btn btn-sm btn-secondary">Show</button></noscript>
+    </form>
+    <strong>{{ line_description }} {{ year }}</strong>
+    <span>Every active church under {{ current_org.name }}. Figures come live from QuickBooks.</span>
+    {% if reply_to %}<span>Replies to emailed statements go to {{ reply_to }}.</span>{% endif %}
+  </div>
+
+  {% if not log_ok %}
+  <div class="banner banner-error ff-banner">The statement log is not set up yet (migration 099), so <strong>Email is switched off</strong>. Generating statements still works.</div>
+  {% endif %}
+  {% if dev_mode %}
+  <div class="banner banner-info ff-banner">This is the development site. {% if test_address %}Every email is sent to <strong>{{ test_address }}</strong> and never reaches a church.{% else %}No test address is set, so emails are held back and nothing is sent.{% endif %}</div>
+  {% endif %}
+
+  <div class="ff-filters">
+    <label>Search <input type="text" data-ff-search placeholder="code, name or city"></label>
+    <div class="ff-multi" data-ff-multi="state">
+      <button type="button" class="ff-multi-btn" aria-haspopup="true" aria-expanded="false">Show: <span data-ff-multi-label>All</span> &#9662;</button>
+      <div class="ff-multi-panel" hidden>
+        <label><input type="checkbox" value="owes" checked> Balance due</label>
+        <label><input type="checkbox" value="paid" checked> Paid in full</label>
+        <label><input type="checkbox" value="none" checked> No allocation this year</label>
+        <label><input type="checkbox" value="nolink" checked> No QuickBooks link</label>
+        <label><input type="checkbox" value="error" checked> QuickBooks problem</label>
+        <label><input type="checkbox" value="loading" checked> Still loading</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      <table class="ff-table">
+        <colgroup>
+          <col style="width:34px"><col style="width:25%"><col style="width:9%"><col style="width:9%"><col style="width:9%">
+          <col style="width:12%"><col style="width:14%"><col style="width:11%"><col style="width:11%"><col style="width:44px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="c-center"><input type="checkbox" id="asCheckAll" aria-label="Tick every church shown" disabled></th>
+            <th data-sort="1" data-dir="asc">Church<span class="arrow">&#9650;</span></th>
+            <th data-sort="1" class="c-num">Allocation<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num">Paid<span class="arrow"></span></th>
+            <th data-sort="1" class="c-num">Balance<span class="arrow"></span></th>
+            <th data-sort="1">Status<span class="arrow"></span></th>
+            <th data-sort="1">Email on file<span class="arrow"></span></th>
+            <th data-sort="1">Generated<span class="arrow"></span></th>
+            <th data-sort="1">Emailed<span class="arrow"></span></th>
+            <th class="c-menu" aria-label="Actions"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          {% set p = r.parish %}
+          <tr class="ff-row" data-id="{{ p.id }}" data-state="loading" data-linked="{{ 1 if r.linked else 0 }}" data-emailed="{{ 1 if r.emailed_at else 0 }}">
+            <td class="c-center"><input type="checkbox" class="as-check" aria-label="Tick {{ p.name }}" disabled></td>
+            <td data-v="{{ p.name }}{{ p.city or '' }}" data-tip="{{ p.name }}{% if p.city %}, {{ p.city }}{% endif %}"><span class="c-muted">{{ p.code or '' }}</span> {{ p.name }}{% if p.city %}, {{ p.city }}{% endif %}</td>
+            <td class="c-num as-alloc" data-v="-1">…</td>
+            <td class="c-num as-paid" data-v="-1"></td>
+            <td class="c-num as-balance" data-v="-1"></td>
+            <td class="as-status" data-v="0"><span class="badge badge-draft">Loading</span></td>
+            <td class="as-email" data-v=""></td>
+            <td class="as-generated" data-v="{{ r.generated_at }}">{{ r.generated_at or "—" }}</td>
+            <td class="as-emailed" data-v="{{ r.emailed_at }}"{% if r.emailed_to %} data-tip="Sent to {{ r.emailed_to }}"{% endif %}>
+              {% if r.failed %}<span class="ph-state-attn" data-tip="{{ r.failed_why }}">Failed</span>{% if r.emailed_at %} <span class="c-muted">(earlier: {{ r.emailed_at }})</span>{% endif %}
+              {% else %}{{ r.emailed_at or "—" }}{% endif %}
+            </td>
+            <td class="c-menu">
+              <button type="button" class="ff-menu-btn" aria-label="Row actions" aria-haspopup="menu">&#8942;</button>
+              <div class="ff-menu-src" hidden>
+                <a role="menuitem" href="/admin/allocation-statements/pdf/{{ p.id }}?year={{ year }}" target="_blank" rel="noopener">View saved statement</a>
+                <button role="menuitem" type="button" data-as-act="generate" data-id="{{ p.id }}">Generate this statement</button>
+                {% if log_ok %}<button role="menuitem" type="button" data-as-act="email" data-id="{{ p.id }}">Email this statement</button>{% endif %}
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr class="ff-empty"><td colspan="10">No active churches found for this diocese.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count" data-ff-count>{{ rows|length }} shown</span>
+      <span class="ff-count" id="asLoadMsg">Loading figures from QuickBooks: 0 of {{ rows|length }}</span>
+      <span class="ff-msg" id="asRunMsg" role="status" aria-live="polite"></span>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<dialog class="ff-dialog" id="asEmailDialog">
+  <h2>Email statements</h2>
+  <p id="asEmailText"></p>
+  <div class="ff-dialog-actions">
+    <button type="button" class="btn btn-sm btn-secondary" data-ff-close>Cancel</button>
+    <button type="button" class="btn btn-sm btn-primary" id="asEmailGo">Send the emails</button>
+  </div>
+</dialog>
+
+<div id="asData" hidden data-year="{{ year }}" data-dev="{{ 1 if dev_mode else 0 }}" data-log-ok="{{ 1 if log_ok else 0 }}" data-line="{{ line_description }}"></div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
+<script src="/static/js/allocation_statements.js?v={{ asset_version('js/allocation_statements.js') }}"></script>
+{% endblock %}
