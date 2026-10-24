@@ -28,8 +28,8 @@
   {% if can_decide and report.register_loaded and (report.undecided or report.decided) %}
   <div class="ff-info vd-help">
     <span><strong>Settle each difference:</strong>
-      <em>Paid next period</em>: the extra hours move to the next pay period to be keyed there.
-      <em>Manual check</em>: already paid by an interpay check, kept here, not keyed again.
+      <em>Include in next period</em>: the extra hours move to the next pay period to be keyed there.
+      <em>Manual check / void-reissue</em>: settled outside the regular run (a manual check, or a check voided and reissued): kept here, nothing to key.
       <em>Beacon wrong</em>: Beacon takes the paid hours.</span>
   </div>
   {% endif %}
@@ -57,9 +57,14 @@
           </tr>
         </thead>
         <tbody>
+          {% set ns = namespace(shade=1, prev=None) %}
           {% for r in bad %}
+          {% set first_of = (r.staff_id != ns.prev) %}
+          {% if first_of %}{% set ns.shade = 1 - ns.shade %}{% endif %}
+          {% set ns.prev = r.staff_id %}
+          {% set last_of = loop.last or (loop.nextitem.staff_id != r.staff_id) %}
           {% set open_lines = bad|selectattr('staff_id', 'equalto', r.staff_id)|selectattr('kind', 'in', ['differs', 'paid_no_beacon_hours', 'beacon_hours_not_paid'])|list %}
-          <tr class="ff-row{% if r.kind not in ['category_only', 'manual_check'] %} is-attn{% endif %}" data-kind="{{ r.kind }}">
+          <tr class="ff-row vd-p{{ ns.shade }}{{ ' vd-first' if first_of }}{{ ' vd-last' if last_of }}{% if r.kind not in ['category_only', 'manual_check'] %} is-attn{% endif %}" data-kind="{{ r.kind }}">
             <td data-v="{{ r.parish_code or '~' }}" data-tip="{{ r.parish_name }}">{% if r.parish_code %}{{ r.parish_code }} {% endif %}{{ r.dept_name or r.parish_name }}</td>
             <td data-v="{{ (r.last_name ~ ' ' ~ r.first_name)|lower }}">{{ r.last_name }}, {{ r.first_name }}{% if r.employee_number %} <span class="c-muted">#{{ r.employee_number }}</span>{% endif %}
               {% if can_decide and open_lines|length > 1 and open_lines[0].category_id == r.category_id and r.kind in ['differs', 'paid_no_beacon_hours', 'beacon_hours_not_paid'] %}
@@ -79,7 +84,7 @@
             <td class="c-num" data-v="{{ r.beacon_hours if r.beacon_hours is not none else '' }}">{{ "%.2f"|format(r.beacon_hours) if r.beacon_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.register_hours if r.register_hours is not none else '' }}">{{ "%.2f"|format(r.register_hours) if r.register_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.difference if r.difference is not none else '' }}">{{ "%+.2f"|format(r.difference) if r.difference is not none else "—" }}</td>
-            <td>{% if r.kind == 'category_only' %}<span class="c-muted" data-tip="This person's total hours are the same as paid ({{ '%.2f'|format(r.person_beacon_total) }}). Only the categories differ. Left as entered, for review.">Total matches, categories differ</span>{% elif r.kind == 'manual_check' %}<span class="c-muted" data-tip="Paid by an interpay manual check. Beacon keeps its hours for this period and the check is expected on the next period's register.">Manual check, kept as entered</span>{% else %}<span class="ph-state-attn">{{ {'differs': 'Hours differ', 'paid_no_beacon_hours': 'Paid, no Beacon hours', 'beacon_hours_not_paid': 'Beacon hours, none paid'}[r.kind] }}</span>{% endif %}{% if r.manual_check_hours %}<div class="c-muted vd-sub">includes {{ "%.2f"|format(r.manual_check_hours) }} hours paid by manual check last period</div>{% endif %}</td>
+            <td>{% if r.kind == 'category_only' %}<span class="c-muted" data-tip="This person's total hours are the same as paid ({{ '%.2f'|format(r.person_beacon_total) }}). Only the categories differ. Left as entered, for review.">Total matches, categories differ</span>{% elif r.kind == 'manual_check' %}<span class="c-muted" data-tip="Settled by a manual check or a void and reissue. Beacon keeps its hours for this period and the correction is expected on the next period's register.">Manual check / void-reissue, kept as entered</span>{% else %}<span class="ph-state-attn">{{ {'differs': 'Hours differ', 'paid_no_beacon_hours': 'Paid, no Beacon hours', 'beacon_hours_not_paid': 'Beacon hours, none paid'}[r.kind] }}</span>{% endif %}{% if r.manual_check_hours %}<div class="c-muted vd-sub">includes {{ "%.2f"|format(r.manual_check_hours) }} hours paid by manual check last period</div>{% endif %}</td>
             <td data-v="{{ r.decision or '~' }}">
               {% if r.kind == 'category_only' %}<span class="c-muted">None needed</span>
               {% elif r.kind == 'manual_check' %}<span>{{ decision_labels['manual_check'] }}</span>{% if r.decision_note %}<div class="c-muted vd-sub">{{ r.decision_note }}</div>{% endif %}
@@ -89,12 +94,15 @@
                 <input type="hidden" name="staff_id" value="{{ r.staff_id }}">
                 <input type="hidden" name="category_id" value="{{ r.category_id }}">
                 {% set live = r.decision and not r.decision_stale %}
-                <select name="decision" class="vd-select vd-auto{{ ' is-set' if live }}" aria-label="Decision for this line">
-                  <option value="">{{ 'Take back' if live else 'Decide...' }}</option>
-                  {% for k in decision_order %}
-                  <option value="{{ k }}" title="{{ decision_explain[k] }}" {{ 'selected' if live and r.decision == k }} {{ 'disabled' if k != 'beacon_wrong' and r.difference <= 0 }}>{{ decision_labels[k] }}</option>
-                  {% endfor %}
-                </select>
+                <div class="vd-row">
+                  <select name="decision" class="vd-select vd-auto{{ ' is-set' if live }}" aria-label="Decision for this line">
+                    {% if not live %}<option value="">Decide...</option>{% endif %}
+                    {% for k in decision_order %}
+                    <option value="{{ k }}" title="{{ decision_explain[k] }}" {{ 'selected' if live and r.decision == k }} {{ 'disabled' if k == 'next_period' and r.difference <= 0 }}>{{ decision_labels[k] }}</option>
+                    {% endfor %}
+                  </select>
+                  {% if r.decision %}<button type="submit" name="undo" value="1" class="btn btn-xs vd-undo" title="Take this decision back: the line needs a decision again">Undo</button>{% endif %}
+                </div>
                 <input type="text" name="note" class="vd-note" maxlength="300" placeholder="Note (check number, date)" value="{{ r.decision_note or '' }}" aria-label="Note for this decision"{{ '' if live else ' hidden' }}>
                 {% if r.decision and r.decision_stale %}<div class="ph-state-attn vd-sub">The paid hours changed since this was decided. Decide again.</div>{% endif %}
               </form>

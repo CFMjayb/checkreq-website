@@ -352,8 +352,8 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
     if not auto:
         waiting = [r for r in todo if dec_of(r) is None]
         if waiting:
-            raise PayrollError("refused", f"{len(waiting)} line(s) still need a decision: Paid next period, Manual check or "
-                                          "Beacon wrong. Settle them on the tie-out page first.")
+            raise PayrollError("refused", f"{len(waiting)} line(s) still need a decision: Include in next period, Manual check / "
+                                          "void-reissue or Beacon wrong. Settle them on the tie-out page first.")
     targets = {dec_of(r)["target_period_id"] for r in todo
                if dec_of(r) and dec_of(r)["decision"] in (pdec.NEXT_PERIOD, pdec.MANUAL_CHECK)}
     for tid in targets:
@@ -385,8 +385,13 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
                 if mode == pdec.MANUAL_CHECK:
                     # the hours are right for THIS period: nothing changes except a note (when there is a line to put it on)
                     if line:
-                        note = (f"Paid by an interpay manual check: Beacon's {r['beacon_hours']} hours stand for this pay period; "
-                                f"this register paid {paid}, and the check will show on {nxt_label}'s register ({ref}).{extra}")
+                        if pdec.d2(dec["hours"]) < 0:
+                            note = (f"Voided and reissued: Beacon's {r['beacon_hours']} hours were right and stand for this pay period; "
+                                    f"this register paid {paid} (more), and the void and reissue will show on {nxt_label}'s register "
+                                    f"as {pdec.d2(dec['hours'])} hours ({ref}).{extra}")
+                        else:
+                            note = (f"Paid by an interpay manual check: Beacon's {r['beacon_hours']} hours stand for this pay period; "
+                                    f"this register paid {paid}, and the check will show on {nxt_label}'s register ({ref}).{extra}")
                         pt._log_edit(cur, line["id"], line["hours"], line["hours"], line["review_status"], line["review_status"],
                                      actor, "register", note[:1000])
                     n_manual += 1

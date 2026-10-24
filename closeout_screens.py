@@ -99,7 +99,7 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
     undecided = var.get("undecided", 0) if var else 0
     decided = var.get("decided", 0) if var else 0
     manual_n = counts.get("manual_check", 0)
-    manual_text = (f" {manual_n} line(s) paid by an interpay manual check: kept as entered, due on the next register."
+    manual_text = (f" {manual_n} line(s) settled by manual check or void-reissue: kept as entered, due on the next register."
                    if manual_n else "")
     s4 = {"n": 4, "title": "Tie out: Beacon against the paid hours"}
     if var is None:
@@ -111,8 +111,8 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
         s4.update(state="todo", detail=(f"{counts.get('match', 0)} match. {counts.get('differs', 0)} differ, "
                                          f"{counts.get('paid_no_beacon_hours', 0)} were paid with no Beacon hours, "
                                          f"{counts.get('beacon_hours_not_paid', 0)} Beacon hours were not paid. "
-                                         f"{decided} decided, {undecided} still need a decision (paid next period, "
-                                         f"manual check, or Beacon wrong)." + manual_text + review_text),
+                                         f"{decided} decided, {undecided} still need a decision (include in next period, "
+                                         f"manual check / void-reissue, or Beacon wrong)." + manual_text + review_text),
                   link={"label": "Decide each difference" if undecided else "See each difference", "url": f"{base}/variance"})
     steps.append(s4)
 
@@ -138,9 +138,9 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
         if by[pdec.BEACON_WRONG]:
             parts.append(f"{len(by[pdec.BEACON_WRONG])} change to the paid hours")
         if by[pdec.NEXT_PERIOD]:
-            parts.append(f"{len(by[pdec.NEXT_PERIOD])} paid next period ({carry_h:g} hours move to {nxt_label})")
+            parts.append(f"{len(by[pdec.NEXT_PERIOD])} include in next period ({carry_h:g} hours move to {nxt_label})")
         if by[pdec.MANUAL_CHECK]:
-            parts.append(f"{len(by[pdec.MANUAL_CHECK])} manual check (kept as entered)")
+            parts.append(f"{len(by[pdec.MANUAL_CHECK])} manual check / void-reissue (kept as entered)")
         s5.update(state="todo",
                   detail=((f"All decided: {', '.join(parts)}. The old figures stay in the edit history. "
                            "Beacon hours that were not paid become 0 with a note.") if differing else
@@ -233,9 +233,9 @@ async def closeout_actualize(period_id: int, request: Request):
     def msg(r):
         parts = [f"{r['changed']} changed to the paid hours", f"{r['added']} added", f"{r['zeroed']} set to 0 (not paid)"]
         if r.get("carried"):
-            parts.append(f"{r['carried']} paid next period ({r['carried_hours']:g} hours carried to the next pay period)")
+            parts.append(f"{r['carried']} included in next period ({r['carried_hours']:g} hours carried to the next pay period)")
         if r.get("manual"):
-            parts.append(f"{r['manual']} kept as entered (manual check)")
+            parts.append(f"{r['manual']} kept as entered (manual check / void-reissue)")
         tail = " Beacon now matches the paid hours." if r["tied"] else f" {r['left']} difference(s) left" + (
             f" and {r['unmatched']} paid person(s) not on the roster." if r["unmatched"] else ".")
         if r.get("for_review"):
@@ -280,7 +280,7 @@ async def variance_decide(period_id: int, request: Request):
         return _back_variance(period_id, err="That line was not understood.")
     decision = str(form.get("decision") or "").strip()
     try:
-        if not decision:  # "Decide..." picked again: the decision is taken back
+        if form.get("undo") or not decision:  # the Undo button: the decision is taken back
             pc.clear_decision(org["id"], period_id, staff_id, category_id)
             return _back_variance(period_id, msg="The decision was taken back. This line needs a decision.")
         res = pc.set_decision(org["id"], period_id, staff_id, category_id, decision, user["id"], form.get("note"))

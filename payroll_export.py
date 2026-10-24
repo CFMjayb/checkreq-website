@@ -25,6 +25,7 @@ from decimal import Decimal
 import category_order
 import db
 import email_pdf
+import payroll_decisions as pdec
 import payroll_totals as pt
 
 _HEADER_FILL = "1F3D2E"
@@ -81,10 +82,12 @@ def _link(ws, row: int, col: int, ref: str | None, org_id: int | None = None, ba
         c.font = Font(color="0563C1", underline="single")
 
 
-def summary_figures(org_id: int, rows: list[dict]) -> dict:
+def summary_figures(org_id: int, rows: list[dict], period_id: int | None = None) -> dict:
     """The Summary sheet's numbers, one row per employee, grouped by department (code order).
     Standing = hours whose source is standing. Entered = every other hour in force, by kind of hours.
-    Grand total = Standing + Entered, so each department subtotal can be compared with the Labor Summary."""
+    Grand total = Standing + Entered = the hours to KEY. Manual check = hours the previous period settled by a manual check or a
+    void-reissue that this period's register shows: their own column, NEVER part of the hours to key (Checkwriters already paid them),
+    only added into Total hours so each department subtotal can be compared with the Labor Summary (Jay, 2026-10-24)."""
     cats = category_order.sort_categories(db.query(
         "SELECT id, key, label, sort_order FROM portal.timekeeping_categories WHERE org_id = %s AND is_active "
         "ORDER BY sort_order", (org_id,)))
@@ -96,35 +99,43 @@ def summary_figures(org_id: int, rows: list[dict]) -> dict:
                r["staff_id"] if r["staff_id"] is not None else ("p", r["pending_change_id"]))
         d = people.setdefault(key, {"parish_code": r["parish_code"], "dept": r.get("dept_name") or r["parish_name"],
                                     "employee_number": r["employee_number"], "name": _name(r),
-                                    "cat": {}, "std": Decimal(0)})
+                                    "cat": {}, "std": Decimal(0), "manual": Decimal(0)})
         h = Decimal(r["counted_hours"])
         if r["source"] == "standing":
             d["std"] += h
         else:
             d["cat"][r["category_id"]] = d["cat"].get(r["category_id"], Decimal(0)) + h
+    for m in (pdec.manual_by_staff(period_id) if period_id else []):
+        mkey = (m["parish_code"] or "~", m["parish_name"] or "", m["last_name"] or "", m["first_name"] or "", m["staff_id"])
+        d = people.setdefault(mkey, {"parish_code": m["parish_code"], "dept": m["dept_name"] or m["parish_name"],
+                                     "employee_number": m["employee_number"], "name": _name(m),
+                                     "cat": {}, "std": Decimal(0), "manual": Decimal(0)})
+        d["manual"] += Decimal(m["hours"])
     depts: dict = {}
     for key in sorted(people, key=lambda k: k[:4]):
         p = people[key]
         p["entered"] = sum(p["cat"].values(), Decimal(0))
         p["grand"] = p["entered"] + p["std"]
+        p["total_all"] = p["grand"] + p["manual"]
         depts.setdefault((key[0], p["dept"]), []).append(p)
     return {"cats": cats, "depts": depts}
 
 
-def _summary_sheet(wb, org: dict, rows: list[dict]) -> None:
+def _summary_sheet(wb, org: dict, rows: list[dict], period_id: int | None = None) -> None:
     """A new first sheet: one row per employee with each kind of hours, the Entered total, Standing and the Grand total,
     a subtotal after each department and a grand total at the bottom."""
-    fig = summary_figures(org["id"], rows)
+    fig = summary_figures(org["id"], rows, period_id)
     cats = fig["cats"]
     ws = wb.create_sheet("Summary", 0)
     heads = ["Parish Code", "Department", "Employee #", "Name"] + [c["short"] for c in cats] + [
-        "Entered total", "Standing", "Grand total"]
+        "Entered total", "Standing", "Grand total", "Manual check (do not key)", "Total hours"]
     _header(ws, 1, heads)
     ncat = len(cats)
     bold = Font(bold=True)
     sub_fill = PatternFill(start_color="E8F3E6", end_color="E8F3E6", fill_type="solid")
     row = 2
-    grand = {"cat": {c["id"]: Decimal(0) for c in cats}, "entered": Decimal(0), "std": Decimal(0), "grand": Decimal(0)}
+    grand = {"cat": {c["id"]: Decimal(0) for c in cats}, "entered": Decimal(0), "std": Decimal(0), "grand": Decimal(0),
+             "manual": Decimal(0), "all": Decimal(0)}
 
     def put(r: int, c: int, v: Decimal | None, is_bold: bool = False, fill=None) -> None:
         cell = ws.cell(row=r, column=c, value=None if v is None else float(v))
@@ -135,7 +146,8 @@ def _summary_sheet(wb, org: dict, rows: list[dict]) -> None:
             cell.fill = fill
 
     for (code, dept), people in fig["depts"].items():
-        sub = {"cat": {c["id"]: Decimal(0) for c in cats}, "entered": Decimal(0), "std": Decimal(0), "grand": Decimal(0)}
+        sub = {"cat": {c["id"]: Decimal(0) for c in cats}, "entered": Decimal(0), "std": Decimal(0), "grand": Decimal(0),
+               "manual": Decimal(0), "all": Decimal(0)}
         for p in people:
             ws.cell(row=row, column=1, value=code)
             ws.cell(row=row, column=2, value=dept)
@@ -149,14 +161,18 @@ def _summary_sheet(wb, org: dict, rows: list[dict]) -> None:
             put(row, 5 + ncat, p["entered"] or None)
             put(row, 6 + ncat, p["std"] or None)
             put(row, 7 + ncat, p["grand"], is_bold=True)
+            put(row, 8 + ncat, p["manual"] or None)
+            put(row, 9 + ncat, p["total_all"], is_bold=True)
             sub["entered"] += p["entered"]
             sub["std"] += p["std"]
             sub["grand"] += p["grand"]
+            sub["manual"] += p["manual"]
+            sub["all"] += p["total_all"]
             row += 1
         fill = sub_fill
         ws.cell(row=row, column=1, value=code).font = bold
         ws.cell(row=row, column=2, value=f"{dept} total").font = bold
-        for col in range(1, 8 + ncat):
+        for col in range(1, 10 + ncat):
             ws.cell(row=row, column=col).fill = fill
         for i, c in enumerate(cats):
             put(row, 5 + i, sub["cat"][c["id"]], True, fill)
@@ -164,9 +180,13 @@ def _summary_sheet(wb, org: dict, rows: list[dict]) -> None:
         put(row, 5 + ncat, sub["entered"], True, fill)
         put(row, 6 + ncat, sub["std"], True, fill)
         put(row, 7 + ncat, sub["grand"], True, fill)
+        put(row, 8 + ncat, sub["manual"] or None, True, fill)
+        put(row, 9 + ncat, sub["all"], True, fill)
         grand["entered"] += sub["entered"]
         grand["std"] += sub["std"]
         grand["grand"] += sub["grand"]
+        grand["manual"] += sub["manual"]
+        grand["all"] += sub["all"]
         row += 1
     if not fig["depts"]:
         ws.cell(row=2, column=1, value="No hours are in force for this period yet.")
@@ -178,11 +198,15 @@ def _summary_sheet(wb, org: dict, rows: list[dict]) -> None:
         put(row, 5 + ncat, grand["entered"], True)
         put(row, 6 + ncat, grand["std"], True)
         put(row, 7 + ncat, grand["grand"], True)
+        put(row, 8 + ncat, grand["manual"] or None, True)
+        put(row, 9 + ncat, grand["all"], True)
         row += 1
     ws.cell(row=row + 1, column=1, value="Only hours in force are counted. Lines still waiting for a decision are on the Review sheet. "
-                                         "Standing = standing hours carried forward. Entered = everything else. "
-                                         "Compare each department total with the Labor Summary.").font = Font(italic=True)
-    _widths(ws, [12, 32, 14, 28] + [9] * ncat + [14, 11, 13])
+                                         "Standing = standing hours carried forward. Entered = everything else. Grand total = the hours to KEY. "
+                                         "Manual check (do not key) = hours the previous pay period settled by a manual check or a voided and reissued check "
+                                         "(a negative number is a void and reissue): already paid in Checkwriters, so never key them. They are only added into "
+                                         "Total hours. Compare each department's Total hours with the Labor Summary.").font = Font(italic=True)
+    _widths(ws, [12, 32, 14, 28] + [9] * ncat + [14, 11, 13, 18, 13])
 
 
 def build_export_workbook(org: dict, period: dict, base_url: str | None = None) -> bytes:
@@ -258,7 +282,7 @@ def build_export_workbook(org: dict, period: dict, base_url: str | None = None) 
         wd.cell(row=2, column=1, value="No daily hours were entered in Beacon for this period.")
     _widths(wd, [12, 32, 18, 14, 14, 12, 10])
 
-    _summary_sheet(wb, org, rows)
+    _summary_sheet(wb, org, rows, period["id"])
     wb.active = 0
 
     buf = io.BytesIO()

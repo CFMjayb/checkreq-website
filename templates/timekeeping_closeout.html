@@ -75,8 +75,8 @@
   {% if prior.carried_in or prior.manual_checks or manual_missing %}
   <h2 class="co-h2">From the previous pay period</h2>
   <p class="co-note">Differences settled at the last close-out reach this period like this. Hours carried in are part of the lines to key
-    in this period's payroll run. Hours already paid by an interpay manual check are NOT keyed again: they are expected on this period's
-    register and the tie-out does not count them as a difference.</p>
+    in this period's payroll run. Hours already paid by an interpay manual check, and the net effect of a voided and reissued check (a negative amount), are NOT keyed
+    again: they are expected on this period's register and the tie-out does not count them as a difference.</p>
   <div class="table-scroll">
   <table class="simple-table co-prior">
     <thead><tr><th>What</th><th>Department</th><th>Employee</th><th>Category</th><th class="co-num">Hours</th><th>From</th></tr></thead>
@@ -88,7 +88,7 @@
           <td>{{ r.cat_label }}</td><td class="co-num">{{ "%.2f"|format(r.hours) }}</td><td>{{ r.from_label }}{% if r.note %}. {{ r.note }}{% endif %}</td></tr>
     {% endfor %}
     {% for r in prior.manual_checks %}
-      <tr><td><span class="badge badge-cancelled">Paid by manual check: do not key</span></td>
+      <tr><td><span class="badge badge-cancelled">{{ 'Void/reissue adjustment: do not key' if r.hours < 0 else 'Paid by manual check: do not key' }}</span></td>
           <td>{% if r.parish_code %}{{ r.parish_code }} {% endif %}{{ r.dept_name }}</td>
           <td>{{ r.last_name }}, {{ r.first_name }}{% if r.employee_number %} <span class="c-muted">#{{ r.employee_number }}</span>{% endif %}</td>
           <td>{{ r.cat_label }}</td><td class="co-num">{{ "%.2f"|format(r.hours) }}</td><td>{{ r.from_label }}{% if r.note %}. {{ r.note }}{% endif %}</td></tr>

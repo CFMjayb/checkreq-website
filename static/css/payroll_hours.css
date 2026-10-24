@@ -23,3 +23,12 @@
 .vd-sub { font-size: 0.75rem; line-height: 1.25; }
 .vd-help span { line-height: 1.35; }
 .ff-foot .vd-all { margin-left: auto; }
+
+/* Feedback 2026-10-24: Undo button beside the decision list, and each person's lines drawn as one box */
+.vd-row { display: flex; gap: 6px; align-items: center; }
+.vd-undo { height: 26px; padding: 0 10px; font-size: 0.8rem; white-space: nowrap; }
+.ff-table tr.vd-p0 td:first-child { border-left: 5px solid #1f4e79; }
+.ff-table tr.vd-p1 td:first-child { border-left: 5px solid #c9a227; }
+.ff-table tr.vd-first td { border-top: 2px solid #5d6b63; }
+.ff-table tr.vd-last td { border-bottom: 2px solid #5d6b63; }
+.ff-table tr.vd-p1 td { box-shadow: inset 0 0 0 100px rgba(201, 162, 39, 0.07); }
