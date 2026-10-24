@@ -147,6 +147,13 @@ def timekeeping_context(request: Request):
         return None, None, None, _render(
             request, "timekeeping_unavailable.html", user,
             {"parish": parish, "reason": "parish"})
+    # 2026-10-23 (Jay: "the HR & Payroll tile and both screens show only to people with Timekeeping, Parish Finance or Parish
+    # Admin"): every screen that opens through this function (Staff roster, Timekeeping, Hours the diocese received) now needs
+    # the same role check the save routes already made. Before, any parish login could open them read-only.
+    if not can_manage_timekeeping(user, parish):
+        return None, None, None, _render(
+            request, "timekeeping_unavailable.html", user,
+            {"parish": parish, "reason": "role"})
     return user, parish, diocese_org, None
 
 
@@ -169,7 +176,11 @@ def can_manage_timekeeping(user: dict, parish: dict) -> bool:
         return True
     if parish.get("linked_org_id") and rbac.user_has_role(user["id"], "cornerstone_employee", parish["linked_org_id"]):
         return True
-    return parish_roles.user_has_any_parish_role(user["id"], ["parish_finance", "parish_admin"], parish["id"])
+    # 2026-10-23 (Jay): the diocesan HR role (hr_admin, the existing "Dio-HR" role) counts at the parish's own diocese, and the
+    # new parish_time ("Timekeeping") role counts at this parish.
+    if rbac.user_has_role(user["id"], "hr_admin", parish["org_id"]):
+        return True
+    return parish_roles.user_has_any_parish_role(user["id"], ["parish_time", "parish_finance", "parish_admin"], parish["id"])
 
 
 # ── Diocese-side admin: Payroll Periods + Time Categories ──────────────────
