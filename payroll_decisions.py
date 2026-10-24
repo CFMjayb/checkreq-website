@@ -10,14 +10,16 @@ line gets ONE decision (table portal.time_variance_decisions, migration 098):
   next_period   Beacon is higher than paid, and the extra hours WILL BE PAID IN THE FOLLOWING PAY PERIOD.
                 This period's line takes the paid hours. The difference is added to that person's line in the same category
                 of the following period (flag `carried_in`), so it shows in Time Review and on the Checkwriters Excel to be keyed.
-  manual_check  Beacon is higher than paid, and the extra hours were ALREADY PAID BY AN INTERPAY MANUAL CHECK that will appear on
-                the following period's register. This period's line stays as entered (the hours are correct for this period).
-                Nothing is added to the following period, so the hours are never rekeyed in the next main payroll run, and
-                that period's tie-out expects the amount on its register.
+  manual_check  (shown as 'Manual check / void-reissue') The difference was settled OUTSIDE the regular payroll run, in either direction:
+                Beacon is higher than paid and the extra hours were ALREADY PAID BY AN INTERPAY MANUAL CHECK, or Beacon is lower
+                than paid, Beacon was right, and the over-paid check was VOIDED AND REISSUED. Either way the correction appears on the
+                following period's register (as +hours for the manual check, as net negative hours for the void and reissue). This
+                period's line stays as entered (the hours are correct for this period). Nothing is added to the following period, so the
+                hours are never rekeyed in the next main payroll run, and that period's tie-out expects the (signed) amount on its register.
   beacon_wrong  Beacon is wrong and the paid hours are right (what Actualize always did): the line takes the paid hours.
 
-next_period and manual_check are only valid when Beacon is higher than paid (the extra hours were not paid yet / were paid
-another way). beacon_wrong is valid for any difference.
+next_period is only valid when Beacon is higher than paid (the extra hours were not paid yet). manual_check and beacon_wrong are
+valid for any difference (Jay, 2026-10-24: a void and reissue is the mirror image of a manual check).
 
 This file holds the rules that need no other Beacon module (pure checks and the reads of the decision table), so that
 payroll_totals.variance() can use them without a circular import. Setting, clearing and APPLYING decisions lives in
@@ -35,15 +37,16 @@ MANUAL_CHECK = "manual_check"
 BEACON_WRONG = "beacon_wrong"
 DECISIONS = (NEXT_PERIOD, MANUAL_CHECK, BEACON_WRONG)
 LABELS = {
-    NEXT_PERIOD: "Paid next period",
-    MANUAL_CHECK: "Manual check",
+    NEXT_PERIOD: "Include in next period",
+    MANUAL_CHECK: "Manual check / void-reissue",
     BEACON_WRONG: "Beacon wrong",
 }
 EXPLAIN = {
     NEXT_PERIOD: "Beacon is higher than paid, and the extra hours will be paid in the next pay period. This period takes the "
-                 "paid hours and the difference is added to the next period's hours to be keyed.",
-    MANUAL_CHECK: "The extra hours were already paid by an interpay manual check, which will show on the next period's register. "
-                  "This period's hours stay as entered, and the hours are not keyed again in the next main payroll run.",
+                 "paid hours and the difference is added to the next period's hours, to be keyed there.",
+    MANUAL_CHECK: "Settled outside the regular run: a manual check for hours Beacon has that the register does not (Beacon higher), or "
+                  "a check that paid more than Beacon, which was voided and reissued (Beacon lower, Beacon was right). This period's "
+                  "hours stay as entered. Nothing is keyed. The next register is expected to show the amount.",
     BEACON_WRONG: "Beacon is wrong and the paid hours are right. Beacon takes the paid hours.",
 }
 NOTE_MAX = 300
@@ -62,9 +65,9 @@ def valid_for(decision: str, difference) -> str | None:
     diff = d2(difference)
     if abs(diff) < TOLERANCE:
         return "This line already matches the paid hours."
-    if decision in (NEXT_PERIOD, MANUAL_CHECK) and diff < 0:
-        return (f"{LABELS[decision]} is only for hours Beacon has that were not paid. Here Beacon has fewer hours than were paid, "
-                "so Beacon wrong is the only decision that fits.")
+    if decision == NEXT_PERIOD and diff < 0:
+        return (f"{LABELS[decision]} is only for hours Beacon has that were not paid. Here Beacon has fewer hours than were paid: "
+                f"use {LABELS[MANUAL_CHECK]} if a check was voided and reissued, or {LABELS[BEACON_WRONG]}.")
     return None
 
 
@@ -114,6 +117,22 @@ def carried_in(period_id: int, staff_id: int, category_id: int) -> Decimal:
     except pgerr.UndefinedTable:
         return Decimal(0)
     return Decimal(r["h"]) if r else Decimal(0)
+
+
+def manual_by_staff(period_id: int) -> list:
+    """Per person and department: the signed hours the PREVIOUS period settled by manual check or void-reissue that this period's
+    register is expected to show. For the Checkwriters Excel's own column (never keyed, only added into a total)."""
+    try:
+        rows = db.query(
+            "SELECT v.staff_id, SUM(v.hours) AS hours, sr.employee_number, sr.first_name, sr.last_name, p.code AS parish_code, "
+            "p.name AS parish_name, COALESCE(p.short_name, p.name) AS dept_name "
+            "FROM portal.time_variance_decisions v JOIN portal.staff_roster sr ON sr.id = v.staff_id "
+            "JOIN portal.parishes p ON p.id = sr.parish_id "
+            "WHERE v.target_period_id = %s AND v.decision = 'manual_check' "
+            "GROUP BY v.staff_id, sr.employee_number, sr.first_name, sr.last_name, p.code, p.name, p.short_name", (period_id,))
+    except pgerr.UndefinedTable:
+        return []
+    return rows
 
 
 def prior_period_notes(period_id: int) -> dict:
