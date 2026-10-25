@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Timekeeping — {{ parish.name }}{% endblock %}
+{% block title %}Timekeeping — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}{% endblock %}
 {% block content %}
 <div class="page-shell">
 <h1>Timekeeping</h1>
-<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</a></p>
 {#
   Two-level gate (see timekeeping.timekeeping_context()): `reason` says which
   level is off, because the two have different fixes and pointing someone at
@@ -13,16 +13,16 @@
 #}
 <div class="banner banner-info">
   {% if reason == 'parish' %}
-    Timekeeping isn't turned on for {{ parish.name }}. It's enabled per parish — ask your diocese to
+    Timekeeping isn't turned on for {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}. It's enabled per parish — ask your diocese to
     activate it (HR &amp; Payroll &rarr; HR Administrative Tasks &rarr; HR Activation).
   {% elif reason == 'role' %}
-    Staff and Timekeeping at {{ parish.name }} are open to people who hold the Timekeeping, Parish Finance or Parish
+    Staff and Timekeeping at {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %} are open to people who hold the Timekeeping, Parish Finance or Parish
     Admin role. Ask your parish administrator to give you the Timekeeping role (User Access).
   {% elif reason == 'diocese' %}
-    Timekeeping isn't available for {{ parish.name }} yet — it's a diocese-wide feature that hasn't
+    Timekeeping isn't available for {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %} yet — it's a diocese-wide feature that hasn't
     been turned on. Ask your diocese to enable it (Administrative Tasks &rarr; Diocese Features).
   {% else %}
-    Timekeeping isn't available for {{ parish.name }} right now. Ask your diocese to check whether
+    Timekeeping isn't available for {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %} right now. Ask your diocese to check whether
     it's enabled for the diocese (Diocese Features) and activated for this parish (HR Activation).
   {% endif %}
 </div>

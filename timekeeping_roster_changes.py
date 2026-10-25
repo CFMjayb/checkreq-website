@@ -45,6 +45,8 @@ allowlist discipline as timekeeping_roster.py's own create_staff/update_staff.
 """
 from __future__ import annotations
 
+import time
+
 import db
 import notifications
 import payroll_totals
@@ -55,6 +57,54 @@ _CHANGE_TYPE_LABELS = {
     "deactivate": "Deactivate staff member",
     "reactivate": "Reactivate staff member",
 }
+
+
+# Status change (Jay, 2026-10-25): the parish says WHY a person is leaving or coming back, and from what date. The words are fixed
+# lists so the diocese reads the same thing every time; "Other" needs a note.
+DEACTIVATE_REASONS = {
+    "resignation": "Voluntary resignation",
+    "termination": "Termination",
+    "retirement": "Retirement",
+    "end_of_term": "End of a position or contract",
+    "other": "Other (explain in the note)",
+}
+REACTIVATE_REASONS = {
+    "rehired": "Rehired",
+    "returned": "Returned from leave",
+    "other": "Other (explain in the note)",
+}
+# A parish can take back a change nobody has answered yet. The table's status only allows pending / approved / rejected, so a
+# withdrawal is a 'rejected' row carrying this exact note (no schema change); the screens read it back as "Withdrawn".
+WITHDRAWN_NOTE = "Withdrawn by the parish."
+
+# Where the reason and note are kept: two nullable columns (migrations/102_roster_change_reason.sql). The code works with or
+# without them, so it can be deployed before that migration is applied; until then a status change still records who, what and
+# the effective date, only the reason and note are not kept.
+_COLS = {"at": 0.0, "have": frozenset()}
+
+
+def _reason_columns() -> frozenset:
+    if time.time() - _COLS["at"] > 60:
+        try:
+            rows = db.query("SELECT column_name FROM information_schema.columns "
+                            "WHERE table_schema = 'portal' AND table_name = 'staff_roster_changes' "
+                            "AND column_name IN ('proposed_reason', 'proposed_note')")
+            _COLS["have"] = frozenset(r["column_name"] for r in rows)
+        except Exception:
+            _COLS["have"] = frozenset()
+        _COLS["at"] = time.time()
+    return _COLS["have"]
+
+
+def reasons_kept() -> bool:
+    """True once the reason columns exist, so the screens know whether to promise that a reason is recorded."""
+    return {"proposed_reason", "proposed_note"} <= _reason_columns()
+
+
+def reason_label(change: dict) -> str | None:
+    key = change.get("proposed_reason")
+    table = DEACTIVATE_REASONS if change.get("change_type") == "deactivate" else REACTIVATE_REASONS
+    return table.get(key) if key else None
 
 
 def _staff_name_from_change(change: dict) -> str:
@@ -102,15 +152,16 @@ def list_all_for_parish(parish_id: int, limit: int = 50) -> list[dict]:
 
 
 def propose_add(parish_id: int, first_name: str, last_name: str, position: str | None,
-                 employee_number: str | None, user_id: int) -> dict:
+                 employee_number: str | None, user_id: int, hire_date=None) -> dict:
+    """hire_date (optional) is kept as the change's effective date (as_of_date) and becomes the roster row's effective date."""
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO portal.staff_roster_changes "
                 "(parish_id, change_type, proposed_first_name, proposed_last_name, "
-                " proposed_position, proposed_employee_number, created_by_user_id) "
-                "VALUES (%s, 'add', %s, %s, %s, %s, %s) RETURNING *",
-                (parish_id, first_name, last_name, position or None, employee_number or None, user_id),
+                " proposed_position, proposed_employee_number, created_by_user_id, as_of_date) "
+                "VALUES (%s, 'add', %s, %s, %s, %s, %s, %s) RETURNING *",
+                (parish_id, first_name, last_name, position or None, employee_number or None, user_id, hire_date),
             )
             return cur.fetchone()
 
@@ -129,18 +180,35 @@ def propose_edit(parish_id: int, staff_id: int, first_name: str, last_name: str,
             return cur.fetchone()
 
 
-def propose_toggle(parish_id: int, staff_id: int, new_active: bool, user_id: int) -> dict:
-    """new_active=False -> a 'deactivate' proposal; True -> 'reactivate'."""
+def propose_toggle(parish_id: int, staff_id: int, new_active: bool, user_id: int, *,
+                   as_of_date=None, reason: str | None = None, note: str | None = None) -> dict:
+    """new_active=False -> a 'deactivate' proposal; True -> 'reactivate'. as_of_date is the last day (deactivate) or the return
+    date (reactivate); reason is a key of DEACTIVATE_REASONS / REACTIVATE_REASONS; note is free words (never personal data)."""
     change_type = "reactivate" if new_active else "deactivate"
+    cols = ["parish_id", "staff_id", "change_type", "created_by_user_id", "as_of_date"]
+    vals = [parish_id, staff_id, change_type, user_id, as_of_date]
+    have = _reason_columns()
+    if "proposed_reason" in have and reason:
+        cols.append("proposed_reason")
+        vals.append(reason)
+    if "proposed_note" in have and note:
+        cols.append("proposed_note")
+        vals.append(note)
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO portal.staff_roster_changes "
-                "(parish_id, staff_id, change_type, created_by_user_id) "
-                "VALUES (%s, %s, %s, %s) RETURNING *",
-                (parish_id, staff_id, change_type, user_id),
-            )
+                f"INSERT INTO portal.staff_roster_changes ({', '.join(cols)}) "
+                f"VALUES ({', '.join(['%s'] * len(cols))}) RETURNING *", tuple(vals))
             return cur.fetchone()
+
+
+def withdraw_change(change_id: int, parish_id: int, user_id: int) -> dict | None:
+    """The parish takes back one of its OWN changes that nobody has answered (queued, or waiting in Roster Review). Returns the
+    row, or None when there is nothing to withdraw (already answered, or not this parish's). The row is kept as history."""
+    return db.query_one(
+        "UPDATE portal.staff_roster_changes SET status = 'rejected', reviewed_by_user_id = %s, reviewed_at = NOW(), "
+        "review_note = %s WHERE id = %s AND parish_id = %s AND status = 'pending' RETURNING *",
+        (user_id, WITHDRAWN_NOTE, change_id, parish_id))
 
 
 def submit_pending_for_parish(parish_id: int, period_id: int, user_id: int) -> int:
@@ -193,6 +261,16 @@ def list_pending_review_for_org(org_id: int) -> list[dict]:
         r["existing_name"] = f"{ex['first_name']} {ex['last_name']}" if ex else None
         r["existing_employee_number"] = ex["employee_number"] if ex else None
     return rows
+
+
+def count_pending_review_for_parish(org_id: int, parish_id: int) -> int:
+    """How many submitted roster changes of ONE department wait in Roster Review (the diocese's own count of them; scoped through
+    the period's diocese like list_pending_review_for_org, never by parish alone). Time Review shows this as a warning flag."""
+    row = db.query_one(
+        "SELECT count(*) AS n FROM portal.staff_roster_changes src "
+        "JOIN portal.payroll_periods pp ON pp.id = src.payroll_period_id "
+        "WHERE pp.org_id = %s AND src.parish_id = %s AND src.status = 'pending'", (org_id, parish_id))
+    return int(row["n"]) if row else 0
 
 
 def existing_staff_for_add(change: dict) -> dict | None:
@@ -248,11 +326,11 @@ def _apply_change(change: dict) -> int | None:
             if ct == "add":
                 cur.execute(
                     "INSERT INTO portal.staff_roster "
-                    "(parish_id, first_name, last_name, position, employee_number, created_by_user_id) "
-                    "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                    "(parish_id, first_name, last_name, position, employee_number, created_by_user_id, effective_date) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
                     (parish_id, change["proposed_first_name"], change["proposed_last_name"],
                      change["proposed_position"], change["proposed_employee_number"],
-                     change["created_by_user_id"]),
+                     change["created_by_user_id"], change.get("as_of_date")),
                 )
                 new_staff_id = cur.fetchone()["id"]
             elif ct == "edit" and change.get("proposed_captures_hours") is not None:
@@ -289,9 +367,9 @@ def _apply_change(change: dict) -> int | None:
                 # a reactivated person is no longer "inactive as of" any date (the Employees screen does the same)
                 cur.execute(
                     "UPDATE portal.staff_roster SET is_active = %s, "
-                    "inactive_as_of = CASE WHEN %s THEN NULL ELSE inactive_as_of END, updated_at = NOW() "
+                    "inactive_as_of = CASE WHEN %s THEN NULL ELSE COALESCE(%s, inactive_as_of) END, updated_at = NOW() "
                     "WHERE id = %s AND parish_id = %s",
-                    (ct == "reactivate", ct == "reactivate", change["staff_id"], parish_id),
+                    (ct == "reactivate", ct == "reactivate", change.get("as_of_date"), change["staff_id"], parish_id),
                 )
     return new_staff_id
 

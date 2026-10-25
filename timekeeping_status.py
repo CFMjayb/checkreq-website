@@ -84,6 +84,7 @@ import payroll_export
 import payroll_screens
 import timekeeping
 import timekeeping_entries
+import timekeeping_roster_changes
 
 router = APIRouter()
 
@@ -356,6 +357,13 @@ def backfill_entry_page(period_id: int, parish_id: int, request: Request):
     ctx["diocese_mode"] = True
     ctx["payroll_totals"] = payroll_screens.section_context(org["id"], period, parish["id"])
     ctx["parish_approval"] = payroll_screens.parish_approval_context(org["id"], period, parish["id"])
+    # Jay (2026-10-25): a department with roster changes waiting in Roster Review gets a warning flag and a link there.
+    try:
+        ctx["roster_pending"] = timekeeping_roster_changes.count_pending_review_for_parish(org["id"], parish["id"])
+    except Exception as exc:                 # the flag must never take the page down
+        print(f"[timekeeping_status] roster flag: {type(exc).__name__}: {exc}")
+        ctx["roster_pending"] = 0
+    ctx["roster_review_url"] = f"/admin/timekeeping/review?parish_id={parish['id']}"
     ctx["back_link_url"] = f"/admin/timekeeping/status/{period_id}"
     ctx["back_link_label"] = "Back to Status Board"
     ctx["save_url"] = f"/admin/timekeeping/status/{period_id}/{parish_id}/save"

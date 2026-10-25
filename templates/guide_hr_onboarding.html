@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">Follow each new hire and each departure until every step is done.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="where">
+    <h2>Where to find it</h2>
+    <p><strong>HR &amp; Payroll</strong> &rarr; <strong>Onboarding &amp; Offboarding</strong>. The board lists every open case, what is late and who it is waiting on. A red number on the tile counts the cases with something past due or a parish request waiting.</p>
+  </section>
+
+  <section class="hiw-section" id="case">
+    <h2>Working a case</h2>
+    <p>Open a case to see its checklist. Each step is one box: what the step is, who owns it and when it is due, a note box, and three buttons on the right.</p>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard"><h3>Done</h3><p>The step is finished. A note is optional.</p></div>
+      <div class="hiw-subcard"><h3>Waive</h3><p>The step is not needed this time. A note saying why is required.</p></div>
+      <div class="hiw-subcard"><h3>Not applicable</h3><p>The step does not apply to this person. A note is required. These steps are hidden afterwards: press <strong>Show not applicable items</strong> at the top to see them again.</p></div>
+    </div>
+    <p>A finished step can be reopened. The buttons at the top open the person's details, the benefits coverage recorded so far, and the case history.</p>
+  </section>
+
+  <section class="hiw-section" id="parish">
+    <h2>Requests from parishes</h2>
+    <p>When a parish sends a new hire for benefits, it appears here as a case waiting on the diocese. Work it like any other case.</p>
+  </section>
+
+  <section class="hiw-section" id="close">
+    <h2>Closing a case</h2>
+    <p>When every required step is done, choose <strong>Close as completed</strong>. Closing an onboarding case adds the person to the Employees roster. Closing an offboarding case marks them inactive as of their last day.</p>
+  </section>
+
+</div>
+{% endblock %}

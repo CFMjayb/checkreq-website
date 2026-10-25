@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% from "_doc_tree_macro.html" import doc_tree with context %}
-{% block title %}Documents — {{ parish.name }}{% endblock %}
+{% block title %}Documents — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}{% endblock %}
 {% block content %}
 <div class="page-shell">
 <h1>Documents — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</h1>
-<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</a></p>
 
 {% if request.query_params.get('uploaded') %}<div class="banner banner-success">Uploaded.</div>{% endif %}
 {% if request.query_params.get('deleted') %}<div class="banner banner-success">Removed.</div>{% endif %}

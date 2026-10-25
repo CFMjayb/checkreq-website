@@ -50,9 +50,9 @@ def _timekeeping_on(user, parish) -> bool:
 
 
 _CARDS = [
-    {"title": "Staff", "url": "/timekeeping/roster", "visible": _timekeeping_on,
+    {"title": "Staff", "url": "/timekeeping/roster", "visible": _timekeeping_on, "guide": "parish-staff",
      "desc": "Your parish's staff roster: see who is on it, and propose adding, changing or ending someone. The diocese reviews each change."},
-    {"title": "Timekeeping", "url": "/timekeeping", "visible": _timekeeping_on,
+    {"title": "Timekeeping", "url": "/timekeeping", "visible": _timekeeping_on, "guide": "parish-timekeeping",
      "desc": "Enter and submit staff hours for the current payroll period."},
 ]
 
@@ -69,7 +69,7 @@ def cards_for(user, parish) -> list[dict]:
         except Exception:
             ok = False
         if ok:
-            out.append({"title": c["title"], "url": c["url"], "desc": c["desc"]})
+            out.append({"title": c["title"], "url": c["url"], "desc": c["desc"], "guide": c.get("guide")})
     return out
 
 
@@ -83,6 +83,7 @@ def parish_hr_menu(request: Request):
     if not cards:
         return RedirectResponse("/parish-view")
     return _render(request, "hr_hub.html", user, {
-        "page_title": "HR & Payroll", "back_url": "/parish-view", "back_label": "Back to " + parish["name"],
+        "page_title": "HR & Payroll", "back_url": "/parish-view", "back_label": "Back to " + parish["name"] + (", " + parish["city"] if parish.get("city") else ""),
         "sub": "Staff and Timekeeping. Only the screens you have access to are shown.",
+        "page_guide": "parish-hr",
         "cards": cards})

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Parish Sustainability Review{% if parish %} — {{ parish.name }}{% endif %}{% endblock %}
+{% block title %}Parish Sustainability Review{% if parish %} — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}{% endif %}{% endblock %}
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/sustain.css?v={{ asset_version('css/sustain.css') }}">
 {% endblock %}
@@ -8,20 +8,20 @@
 <div class="sv-head"><h1>Parish Sustainability Review</h1></div>
 <p class="back-link"><a href="{{ back_url|default('/parish-resources') }}">&larr; {{ back_label|default('Back to Resources for Parishes') }}</a></p>
 {% if diocesan %}
-<div class="banner banner-info">Diocesan view of {{ parish.name }}.{% if can_spreadsheet_mode %} <a href="/congregational-vitality/sustainability/defaults">Edit the diocese's projection defaults</a>.{% endif %}</div>
+<div class="banner banner-info">Diocesan view of {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}.{% if can_spreadsheet_mode %} <a href="/congregational-vitality/sustainability/defaults">Edit the diocese's projection defaults</a>.{% endif %}</div>
 {% endif %}
 
 {% if state == "denied" %}
-<div class="banner banner-info">The Parish Sustainability Review is shown to the people who see {{ parish.name }}'s Finance section. Ask your parish administrator if you need access.</div>
+<div class="banner banner-info">The Parish Sustainability Review is shown to the people who see {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}'s Finance section. Ask your parish administrator if you need access.</div>
 
 {% elif state == "no_report" %}
-<div class="banner banner-info">No parochial report on file yet for {{ parish.name }}.</div>
+<div class="banner banner-info">No parochial report on file yet for {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}.</div>
 
 {% else %}
 <header class="card sv-band">
   <div>
     <div class="lbl">Parochial report</div>
-    <h2>{{ parish.name }}</h2>
+    <h2>{{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</h2>
     <p class="sub">Latest filing: {{ latest_year }}{% if as_of %} &middot; Data as of {{ as_of.strftime('%m/%d/%y') }}{% endif %}</p>
   </div>
 </header>

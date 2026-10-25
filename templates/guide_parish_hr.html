@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">Your staff list and your hours, in one place.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="where">
+    <h2>Where to find it</h2>
+    <p>On your parish's home page, choose <strong>HR &amp; Payroll</strong>. You see it if you hold the <strong>Timekeeping</strong>, <strong>Parish Finance</strong> or <strong>Parish Admin</strong> role at your parish, and your diocese has turned it on for you. If you do not see it, ask your Parish Admin.</p>
+  </section>
+
+  <section class="hiw-section" id="what">
+    <h2>What is here</h2>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard">
+        <h3>Staff</h3>
+        <p>Everyone on your parish's staff list. Add a new person, correct a name or position, or tell the diocese someone has left.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>Timekeeping</h3>
+        <p>Enter the hours your staff worked in each pay period, then send them to the diocese.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="hiw-section" id="review">
+    <h2>The diocese reviews every change</h2>
+    <p>You never change payroll yourself. Anything you do to your staff list is sent to the diocese's HR office, and it takes effect once they approve it. Until then you can take the change back. Beacon keeps names, positions and hours only: it never stores anyone's pay.</p>
+  </section>
+
+</div>
+{% endblock %}

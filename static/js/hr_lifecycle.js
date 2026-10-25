@@ -25,9 +25,9 @@
     sel.addEventListener('change', function () { if (sel.value) window.location.href = sel.value; });
   });
   document.querySelectorAll('form[data-hr-needs-note]').forEach(function (form) {
-    var note = form.querySelector('input[name=note]');
+    var note = form.querySelector('textarea[name=note], input[name=note]');
     if (note) {
-      note.addEventListener('keydown', function (e) { if (e.key === 'Enter') e.preventDefault(); });
+      note.addEventListener('input', function () { note.classList.remove('needs'); });
     }
     form.addEventListener('submit', function (e) {
       var btn = e.submitter;
@@ -36,8 +36,28 @@
       if (needs && !note.value.trim()) {
         e.preventDefault();
         note.hidden = false; note.required = true; note.focus();
+        note.classList.add('needs');
         note.placeholder = 'Say why (required)';
       }
+    });
+  });
+  // "Show not applicable items": items marked not applicable are hidden until this is pressed (Jay, 2026-10-25). The choice is
+  // remembered on this PC; if storage is unavailable the items simply start hidden.
+  document.querySelectorAll('[data-hr-toggle-na]').forEach(function (btn) {
+    var page = btn.closest('.hr-page');
+    var n = btn.getAttribute('data-count');
+    function paint(on) {
+      if (page) page.classList.toggle('show-na', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btn.textContent = (on ? 'Hide' : 'Show') + ' not applicable items (' + n + ')';
+    }
+    var saved = false;
+    try { saved = localStorage.getItem('hr-show-na') === '1'; } catch (e) { /* not remembered */ }
+    paint(saved);
+    btn.addEventListener('click', function () {
+      var on = !(page && page.classList.contains('show-na'));
+      paint(on);
+      try { localStorage.setItem('hr-show-na', on ? '1' : '0'); } catch (e) { /* not remembered */ }
     });
   });
   // Rule 6: the clicked button pulses while the post is in flight. The button's own name/value is copied into a hidden

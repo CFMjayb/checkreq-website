@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Onboarding — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}{% endblock %}
+{#
+  "Continue to onboarding" (parish_onboarding.py): sends a new hire to the diocese's benefits office as a parish enrollment request.
+  Plain words, one short form. No personal data is asked for.
+#}
+{% block content %}
+<div class="page-shell">
+<h1>Onboarding</h1>
+<p class="back-link"><a href="/timekeeping/roster">&larr; Back to Staff</a></p>
+<p class="sub">Send {{ v.first_name or 'this new staff member' }}{% if v.last_name %} {{ v.last_name }}{% endif %}'s hire for {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %} to the diocese so health benefits can be set up. The benefits office will contact you if it needs anything more.</p>
+
+{% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+
+<form method="post" action="/timekeeping/roster/onboarding" class="card">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+  <div class="field"><label>First name</label><input type="text" name="first_name" value="{{ v.first_name or '' }}" required maxlength="80"></div>
+  <div class="field"><label>Last name</label><input type="text" name="last_name" value="{{ v.last_name or '' }}" required maxlength="80"></div>
+  <div class="field"><label>Position</label><input type="text" name="position" value="{{ v.position or '' }}" maxlength="120"></div>
+  <div class="field"><label>Clergy or lay</label>
+    <select name="is_clergy"><option value="no" {{ 'selected' if v.is_clergy != 'yes' }}>Lay</option><option value="yes" {{ 'selected' if v.is_clergy == 'yes' }}>Clergy</option></select></div>
+  <div class="field"><label>Hours worked in a week</label><input type="text" name="hours_per_week" value="{{ v.hours_per_week or '' }}" inputmode="decimal" placeholder="e.g. 32">
+    <div class="sub" style="margin:2px 0 0">Health benefits depend on the weekly hours.</div></div>
+  <div class="field"><label>Housing provided by the parish</label>
+    <select name="housing_provided"><option value="" {{ 'selected' if not v.housing_provided }}>Not sure</option><option value="yes" {{ 'selected' if v.housing_provided == 'yes' }}>Yes</option><option value="no" {{ 'selected' if v.housing_provided == 'no' }}>No</option></select></div>
+  <div class="field"><label>Hire date</label><input type="date" name="start_date" value="{{ v.start_date or '' }}"></div>
+  <div class="field"><label>Anything the benefits office should know</label><textarea name="notes" rows="3" maxlength="500">{{ v.notes or '' }}</textarea>
+    <div class="sub" style="margin:2px 0 0">Please do not type Social Security numbers, birth dates or bank details here.</div></div>
+  <button type="submit" class="btn btn-primary">Send to the diocese</button>
+  <a class="btn btn-secondary" href="/timekeeping/roster">Cancel</a>
+</form>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+document.querySelectorAll('form[method="post" i]').forEach(function (form) {
+  form.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+  });
+});
+</script>
+{% endblock %}

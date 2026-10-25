@@ -1049,6 +1049,26 @@ table.ap-history td { vertical-align: top; }
   justify-content: space-between;
   gap: var(--space-2);
 }
+/* HR & Payroll menu (Jay 2026-10-25): name, then the help icon right after it, then the red count dot at the far right. */
+.tile-head.is-flow { justify-content: flex-start; }
+.tile-count {
+  margin-left: auto;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--color-danger);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  flex: 0 0 auto;
+}
+.tile-count:hover, .tile-count:focus-visible { background: #7d0006; color: #fff; text-decoration: none; }
 
 /* W-9 review panel on the AP edit screen (2026-10-01). A W-9 waiting for
    review is the one thing on the page that needs action, so it is marked. */

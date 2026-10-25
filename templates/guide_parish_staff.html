@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">Add people, fix their details, and tell the diocese when someone leaves.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="where">
+    <h2>Where to find it</h2>
+    <p><strong>HR &amp; Payroll</strong> &rarr; <strong>Staff</strong>. Each person is one line. Use the search box to find someone, and <strong>Show</strong> to see only active people, only inactive people, or only people with a change waiting.</p>
+  </section>
+
+  <section class="hiw-section" id="new">
+    <h2>Onboard a new staff member</h2>
+    <ol>
+      <li>Choose <strong>+ Onboard a new staff member</strong> at the top right.</li>
+      <li>Fill in the name, the position and, if you know them, the employee number and hire date. Choose <strong>Submit</strong>.</li>
+      <li>The diocese reviews the new person before they join your list. Until then they show on your list as <em>New staff member waiting</em>.</li>
+      <li>If your diocese uses onboarding, a button offers <strong>Continue to onboarding</strong>. That sends the hire to the diocese's benefits office so health benefits can be set up. You can skip it, and do it later from the person's line.</li>
+    </ol>
+  </section>
+
+  <section class="hiw-section" id="change">
+    <h2>Edit and Status change</h2>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard">
+        <h3>Edit</h3>
+        <p>Fix a name, position or employee number. The diocese approves the correction before your list changes.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>Status change</h3>
+        <p>Use this when someone leaves, or comes back. Choose what the change is (for example Voluntary resignation or Termination), enter the last day of work, and choose <strong>Review</strong>. Read the sentence, then <strong>Confirm</strong>.</p>
+      </div>
+    </div>
+    <p>The person stays on your list as they are until the diocese approves.</p>
+  </section>
+
+  <section class="hiw-section" id="withdraw">
+    <h2>Taking a change back</h2>
+    <p>A person with a change waiting shows a <strong>Withdraw</strong> button instead of Edit and Status change. Withdraw it and nothing goes to the diocese. Once the diocese has answered, it can no longer be withdrawn: send a new change instead. <strong>Proposed changes</strong> at the top lists everything you have sent and what came of it.</p>
+  </section>
+
+</div>
+{% endblock %}

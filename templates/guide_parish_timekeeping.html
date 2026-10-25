@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">Enter your staff's hours for the pay period and send them to the diocese.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="where">
+    <h2>Where to find it</h2>
+    <p><strong>HR &amp; Payroll</strong> &rarr; <strong>Timekeeping</strong>. It shows the current pay period and one line for each person whose hours you report.</p>
+  </section>
+
+  <section class="hiw-section" id="enter">
+    <h2>Entering hours</h2>
+    <ol>
+      <li>Type each person's hours for each day, in the right kind of hours (regular, overtime and so on).</li>
+      <li>Choose <strong>Save</strong> at any time. Saving does not send anything to the diocese, and you can keep working.</li>
+      <li>When the period's hours are complete, choose <strong>Submit Period to Diocese</strong>. This locks the hours, so check them first.</li>
+    </ol>
+    <p>For one person and one kind of hours you can enter either a total for the period or the hours day by day, not both.</p>
+  </section>
+
+  <section class="hiw-section" id="after">
+    <h2>After you submit</h2>
+    <p>The diocese's HR office reviews the hours. If something needs fixing, they will ask you, and they can reopen the period for you. Staff changes you made on the Staff screen travel with the same submission.</p>
+  </section>
+
+</div>
+{% endblock %}

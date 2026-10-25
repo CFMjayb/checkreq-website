@@ -135,6 +135,7 @@ import org_features
 import timekeeping
 import timekeeping_activation
 import timekeeping_roster
+import parish_onboarding  # "Continue to onboarding" for a new parish staff member (2026-10-25)
 import timekeeping_employees
 import timekeeping_entries
 import timekeeping_review
@@ -9585,6 +9586,7 @@ timekeeping_activation.register(app, current_user=_current_user, current_org=_cu
 # timekeeping_* siblings; its own _require_hr_admin() does the gating.
 timekeeping_employees.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 timekeeping_roster.register(app, render=_render)
+parish_onboarding.register(app, render=_render)
 timekeeping_entries.register(app, render=_render)
 timekeeping_review.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 hr_hub.register(app, current_user=_current_user, current_org=_current_org, render=_render)

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Timekeeping — {{ parish.name }}{% endblock %}
+{% block title %}Timekeeping — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}{% endblock %}
+{% from "_guide_link.html" import guide_link %}
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
 <link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
@@ -11,7 +12,7 @@
 <div class="page-shell-wide"><div class="ff-shell te-shell">
 
   <div class="ff-title-row">
-    <h1>Timekeeping</h1>
+    <h1>Timekeeping{% if not diocese_mode %} {{ guide_link("parish-timekeeping", "How to use Timekeeping") }}{% endif %}</h1>
     {% if period %}<span class="ff-state {{ period.status }}">{{ period.status|capitalize }}</span>{% endif %}
     {% if diocese_mode %}
     <a class="ff-back" href="{{ back_link_url or '/admin/timekeeping/periods' }}">&larr; {{ back_link_label or "Back to Status Board" }}</a>
@@ -59,6 +60,13 @@
     {% set rc = request.query_params.get('roster_changes', '0')|int %}
     {% if rc > 0 %}Also included {{ rc }} pending roster change{{ '' if rc == 1 else 's' }} — see
     <a href="/timekeeping/roster">Staff Roster</a> for status.{% endif %}
+  </div>
+  {% endif %}
+  {% if diocese_mode and roster_pending %}
+  <div class="banner ff-banner roster-flag" role="alert">
+    <strong>&#9888; Roster Review has {{ roster_pending }} item{{ '' if roster_pending == 1 else 's' }} for this department.</strong>
+    People and hours here may not match the roster until {{ 'it is' if roster_pending == 1 else 'they are' }} answered.
+    <a href="{{ roster_review_url }}">Go to Roster Review &rarr;</a>
   </div>
   {% endif %}
   {% if request.query_params.get('error') == 'noperiod' %}<div class="banner banner-error ff-banner">No open payroll period right now.</div>{% endif %}

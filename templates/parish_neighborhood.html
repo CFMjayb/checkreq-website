@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_guide_link.html" import guide_link %}
-{% block title %}Neighborhood View — {{ parish.name }}{% endblock %}
+{% block title %}Neighborhood View — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}{% endblock %}
 {% block extra_css %}
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/static/css/neighborhood_snapshot.css?v={{ asset_version('css/neighborhood_snapshot.css') }}">
@@ -47,7 +47,7 @@
 </div>
 <p class="back-link"><a href="{{ back_url|default('/parish-resources') }}">&larr; {{ back_label|default('Back to Resources for Parishes') }}</a></p>
 {% if diocesan %}
-<div class="banner banner-info">Diocesan view of {{ parish.name }}.</div>
+<div class="banner banner-info">Diocesan view of {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}.</div>
 {% endif %}
 
 {% if state != "ok" %}
@@ -56,7 +56,7 @@
 
 <div class="nb-top">
   <div class="card">
-    <h2 style="margin:0 0 var(--space-2)">{{ parish.name }}</h2>
+    <h2 style="margin:0 0 var(--space-2)">{{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</h2>
     <p class="sub">{{ site.address_used }}</p>
     <div class="nb-rings">
       {% for m in rings %}

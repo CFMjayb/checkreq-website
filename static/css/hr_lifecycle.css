@@ -35,7 +35,6 @@ a.hr-chip:hover { text-decoration: underline; }
 
 /* ---- the case page: on the shared fixed frame. The title row, banners and section chips stay put; the checklist (left) and
    the person / coverage / history (right) each scroll on their own, so a 50-item checklist never scrolls the whole page. ---- */
-.hr-panes { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); gap: 14px; }
 .hr-pane { min-height: 0; overflow: auto; padding-right: 4px; scroll-behavior: smooth; }
 @media (max-width: 960px) {
   .hr-panes { grid-template-columns: minmax(0, 1fr); overflow: auto; }
@@ -49,27 +48,10 @@ a.hr-chip:hover { text-decoration: underline; }
 .hr-panel h2 { font-size: 1.02rem; margin: 0 0 6px; display: flex; align-items: baseline; gap: 8px; }
 .hr-panel h2 .hr-count { margin-left: auto; font-weight: 400; font-size: 0.82rem; }
 .hr-bucket { font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-muted, #6b645a); margin: 10px 0 2px; }
-.hr-items { list-style: none; margin: 0; padding: 0; }
-.hr-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 6px 0; border-top: 1px solid var(--color-border-soft, #eee8da); }
-.hr-item:first-child { border-top: 0; }
-.hr-item .lbl { min-width: 0; }
-.hr-item .lbl .meta { display: block; font-size: 0.78rem; color: var(--color-text-muted, #6b645a); }
-.hr-item.is-done .lbl > span.t { color: var(--color-text-muted, #6b645a); }
-.hr-item.is-na .lbl > span.t { color: var(--color-text-muted, #6b645a); text-decoration: line-through; }
-.hr-item .st { font-size: 0.76rem; font-weight: 600; white-space: nowrap; }
-.hr-item .st.done { color: var(--color-success, #2f6b3c); }
-.hr-item .st.late { color: var(--color-danger, #a3352b); }
-.hr-item .st.due { color: #8a5a00; }
-.hr-item .st.open { color: var(--color-text, #2b2b2b); }
-.hr-item .st.na { color: var(--color-text-muted, #6b645a); font-weight: 400; }
 .hr-secnav { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
 .hr-secnav .hr-chip { font-size: 0.8rem; padding: 2px 9px; }
 .hr-reopen { display: inline; margin: 0 0 0 6px; }
 .hr-linkbtn { background: none; border: 0; padding: 0; font: inherit; font-size: 0.74rem; font-weight: 400; color: var(--color-franciscan-green, #2f5d50); text-decoration: underline; cursor: pointer; }
-.hr-item-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.hr-item-actions form { display: inline-flex; gap: 6px; align-items: center; margin: 0; }
-.hr-item-actions input[type=text] { height: 26px; padding: 2px 6px; font-size: 0.82rem; margin: 0; width: 220px; max-width: 100%; }
-.hr-item-actions .btn { padding: 2px 10px; font-size: 0.8rem; }
 .hr-req { font-size: 0.7rem; color: var(--color-text-muted, #6b645a); }
 .hr-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; font-size: 0.88rem; margin: 0; }
 .hr-dl dt { color: var(--color-text-muted, #6b645a); }
@@ -89,3 +71,42 @@ dialog.hr-dialog { border: 1px solid var(--color-border, #ddd4c0); border-radius
 dialog.hr-dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
 dialog.hr-dialog h2 { margin: 0 0 10px; font-size: 1.12rem; }
 .hr-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+/* ---- the case page, reworked 2026-10-25 (Jay): the checklist is the whole screen. Each item is its own boxed row of at most two
+   lines (the item; under it who owns it and when it is due), a roomy note box, then Waive, Not applicable and Done at the far right
+   (Done last). Items marked not applicable are hidden until "Show not applicable items" is pressed. ---- */
+.hr-panes { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.hr-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hr-item { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(200px, 1fr) auto; gap: 2px 12px; align-items: center;
+  padding: 6px 10px; border: 1px solid var(--color-border, #ddd4c0); border-left: 5px solid #cfc8b6; border-radius: 6px; background: #fff; }
+.hr-item.is-late { border-left-color: var(--color-danger, #a3352b); background: #fdf5f5; }
+.hr-item.is-due { border-left-color: #c58a00; background: #fffaf0; }
+.hr-item.is-done { border-left-color: #7fb08a; background: #f6faf6; }
+.hr-item.is-na { border-left-color: #cfc8b6; background: #faf8f3; }
+.hr-item .lbl { min-width: 0; }
+.hr-item .lbl .t { display: block; font-weight: 600; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hr-item .lbl .meta { display: block; font-size: 0.78rem; color: var(--color-text-muted, #6b645a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hr-item .lbl .meta b.st.late { color: var(--color-danger, #a3352b); }
+.hr-item .lbl .meta b.st.due { color: #8a5a00; }
+.hr-item.is-done .lbl .t { color: var(--color-text-muted, #6b645a); }
+.hr-item.is-na .lbl .t { color: var(--color-text-muted, #6b645a); text-decoration: line-through; }
+.hr-item .hr-q { display: inline-block; width: 15px; height: 15px; line-height: 15px; text-align: center; border-radius: 50%; background: #eef1ee;
+  color: var(--color-text-muted, #6b645a); font-size: 0.7rem; font-weight: 700; vertical-align: 1px; }
+.hr-item-form { display: contents; }
+.hr-item textarea.hr-note { width: 100%; height: 46px; min-height: 46px; margin: 0; padding: 4px 8px; font-size: 0.85rem; resize: vertical; box-sizing: border-box; }
+.hr-item textarea.hr-note.needs { border-color: var(--color-danger, #a3352b); background: #fff5f5; }
+.hr-item .acts { display: flex; gap: 6px; align-items: center; justify-content: flex-end; white-space: nowrap; }
+.hr-item .acts .btn { padding: 3px 12px; font-size: 0.82rem; margin: 0; }
+.hr-item .acts .st { font-size: 0.8rem; font-weight: 600; }
+.hr-item .acts .st.done { color: var(--color-success, #2f6b3c); }
+.hr-item .acts .st.late { color: var(--color-danger, #a3352b); }
+.hr-item .acts .st.na { color: var(--color-text-muted, #6b645a); font-weight: 400; }
+.hr-item .hr-done-note { font-size: 0.82rem; color: var(--color-text-muted, #6b645a); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@media (max-width: 760px) { .hr-item { grid-template-columns: minmax(0, 1fr); } .hr-item .acts { justify-content: flex-start; } }
+/* not applicable: hidden until the button at the top is pressed (an empty bucket or section goes with them) */
+.hr-page:not(.show-na) .hr-item.is-na-item,
+.hr-page:not(.show-na) .hr-items.all-na,
+.hr-page:not(.show-na) .hr-bucket.all-na,
+.hr-page:not(.show-na) .hr-panel.all-na { display: none; }
+dialog.hr-dialog.wide { width: min(760px, 94vw); }
+dialog.hr-dialog h2 .btn { font-size: 0.8rem; }

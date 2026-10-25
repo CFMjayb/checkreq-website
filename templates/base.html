@@ -53,7 +53,7 @@
      confusing. #}
   {% if parish_view and parish_mode_preview %}
   <div class="impersonation-bar">
-    Parish Mode: viewing <strong>{{ parish_view.name }}</strong> ({{ parish_view.org_code }})
+    Parish Mode: viewing <strong>{{ parish_view.name }}{% if parish_view.city %}, {{ parish_view.city }}{% endif %}</strong> ({{ parish_view.org_code }})
     <form method="post" action="/admin/parish-mode/stop">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button type="submit">Exit Parish Mode</button></form>
   </div>
