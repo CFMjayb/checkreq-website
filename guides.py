@@ -79,6 +79,13 @@ GUIDES = {
         "back_url": "/neighborhood",
         "back_label": "Neighborhood",
     },
+    # 2026-10-25 (26-129): Giving (tax) statements, the Finance screens under People & Giving > Statements.
+    "giving-statements": {
+        "title": "Giving Statements",
+        "template": "guide_giving_statements.html",
+        "back_url": "/giving/statements",
+        "back_label": "Giving statements",
+    },
 }
 
 

@@ -5,6 +5,7 @@ Templates and the run screen are added to this page in the next phases.
 #}
 {% extends "base.html" %}
 {% from "donor_macros.html" import csrf with context %}
+{% from "_guide_link.html" import guide_link %}
 {% block title %}Statements — {{ parish.name }}{% endblock %}
 {% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}"><link rel="stylesheet" href="/static/css/donor_statements.css?v={{ asset_version('css/donor_statements.css') }}">{% endblock %}
 {% block content %}
@@ -12,7 +13,7 @@ Templates and the run screen are added to this page in the next phases.
 {% set stg = info.settings %}
 <div class="page-shell-wide dm-page">
   {% include "donor_nav.html" %}
-  <div class="dm-head"><h1>Giving statements</h1></div>
+  <div class="dm-head"><h1>Giving statements {{ guide_link("giving-statements", "How to use giving statements") }}</h1></div>
   <p class="dm-muted">A statement is a year-end letter to a donor with their gifts, for their taxes. Beacon builds it from the gifts in closed deposits, using the parish's
     statement profile below. Nothing here sends a statement to anyone.</p>
 
