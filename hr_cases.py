@@ -4,7 +4,7 @@ hr_cases.py -- 26-162 Beacon Onboarding and Offboarding: the screens (HR & Payro
     /hr/onboarding                       the HR Status Board (Jay: "the status of everything on one easy to use screen")
     /hr/onboarding/new                   open a case: details, then a preview of every item (applies / N/A and why)
     /hr/onboarding/case/{id}             the case page: the checklist on the left, the person, coverage and history on the right
-    /hr/onboarding/templates             the checklist templates, read only (edit the CSV and re-run the seed loader)
+    /hr/onboarding/templates             the checklist templates (read here; changed in the editor, hr_template_editor.py)
 
 Every POST answers with a redirect and a one-line ?saved= or ?error= message, like the Employees screen.
 
@@ -24,11 +24,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 import cornerstone_mode
 import db
+import hr_template_editor
 import org_features
 import org_time
 import rbac
 from logic.hr_lifecycle import board as board_mod
-from logic.hr_lifecycle import cases, clock, conditions, templates
+from logic.hr_lifecycle import cases, clock, conditions, template_edit, templates
 from logic.hr_lifecycle.errors import HrError
 
 router = APIRouter()
@@ -46,6 +47,8 @@ def register(app, *, current_user, current_org, render) -> None:
     global _current_user, _current_org, _render
     _current_user, _current_org, _render = current_user, current_org, render
     app.include_router(router)
+    # the checklist editor is its own module; it is handed this module's gate and renderer, never imports them
+    hr_template_editor.register(app, gate=_gate, render=lambda *a, **k: _render(*a, **k))
 
 
 # ------------------------------------------------------------------ access
@@ -300,7 +303,7 @@ async def offboard_post(request: Request, case_id: int):
     return _back(f"/hr/onboarding/case/{new_id}", saved="Offboarding opened.")
 
 
-# ------------------------------------------------------------------ templates (read only)
+# ------------------------------------------------------------------ templates (read here, changed in hr_template_editor.py)
 
 @router.get("/hr/onboarding/templates", response_class=HTMLResponse)
 def templates_page(request: Request):
@@ -314,6 +317,9 @@ def templates_page(request: Request):
         chosen = templates.get_template(int(tid), org["code"])
     elif tlist:
         chosen = templates.get_template(tlist[0]["id"], org["code"])
+    can_edit = bool(chosen and chosen["is_active"] and hr_template_editor.can_edit(user, org, chosen["case_kind"]))
     return _render(request, "hr_templates.html", user, {
         "templates": tlist, "chosen": chosen, "current_org": org, "kinds": templates.KINDS,
-        "section_labels": templates.SECTION_LABELS, "describe": conditions.describe})
+        "section_labels": templates.SECTION_LABELS, "describe": conditions.describe, "can_edit": can_edit,
+        "history": template_edit.history(chosen["key"]) if chosen else [], "shared": hr_template_editor._shared_with(chosen) if chosen else None,
+        "saved": request.query_params.get("saved"), "error": request.query_params.get("error")})

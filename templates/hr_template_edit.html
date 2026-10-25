@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Edit checklist — Onboarding &amp; Offboarding{% endblock %}
+{#
+  26-162: the checklist editor (Jay, 2026-10-25: "I don't see a place where I can actually build the flow of onboarding and
+  offboarding"). Built on the shared fixed frame: the title row, the name and search line and the column headings stay put;
+  only the items scroll. The rows are drawn by static/js/hr_template_edit.js from the JSON below; Add / Edit / Remove / move
+  change the list on the page only, and one "Save as new version" posts the whole list (a plain form post, with the
+  page's CSRF token). Nothing is written until then, and a save is a NEW VERSION: open cases keep the version they started with.
+#}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+<link rel="stylesheet" href="/static/css/hr_template_edit.css?v={{ asset_version('css/hr_template_edit.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide"><div class="ff-shell">
+
+  <div class="ff-title-row">
+    <h1>Edit checklist</h1>
+    <a class="ff-back" href="/hr/onboarding/templates?id={{ t.id }}" id="teBack">&larr; Back to checklist templates</a>
+    <div class="ff-actions">
+      <button type="button" class="btn btn-sm btn-secondary" id="teAdd">+ Add item</button>
+      <button type="button" class="btn btn-sm btn-secondary" data-ff-dialog="historyDialog">Version history</button>
+      <button type="button" class="btn btn-sm btn-primary" id="teSave" disabled>Save as new version</button>
+    </div>
+  </div>
+
+  <div class="ff-info te-info">
+    <label class="te-name">Checklist name
+      <input type="text" name="name" form="teForm" id="teName" value="{{ name }}" maxlength="{{ max_name }}" autocomplete="off">
+    </label>
+    <label class="te-search">Search
+      <input type="text" id="teSearch" placeholder="wording, section, who" autocomplete="off">
+    </label>
+    <span class="te-meta">{{ kinds[t.case_kind] }} &middot; editing version {{ t.version }} (the current one)</span>
+  </div>
+
+  {% if shared.every_diocese %}
+  <div class="banner banner-info ff-banner te-note"><strong>This checklist is used by every diocese.</strong> A change you save here applies to all of them.</div>
+  {% elif shared.codes|length > 1 %}
+  <div class="banner banner-info ff-banner te-note">This checklist is shared by {{ shared.codes|join(', ') }}. A change you save here applies to all of them.</div>
+  {% endif %}
+  {% if notice %}<div class="banner banner-info ff-banner te-note">{{ notice }}</div>{% endif %}
+  {% if problems %}
+  <div class="banner banner-error ff-banner te-problems" role="alert">
+    <strong>Nothing was saved. Fix {{ 'this' if problems|length == 1 else 'these' }} and save again:</strong>
+    <ul>{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+  <noscript><div class="banner banner-error ff-banner">The editor needs JavaScript. Turn it on for this site and reload.</div></noscript>
+
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      <table class="ff-table te-table">
+        <colgroup><col style="width:44px"><col><col style="width:104px"><col style="width:84px"><col style="width:240px"><col style="width:200px"><col style="width:72px"><col style="width:218px"></colgroup>
+        <thead>
+          <tr>
+            <th class="c-num">#</th><th>Item</th><th>Section</th><th>Who</th><th>Due</th><th>Applies when</th><th class="c-center">Required</th><th aria-label="Actions"></th>
+          </tr>
+        </thead>
+        <tbody id="teBody"></tbody>
+      </table>
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count" id="teCount"></span>
+      <span class="ff-msg" id="teMsg"></span>
+    </div>
+  </div>
+
+</div></div>
+
+{# the one form that saves: hidden values only, filled by the script from the list on the page #}
+<form method="post" action="/hr/onboarding/templates/{{ t.id }}/save" id="teForm" hidden>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+  <input type="hidden" name="base_version" value="{{ base_version }}">
+  <input type="hidden" name="payload" id="tePayload" value="">
+</form>
+
+<script type="application/json" id="teData">{{ editor_data|tojson }}</script>
+
+<dialog class="ff-dialog wide" id="itemDialog">
+  <h2 id="itemDialogTitle">Edit item</h2>
+  <div class="te-dialog-error" id="itemError" role="alert" hidden></div>
+  <div class="field"><label for="fLabel">Wording (what the person sees)</label><input type="text" id="fLabel" autocomplete="off"></div>
+  <div class="field"><label for="fHelp">Help text (optional, a line of guidance under the item)</label><textarea id="fHelp" rows="2"></textarea></div>
+  <div class="te-grid te-grid-2">
+    <div class="field"><label for="fSection">Section</label><select id="fSection"></select></div>
+    <div class="field"><label for="fOwner">Who does it</label><select id="fOwner"></select></div>
+  </div>
+  <div class="te-grid te-grid-3">
+    <div class="field"><label for="fBasis">Due date counts from</label><select id="fBasis"></select></div>
+    <div class="field"><label for="fOffset">Days after (a minus number = before)</label><input type="number" id="fOffset" step="1"></div>
+    <div class="field"><label for="fHard">Hard deadline, days after (optional)</label><input type="number" id="fHard" step="1" min="0"></div>
+  </div>
+  <label class="ff-check"><input type="checkbox" id="fBizDays"> Count business days only</label>
+  <label class="ff-check"><input type="checkbox" id="fRequired"> Required: the case cannot be completed until it is done, waived or marked not applicable</label>
+  <div class="te-grid te-grid-2">
+    <div class="field"><label for="fDoc">Document expected (optional)</label><select id="fDoc"></select></div>
+    <div class="field"><label for="fCondition">Applies when</label><select id="fCondition"></select></div>
+  </div>
+  <div class="field" id="fCustomWrap" hidden>
+    <label for="fCustom">Custom rule</label>
+    <input type="text" id="fCustom" autocomplete="off" placeholder="e.g. clergy and housing_provided">
+    <p class="ff-help" style="margin:4px 0 0">Words: clergy, lay, health_eligible, pension_eligible, housing_provided, org=CODE, enrolled:medical. Join with <b>and</b> / <b>or</b>; <b>not</b> in front of one. No brackets.</p>
+  </div>
+  <div class="ff-dialog-actions">
+    <button type="button" class="btn btn-sm btn-secondary" id="itemCancel">Cancel</button>
+    <button type="button" class="btn btn-sm btn-primary" id="itemOk">Done</button>
+  </div>
+</dialog>
+
+<dialog class="ff-dialog" id="confirmDialog">
+  <h2>Save as a new version?</h2>
+  <p class="ff-help" id="confirmText"></p>
+  <p class="ff-help">Cases already open keep the checklist they started with. New cases use this version.{% if shared.every_diocese %} <strong>Every diocese will use it.</strong>{% endif %}</p>
+  <div class="ff-dialog-actions">
+    <button type="button" class="btn btn-sm btn-secondary" id="confirmCancel">Keep editing</button>
+    <button type="button" class="btn btn-sm btn-primary" id="confirmOk">Save new version</button>
+  </div>
+</dialog>
+
+<dialog class="ff-dialog wide" id="historyDialog">
+  <h2>Version history</h2>
+  <ul class="ff-list">
+    {% for h in history %}
+    <li><span class="te-hist"><b>Version {{ h.version }}</b>{% if h.is_active %} <span class="badge badge-approved">current</span>{% endif %}
+      <span class="c-muted">{{ h.item_count }} items &middot; {{ h.published_at.strftime('%m/%d/%y') if h.published_at else '' }}{% if h.published_by %} &middot; {{ h.published_by }}{% endif %}</span></span></li>
+    {% endfor %}
+  </ul>
+  <div class="ff-dialog-actions"><button type="button" class="btn btn-sm btn-secondary" data-ff-close>Close</button></div>
+</dialog>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
+<script src="/static/js/hr_template_edit.js?v={{ asset_version('js/hr_template_edit.js') }}"></script>
+{% endblock %}

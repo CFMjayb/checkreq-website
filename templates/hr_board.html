@@ -32,6 +32,7 @@
         <a href="{{ qs({'view': 'owners'}) }}" class="{{ 'is-on' if view == 'owners' else '' }}">By who it is waiting on</a>
         <a href="{{ qs({'view': 'closed'}) }}" class="{{ 'is-on' if view == 'closed' else '' }}">Closed cases</a>
       </span>
+      <a class="btn btn-sm btn-secondary" href="/hr/onboarding/templates" data-tip="See and change the steps in each onboarding and offboarding checklist">Checklist setup</a>
       <div class="ff-dropdown">
         <button type="button" class="btn btn-sm btn-primary" data-ff-dropdown aria-haspopup="menu" aria-expanded="false">New &#9662;</button>
         <div class="ff-dropdown-menu" role="menu" hidden>
