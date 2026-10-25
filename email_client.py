@@ -61,6 +61,9 @@ def _apply_test_mode(to: str, subject: str) -> tuple[str, str] | None:
     configured, it SUPPRESSES the send entirely (returns None) rather than
     ever letting an unconfigured dev fall through to a real recipient.
 
+    The subject prefix has NO square brackets (2026-10-25): Bracket (secure
+    email) silently drops shared-mailbox mail whose subject contains them.
+
     Returns None to mean "do not send this email at all" -- callers
     (send_email(), below) must check for this."""
     if _BEACON_ENV == "prod":
@@ -68,7 +71,7 @@ def _apply_test_mode(to: str, subject: str) -> tuple[str, str] | None:
     test_address = app_settings.get_setting("email_test_mode_address")
     if not test_address:
         return None
-    return test_address, f"[DEV — would have gone to: {to}] {subject}"
+    return test_address, f"DEV — would have gone to: {to} — {subject}"
 
 
 def _get_api_key() -> str:
@@ -108,6 +111,17 @@ def send_email(
         # check already handles this correctly with no changes needed.
         return {"error": "Suppressed: dev environment has no email_test_mode_address configured.", "status": "suppressed"}
     to, subject = routed
+    if _BEACON_ENV != "prod":
+        # 2026-10-25: dev mail must not be sent AS a real business mailbox.
+        # Every caller passes sender=W9_SENDER_EMAIL (businessoffice@
+        # episcopalmaryland.org), and Graph saves a Sent copy in that mailbox,
+        # which Front syncs into the "EDOM Biz Ofc" inbox (and 26-119 then
+        # triages it as real mail). Blank sender = 26-122's default,
+        # notifications@cfmins.org, which no Front inbox ingests. Reply-To is
+        # cleared too, so a reply to a DEV email cannot land in a business
+        # mailbox. Production (BEACON_ENV=prod) is untouched.
+        sender = ""
+        reply_to = ""
     try:
         resp = requests.post(
             f"{EMAIL_SERVER_URL}/api/send-email",
