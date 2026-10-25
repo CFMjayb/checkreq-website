@@ -499,14 +499,28 @@ def get_pending_parish_access_request(user_id: int) -> dict | None:
     )
 
 
-def list_pending_parish_access_requests(parish_ids: list[int] | None = None) -> list[dict]:
+def parish_in_entity(parish_id: int, org_id: int | None) -> bool:
+    """Does this parish belong to the entity -- its diocese (portal.parishes.org_id) or, in Cornerstone Mode, the served entity
+    linked to it (linked_org_id)?  No entity selected -> True (2026-10-22, Jay: queues show only the entity you are in)."""
+    if org_id is None:
+        return True
+    return bool(db.query_one(
+        "SELECT 1 FROM portal.parishes WHERE id = %s AND (org_id = %s OR linked_org_id = %s)",
+        (parish_id, org_id, org_id),
+    ))
+
+
+def list_pending_parish_access_requests(parish_ids: list[int] | None = None, org_id: int | None = None) -> list[dict]:
     """Reviewed by beacon_admin OR, as of 2026-08-08 (Jay: "The Parish Admin
     will have to grant access to someone who requests it"), a Parish Admin.
     parish_ids is always the reviewer's own reach, from
     get_reviewable_parish_ids (the parishes of the dioceses where they hold
     Beacon Admin, plus the parishes they administer). None means no
     restriction at all -- since 2026-10-05 no caller passes it, because even
-    a Beacon Admin only reaches their own dioceses' parishes."""
+    a Beacon Admin only reaches their own dioceses' parishes.
+
+    org_id (2026-10-22, Jay: "a DME person won't understand a request from an EDOM parish"): when given, only the requests of
+    that entity's parishes -- its diocese's, or the parish linked to it in Cornerstone Mode."""
     return db.query(
         """
         SELECT par.id, par.user_id, u.email, u.display_name,
@@ -520,9 +534,10 @@ def list_pending_parish_access_requests(parish_ids: list[int] | None = None) -> 
           JOIN portal.parish_roles pr ON pr.key = par.requested_role_key
          WHERE par.status = 'Pending'
            AND (%s::int[] IS NULL OR par.parish_id = ANY(%s::int[]))
+           AND (%s::int IS NULL OR p.org_id = %s OR p.linked_org_id = %s)
          ORDER BY par.requested_at
         """,
-        (parish_ids, parish_ids),
+        (parish_ids, parish_ids, org_id, org_id, org_id),
     )
 
 

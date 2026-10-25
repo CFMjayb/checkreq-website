@@ -218,7 +218,9 @@ def parish_access_request_page(request: Request, entity: str = "", error: str = 
         # dioceses where they hold Beacon Admin plus the parishes they
         # administer -- never every parish of every diocese.
         scoped_parish_ids = parish_roles.get_reviewable_parish_ids(user["id"])
-        requests_ = parish_roles.list_pending_parish_access_requests(scoped_parish_ids)
+        # 2026-10-22, Jay: only the entity you are in (no entity selected -> the reviewer's own reach, as before).
+        _org = _current_org(request)
+        requests_ = parish_roles.list_pending_parish_access_requests(scoped_parish_ids, org_id=(_org["id"] if _org else None))
         if entity:
             requests_ = [r for r in requests_ if r["org_code"] == entity]
         for r in requests_:
@@ -306,7 +308,7 @@ def admin_parish_access_requests_redirect():
     return RedirectResponse("/parish-access-request", status_code=308)
 
 
-def _authorize_for_request(user: dict, request_id: int):
+def _authorize_for_request(user: dict, request_id: int, org_id: int | None = None):
     """Shared by approve/reject below: a reviewer may act ONLY on a request
        whose own parish_id they review -- Beacon Admin at that parish's own
        diocese, or Parish Admin of that parish (parish_roles.
@@ -318,6 +320,9 @@ def _authorize_for_request(user: dict, request_id: int):
     req = parish_roles.get_parish_access_request(request_id)
     if not req or not parish_roles.is_parish_reviewer(user["id"], req["parish_id"]):
         return JSONResponse({"error": "You don't administer this request's parish."}, status_code=403)
+    # 2026-10-22: and only a request of the entity you are in (org_id None = no entity selected = no extra limit)
+    if not parish_roles.parish_in_entity(req["parish_id"], org_id):
+        return JSONResponse({"error": "This request belongs to another entity. Switch to that entity to answer it."}, status_code=403)
     return None
 
 
@@ -326,7 +331,8 @@ async def admin_parish_access_request_approve(request_id: int, request: Request)
     user, err = _require_parish_reviewer(request)
     if err:
         return err
-    scope_err = _authorize_for_request(user, request_id)
+    _org = _current_org(request)
+    scope_err = _authorize_for_request(user, request_id, _org["id"] if _org else None)
     if scope_err:
         return scope_err
     form = await request.form()
@@ -343,7 +349,8 @@ async def admin_parish_access_request_reject(request_id: int, request: Request):
     user, err = _require_parish_reviewer(request)
     if err:
         return err
-    scope_err = _authorize_for_request(user, request_id)
+    _org = _current_org(request)
+    scope_err = _authorize_for_request(user, request_id, _org["id"] if _org else None)
     if scope_err:
         return scope_err
     form = await request.form()

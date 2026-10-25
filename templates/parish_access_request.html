@@ -41,7 +41,7 @@
     {% if requests_count %}<span class="count-pill count-pill-alert" title="{{ requests_count }} waiting for you">{{ requests_count }}</span>{% endif %}
   </summary>
   {% if is_beacon_admin_reviewer %}
-  <p class="sub">Pending self-service requests for access to a specific parish's portal — the parishes of the diocese(s) where you hold Beacon Admin, plus any parish you administer as Parish Admin.</p>
+  <p class="sub">Pending self-service requests for access to a specific parish's portal — only the entity you are working in{% if current_org %} ({{ current_org.name }}){% endif %}: switch entity to see another's.</p>
   {% else %}
   <p class="sub">Pending self-service requests for access to a specific parish's portal — only the parish(es) you administer as Parish Admin.</p>
   {% endif %}
