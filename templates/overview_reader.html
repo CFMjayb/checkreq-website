@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ doc.title }} — Beacon Overview{% endblock %}
+{#
+  One Beacon Overview document, read inside a sandboxed iframe (overview_docs.py). The sandbox has NO allow-scripts, so nothing in the
+  document can run: this page's own script (static/js/overview_reader.js) reads the iframe's height to size it, and switches light /
+  dark. The page inside the iframe is built by logic/overview_docs/render.py from the SANITIZED text (srcdoc), never the raw text.
+#}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/overview_library.css?v={{ asset_version('css/overview_library.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell ovl ovr">
+
+<div class="ovr-bar">
+  <a class="ovr-back" href="/cfm/overview">&larr; Beacon Overview</a>
+  <span class="ovr-title">{{ doc.title }}</span>
+  <span class="ovr-upd">Updated {{ doc.updated_label }} &middot; v{{ doc.version }}</span>
+  <button type="button" class="btn btn-secondary btn-sm ovr-theme" data-ovr-theme aria-label="Switch between light and dark reading">Dark mode</button>
+</div>
+<iframe id="ovr-frame" class="ovr-frame" title="{{ doc.title }}"
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+        srcdoc="{{ srcdoc }}"></iframe>
+
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/overview_reader.js?v={{ asset_version('js/overview_reader.js') }}"></script>
+{% endblock %}

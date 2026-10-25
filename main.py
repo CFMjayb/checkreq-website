@@ -777,6 +777,10 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # a one-off template special-case.
     if entity_roles & ADMIN_TASK_ROLE_KEYS:
         entity_roles = entity_roles | {"administrative_tasks"}
+    # 26-163 (2026-10-25): a Cornerstone staff member (cornerstone_employee at ANY organization) reaches Administrative Tasks, where the
+    # Beacon Overview card lives under CFM Items. The rule is in overview_docs.py; _roles() is request-cached, so this costs no query.
+    if "administrative_tasks" not in entity_roles and overview_docs.staff_reach_admin_hub(_roles(request, user, None), org_id):
+        entity_roles = entity_roles | {"administrative_tasks"}
     # Parish Portal S3 (2026-08-08): same synthetic-pseudo-role trick as
     # administrative_tasks above, so the Parish Access Requests tile uses
     # the identical generic `m.gate in entity_roles` check -- a beacon_admin
@@ -9651,6 +9655,11 @@ donor_register.register(app, current_user=_current_user, render=_render, templat
 import allocation_statements
 
 allocation_statements.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+
+# 26-163 Beacon Overview library (CFM Items > Beacon Overview): read-only pages and two read tools; all rules live in logic/overview_docs/.
+import overview_docs
+
+overview_docs.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 
 # ── Per-hostname favicon (2026-10-01, Jay) ──
 # See favicon.py. Thin wiring only: the host -> diocese lookup is the login

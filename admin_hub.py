@@ -39,7 +39,9 @@ _render = None
 # identical addition for the "Administrative Tasks" portal tile itself to
 # even appear for such a user -- see this project's own wiring snippet for
 # that one-line change.
-_ADMIN_TASK_ROLE_KEYS = ["cfo", "setup_admin", "beacon_admin", "vendor_approver"]  # hr_admin removed 2026-10-17 (HR cards moved)
+# 2026-10-25 (26-163): cornerstone_employee joins, so Cornerstone staff can open the hub and its CFM Items group (the Beacon Overview card).
+# Keep main.py's overview_docs.staff_reach_admin_hub() (the portal tile) in step.
+_ADMIN_TASK_ROLE_KEYS = ["cfo", "setup_admin", "beacon_admin", "vendor_approver", "cornerstone_employee"]  # hr_admin removed 2026-10-17 (HR cards moved)
 
 
 def register(app, *, current_user, current_org, render) -> None:
@@ -96,6 +98,11 @@ _CARDS = [
      "url": "/admin/report-templates", "role": ["setup_admin", "beacon_admin"], "group": "reports",
      "guide": "report-template-lines"},
 
+    # 26-163 (2026-10-25): the Beacon Overview library -- plain-language guides for every Cornerstone employee (cornerstone_employee at ANY
+    # organization, deliberately NOT entity-scoped and so NOT in _ENTITY_SCOPED_TITLES: the library is CFM-wide, Jay's decision).
+    {"title": "Beacon Overview", "desc": "Plain-language guides for Cornerstone staff: what runs overnight, how Beacon works, the CFM database.",
+     "url": "/cfm/overview", "role": ["cornerstone_employee"], "group": "cfm"},
+
     # Parish Mode (S4, 2026-08-08) -- gated on the "real_parish_mode"
     # sentinel (widened 2026-09-14, see below): hidden while already
     # impersonating, same reasoning as Impersonate a User's own real_cfo
@@ -140,6 +147,7 @@ _CARD_GROUPS = [
     ("beacon", "Beacon"),
     ("ap", "AP"),
     ("reports", "Reports"),
+    ("cfm", "CFM Items"),
     ("parish", "Parish"),
 ]
 
