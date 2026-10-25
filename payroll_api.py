@@ -33,6 +33,7 @@ import db
 import email_pdf
 import org_features
 import payroll_closeout
+import payroll_inbox_run
 import payroll_totals as pt
 
 router = APIRouter()
@@ -369,3 +370,31 @@ def beacon_email_pdfs_present(request: Request, body: dict = Body(...)):
     if not isinstance(refs, list) or len(refs) > 2000 or not all(isinstance(r, str) for r in refs):
         return _err(422, "invalid", "source_refs must be a list of up to 2000 text values.")
     return _ok({"present": email_pdf.present_refs(org["id"], refs)})
+
+
+# ---------------------------------------------------- the reader's last review (Time Review shows "Last updated")
+
+@router.get("/api/payroll/import-status")
+def beacon_get_import_status(request: Request):
+    """When the reader last finished a review and what it did (hours and counts only), and whether one runs now."""
+    org, bad = _auth(request)
+    if bad:
+        return bad
+    st = payroll_inbox_run.get_status(org["id"])
+    return _ok({**st, "running": payroll_inbox_run.is_running(st)})
+
+
+@router.put("/api/payroll/import-status")
+def beacon_put_import_status(request: Request, body: dict = Body(...)):
+    """The reader reports: state running | done | failed, started_at, finished_at, source pc | cloud, and
+    whole-number counts (messages, lines_recorded, recorded, review, noise, closed_period, error)."""
+    org, bad = _auth(request)
+    if bad:
+        return bad
+    try:
+        _need(body, "state", "started_at")
+        return _ok(payroll_inbox_run.record_report(
+            org["id"], state=body["state"], started_at=body["started_at"], finished_at=body.get("finished_at"),
+            counts=body.get("counts"), source=body.get("source")))
+    except pt.PayrollError as e:
+        return _pe(e)

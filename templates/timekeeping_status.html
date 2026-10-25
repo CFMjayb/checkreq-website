@@ -24,6 +24,7 @@
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
 <link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
+<link rel="stylesheet" href="/static/css/process_button.css?v={{ asset_version('css/process_button.css') }}">
 {% endblock %}
 {% block content %}
 {% set ns = namespace(attn=0, miss=0, wait=0, ok=0, idle=0, ready=0, std=0, std_ready=0, std_done=0) %}
@@ -38,6 +39,19 @@
     {% if payroll.final and not payroll.left %}<span class="ff-state final" data-tip="Hours were marked Final{% if payroll.final_at %} {{ payroll.final_at }}{% endif %}">Final</span>{% endif %}
     <a class="ff-back" href="/hr">&larr; Back to HR &amp; Payroll</a>
     <div class="ff-actions">
+      {# Review Inbox is a PROCESS button (Jay, 2026-10-25): blue, not gold like the page's other buttons, and a ring pulses around it
+         until the review is finished (static/js/review_inbox.js polls .../review-inbox/state). Without scripts the form still posts. #}
+      {% if payroll.reader.connected %}
+      <form method="post" action="/admin/timekeeping/status/{{ period.id }}/review-inbox" id="reviewInboxForm"
+            data-state-url="/admin/timekeeping/status/{{ period.id }}/review-inbox/state" data-running="{{ 1 if payroll.reader.running else 0 }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" id="reviewInboxBtn" class="btn btn-sm btn-process{% if payroll.reader.running %} is-running{% endif %}"{% if payroll.reader.running %} disabled aria-busy="true"{% endif %}
+                data-tip="Read the payroll mailbox now. A ring pulses around this button until the review is finished, then Last updated changes."><span class="btn-process-label">{% if payroll.reader.running %}Reviewing inbox&hellip;{% else %}Review Inbox{% endif %}</span></button>
+      </form>
+      {% else %}
+      <button type="button" class="btn btn-sm btn-process" disabled data-tip="The cloud reader is not connected yet. The reader on the diocese PC still checks the inbox by itself.">Review Inbox</button>
+      {% endif %}
+      <span class="ff-process-msg" id="reviewInboxMsg" role="status" aria-live="polite"></span>
       <button type="button" class="btn btn-sm btn-primary" data-ff-dialog="changePeriodDialog">Change period</button>
       <div class="ff-dropdown">
         <button type="button" class="btn btn-sm btn-primary" data-ff-dropdown aria-haspopup="menu" aria-expanded="false">Actions &#9662;</button>
@@ -177,6 +191,11 @@
     <div class="ff-foot">
       <span class="ff-count" data-ff-count>{{ rows|length }} shown</span>
       <span class="ff-count">{{ rows|length }} parishes &middot; {{ ns.ok + ns.idle }} green &middot; {{ ns.ready }} ready to approve &middot; {{ ns.attn }} to review &middot; {{ ns.miss }} missing hours</span>
+      <span class="ff-count ff-updated" data-ff-updated{% if payroll.reader.detail %} data-tip="{{ payroll.reader.detail }}"{% endif %}>
+        {% if payroll.reader.running %}<span class="ph-state-attn">Review running since {{ payroll.reader.running_since }}</span> &middot; {% endif %}
+        {% if payroll.reader.failed %}<span class="ph-state-attn" data-tip="The last review failed {{ payroll.reader.failed_at }}. Nothing was lost; it will try again.">Last review failed {{ payroll.reader.failed_at }}</span> &middot; {% endif %}
+        Last updated: <strong>{{ payroll.reader.last or "never" }}</strong>
+      </span>
     </div>
   </div>
 
@@ -219,6 +238,7 @@
 {% endblock %}
 {% block extra_js %}
 <script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
+<script src="/static/js/review_inbox.js?v={{ asset_version('js/review_inbox.js') }}"></script>
 <script>
 document.querySelectorAll('form[method="post" i]').forEach(function (form) {
   form.addEventListener('submit', function (e) {

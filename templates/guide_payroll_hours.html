@@ -25,7 +25,7 @@
     <p>In order, for each new email in the payroll mailbox:</p>
     <ol>
       <li><strong>Reads it, and only reads it.</strong> The routine has read-only access to the mailbox. It never sends, replies, labels, moves or deletes anything.</li>
-      <li><strong>Decides the pay period.</strong> A staff pay-date label on the message wins. Otherwise the deadline windows decide: mail up to noon on a period's submission deadline belongs to that period.</li>
+      <li><strong>Decides the pay period.</strong> A staff pay-date label on the message wins. Otherwise the windows decide, and the noon deadline is soft: mail that arrives after it still belongs to that period until the pay date ends, unless the email says its hours are for the next pay period.</li>
       <li><strong>Decides the parish.</strong> From the sender's address (the people listed on each parish's Profile), or from the parish named in a forwarded message. If it cannot tell, the email goes to review. It does not guess.</li>
       <li><strong>Reads the content</strong>, including a timesheet in a photo, PDF, spreadsheet or Word attachment. The text of the email and those attachments is read by an AI (Claude) to pick out who worked how many hours. Attachments that may hold personal data (enrollment forms, W-4, I-9, direct deposit forms) are <strong>never sent</strong> to the AI, and Social Security numbers, bank numbers and birth dates are never copied.</li>
       <li><strong>Matches each name to the parish's roster.</strong> A clear match is recorded. A close but uncertain match, or two people who fit, goes to review.</li>
@@ -56,7 +56,7 @@
     <div class="hiw-subcards">
       <div class="hiw-subcard">
         <h3>The top</h3>
-        <p>The pill by the heading says whether the period is <strong>Open</strong>, <strong>Closed</strong> or <strong>Future</strong> (a <strong>Final</strong> pill appears once the hours are final). <strong>Change period</strong> lists every pay period so you can open another one. The <strong>Actions</strong> menu holds <strong>Set status</strong> (open or close the period), <strong>Excel for Checkwriters</strong>, <strong>Mark hours Final</strong>, <strong>Variance report</strong> and <strong>Carry forward standing hours</strong>. Only the parish rows scroll.</p>
+        <p>The pill by the heading says whether the period is <strong>Open</strong>, <strong>Closed</strong> or <strong>Future</strong> (a <strong>Final</strong> pill appears once the hours are final). <strong>Change period</strong> lists every pay period so you can open another one. The blue <strong>Review Inbox</strong> button reads the payroll mailbox right now (it is available once the cloud reader is connected, and until then the button says so): a ring pulses around it while the review runs, and when it is finished the ring stops and <strong>Last updated</strong> changes. The <strong>Actions</strong> menu holds <strong>Set status</strong> (open or close the period), <strong>Excel for Checkwriters</strong>, <strong>Mark hours Final</strong>, <strong>Variance report</strong> and <strong>Carry forward standing hours</strong>. Only the parish rows scroll. At the bottom right of the screen, <strong>Last updated</strong> shows the date and time (MM/DD HH:MM) the payroll mailbox was last read; while a review is running it says so, and if the last one failed it says that too.</p>
       </div>
       <div class="hiw-subcard">
         <h3>Status</h3>

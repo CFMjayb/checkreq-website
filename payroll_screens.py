@@ -22,7 +22,8 @@ from __future__ import annotations
 from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 import category_order
 import cornerstone_mode
@@ -30,6 +31,7 @@ import db
 import email_pdf
 import org_time
 import payroll_decisions as pdec
+import payroll_inbox_run
 import payroll_totals as pt
 import rbac
 import registry
@@ -294,7 +296,38 @@ def board_summary(org_id: int, period: dict, rows: list[dict] | None = None) -> 
             "not_done": sum(1 for r in (rows or []) if not r.get("done")),
             "final": bool(period.get("hours_finalized_at")),
             "final_at": org_time.format_local(period.get("hours_finalized_at"), org_time.zone_name_for_org(org_id))
-            if period.get("hours_finalized_at") else None}
+            if period.get("hours_finalized_at") else None,
+            "reader": payroll_inbox_run.summary(org_id)}
+
+
+@router.post("/admin/timekeeping/status/{period_id}/review-inbox")
+async def review_inbox(period_id: int, request: Request):
+    """Time Review's blue Review Inbox button: starts a review of the payroll mailbox (Cloud Run job). HR Admin or Beacon
+    Admin of this diocese; the browser sends nothing but the button press. The page's script asks for JSON (the answer plus the
+    state it then polls); a plain form post still redirects back with a banner."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    code = await run_in_threadpool(payroll_inbox_run.start_review, org, user)
+    text = payroll_inbox_run.MESSAGES.get(code, payroll_inbox_run.MESSAGES["unavailable"])
+    if "application/json" in request.headers.get("accept", ""):
+        state = await run_in_threadpool(payroll_inbox_run.summary, org["id"])
+        return JSONResponse({"ok": code in payroll_inbox_run.OK_CODES, "code": code, "message": text, "state": state},
+                            headers={"Cache-Control": "no-store"})
+    if code in payroll_inbox_run.OK_CODES:
+        return _status_back(period_id, msg=text)
+    return _status_back(period_id, err=text)
+
+
+@router.get("/admin/timekeeping/status/{period_id}/review-inbox/state")
+async def review_inbox_state(period_id: int, request: Request):
+    """Where the payroll mailbox review stands (running or not, Last updated, failed): what the Review Inbox button's ring watches.
+    Same gate as the button. Times and counts only, the same things the page already shows."""
+    user, org, err = _require_hr_admin(request)
+    if err:
+        return err
+    state = await run_in_threadpool(payroll_inbox_run.summary, org["id"])
+    return JSONResponse(state, headers={"Cache-Control": "no-store"})
 
 
 # ------------------------------------------------------------------ the stored email PDF

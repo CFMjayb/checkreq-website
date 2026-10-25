@@ -93,6 +93,8 @@ table.ff-table { width: 100%; border-collapse: separate; border-spacing: 0; tabl
 }
 .ff-foot .ff-count { font-size: 0.8rem; color: var(--color-muted, #6b645a); }
 .ff-foot .ff-msg { font-size: 0.85rem; font-weight: 600; margin-left: auto; }
+.ff-foot .ff-updated { margin-left: auto; white-space: nowrap; }
+.ff-foot .ff-updated strong { color: var(--color-ink, #2b2b2b); }
 .ff-foot .ff-msg.ok { color: #1f6b3a; }
 .ff-foot .ff-msg.attn { color: #9c0006; }
 .ff-foot .ff-buttons { display: flex; gap: 6px; align-items: center; }
