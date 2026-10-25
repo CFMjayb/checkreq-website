@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">Year-end statements for donors: set the parish up once, make the list, build, and download. Beacon never sends one for you.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="where">
+    <h2>Where to find it</h2>
+    <p><strong>People &amp; Giving</strong> &rarr; <strong>Statements</strong> (in the bar with People, Giving, Funds &amp; campaigns and Pledges). It shows for people who hold the parish's <strong>Finance</strong> or <strong>Finance Supervisor</strong> role, once Giving is switched on for the parish. If you do not see it, you do not hold one of those roles here.</p>
+  </section>
+
+  <section class="hiw-section" id="setup">
+    <h2>Set up once, before the first real run</h2>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard">
+        <h3>1. The parish profile</h3>
+        <p>Legal name, <strong>tax ID (EIN)</strong>, address, the signer's name and title, a contact email, and whether to print the logo. Beacon fills the boxes from what it already holds (the parish record, the church office address, the clergy list), so <strong>check every one</strong>. The tax ID is printed on a tax document, so a person types or checks it. Press <strong>Save and confirm</strong>. Until the profile is confirmed you can still preview, but no real run can be made. Changing a confirmed profile takes the confirmation away until you confirm again.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>2. The statement settings</h3>
+        <p>A <strong>minimum</strong> year total (a donor under it gets no statement); whether to still build one for a donor with <strong>no mailing address</strong> (to hand out at church); a separate <strong>not tax deductible</strong> section; <strong>check numbers</strong>; and <strong>let members get their own statement online</strong>. Leave that last one off until you are ready.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>3. The template</h3>
+        <p>The template is the wording and look. The parish has one <strong>default</strong>. The first time a statement is needed, Beacon makes a copy of Cornerstone's Standard template for you. To change the wording, open <strong>Statement templates</strong>, <strong>copy</strong> a Cornerstone template to your parish, and edit your copy. Every save is a <strong>new version</strong>, and a preview with made-up data sits beside it. A copy never changes when Cornerstone changes its own; you are told when a newer version exists.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="hiw-section" id="preview">
+    <h2>Look at one donor first</h2>
+    <p>On the Statements page, search a donor's name (at least two letters) and press <strong>Preview</strong>. You see the statement as it would print for that year. A preview builds and stores nothing, and works before the profile is confirmed.</p>
+  </section>
+
+  <section class="hiw-section" id="run">
+    <h2>Run a year</h2>
+    <ol>
+      <li><strong>Make the list.</strong> On the Statements page choose <strong>Run statements</strong>. Pick the year, the template (the default unless you choose another), who (everyone, print only or email only), the order (name, ZIP code or envelope number), and the minimum. Typing a letter in <strong>Last name starts with</strong> makes a small test run. Press <strong>Make the list</strong>. Nothing is built yet.</li>
+      <li><strong>Read the list.</strong> It shows how many statements will be built and, for everyone left out, the plain reason, with a spreadsheet of the skipped. If you want to fix something (an address, a deposit still open), <strong>cancel the run</strong>, fix it, and make a new list: a year can have only one run open at a time.</li>
+      <li><strong>Build.</strong> Press <strong>Build the statements</strong>. Beacon builds a few at a time and shows progress. If you close the page, come back and press Build again: it carries on where it stopped. A statement that could not be built says why, and <strong>Try the failed ones again</strong> retries them. <strong>Cancel this run</strong> keeps everything already built.</li>
+      <li><strong>Download.</strong> <strong>All statements to print</strong> is one PDF for the donors who get a mailed copy, in the order of the list. The <strong>ZIP</strong> has a Print folder and an Email folder, one PDF per donor. Each statement also opens on its own. Every download is recorded.</li>
+    </ol>
+  </section>
+
+  <section class="hiw-section" id="counts">
+    <h2>What is on a statement</h2>
+    <ul>
+      <li>Only gifts in <strong>closed deposits</strong> count. A gift in a deposit that is still open is on no statement yet; the Run page tells you how many deposits are open.</li>
+      <li><strong>Corrections are netted.</strong> A reversed, returned or moved gift is not listed twice: a gift moved to another fund shows once, under its final fund.</li>
+      <li>The <strong>year</strong> is the postmark date when a gift has one, otherwise the gift date, so a December-postmarked check deposited in January counts in December. The current year runs through today.</li>
+      <li>Tax-deductible gifts are listed by date and fund, with a total. When a donor received goods or services, their value reduces the deductible amount. Gifts in kind are listed by description with no dollar value; stock by symbol and shares. Gifts that are not tax deductible stay off unless you turned that section on. Staff notes never appear.</li>
+      <li>The name printed is first, middle, last and suffix, with no title. An organization prints its name.</li>
+      <li>A <strong>joint</strong> statement needs both spouses set to Joint on their records and linked as spouses. Otherwise each gets their own, and the list warns you.</li>
+    </ul>
+    <p><strong>Who is left out, with the reason shown:</strong> a person set to <em>No statement</em>; a donor with nothing to report; a total under the minimum; no mailing address for a printed copy (unless you allowed it); a donor marked do not mail; and placeholder records.</p>
+  </section>
+
+  <section class="hiw-section" id="changed">
+    <h2>After a statement is built</h2>
+    <p><strong>Statements changed since issued</strong> (a link on the Run page) compares each built statement with the donor's gifts as they are now. A late gift, a correction or a reopened deposit makes a statement appear there. <strong>Re-issue</strong> builds a new, corrected statement. It says it is corrected and the date of the one it replaces. The old one is kept, marked replaced, and stays downloadable.</p>
+  </section>
+
+  <section class="hiw-section" id="members">
+    <h2>What members see</h2>
+    <p>If you turn on <strong>let members get their own statement online</strong> (the profile must be confirmed and the parish's member screen must be on), a member sees <strong>Giving</strong> &rarr; <strong>Statements</strong> on their own page: each year with their gift count and tax-deductible total. Choosing a year builds that statement on the spot with the parish's default template. They see only their own giving, nothing is stored, each statement is logged, and a person can build ten an hour. A gift appears there once its deposit is closed, the same as on yours.</p>
+  </section>
+
+  <section class="hiw-section" id="good">
+    <h2>Good to know</h2>
+    <ul>
+      <li><strong>Beacon never emails or mails a statement.</strong> It builds the files; your office prints or sends them.</li>
+      <li>A run is fixed to the template version it was made with, even if the template is changed afterwards.</li>
+      <li>Gifts are read again as each statement is built. Anything that changes later shows up under <strong>Changed since issued</strong>.</li>
+    </ul>
+  </section>
+
+</div>
+{% endblock %}

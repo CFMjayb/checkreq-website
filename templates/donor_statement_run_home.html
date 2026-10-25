@@ -5,13 +5,14 @@ donor_statement_run_home.html -- Giving statements, "Run statements": choose a y
 #}
 {% extends "base.html" %}
 {% from "donor_macros.html" import csrf with context %}
+{% from "_guide_link.html" import guide_link %}
 {% block title %}Run statements — {{ parish.name }}{% endblock %}
 {% block extra_css %}<link rel="stylesheet" href="/static/css/donor.css?v={{ asset_version('css/donor.css') }}"><link rel="stylesheet" href="/static/css/donor_statements.css?v={{ asset_version('css/donor_statements.css') }}">{% endblock %}
 {% block content %}
 <div class="page-shell-wide dm-page">
   {% include "donor_nav.html" %}
   <p class="back-link"><a href="/giving/statements">&larr; Giving statements</a></p>
-  <div class="dm-head"><h1>Run statements</h1></div>
+  <div class="dm-head"><h1>Run statements {{ guide_link("giving-statements", "How to use giving statements") }}</h1></div>
   <p class="dm-muted">Make the list first: it shows who gets a statement and, for everyone who does not, the plain reason. Nothing is built until you press Build on the next page, and nothing is ever sent to anyone.</p>
 
   {% if not opts.profile_ready %}
