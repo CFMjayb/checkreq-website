@@ -1,0 +1,41 @@
+/* process_button.css -- Jay, 2026-10-25.
+   A button that RUNS A PROCESS (reads a mailbox, starts a job) is blue, so it reads as different from the page's ordinary gold
+   buttons. While the process runs, a ring pulses around the button (the same pulse the Submit and Post to QBO buttons use:
+   no rotation, per Jay 2026-09-22) until the page learns the process has finished. Used first by Time Review > Review Inbox. */
+
+.btn-process {
+  position: relative;
+  background: linear-gradient(135deg, #3b82c4, #1f5fa8);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(31, 95, 168, 0.35);
+}
+.btn-process:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(31, 95, 168, 0.5); }
+.btn-process:focus-visible { outline: 3px solid rgba(31, 95, 168, 0.45); outline-offset: 2px; }
+.btn-process:disabled { cursor: default; }
+.btn-process:disabled:not(.is-running) { opacity: 0.55; box-shadow: none; }
+
+/* Running: the ring sits just outside the button's own shape (border-radius: inherit) and pulses in and out. */
+.btn-process.is-running { cursor: progress; }
+.btn-process.is-running::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  border: 3px solid #12406f;
+  pointer-events: none;
+  animation: btn-process-pulse 1.1s ease-in-out infinite;
+}
+@keyframes btn-process-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-process.is-running::after { animation: none; opacity: 1; }
+}
+
+/* The one-line result next to the button (started, finished, failed). */
+.ff-process-msg { font-size: 0.82rem; font-weight: 600; color: var(--color-muted, #6b645a); }
+.ff-process-msg:empty { display: none; }
+.ff-process-msg.ok { color: #1f6b3a; }
+.ff-process-msg.attn { color: #9c0006; }
+.ff-process-msg a { margin-left: 6px; font-weight: 600; }

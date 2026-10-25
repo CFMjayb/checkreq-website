@@ -168,7 +168,10 @@ def summary(org_id: int, now: dt.datetime | None = None) -> dict:
         detail = f"{c.get('messages', 0)} messages, {c.get('lines_recorded', 0)} hour lines, {c.get('review', 0)} to a person"
     running = is_running(st, now)
     failed = bool(st["state"] == "failed" and st["failed_at"] and (not st["finished_at"] or st["failed_at"] > st["finished_at"]))
-    return {"last": _fmt(st["finished_at"], zone, "%m/%d %H:%M"), "detail": detail,
+    # true when the last finished review put something on the board (hour lines, or items a person has to look at): the page
+    # reloads itself once for that, and leaves a review that found nothing new alone
+    changed = bool(st["finished_at"] and (c.get("lines_recorded") or c.get("review") or c.get("recorded")))
+    return {"last": _fmt(st["finished_at"], zone, "%m/%d %H:%M"), "detail": detail, "changed": changed,
             "running": running, "running_since": _fmt(st["started_at"], zone, "%H:%M") if running else None,
             "failed": failed, "failed_at": _fmt(st["failed_at"], zone, "%m/%d %H:%M") if failed else None,
             "connected": bool(job_name(org_id))}
