@@ -142,6 +142,7 @@ import timekeeping_review
 import hr_hub  # the HR & Payroll menu (2026-10-17)
 import parish_hr_hub  # the same menu in Parish Mode (2026-10-23)
 import hr_cases  # 26-162 Onboarding & Offboarding screens (HR Status Board, cases, templates)
+import overview_docs  # 26-163 Beacon Overview library (CFM Items > Beacon Overview)
 import hr_api  # 26-162 Onboarding & Offboarding service API (one endpoint = one tool)
 import timekeeping_status
 import payroll_api
@@ -779,6 +780,10 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # entity_roles` check every other portal tile already uses, instead of
     # a one-off template special-case.
     if entity_roles & ADMIN_TASK_ROLE_KEYS:
+        entity_roles = entity_roles | {"administrative_tasks"}
+    # 26-163 (2026-10-25): a Cornerstone staff member (cornerstone_employee at ANY organization) reaches Administrative Tasks, where the
+    # Beacon Overview card lives under CFM Items. The rule is in overview_docs.py; _roles() is request-cached, so this costs no query.
+    if "administrative_tasks" not in entity_roles and overview_docs.staff_reach_admin_hub(_roles(request, user, None), org_id):
         entity_roles = entity_roles | {"administrative_tasks"}
     # Parish Portal S3 (2026-08-08): same synthetic-pseudo-role trick as
     # administrative_tasks above, so the Parish Access Requests tile uses
@@ -9595,6 +9600,8 @@ parish_hr_hub.register(app, current_user=_current_user, current_org=_current_org
 # service API (X-API-Key from Secret Manager beacon-hr-api-keys; /api/hr/ is CSRF-exempt in csrf_guard.py).
 hr_cases.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 hr_api.register(app)
+# 26-163 Beacon Overview library: read-only pages and two read tools; all rules live in logic/overview_docs/.
+overview_docs.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 # Diocese status board / "enter missing data" backfill / Excel export
 # (2026-08-16, per Jay's direct request) -- new sibling module, same
 # current_user/current_org/render signature as timekeeping.py/

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Beacon Overview — Beacon{% endblock %}
+{#
+  The Beacon Overview library (overview_docs.py): plain-language overviews for Cornerstone staff, grouped by category.
+  A document opens on its own page (overview_reader.html). Look agreed with Jay in 26-163's preview.
+#}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/overview_library.css?v={{ asset_version('css/overview_library.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell ovl">
+
+<p class="ovl-crumb"><a href="{{ back_url }}">{{ back_label }}</a> &rsaquo; Beacon Overview</p>
+<h1>Beacon Overview</h1>
+<p class="sub">Plain-language guides for Cornerstone staff: what runs overnight, how Beacon works, and what the CFM database holds.</p>
+
+{% if groups %}
+  {% for g in groups %}
+  <section class="ovl-group">
+    <h2 class="ovl-cat">{{ g.category }}</h2>
+    <div class="ovl-grid">
+      {% for d in g.docs %}
+      <a class="ovl-card" href="/cfm/overview/{{ d.slug }}">
+        <strong>{{ d.title }}</strong>
+        {% if d.summary %}<span class="ovl-sum">{{ d.summary }}</span>{% endif %}
+        <span class="ovl-upd">Updated {{ d.updated_label }} &middot; v{{ d.version }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+{% else %}
+  <div class="card ovl-empty"><p>No documents have been published yet.</p></div>
+{% endif %}
+
+</div>
+{% endblock %}
