@@ -103,21 +103,70 @@ def _fmt_date(value) -> str:
     return value.strftime("%m/%d/%y") if value and hasattr(value, "strftime") else (value or "")
 
 
-def default_message(org: dict, period: dict) -> dict:
-    """The starting subject and body. {department} is replaced for each department when the emails are made."""
+ORIGINAL_SUBJECT = "Payroll hours reminder: {department}"
+ORIGINAL_BODY = (
+    "Hello,\n\n"
+    "We have not yet received the payroll hours for {department} for the pay period {period}. They are due by {deadline}.\n\n"
+    "Please reply to this email with the hours for each hourly employee (regular, overtime, sick, vacation and holiday), "
+    "or tell us if there are no hours to report this period.\n\n"
+    "Thank you,\n{org} payroll"
+)
+SETTING_SUBJECT = "payroll_reminder_subject"       # app_settings key "<key>:<org id>": the diocese's standard subject
+SETTING_BODY = "payroll_reminder_body"             # ... and its standard message, saved WITH {period} and {deadline} in it
+
+
+def period_text(period: dict) -> str:
     what = f"{_fmt_date(period.get('period_start'))} to {_fmt_date(period.get('period_end'))}"
-    if period.get("label"):
-        what = f"{period['label']} ({what})"
+    return f"{period['label']} ({what})" if period.get("label") else what
+
+
+def deadline_text(period: dict) -> str:
+    return _fmt_date(period.get("submission_deadline")) or "the payroll deadline"
+
+
+def expand(text: str, period: dict) -> str:
+    """{period} and {deadline} become this pay period's text. {department} is left for each department's own email."""
+    return (text or "").replace("{period}", period_text(period)).replace("{deadline}", deadline_text(period))
+
+
+def collapse(text: str, period: dict) -> str:
+    """The reverse, for saving: this pay period's own dates go back to {period} and {deadline}, so a saved standard message is right
+    for every later pay period instead of keeping this one's dates."""
+    out = (text or "").replace(period_text(period), "{period}")
     due = _fmt_date(period.get("submission_deadline"))
-    body = (
-        "Hello,\n\n"
-        f"We have not yet received the payroll hours for {{department}} for the pay period {what}."
-        + (f" They are due by {due}." if due else "")
-        + "\n\nPlease reply to this email with the hours for each hourly employee (regular, overtime, sick, vacation and holiday), "
-        "or tell us if there are no hours to report this period.\n\n"
-        f"Thank you,\n{org.get('name') or 'The diocese'} payroll"
-    )
-    return {"subject": "Payroll hours reminder: {department}", "body": body}
+    return out.replace(due, "{deadline}") if due else out
+
+
+def original_message(org: dict, period: dict) -> dict:
+    return {"subject": expand(ORIGINAL_SUBJECT, period),
+            "body": expand(ORIGINAL_BODY.replace("{org}", org.get("name") or "The diocese"), period)}
+
+
+def saved_message(org: dict) -> dict | None:
+    """The diocese's saved standard message (with its placeholders), or None when nobody saved one."""
+    subject = app_settings.get_setting(f"{SETTING_SUBJECT}:{org['id']}")
+    body = app_settings.get_setting(f"{SETTING_BODY}:{org['id']}")
+    return {"subject": subject, "body": body} if subject and body else None
+
+
+def default_message(org: dict, period: dict) -> dict:
+    """The starting subject and body for this pay period: the diocese's saved standard message if there is one, else the original
+    wording. {department} is replaced for each department when the emails are made."""
+    saved = saved_message(org)
+    if saved:
+        return {"subject": expand(saved["subject"], period), "body": expand(saved["body"], period), "saved": True}
+    return {**original_message(org, period), "saved": False}
+
+
+def save_standard_message(org: dict, user: dict, period: dict, subject: str, body: str) -> None:
+    """Keeps what was written as the standard message from now on (this pay period's dates become placeholders first)."""
+    app_settings.set_setting(f"{SETTING_SUBJECT}:{org['id']}", collapse(subject, period), user["id"])
+    app_settings.set_setting(f"{SETTING_BODY}:{org['id']}", collapse(body, period), user["id"])
+
+
+def clear_standard_message(org: dict) -> None:
+    db.execute("DELETE FROM checkreq.app_settings WHERE key = ANY(%s)",
+               ([f"{SETTING_SUBJECT}:{org['id']}", f"{SETTING_BODY}:{org['id']}"],))
 
 
 def reply_to_for(org: dict) -> str:
@@ -213,29 +262,33 @@ def page_context(org: dict, period: dict, form=None, query=None, error: str | No
         recent = bool(sent and (now - sent["created_at"]) < dt.timedelta(hours=RECENT_HOURS))
         checked = c["state"] == "miss" and bool(senders) and not recent
         ticked = {a["email"] for a in senders}
-        extra = ""
+        extra, remember = "", False
         if form is not None:
             checked = f"send_{pid}" in form
             ticked = {str(a).strip().lower() for a in form.getlist(f"to_{pid}")}
             extra = str(form.get(f"extra_{pid}") or "")
+            remember = f"remember_{pid}" in form
         rows.append({
             "parish_id": pid, "label": label_of(c), "name": c["parish_name"], "state": c["state"], "status": STATUS_TEXT[c["state"]],
-            "senders": senders, "recipients": recipients, "ticked": ticked, "extra": extra, "checked": checked,
+            "senders": senders, "recipients": recipients, "ticked": ticked, "extra": extra, "remember": remember, "checked": checked,
             "reminded": org_time.format_local(sent["created_at"], zone) if sent else "",
             "reminded_to": (sent or {}).get("recipients") or "", "recent": recent,
             "failed_why": (failed["error"] or "The last send failed.") if failed and (not sent or failed["created_at"] > sent["created_at"]) else "",
         })
     message = default_message(org, period)
     if form is not None:
-        message = {"subject": str(form.get("subject") or ""), "body": str(form.get("body") or "")}
+        message = {**message, "subject": str(form.get("subject") or ""), "body": str(form.get("body") or "")}
     q = query or {}
     summary = None
     if str(q.get("sent", "")).isdigit() or str(q.get("failed", "")).isdigit():
         summary = {"sent": int(q.get("sent") or 0), "failed": int(q.get("failed") or 0), "skipped": int(q.get("skipped") or 0),
-                   "failed_for": str(q.get("failed_for") or "")[:300]}
+                   "failed_for": str(q.get("failed_for") or "")[:300], "remembered": int(q.get("remembered") or 0) if str(q.get("remembered", "")).isdigit() else 0,
+                   "saved_message": q.get("saved_message") == "1"}
     dev = getattr(email_client, "_BEACON_ENV", "dev") != "prod"
     return {
         "current_org": org, "period": period, "rows": rows, "subject": message["subject"], "body": message["body"],
+        "message_saved": message.get("saved", False), "save_ticked": form is not None and "save_message" in form,
+        "message_reset": q.get("msg") == "reset",
         "reply_to": mailbox, "log_ok": log_ok, "can_send": bool(log_ok and mailbox and rows), "error": error, "summary": summary,
         "dev_mode": dev, "test_address": app_settings.get_setting("email_test_mode_address") if dev else None,
         "recent_hours": RECENT_HOURS, "due": _fmt_date(period.get("submission_deadline")),
@@ -267,8 +320,10 @@ def reminders_page(period_id: int, request: Request):
 
 def send_reminders(org: dict, user: dict, period: dict, form) -> dict:
     """Checks everything first and sends nothing if anything is wrong, then sends one email per ticked department.
-    Returns {"error": text or None, "sent": [labels], "failed": [(label, why)], "skipped": [labels]}."""
-    out: dict = {"error": None, "sent": [], "failed": [], "skipped": []}
+    Returns {"error": text or None, "sent": [labels], "failed": [(label, why)], "skipped": [labels], "remembered": [(label, address)],
+    "saved_message": bool}. Two things are kept only when the send itself is going ahead: the wording, when "Save as the standard
+    message" is ticked, and an address typed on a row with "Remember" ticked, once that department's email was sent."""
+    out: dict = {"error": None, "sent": [], "failed": [], "skipped": [], "remembered": [], "saved_message": False}
 
     def refuse(text: str) -> dict:
         out["error"] = text
@@ -282,8 +337,9 @@ def send_reminders(org: dict, user: dict, period: dict, form) -> dict:
     mailbox = reply_to_for(org)
     if not mailbox:
         return refuse("No reply address is set for this diocese, so a parish could not answer. Nothing was sent.")
-    subject_t = " ".join(str(form.get("subject") or "").split())   # one line: a line break can never ride in a subject
-    body_t = str(form.get("body") or "").replace("\r\n", "\n").strip()
+    posted_subject = " ".join(str(form.get("subject") or "").split())   # one line: a line break can never ride in a subject
+    posted_body = str(form.get("body") or "").replace("\r\n", "\n").strip()
+    subject_t, body_t = expand(posted_subject, period), expand(posted_body, period)   # {period} and {deadline}: this pay period's text
     if not subject_t or not body_t:
         return refuse("Write a subject and a message first.")
     if len(subject_t) > MAX_SUBJECT or len(body_t) > MAX_BODY:
@@ -297,7 +353,7 @@ def send_reminders(org: dict, user: dict, period: dict, form) -> dict:
 
     cands = {c["parish_id"]: c for c in candidates(org["id"], period)}
     contacts = department_contacts(org["id"], list(cands), mailbox)
-    plan: list[tuple[dict, list[str]]] = []
+    plan: list[tuple[dict, list[str], list[str]]] = []
     for pid in selected:
         c = cands.get(pid)
         if c is None:
@@ -328,11 +384,17 @@ def send_reminders(org: dict, user: dict, period: dict, form) -> dict:
         subject = subject_t.replace("{department}", c["parish_name"])
         if len(subject) > MAX_SUBJECT or "[" in subject or "]" in subject:
             return refuse(f"{label}: the subject is too long or has a square bracket once the department name is added.")
-        plan.append((c, chosen))
+        # "Remember": only an address typed on the row that the department did not already have on file
+        to_remember = [a for a in extra if f"remember_{pid}" in form and a != mailbox and a not in allowed]
+        plan.append((c, chosen, to_remember))
     if not plan:
         return refuse("None of the ticked departments is missing hours any more, so nothing was sent.")
 
-    for c, chosen in plan:
+    if "save_message" in form:   # everything checked out and the send goes ahead: keep this wording as the standard message
+        save_standard_message(org, user, period, posted_subject, posted_body)
+        out["saved_message"] = True
+
+    for c, chosen, to_remember in plan:
         label, to = label_of(c), ", ".join(chosen)
         text = body_t.replace("{department}", c["parish_name"])
         result = email_client.send_email(
@@ -341,6 +403,12 @@ def send_reminders(org: dict, user: dict, period: dict, form) -> dict:
         if result.get("status") == "sent":
             _write_log(org["id"], period["id"], c["parish_id"], "sent", to, None, user["id"])
             out["sent"].append(label)
+            for a in to_remember:   # the email went out, so the address is worth keeping: a sender of this department (added by hand)
+                try:
+                    pt.add_learned_sender(org["id"], parish_code=c["parish_code"], email=a, source="manual")
+                    out["remembered"].append((label, a))
+                except pt.PayrollError:
+                    pass
         else:
             why = f"The email was not sent: {result.get('error') or 'no answer from the email server'}"
             _write_log(org["id"], period["id"], c["parish_id"], "failed", to, why, user["id"])
@@ -366,4 +434,20 @@ async def reminders_send(period_id: int, request: Request):
     failed_for = ", ".join(label for label, _why in result["failed"])
     return RedirectResponse(
         f"/admin/timekeeping/status/{period_id}/reminders?sent={len(result['sent'])}&failed={len(result['failed'])}"
-        f"&skipped={len(result['skipped'])}&failed_for={quote_plus(failed_for[:300])}", status_code=303)
+        f"&skipped={len(result['skipped'])}&remembered={len(result['remembered'])}&saved_message={1 if result['saved_message'] else 0}"
+        f"&failed_for={quote_plus(failed_for[:300])}", status_code=303)
+
+
+@router.post("/admin/timekeeping/status/{period_id}/reminders/reset-message")
+def reminders_reset_message(period_id: int, request: Request):
+    """Back to the original wording: forgets the saved standard message (the button posts the page's form, so the form token is there)."""
+    user, org, err = _gate(request)
+    if err:
+        return err
+    period = _period(org["id"], period_id)
+    if not period:
+        return RedirectResponse("/admin/timekeeping/periods?error=That+payroll+period+was+not+found+for+this+diocese.", status_code=303)
+    if period["status"] != "open":
+        return _board_back(period_id, "Reminders can only be sent while the pay period is Open.")
+    clear_standard_message(org)
+    return RedirectResponse(f"/admin/timekeeping/status/{period_id}/reminders?msg=reset", status_code=303)

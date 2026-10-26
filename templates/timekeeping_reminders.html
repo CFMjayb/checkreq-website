@@ -40,9 +40,12 @@
     {% if summary.sent %}Sent {{ summary.sent }} reminder{{ '' if summary.sent == 1 else 's' }}.{% endif %}
     {% if summary.failed %}{{ summary.failed }} could not be sent{% if summary.failed_for %}: {{ summary.failed_for }}{% endif %}. The row says why.{% endif %}
     {% if summary.skipped %}{{ summary.skipped }} ticked department{{ '' if summary.skipped == 1 else 's' }} had hours come in and {{ 'was' if summary.skipped == 1 else 'were' }} not emailed.{% endif %}
+    {% if summary.remembered %}Remembered {{ summary.remembered }} address{{ '' if summary.remembered == 1 else 'es' }}: {{ 'it is' if summary.remembered == 1 else 'they are' }} now on {{ 'its' if summary.remembered == 1 else 'their' }} department{{ '' if summary.remembered == 1 else 's' }} and ticked from now on.{% endif %}
+    {% if summary.saved_message %}Saved as the standard message.{% endif %}
     {% if dev_mode and summary.sent %}This is the development site: the emails went to {{ test_address or 'no one (no test address is set)' }}, not to the departments.{% endif %}
   </div>
   {% endif %}
+  {% if message_reset %}<div class="banner banner-success ff-banner">The standard message is forgotten: the original wording is back.</div>{% endif %}
   {% if not log_ok %}<div class="banner banner-error ff-banner">Sending is switched off until the reminder log (migration 104) is set up on this site.</div>{% endif %}
   {% if log_ok and not reply_to %}<div class="banner banner-error ff-banner">No reply address is set for this diocese, so sending is switched off: a parish could not answer.</div>{% endif %}
   {% if dev_mode and not summary %}<div class="banner banner-info ff-banner">Development site: every email goes to {{ test_address or 'no one (no test address is set)' }} with a DEV subject, never to a department.</div>{% endif %}
@@ -53,6 +56,13 @@
       <label>Subject <input type="text" name="subject" maxlength="200" value="{{ subject }}"></label>
       <label>Message <textarea name="body" rows="9" maxlength="3000">{{ body }}</textarea></label>
       <p class="c-muted">Write <code>{department}</code> where the department&rsquo;s name should go. One email is made for each ticked department. Leave square brackets out of the subject: the mail system drops mail that has them.</p>
+      <div class="rem-save-row">
+        <label class="rem-save"><input type="checkbox" name="save_message" value="1"{% if save_ticked %} checked{% endif %}> Save this wording as the standard message</label>
+        <span class="c-muted">{% if message_saved %}A standard message is saved: it starts every reminder. This pay period&rsquo;s dates are kept as <code>{period}</code> and <code>{deadline}</code> so it is right for every pay period.{% else %}It is kept when you send, and starts every reminder from then on. This pay period&rsquo;s dates are kept as <code>{period}</code> and <code>{deadline}</code>.{% endif %}</span>
+        {% if message_saved %}<button type="submit" class="btn btn-sm btn-secondary" data-plain formnovalidate
+                formaction="/admin/timekeeping/status/{{ period.id }}/reminders/reset-message"
+                data-tip="Forgets the saved standard message and goes back to the original wording">Use the original wording</button>{% endif %}
+      </div>
     </div>
   </details>
 
@@ -98,7 +108,10 @@
               {% endfor %}
               {% if not r.senders %}<span class="c-muted rem-note">No sender learned from its emails yet.{% if not r.recipients %} Type an address.{% endif %}</span>{% endif %}
             </td>
-            <td><input type="text" class="rem-extra" name="extra_{{ r.parish_id }}" value="{{ r.extra }}" placeholder="name@example.org" autocomplete="off"></td>
+            <td>
+              <input type="text" class="rem-extra" name="extra_{{ r.parish_id }}" value="{{ r.extra }}" placeholder="name@example.org" autocomplete="off">
+              <label class="rem-remember" data-tip="Adds a typed address to this department as a sender, so it is ticked next time. The payroll inbox reader also uses a department's senders to tell which department an email belongs to."><input type="checkbox" name="remember_{{ r.parish_id }}" value="1"{% if r.remember %} checked{% endif %}> Remember</label>
+            </td>
           </tr>
           {% else %}
           <tr class="ff-empty"><td colspan="6">Every department&rsquo;s hours have come in, or are not expected. Nobody needs a reminder.</td></tr>

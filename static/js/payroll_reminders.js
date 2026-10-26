@@ -60,6 +60,8 @@
   form.addEventListener('input', function (e) { if (e.target && e.target.classList && e.target.classList.contains('rem-extra')) refresh(); });
 
   form.addEventListener('submit', function (e) {
+    // a button marked data-plain (Use the original wording) is not a send: no count, no question, no lock
+    if (e.submitter && e.submitter.hasAttribute('data-plain')) return;
     var t = totals();
     if (t.depts === 0) { e.preventDefault(); return; }
     if (t.noAddress) {
