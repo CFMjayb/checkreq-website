@@ -69,6 +69,8 @@ def register(app, *, current_user, current_org, render) -> None:
     closeout_screens.register(app, current_user=current_user, current_org=current_org, render=render, gate=_require_hr_admin)
     import hours_history  # the hours history screens (26-158): one person / one department, a row per pay period
     hours_history.register(app, current_user=current_user, current_org=current_org, render=render, gate=_require_hr_admin)
+    import payroll_import_csv  # the Checkwriters import file (26-158); registered here so it sits before /status/{period}/{parish}
+    payroll_import_csv.register(app, gate=_require_hr_admin)
     app.include_router(router)
 
 
