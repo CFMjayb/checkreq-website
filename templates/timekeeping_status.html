@@ -63,6 +63,11 @@
           <button type="button" role="menuitem" data-ff-dialog="setPeriodDialog">Set status (open / close)</button>
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/export">Excel for Checkwriters</a>
           {% if payroll.final %}
+          <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/checkwriters-csv" data-tip="The Final hours as a Checkwriters payroll import file (CSV, hours only, no pay).">CSV for Checkwriters import</a>
+          {% else %}
+          <button type="button" role="menuitem" disabled data-tip="Mark the hours Final first. The import file is only made from Final hours.">CSV for Checkwriters import</button>
+          {% endif %}
+          {% if payroll.final %}
           <form method="post" action="/admin/timekeeping/status/{{ period.id }}/unfinal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit">Mark hours not final</button></form>
           {% else %}
           <form method="post" action="/admin/timekeeping/status/{{ period.id }}/final"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit" data-tip="Needs every row green{% if payroll.not_done %}. {{ payroll.not_done }} not green yet{% endif %}">Mark hours Final</button></form>
