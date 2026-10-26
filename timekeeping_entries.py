@@ -424,19 +424,23 @@ def apply_totals_from_form(period: dict, parish: dict, org_id: int, user: dict, 
                             continue
                         pt.review_line(org_id, ln["line_id"], "edit", user["id"], hours=str(h))
                     else:
-                        pt.record_period_hours(org_id, period_id=period["id"], parish_code=parish["code"],
-                                               category_key=c["key"], hours=str(h), source="diocese",
-                                               employee_number=s["employee_number"], actor_user_id=user["id"],
-                                               status="confirmed")
+                        res = pt.record_period_hours(org_id, period_id=period["id"], parish_code=parish["code"],
+                                                     category_key=c["key"], hours=str(h), source="diocese",
+                                                     employee_number=s["employee_number"], actor_user_id=user["id"],
+                                                     status="confirmed")
+                        if res.get("action") == "unchanged":
+                            continue  # nothing was written, so it is not a saved change
                 else:
                     if ln is not None and ln["source"] != "parish":
                         problems.append(f"{who}: the diocese already recorded this total, so it was not changed.")
                         continue
                     if ln is not None and ln["line_hours"] == h:
                         continue
-                    pt.record_period_hours(org_id, period_id=period["id"], parish_code=parish["code"],
-                                           category_key=c["key"], hours=str(h), source="parish",
-                                           employee_number=s["employee_number"], actor_user_id=user["id"])
+                    res = pt.record_period_hours(org_id, period_id=period["id"], parish_code=parish["code"],
+                                                 category_key=c["key"], hours=str(h), source="parish",
+                                                 employee_number=s["employee_number"], actor_user_id=user["id"])
+                    if res.get("action") == "unchanged":
+                        continue  # nothing was written, so it is not a saved change
                 changed += 1
             elif ln is not None:
                 if diocese_mode:

@@ -13,7 +13,8 @@ line it touches belongs to it. The API takes org_id from the API key, never from
 
 THE RULES (plan A5) in one place:
   * One line per employee, period and category.
-  * Same hours as the line already holds: nothing changes (re-runs are safe).
+  * Same hours as the line already holds: nothing changes (re-runs are safe). The one exception is a REJECTED line: the same
+    figure from a different email, or typed by a person, brings it back (the same email read again does not).
   * Different hours on a needs_review or rejected line: the line takes the new figure and goes
     (back) to needs_review.
   * Different hours on a CONFIRMED line: the confirmed figure stays in force, the new one is
@@ -465,7 +466,12 @@ def record_period_hours(org_id: int, *, period_id: int, parish_code: str, catego
 
             line = cur_line
             old = Decimal(line["hours"])
-            if h == old:
+            # A REJECTED line is not "already entered". The same figure brings it back when it comes from a DIFFERENT email, or when a
+            # person types it (diocese or parish): Terri Cobb's 4.00 had been rejected as misfiled, and today's 4 was swallowed.
+            # The same email read again (an automated re-run) still changes nothing.
+            reopen_same = (h == old and line["review_status"] == "rejected"
+                           and (source in ("diocese", "parish") or source != line["source"] or (line["source_ref"] or None) != ref))
+            if h == old and not reopen_same:
                 # same figure: nothing changes. (A proposal equal to the confirmed figure is moot.)
                 conn.commit()
                 return {"action": "unchanged", "line_id": line["id"], "review_status": line["review_status"],
@@ -505,7 +511,8 @@ def record_period_hours(org_id: int, *, period_id: int, parish_code: str, catego
                  actor if new_status == "confirmed" else None,
                  dt.datetime.now(dt.timezone.utc) if new_status == "confirmed" else None, line["id"]))
             _log_edit(cur, line["id"], old, h, line["review_status"], new_status, actor, source,
-                      "Updated by a later source" + (f" ({ref})" if ref else "") + (f". {auto_note}" if auto_note else ""))
+                      ("Reopened a rejected line: the same figure arrived again" if reopen_same else "Updated by a later source")
+                      + (f" ({ref})" if ref else "") + (f". {auto_note}" if auto_note else ""))
             _unfinalize(cur, period_id)
             conn.commit()
             return {"action": "updated", "line_id": line["id"], "review_status": new_status, "flags": flags,
