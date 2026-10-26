@@ -1,69 +1,102 @@
 {% extends "base.html" %}
 {% block title %}Time Categories — Timekeeping{% endblock %}
+{#
+  Time Categories on the shared fixed frame (Jay, 2026-10-25: same slim rows and locked top and bottom as HR Activation, and no
+  expanding "drop-downs": adding a category and editing one are pop-ups, Hide / Unhide is a button in the row).
+#}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+{% endblock %}
 {% block content %}
-<div class="page-shell-wide">
-<h1>Time Categories</h1>
-<p class="back-link"><a href="/hr/admin">&larr; Back to HR Administrative Tasks</a></p>
-<p class="sub">Categories shown on {{ current_org.name }}'s served parishes' time-entry grid.
-Renaming a category doesn't affect hours already logged against it; hiding one removes it from
-future entry without touching historical data.</p>
+<div class="page-shell-wide"><div class="ff-shell">
 
-{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
-{% if request.query_params.get('saved') %}<div class="banner banner-success">Saved.</div>{% endif %}
+  <div class="ff-title-row">
+    <h1>Time Categories</h1>
+    <a class="ff-back" href="/hr/admin">&larr; Back to HR Administrative Tasks</a>
+    <div class="ff-actions">
+      <button type="button" class="btn btn-sm btn-primary" data-ff-dialog="addCategoryDialog">+ Add category</button>
+    </div>
+  </div>
 
-<div class="card">
-<details>
-  <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ Add Category</summary>
-  <form method="post" action="/admin/timekeeping/categories/create" style="margin-top:12px">
+  <div class="ff-info">
+    <span>The kinds of hours shown on {{ current_org.name }}'s time entry grid. Renaming a category does not change hours already logged against it; hiding one removes it from future entry without touching history.</span>
+  </div>
+
+  {% if request.query_params.get('error') %}<div class="banner banner-error ff-banner">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% if request.query_params.get('saved') %}<div class="banner banner-success ff-banner">Saved.</div>{% endif %}
+
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      <table class="ff-table">
+        <colgroup><col style="width:32%"><col style="width:22%"><col style="width:90px"><col style="width:110px"><col></colgroup>
+        <thead>
+          <tr>
+            <th data-sort="1">Label<span class="arrow"></span></th>
+            <th data-sort="1">Key<span class="arrow"></span></th>
+            <th data-sort="1" data-dir="asc" class="c-num">Sort<span class="arrow">&#9650;</span></th>
+            <th data-sort="1">Status<span class="arrow"></span></th>
+            <th aria-label="Actions"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in categories %}
+          <tr class="ff-row{{ '' if c.is_active else ' is-idle' }}">
+            <td>{{ c.label }}</td>
+            <td class="c-muted">{{ c.key }}</td>
+            <td class="c-num" data-v="{{ c.sort_order }}">{{ c.sort_order }}</td>
+            <td>{% if c.is_active %}<span class="badge badge-approved">Active</span>{% else %}<span class="c-muted">Hidden</span>{% endif %}</td>
+            <td>
+              <button type="button" class="btn btn-sm btn-secondary ff-rowbtn" data-ff-dialog="editCategory{{ c.id }}">Edit</button>
+              <form method="post" action="/admin/timekeeping/categories/{{ c.id }}/toggle-active">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                <button type="submit" class="btn btn-sm btn-secondary ff-rowbtn">{{ 'Hide' if c.is_active else 'Unhide' }}</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr class="ff-empty"><td colspan="5">No categories yet. The diocese's default four (Regular, Overtime, PTO/Sick, Holiday) are added automatically when the migration is applied.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count">{{ categories|length }} categor{{ 'y' if categories|length == 1 else 'ies' }}</span>
+    </div>
+  </div>
+
+</div></div>
+
+<dialog class="ff-dialog" id="addCategoryDialog">
+  <h2>Add category</h2>
+  <form method="post" action="/admin/timekeeping/categories/create">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="field"><label>Key (short, no spaces)</label><input type="text" name="key" required placeholder="e.g. jury_duty"></div>
     <div class="field"><label>Label</label><input type="text" name="label" required placeholder="e.g. Jury Duty"></div>
-    <div class="field"><label>Sort Order</label><input type="number" name="sort_order" value="50"></div>
-    <button type="submit" class="btn btn-sm">Add</button>
+    <div class="field"><label>Sort order</label><input type="number" name="sort_order" value="50"></div>
+    <div class="ff-dialog-actions">
+      <button type="button" class="btn btn-sm btn-secondary" data-ff-close>Cancel</button>
+      <button type="submit" class="btn btn-sm btn-primary">Add</button>
+    </div>
   </form>
-</details>
-</div>
+</dialog>
 
-<div class="card">
-<div class="table-scroll">
-<table class="simple-table">
-  <tr><th>Label</th><th>Key</th><th>Sort</th><th>Status</th><th></th></tr>
-  {% for c in categories %}
-  <tr>
-    <td>
-      <details>
-        <summary style="cursor:pointer">{{ c.label }}</summary>
-        <form method="post" action="/admin/timekeeping/categories/{{ c.id }}/update" style="margin-top:8px">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-          <div class="field"><label>Label</label><input type="text" name="label" value="{{ c.label }}" required></div>
-          <div class="field"><label>Sort Order</label><input type="number" name="sort_order" value="{{ c.sort_order }}"></div>
-          <button type="submit" class="btn btn-sm">Save</button>
-        </form>
-      </details>
-    </td>
-    <td class="sub">{{ c.key }}</td>
-    <td>{{ c.sort_order }}</td>
-    <td>
-      {% if c.is_active %}<span class="badge badge-confirmed">Active</span>
-      {% else %}<span class="sub">Hidden</span>{% endif %}
-    </td>
-    <td>
-      <form method="post" action="/admin/timekeeping/categories/{{ c.id }}/toggle-active">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-        <button type="submit" class="btn btn-secondary btn-sm">{{ 'Hide' if c.is_active else 'Unhide' }}</button>
-      </form>
-    </td>
-  </tr>
-  {% endfor %}
-  {% if not categories %}
-  <tr><td colspan="5" class="sub">No categories yet — the diocese's default 4 (Regular/Overtime/PTO-Sick/Holiday) are seeded automatically when the migration is applied.</td></tr>
-  {% endif %}
-</table>
-</div>
-</div>
-</div>
+{% for c in categories %}
+<dialog class="ff-dialog" id="editCategory{{ c.id }}">
+  <h2>Edit {{ c.label }}</h2>
+  <form method="post" action="/admin/timekeeping/categories/{{ c.id }}/update">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <div class="field"><label>Label</label><input type="text" name="label" value="{{ c.label }}" required></div>
+    <div class="field"><label>Sort order</label><input type="number" name="sort_order" value="{{ c.sort_order }}"></div>
+    <div class="ff-dialog-actions">
+      <button type="button" class="btn btn-sm btn-secondary" data-ff-close>Cancel</button>
+      <button type="submit" class="btn btn-sm btn-primary">Save</button>
+    </div>
+  </form>
+</dialog>
+{% endfor %}
 {% endblock %}
 {% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
 <script>
 document.querySelectorAll('form[method="post" i]').forEach(function (form) {
   form.addEventListener('submit', function (e) {

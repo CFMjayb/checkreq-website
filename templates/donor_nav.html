@@ -1,7 +1,7 @@
 {# donor_nav.html -- the module bar shown at the top of every Donor Management page. One slim row; a page may set
    nav_search to put the people search box at the right end of it (the person screen does, instead of a row of its own). #}
 <nav class="dm-nav" aria-label="People and giving">
-  <span class="dm-nav-parish">{{ parish.name }}</span>
+  <span class="dm-nav-parish">{{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</span>
   {% for item in dm_nav %}
   <a href="{{ item.href }}" class="{{ 'dm-nav-on' if dm_active == item.key else '' }}">{{ item.label }}{% if dm_counts and dm_counts.get(item.key) %} <span class="dm-count-badge" title="{{ 'Requests from parishioners waiting for Finance' if item.key == 'pledges' else 'Messages from parishioners waiting' }}">{{ dm_counts.get(item.key) }}</span>{% endif %}</a>
   {% endfor %}

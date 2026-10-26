@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Feedback & Requests — {{ parish.name }}{% endblock %}
+{% block title %}Feedback & Requests — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}{% endblock %}
 {% block content %}
 <div class="page-shell">
 <h1>Feedback &amp; Requests</h1>
-<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</a></p>
 
 {% if request.query_params.get('submitted') %}<div class="banner banner-success">Sent. Thank you!</div>{% endif %}
 {% if request.query_params.get('error') %}<div class="banner banner-error">Please choose a type and enter a message.</div>{% endif %}

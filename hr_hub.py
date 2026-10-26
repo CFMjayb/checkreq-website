@@ -24,6 +24,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+import hr_hub_badges
 import org_features
 import rbac
 
@@ -44,7 +45,7 @@ def register(app, *, current_user, current_org, render) -> None:
 _OPERATIONS = [
     {"title": "Time Review", "url": "/admin/timekeeping/status", "role": ["hr_admin", "beacon_admin"], "guide": "payroll-hours",
      "desc": "Review each parish's hours, open or close a period, close it out after payroll, enter missing hours, and export."},
-    {"title": "Roster Review", "url": "/admin/timekeeping/review", "role": ["hr_admin", "beacon_admin"],
+    {"title": "Roster Review", "url": "/admin/timekeeping/review", "role": ["hr_admin", "beacon_admin"], "guide": "roster-review",
      "desc": "Approve or reject the roster changes (new hires, terminations, edits) parishes and emails ask for."},
 ]
 
@@ -78,7 +79,8 @@ def hr_menu(request: Request):
         return RedirectResponse("/login")
     org = _current_org(request)
     org_id = org["id"] if org else None
-    cards = _visible(user, org_id, _OPERATIONS)
+    # copies: the card dicts above are module-level and shared by every request; the red counts belong to this visit only
+    cards = hr_hub_badges.with_badges(org_id, [dict(c) for c in _visible(user, org_id, _OPERATIONS)])
     if _visible(user, org_id, _ADMIN_TASKS):
         cards = cards + [_SUBMENU_CARD]
     if not cards:

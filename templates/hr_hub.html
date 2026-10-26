@@ -11,16 +11,18 @@
 {% from "_guide_link.html" import guide_link %}
 <div class="page-shell-wide">
 
-<h1>{{ page_title }}</h1>
+<h1>{{ page_title }}{% if page_guide %} {{ guide_link(page_guide, "How to use: " ~ page_title) }}{% endif %}</h1>
 <p><a href="{{ back_url }}">&larr; {{ back_label }}</a></p>
 <p class="sub">{{ sub }}</p>
 
 <div class="setup-grid" style="margin-top: var(--space-5);">
   {% for c in cards %}
   <div class="setup-tile is-built">
-    <div class="tile-head">
+    {# Jay (2026-10-25): the help icon sits right after the name; the red count dot, when something is waiting, is far right. #}
+    <div class="tile-head is-flow">
       <h2><a href="{{ c.url }}">{{ c.title }}{% if c.submenu %} &rsaquo;{% endif %}</a></h2>
       {% if c.guide %}{{ guide_link(c.guide, "How to use: " ~ c.title) }}{% endif %}
+      {% if c.badge %}<a class="tile-count" href="{{ c.url }}" title="{{ c.badge_tip }}" aria-label="{{ c.badge }} waiting: {{ c.badge_tip }}">{{ c.badge if c.badge < 100 else '99+' }}</a>{% endif %}
     </div>
     <div class="desc">{{ c.desc }}</div>
   </div>

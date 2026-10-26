@@ -167,3 +167,8 @@ table.te-table { table-layout: fixed; }
 .te-splitter:hover::before, .te-splitter:focus-visible::before, .te-splitter.dragging::before { background: var(--color-gold, #c9a227); }
 .te-splitter:focus-visible { outline: 2px solid var(--color-gold, #c9a227); outline-offset: -2px; }
 body.te-dragging { cursor: row-resize; user-select: none; }
+
+/* Time Review, a department's page: roster changes are waiting for this department in Roster Review (Jay, 2026-10-25). */
+.roster-flag { background: #fdf0d6; color: #5a3b00; border: 2px solid #d9a441; border-left: 10px solid #b7791f; font-size: 1.05rem; padding: 10px 14px; }
+.roster-flag strong { font-size: 1.15rem; color: #7d0006; margin-right: 6px; }
+.roster-flag a { font-weight: 700; margin-left: 6px; color: #7d0006; text-decoration: underline; white-space: nowrap; }

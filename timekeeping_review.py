@@ -73,9 +73,18 @@ def review_page(request: Request):
     # Roster Review (Jay, 2026-10-11): only the roster changes. The submitted-periods list is gone: all the time review is
     # done on Time Review (the old Time Status board).
     roster_changes = timekeeping_roster_changes.list_pending_review_for_org(org["id"])
+    # Time Review's warning flag links here with ?parish_id=: show just that department (and say so, with a way back to all)
+    only_parish = None
+    raw = request.query_params.get("parish_id")
+    if raw and raw.isdigit():
+        shown = [c for c in roster_changes if c["parish_id"] == int(raw)]
+        if shown:
+            only_parish = {"id": int(raw), "name": shown[0]["parish_name"]}
+            roster_changes = shown
     return _render(request, "timekeeping_review.html", user, {
         "current_org": org,
         "roster_changes": roster_changes,
+        "only_parish": only_parish,
     })
 
 

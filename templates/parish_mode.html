@@ -27,12 +27,11 @@
 <details class="card setup-section" open>
   <summary><h2>Parishes</h2></summary>
   <table class="simple-table compact">
-    <thead><tr><th>Parish</th><th>City</th><th></th></tr></thead>
+    <thead><tr><th>Parish</th><th></th></tr></thead>
     <tbody>
       {% for p in parishes %}
       <tr>
-        <td>{{ p.name }}</td>
-        <td>{{ p.city or "—" }}</td>
+        <td>{{ p.name }}{% if p.city %}, {{ p.city }}{% endif %}</td>
         <td>
           <form method="post" action="/admin/parish-mode/{{ p.id }}" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
@@ -41,7 +40,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="3">No parishes yet in this entity.</td></tr>
+      <tr><td colspan="2">No parishes yet in this entity.</td></tr>
       {% endfor %}
     </tbody>
   </table>

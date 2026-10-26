@@ -27,9 +27,13 @@
 <link rel="stylesheet" href="/static/css/process_button.css?v={{ asset_version('css/process_button.css') }}">
 {% endblock %}
 {% block content %}
-{% set ns = namespace(attn=0, miss=0, wait=0, ok=0, idle=0, ready=0, std=0, std_ready=0, std_done=0) %}
+{# Jay (2026-10-25): the Show dropdown at the top and the bar at the bottom are ONE filter. Every department is exactly one of
+   these seven kinds (a department with only standing hours is "Only Std Hrs", never also "Ready" or "Approved"), so both places
+   list the same seven kinds with the same counts and the same colors as the rows, and a box ticked in one is ticked in the other. #}
+{% set ns = namespace(attn=0, miss=0, wait=0, ok=0, idle=0, ready=0, std=0) %}
 {% set tok = csrf_token(request) %}
-{% for r in rows %}{% set st = r.state %}{% if st == 'attn' %}{% set ns.attn = ns.attn + 1 %}{% elif st == 'miss' %}{% set ns.miss = ns.miss + 1 %}{% elif st == 'wait' %}{% set ns.wait = ns.wait + 1 %}{% elif st == 'ok' %}{% set ns.ok = ns.ok + 1 %}{% elif st == 'idle' %}{% set ns.idle = ns.idle + 1 %}{% elif st == 'ready' %}{% set ns.ready = ns.ready + 1 %}{% endif %}{% if r.pill == 'only_std' %}{% set ns.std = ns.std + 1 %}{% set ns.std_ready = ns.std_ready + 1 %}{% elif r.pill == 'only_std_done' %}{% set ns.std = ns.std + 1 %}{% set ns.std_done = ns.std_done + 1 %}{% endif %}{% endfor %}
+{% for r in rows %}{% if r.pill in ('only_std', 'only_std_done') %}{% set ns.std = ns.std + 1 %}{% else %}{% set st = r.state %}{% if st == 'attn' %}{% set ns.attn = ns.attn + 1 %}{% elif st == 'miss' %}{% set ns.miss = ns.miss + 1 %}{% elif st == 'wait' %}{% set ns.wait = ns.wait + 1 %}{% elif st == 'ok' %}{% set ns.ok = ns.ok + 1 %}{% elif st == 'idle' %}{% set ns.idle = ns.idle + 1 %}{% elif st == 'ready' %}{% set ns.ready = ns.ready + 1 %}{% endif %}{% endif %}{% endfor %}
+{% set KINDS = [('attn', 'Needs review', ns.attn, 'k-attn'), ('miss', 'Missing hours', ns.miss, 'k-miss'), ('ready', 'Ready to approve', ns.ready, 'k-ready'), ('ok', 'Approved or done', ns.ok, 'k-ok'), ('std', 'Only Std Hrs', ns.std, 'k-std'), ('wait', 'Not started', ns.wait, 'k-wait'), ('idle', 'Not expected', ns.idle, 'k-idle')] %}
 <div class="page-shell-wide">
 <div class="ff-shell">
 
@@ -99,13 +103,9 @@
     <div class="ff-multi" data-ff-multi="state">
       <button type="button" class="ff-multi-btn" aria-haspopup="true" aria-expanded="false">Show: <span data-ff-multi-label>All</span> &#9662;</button>
       <div class="ff-multi-panel" hidden>
-        <label><input type="checkbox" value="attn" checked> Needs review <span class="c-muted">({{ ns.attn }})</span></label>
-        <label><input type="checkbox" value="miss" checked> Missing hours <span class="c-muted">({{ ns.miss }})</span></label>
-        <label><input type="checkbox" value="ready" checked> Ready to approve <span class="c-muted">({{ ns.ready - ns.std_ready }})</span></label>
-        <label><input type="checkbox" value="ok" checked> Approved or done <span class="c-muted">({{ ns.ok - ns.std_done }})</span></label>
-        <label><input type="checkbox" value="std" checked> Only Std Hrs <span class="c-muted">({{ ns.std }})</span></label>
-        <label><input type="checkbox" value="wait" checked> Not started <span class="c-muted">({{ ns.wait }})</span></label>
-        <label><input type="checkbox" value="idle" checked> Not expected <span class="c-muted">({{ ns.idle }})</span></label>
+        {% for key, label, n, cls in KINDS %}
+        <label class="ff-k {{ cls }}"><input type="checkbox" value="{{ key }}" checked> {{ label }} <span class="c-muted">({{ n }})</span></label>
+        {% endfor %}
       </div>
     </div>
   </div>
@@ -190,7 +190,12 @@
     </div>
     <div class="ff-foot">
       <span class="ff-count" data-ff-count>{{ rows|length }} shown</span>
-      <span class="ff-count">{{ rows|length }} parishes &middot; {{ ns.ok + ns.idle }} green &middot; {{ ns.ready }} ready to approve &middot; {{ ns.attn }} to review &middot; {{ ns.miss }} missing hours</span>
+      <span class="ff-count">{{ rows|length }} parishes</span>
+      <span class="ff-kinds" role="group" aria-label="Show or hide each kind of department. The same choice as the Show list at the top.">
+        {% for key, label, n, cls in KINDS %}
+        <label class="ff-k {{ cls }}" data-tip="Tick to show these, untick to hide them"><input type="checkbox" data-ff-mirror="state" value="{{ key }}" checked> {{ label }} <b>{{ n }}</b></label>
+        {% endfor %}
+      </span>
       <span class="ff-count ff-updated" data-ff-updated{% if payroll.reader.detail %} data-tip="{{ payroll.reader.detail }}"{% endif %}>
         {% if payroll.reader.running %}<span class="ph-state-attn">Review running since {{ payroll.reader.running_since }}</span> &middot; {% endif %}
         {% if payroll.reader.failed %}<span class="ph-state-attn" data-tip="The last review failed {{ payroll.reader.failed_at }}. Nothing was lost; it will try again.">Last review failed {{ payroll.reader.failed_at }}</span> &middot; {% endif %}

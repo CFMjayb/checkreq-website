@@ -1,57 +1,85 @@
 {% extends "base.html" %}
 {% block title %}Payroll Periods — Timekeeping{% endblock %}
+{#
+  Payroll Periods on the shared fixed frame (Jay, 2026-10-25: same slim rows and locked top and bottom as HR Activation). The
+  "+ New payroll period" form is a pop-up from the title row instead of an expanding section above the table.
+#}
+{% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+{% endblock %}
 {% block content %}
-<div class="page-shell-wide">
-<h1>Payroll Periods</h1>
-<p class="back-link"><a href="/hr/admin">&larr; Back to HR Administrative Tasks</a></p>
-<p class="sub">Payroll periods for {{ current_org.name }}. Every Cornerstone-served parish under this
-diocese shares the same periods — opening one here is what lets those parishes start entering time.</p>
+<div class="page-shell-wide"><div class="ff-shell">
 
-{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
-{% if request.query_params.get('created') %}<div class="banner banner-success">Period created.</div>{% endif %}
+  <div class="ff-title-row">
+    <h1>Payroll Periods</h1>
+    <a class="ff-back" href="/hr/admin">&larr; Back to HR Administrative Tasks</a>
+    <div class="ff-actions">
+      <button type="button" class="btn btn-sm btn-primary" data-ff-dialog="newPeriodDialog">+ New payroll period</button>
+    </div>
+  </div>
 
-<div class="card">
-<details>
-  <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ New Payroll Period</summary>
-  <form method="post" action="/admin/timekeeping/periods/create" style="margin-top:12px">
+  <div class="ff-info">
+    <span>Payroll periods for {{ current_org.name }}. Every parish under this diocese shares the same periods: opening one is what lets parishes start entering time. Open, close or reopen a period from <strong>Time Review &rarr; Actions &rarr; Set status</strong>.</span>
+  </div>
+
+  {% if request.query_params.get('error') %}<div class="banner banner-error ff-banner">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% if request.query_params.get('created') %}<div class="banner banner-success ff-banner">Period created.</div>{% endif %}
+
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      <table class="ff-table">
+        <colgroup><col style="width:24%"><col style="width:20%"><col style="width:14%"><col style="width:14%"><col style="width:110px"><col></colgroup>
+        <thead>
+          <tr>
+            <th data-sort="1">Period<span class="arrow"></span></th>
+            <th data-sort="1" data-dir="desc">Dates<span class="arrow">&#9660;</span></th>
+            <th data-sort="1">Deadline<span class="arrow"></span></th>
+            <th data-sort="1">Pay date<span class="arrow"></span></th>
+            <th data-sort="1">Status<span class="arrow"></span></th>
+            <th aria-label="Actions"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in periods %}
+          <tr class="ff-row">
+            <td>{{ p.label or "—" }}</td>
+            <td data-v="{{ p.period_start.isoformat() if p.period_start else '' }}">{{ dt(p.period_start) }} &ndash; {{ dt(p.period_end) }}</td>
+            <td data-v="{{ p.submission_deadline.isoformat() if p.submission_deadline else '' }}">{{ dt(p.submission_deadline) or "—" }}</td>
+            <td data-v="{{ p.pay_date.isoformat() if p.pay_date else '' }}">{{ dt(p.pay_date) or "—" }}</td>
+            <td><span class="ff-state {{ p.status }}" style="padding:1px 10px;font-size:0.72rem">{{ p.status|capitalize }}</span></td>
+            <td><a class="btn btn-sm btn-secondary ff-rowbtn" href="/admin/timekeeping/status/{{ p.id }}">View status</a></td>
+          </tr>
+          {% else %}
+          <tr class="ff-empty"><td colspan="6">No payroll periods yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count">{{ periods|length }} period{{ '' if periods|length == 1 else 's' }}</span>
+    </div>
+  </div>
+
+</div></div>
+
+<dialog class="ff-dialog" id="newPeriodDialog">
+  <h2>New payroll period</h2>
+  <form method="post" action="/admin/timekeeping/periods/create">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <div class="field"><label>Start Date</label><input type="date" name="period_start" required></div>
-    <div class="field"><label>End Date</label><input type="date" name="period_end" required></div>
-    <div class="field"><label>Submission Deadline (optional)</label><input type="date" name="submission_deadline"></div>
+    <div class="field"><label>Start date</label><input type="date" name="period_start" required></div>
+    <div class="field"><label>End date</label><input type="date" name="period_end" required></div>
+    <div class="field"><label>Submission deadline (optional)</label><input type="date" name="submission_deadline"></div>
     <div class="field"><label>Label (optional)</label><input type="text" name="label" placeholder="e.g. Jan 1-15, 2027"></div>
-    <button type="submit" class="btn btn-sm">Create</button>
+    <div class="ff-dialog-actions">
+      <button type="button" class="btn btn-sm btn-secondary" data-ff-close>Cancel</button>
+      <button type="submit" class="btn btn-sm btn-primary">Create</button>
+    </div>
   </form>
-</details>
-</div>
-
-<div class="card">
-<div class="table-scroll">
-<table class="simple-table">
-  <tr><th>Period</th><th>Dates</th><th>Deadline</th><th>Status</th><th></th></tr>
-  {% for p in periods %}
-  <tr>
-    <td>{{ p.label or "—" }}</td>
-    <td>{{ p.period_start }} to {{ p.period_end }}</td>
-    <td>{{ p.submission_deadline or "—" }}</td>
-    <td><span class="badge">{{ p.status }}</span></td>
-    <td><a class="btn btn-sm" href="/admin/timekeeping/status/{{ p.id }}">View Status</a></td>
-  </tr>
-  {% endfor %}
-  {% if not periods %}
-  <tr><td colspan="5" class="sub">No payroll periods yet.</td></tr>
-  {% endif %}
-</table>
-</div>
-</div>
-
-<div class="banner banner-info" style="font-size:0.9em">
-  Closing/processing a period and the Excel payroll export aren't built yet in this pass — new
-  periods stay "open" indefinitely for now. See this project's own Timekeeping build plan for the
-  remaining stages.
-</div>
-</div>
+</dialog>
 {% endblock %}
 {% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
 <script>
 document.querySelectorAll('form[method="post" i]').forEach(function (form) {
   form.addEventListener('submit', function (e) {

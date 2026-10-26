@@ -195,6 +195,16 @@ def list_pending_review_for_org(org_id: int) -> list[dict]:
     return rows
 
 
+def count_pending_review_for_parish(org_id: int, parish_id: int) -> int:
+    """How many submitted roster changes of ONE department wait in Roster Review (the diocese's own count of them; scoped through
+    the period's diocese like list_pending_review_for_org, never by parish alone). Time Review shows this as a warning flag."""
+    row = db.query_one(
+        "SELECT count(*) AS n FROM portal.staff_roster_changes src "
+        "JOIN portal.payroll_periods pp ON pp.id = src.payroll_period_id "
+        "WHERE pp.org_id = %s AND src.parish_id = %s AND src.status = 'pending'", (org_id, parish_id))
+    return int(row["n"]) if row else 0
+
+
 def existing_staff_for_add(change: dict) -> dict | None:
     """For a pending 'add': the roster person at the same parish it is really about (same employee number, or the same
     surname with a first name that fits: Mary / Mary Frances, Tim / Timothy), active or not. None for any other change type."""

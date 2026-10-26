@@ -188,6 +188,21 @@
       var saved = JSON.parse(localStorage.getItem(key) || 'null');
       if (Array.isArray(saved)) checks.forEach(function (cb) { cb.checked = saved.indexOf(cb.value) === -1; });
     } catch (e) { /* storage may be unavailable: the filter simply starts with everything ticked */ }
+    // Mirror boxes: input[data-ff-mirror="<attr>"] elsewhere on the screen (the bottom bar's colored kinds) are the SAME
+    // choice as the panel's checkboxes. Ticking one ticks the other, and both drive the one filter (Jay, 2026-10-25).
+    var mirrors = Array.prototype.slice.call(shell.querySelectorAll('input[data-ff-mirror="' + attr + '"]'));
+    function panelBox(value) { return checks.filter(function (x) { return x.value === value; })[0]; }
+    function syncMirrors() {
+      mirrors.forEach(function (m) { var c = panelBox(m.value); if (c) m.checked = c.checked; });
+    }
+    mirrors.forEach(function (m) {
+      m.addEventListener('change', function () {
+        var c = panelBox(m.value);
+        if (!c) return;
+        c.checked = m.checked;
+        c.dispatchEvent(new Event('change'));      // the panel box's own handler repaints, remembers and applies
+      });
+    });
     function text(cb) { return cb.parentNode.textContent.replace(/\(.*\)/, '').trim(); }
     function paintLabel() {
       var off = checks.filter(function (cb) { return !cb.checked; });
@@ -205,11 +220,13 @@
     checks.forEach(function (cb) {
       cb.addEventListener('change', function () {
         paintLabel();
+        syncMirrors();
         try { localStorage.setItem(key, JSON.stringify(checks.filter(function (x) { return !x.checked; }).map(function (x) { return x.value; }))); } catch (e) { /* not remembered */ }
         apply();
       });
     });
     paintLabel();
+    syncMirrors();
     return { attr: attr, checks: checks };
   });
   function apply() {

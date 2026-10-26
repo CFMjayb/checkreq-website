@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">Approve or reject the staff changes that parishes ask for.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="where">
+    <h2>Where to find it</h2>
+    <p><strong>HR &amp; Payroll</strong> &rarr; <strong>Roster Review</strong>. A red number on the tile is how many changes are waiting. You need the HR Admin role at your diocese.</p>
+  </section>
+
+  <section class="hiw-section" id="rows">
+    <h2>What each line is</h2>
+    <p>One request from a parish: a new staff member, a correction, or someone leaving or returning. A new person who is already on the roster is flagged, with a <strong>Reactivate</strong> button when they are inactive.</p>
+  </section>
+
+  <section class="hiw-section" id="decide">
+    <h2>Approve or reject</h2>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard">
+        <h3>Approve</h3>
+        <p>The change goes onto the staff list right away, and the parish is told.</p>
+      </div>
+      <div class="hiw-subcard">
+        <h3>Reject</h3>
+        <p>You must give a reason. The parish sees it and can send a corrected request.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="hiw-section" id="from-time-review">
+    <h2>From Time Review</h2>
+    <p>When you open a department in Time Review and it has requests waiting here, a warning at the top links to this screen, showing only that department.</p>
+  </section>
+
+</div>
+{% endblock %}

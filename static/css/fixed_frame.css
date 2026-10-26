@@ -155,3 +155,30 @@ dialog.ff-dialog.wide { width: min(600px, 94vw); }
 
 /* The tip shown over any element with data-tip (shared script): the app's green and gold, not the browser's black box. */
 .ff-tip { position: fixed; z-index: 90; max-width: 340px; padding: 7px 12px; font-size: 0.85rem; line-height: 1.35; color: #fff8e6; background: var(--color-franciscan-green, #1f3d2e); border-left: 4px solid var(--color-gold, #c9a227); border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); pointer-events: none; }
+
+/* The seven kinds of department, in the Show list at the top AND on the bottom bar (Jay, 2026-10-25): the same words, counts and
+   colors as the rows themselves. Ready to approve is blue wherever it appears. A department with only standing hours is blue
+   until it is confirmed and then green, so that kind shows both. */
+.ff-k { border-radius: 4px; padding: 1px 8px; border: 1px solid rgba(0, 0, 0, 0.12); }
+.ff-k.k-attn { background: #f6e0e0; }
+.ff-k.k-miss { background: #fbf0d2; }
+.ff-k.k-ready { background: #e3edf8; }
+.ff-k.k-ok, .ff-k.k-idle { background: #e8f3e6; }
+.ff-k.k-std { background: linear-gradient(90deg, #e3edf8 50%, #e8f3e6 50%); }
+.ff-k.k-wait { background: #fff; border-color: #cdc4ae; }
+.ff-multi-panel label.ff-k { padding: 3px 8px; }
+.ff-foot .ff-kinds { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ff-foot .ff-k { display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; line-height: 1.5; cursor: pointer; margin: 0; white-space: nowrap; color: var(--color-ink, #2b2b2b); }
+.ff-foot .ff-k input { margin: 0; }
+.ff-foot .ff-k b { font-variant-numeric: tabular-nums; }
+
+/* Form fields inside a pop-up (HR Administrative Tasks screens, parish Staff screen, 2026-10-25) and a small button that sits
+   inside a one-line row (Edit, Hide ...). */
+dialog.ff-dialog .field { margin-bottom: 8px; }
+dialog.ff-dialog .field label { display: block; font-size: 0.8rem; margin-bottom: 2px; color: var(--color-muted, #6b645a); }
+dialog.ff-dialog .field input[type=text], dialog.ff-dialog .field input[type=date], dialog.ff-dialog .field input[type=number],
+dialog.ff-dialog .field select, dialog.ff-dialog .field textarea { width: 100%; box-sizing: border-box; }
+dialog.ff-dialog label.ff-check { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; margin: 4px 0; }
+dialog.ff-dialog .ff-help { font-size: 0.82rem; color: var(--color-muted, #6b645a); margin: 0 0 10px; }
+.ff-table td .ff-rowbtn { height: 22px; padding: 0 9px; font-size: 0.78rem; line-height: 20px; margin-right: 4px; vertical-align: middle; cursor: pointer; }
+.ff-table td form { display: inline; margin: 0; }

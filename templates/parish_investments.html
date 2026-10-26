@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_doc_tree_macro.html" import doc_tree with context %}
-{% block title %}Investments — {{ parish.name }}{% endblock %}
+{% block title %}Investments — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}{% endblock %}
 {% block content %}
 <div class="page-shell">
 <h1>Investments — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</h1>

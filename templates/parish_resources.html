@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Resources for Parishes{% if parish %} — {{ parish.name }}{% endif %}{% endblock %}
+{% block title %}Resources for Parishes{% if parish %} — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}{% endif %}{% endblock %}
 {% block content %}
 <div class="page-shell">
 <h1>Resources for Parishes</h1>

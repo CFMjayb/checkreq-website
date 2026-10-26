@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Finance — {{ parish.name }}{% endblock %}
+{% block title %}Finance — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
 <h1>Finance</h1>
-<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}</a></p>
+<p class="back-link"><a href="/parish-view">&larr; Back to {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}</a></p>
 
 {% if not can_view %}
 <div class="banner banner-info">You don't have permission to view this parish's finances. Ask your

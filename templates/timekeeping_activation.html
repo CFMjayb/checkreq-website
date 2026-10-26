@@ -1,74 +1,113 @@
 {% extends "base.html" %}
 {% block title %}HR Activation — Timekeeping{% endblock %}
+{#
+  HR Activation on the shared fixed frame (Jay, 2026-10-25: "way too fat each row ... use the grid that keeps the top locked and the
+  bottom locked, and roll them like we do with all of our screens"). The heading, the one-line explanation and the filters stay at
+  the top, the column headers stay under them, the Save bar stays at the bottom, and only the parishes scroll. The boxes belong to
+  the form below the frame (form="actForm"), so a filter that hides a row never drops its box from the save.
+#}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+{% endblock %}
 {% block content %}
-<div class="page-shell-wide">
-<h1>HR Activation</h1>
-<p class="back-link"><a href="/hr/admin">&larr; Back to HR Administrative Tasks</a></p>
-<p class="sub">Choose which {{ current_org.name }} parishes use Timekeeping / HR. A parish that isn't
-activated here has no time entry grid and no staff roster, even though Timekeeping is turned on for
-the diocese as a whole. Currently activated: <strong>{{ enabled_count }}</strong> of
-{{ parishes|length }}.</p>
+<div class="page-shell-wide"><div class="ff-shell">
 
-{% if request.query_params.get('saved') is not none %}
-  {% set n = request.query_params.get('saved')|int %}
-  <div class="banner banner-success">
-    {% if n == 0 %}No changes to save.{% elif n == 1 %}1 parish updated.{% else %}{{ n }} parishes updated.{% endif %}
+  <div class="ff-title-row">
+    <h1>HR Activation</h1>
+    <a class="ff-back" href="/hr/admin">&larr; Back to HR Administrative Tasks</a>
   </div>
-{% endif %}
 
-<form method="post" action="/admin/timekeeping/parishes">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-<div class="card">
-<div class="table-scroll">
-<table class="simple-table">
-  <tr>
-    <th style="min-width:60px">HR</th>
-    <th style="min-width:70px">Dept</th>
-    <th style="min-width:220px">Parish</th>
-    <th style="min-width:130px">Town</th>
-    <th style="min-width:150px">Type</th>
-  </tr>
-  {% for p in parishes %}
-  <tr>
-    <td>
-      <input type="hidden" name="present_{{ p.id }}" value="1">
-      <input type="checkbox" name="hr_{{ p.id }}" value="1"{% if p.hr_enabled %} checked{% endif %}
-             aria-label="Timekeeping for {{ p.short_name or p.name }}">
-    </td>
-    <td>{{ p.code or "—" }}</td>
-    <td>{{ p.name }}</td>
-    <td>{{ p.city or p.short_name or "—" }}</td>
-    <td>
-      {% if p.is_congregation %}<span class="badge">Congregation</span>
-      {% else %}<span class="badge badge-skipped">Non-congregational</span>{% endif %}
-      {% if not p.code %}<span class="sub"> &middot; no payroll dept</span>{% endif %}
-      {% if not p.is_active %}<span class="sub"> &middot; inactive</span>{% endif %}
-    </td>
-  </tr>
-  {% endfor %}
-  {% if not parishes %}
-  <tr><td colspan="5" class="sub">No parishes for this diocese yet.</td></tr>
+  <div class="ff-info">
+    <span>Choose which {{ current_org.name }} parishes use Timekeeping / HR. A parish that is not activated has no time entry grid and no staff roster.
+      Activated: <strong data-act-count>{{ enabled_count }}</strong> of {{ parishes|length }}.</span>
+  </div>
+
+  {% if request.query_params.get('saved') is not none %}
+    {% set n = request.query_params.get('saved')|int %}
+    <div class="banner banner-success ff-banner">{% if n == 0 %}No changes to save.{% elif n == 1 %}1 parish updated.{% else %}{{ n }} parishes updated.{% endif %}</div>
   {% endif %}
-</table>
-</div>
-<div style="margin-top:12px"><button type="submit" class="btn btn-sm">Save Changes</button></div>
-</div>
-</form>
 
-<p class="sub">A <strong>non-congregational</strong> row is an entity the diocese runs payroll for
-without it being a congregation — the diocese itself, a camp, a thrift shop, a child care center, a
-pantry, a ministry program, or a payroll umbrella such as the Aroostook Cluster. These can be
-HR-activated like any other row. Rows with <strong>no payroll dept</strong> came from the parochial
-report and have no diocesan payroll, so they start deactivated.</p>
-</div>
+  <div class="ff-filters">
+    <label>Search <input type="text" data-ff-search placeholder="dept, parish or town"></label>
+    <label>Show
+      <select data-ff-filter="hr">
+        <option value="">All</option>
+        <option value="on">Activated</option>
+        <option value="off">Not activated</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      <table class="ff-table">
+        <colgroup><col style="width:70px"><col style="width:80px"><col style="width:38%"><col style="width:20%"><col></colgroup>
+        <thead>
+          <tr>
+            <th data-sort="1" class="c-center">HR<span class="arrow"></span></th>
+            <th data-sort="1">Dept<span class="arrow"></span></th>
+            <th data-sort="1" data-dir="asc">Parish<span class="arrow">&#9650;</span></th>
+            <th data-sort="1">Town<span class="arrow"></span></th>
+            <th data-sort="1" data-tip="A non-congregational row is something the diocese runs payroll for that is not a congregation: the diocese itself, a camp, a thrift shop, a child care center, a pantry, a ministry program, or a payroll umbrella such as the Aroostook Cluster. It can be activated like any other row. A row with no payroll dept came from the parochial report and has no diocesan payroll, so it starts not activated.">Type<span class="arrow"></span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in parishes %}
+          <tr class="ff-row" data-hr="{{ 'on' if p.hr_enabled else 'off' }}">
+            <td class="c-center" data-v="{{ 1 if p.hr_enabled else 0 }}">
+              <input type="hidden" name="present_{{ p.id }}" value="1" form="actForm">
+              <input type="checkbox" name="hr_{{ p.id }}" value="1" form="actForm" data-act-box data-was="{{ 1 if p.hr_enabled else 0 }}"{% if p.hr_enabled %} checked{% endif %}
+                     aria-label="Timekeeping for {{ p.short_name or p.name }}">
+            </td>
+            <td data-v="{{ p.code or '~' }}">{{ p.code or "—" }}</td>
+            <td data-tip="{{ p.name }}">{{ p.name }}</td>
+            <td>{{ p.city or p.short_name or "—" }}</td>
+            <td>
+              {% if p.is_congregation %}<span class="badge">Congregation</span>{% else %}<span class="badge badge-skipped">Non-congregational</span>{% endif %}
+              {% if not p.code %}<span class="c-muted"> &middot; no payroll dept</span>{% endif %}
+              {% if not p.is_active %}<span class="c-muted"> &middot; inactive</span>{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr class="ff-empty"><td colspan="5">No parishes for this diocese yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count" data-ff-count>{{ parishes|length }} shown</span>
+      <span class="ff-msg attn" data-act-note hidden></span>
+      <span class="ff-buttons" style="margin-left:auto">
+        <button type="submit" form="actForm" class="btn btn-sm btn-primary">Save Changes</button>
+      </span>
+    </div>
+  </div>
+
+  <form id="actForm" method="post" action="/admin/timekeeping/parishes" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+  </form>
+
+</div></div>
 {% endblock %}
 {% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
 <script>
-document.querySelectorAll('form[method="post" i]').forEach(function (form) {
-  form.addEventListener('submit', function (e) {
-    if (e.defaultPrevented) return;
-    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+(function () {
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('[data-act-box]'));
+  var note = document.querySelector('[data-act-note]');
+  var count = document.querySelector('[data-act-count]');
+  function paint() {
+    var changed = boxes.filter(function (b) { return (b.checked ? '1' : '0') !== b.dataset.was; }).length;
+    if (count) count.textContent = boxes.filter(function (b) { return b.checked; }).length;
+    if (note) { note.hidden = changed === 0; note.textContent = changed + ' change' + (changed === 1 ? '' : 's') + ' not saved yet'; }
+  }
+  boxes.forEach(function (b) { b.addEventListener('change', paint); });
+  document.querySelectorAll('form[method="post" i]').forEach(function (form) {
+    form.addEventListener('submit', function (e) {
+      if (e.defaultPrevented) return;
+      showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+    });
   });
-});
+})();
 </script>
 {% endblock %}
