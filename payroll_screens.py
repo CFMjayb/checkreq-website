@@ -71,6 +71,8 @@ def register(app, *, current_user, current_org, render) -> None:
     hours_history.register(app, current_user=current_user, current_org=current_org, render=render, gate=_require_hr_admin)
     import payroll_import_csv  # the Checkwriters import file (26-158); registered here so it sits before /status/{period}/{parish}
     payroll_import_csv.register(app, gate=_require_hr_admin)
+    import payroll_reminders  # Send reminder emails (26-158); registered here so it sits before /status/{period}/{parish}
+    payroll_reminders.register(app, current_user=current_user, current_org=current_org, render=render, gate=_require_hr_admin)
     app.include_router(router)
 
 

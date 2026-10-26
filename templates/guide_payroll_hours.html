@@ -107,6 +107,18 @@
     <p>Parishes write more than hours: a new position with new pay, a flat payment for a pianist, a note that someone is on normal hours, a question. The reader keeps every comment, note and request. <strong>Actions &rarr; Payroll notes</strong> on Time Review lists them all for the pay period, by department, each email with who sent it, when, its subject and its PDF. <strong>Print</strong> gives a clean paper copy; <strong>Export to Excel</strong> gives one row per note. Use it as the list of things to key or answer when you do the payroll. Personal data (Social Security, bank, birth dates) is never stored in a note.</p>
   </section>
 
+  <section class="hiw-section" id="reminders">
+    <h2>Send reminder emails</h2>
+    <p>While a pay period is Open, <strong>Actions &rarr; Send reminder emails</strong> on Time Review opens a screen of every department whose hours have not come in. It uses the same rule as the board: <strong>Missing hours</strong> (a department that normally sends every period or most periods and has sent nothing) and <strong>Not started</strong>. A department whose hours are in, or that is not expected to send, is left out.</p>
+    <ul>
+      <li><strong>Who gets it.</strong> Each row lists the people who emailed that department&rsquo;s hours (Beacon learns them from the mail the reader sees, and they are already <strong>ticked</strong>), then the department&rsquo;s payroll contacts (listed <strong>unticked</strong>). You can type one more address on the row. A department with no sender learned yet says so: tick a payroll contact or type an address.</li>
+      <li><strong>Which departments.</strong> A tick box on each row. <strong>Missing hours</strong> departments that have a sender start ticked, <strong>Not started</strong> ones start unticked, and a department reminded in the last 24 hours starts unticked. <strong>Tick all with a sender</strong> and <strong>Untick all</strong> are above the list.</li>
+      <li><strong>The message.</strong> Open <strong>Message</strong> to read or change it. <code>{department}</code> becomes each department&rsquo;s name. Leave square brackets out of the subject: the mail system drops mail that has them.</li>
+      <li><strong>Sending.</strong> <strong>Send reminders</strong> asks first, then sends <strong>one email per ticked department</strong> to its ticked addresses. The email comes from the Beacon notification address and answers go to the payroll mailbox, so a reply lands where the reader looks. If one email fails the rest still go; the row says what went wrong. <strong>Last reminded</strong> shows when each department was last sent a reminder.</li>
+      <li><strong>Nothing is sent by accident.</strong> Beacon sends only to addresses it offered for that department or one you typed, and checks everything before it sends anything: a mistake means nothing is sent and your ticks are kept. On the development site every email goes to the test address, never to a department.</li>
+    </ul>
+  </section>
+
   <section class="hiw-section" id="entry">
     <h2>The Timekeeping screen (View / edit hours)</h2>
     <p>The same screen the parish uses, opened on the parish's behalf. The title row, the period and the grand total stay at the top and the bottom, with a gold <strong>Save</strong> at each end. Only the people scroll.</p>
