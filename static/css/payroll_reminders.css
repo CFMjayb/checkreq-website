@@ -1,0 +1,35 @@
+/* Send reminder emails (templates/timekeeping_reminders.html). Sits on the shared fixed frame (fixed_frame.css). */
+
+/* A row holds several addresses, so its cells wrap instead of cutting the text off. */
+.rem-table td { white-space: normal; height: auto; padding: 4px 8px; vertical-align: top; text-overflow: clip; overflow: visible; }
+.rem-table td.c-center { text-align: center; }
+.rem-table tbody td:first-child input { margin-top: 3px; }
+
+.rem-addr { display: inline-flex; align-items: center; gap: 4px; margin: 0 14px 2px 0; font-size: 0.85rem; white-space: nowrap; cursor: pointer; }
+.rem-addr input { margin: 0; }
+.rem-other { color: var(--color-muted, #6b645a); }
+.rem-note { font-size: 0.8rem; }
+.rem-extra { width: 100%; height: 26px; padding: 2px 6px; font-size: 0.85rem; margin: 0; box-sizing: border-box; }
+.rem-failed { color: #9c0006; font-size: 0.78rem; font-weight: 600; }
+.rem-remember { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 0.78rem; color: var(--color-muted, #6b645a); cursor: pointer; white-space: nowrap; }
+.rem-remember input { margin: 0; }
+.rem-save-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 0.8rem; }
+.rem-save { display: inline-flex; align-items: center; gap: 5px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+.rem-save input { margin: 0; }
+
+/* The message: closed to a one-line summary, open to a subject box and a text box. */
+.rem-message { flex: 0 0 auto; border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; background: #fff; padding: 4px 10px; }
+.rem-message > summary { cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+.rem-message > summary .c-muted { font-weight: 400; }
+.rem-message-body { display: grid; gap: 6px; padding: 6px 0 4px; }
+.rem-message-body label { display: grid; gap: 2px; font-size: 0.85rem; font-weight: 600; }
+.rem-message-body input[type=text], .rem-message-body textarea {
+  width: 100%; box-sizing: border-box; font: inherit; font-weight: 400; padding: 4px 8px; margin: 0;
+  border: 1px solid var(--color-border, #ddd4c0); border-radius: 4px;
+}
+.rem-message-body textarea { resize: vertical; }
+.rem-message-body p { margin: 0; font-size: 0.8rem; }
+
+@media (max-width: 760px) {
+  .rem-addr { white-space: normal; word-break: break-all; }
+}

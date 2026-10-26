@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Send reminder emails â€” {{ current_org.name }}{% endblock %}
+{#
+  Send reminder emails (payroll_reminders.py): the departments whose hours have not come in, a tick box for each, and the addresses to
+  write to (the people who emailed their hours, ticked for you; the department's payroll contacts, unticked; one more address can be
+  typed). One email per ticked department. On the shared fixed frame (fixed_frame.css / .js). Hours and addresses only.
+#}
+{% from "_guide_link.html" import guide_link %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+<link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
+<link rel="stylesheet" href="/static/css/payroll_reminders.css?v={{ asset_version('css/payroll_reminders.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<form class="ff-shell" id="remindForm" method="post" action="/admin/timekeeping/status/{{ period.id }}/reminders/send"
+      data-recent-hours="{{ recent_hours }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+
+  <div class="ff-title-row">
+    <h1>Send reminder emails {{ guide_link("payroll-hours", "How payroll hours from email work") }}</h1>
+    <a class="ff-back" href="/admin/timekeeping/status/{{ period.id }}">&larr; Back to Time Review</a>
+    <div class="ff-actions">
+      <button type="submit" id="remindSend" class="btn btn-sm btn-primary"{% if not can_send %} disabled{% endif %}
+              data-tip="Sends one email to each ticked department, to the addresses ticked on its row. You are asked first.">Send reminders</button>
+    </div>
+  </div>
+
+  <div class="ff-info">
+    <strong>{{ period.label or (period.period_start.strftime('%m/%d/%y') ~ " to " ~ period.period_end.strftime('%m/%d/%y')) }}</strong>
+    <span>{{ period.period_start.strftime('%m/%d/%y') }} &ndash; {{ period.period_end.strftime('%m/%d/%y') }}</span>
+    {% if due %}<span>submit by {{ due }}</span>{% endif %}
+    <span>Departments whose hours have not come in.</span>
+    {% if reply_to %}<span>Answers go to <strong>{{ reply_to }}</strong></span>{% endif %}
+  </div>
+
+  {% if error %}<div class="banner banner-error ff-banner">{{ error }}</div>{% endif %}
+  {% if summary %}
+  <div class="banner {{ 'banner-error' if summary.failed else 'banner-success' }} ff-banner">
+    {% if summary.sent %}Sent {{ summary.sent }} reminder{{ '' if summary.sent == 1 else 's' }}.{% endif %}
+    {% if summary.failed %}{{ summary.failed }} could not be sent{% if summary.failed_for %}: {{ summary.failed_for }}{% endif %}. The row says why.{% endif %}
+    {% if summary.skipped %}{{ summary.skipped }} ticked department{{ '' if summary.skipped == 1 else 's' }} had hours come in and {{ 'was' if summary.skipped == 1 else 'were' }} not emailed.{% endif %}
+    {% if summary.remembered %}Remembered {{ summary.remembered }} address{{ '' if summary.remembered == 1 else 'es' }}: {{ 'it is' if summary.remembered == 1 else 'they are' }} now on {{ 'its' if summary.remembered == 1 else 'their' }} department{{ '' if summary.remembered == 1 else 's' }} and ticked from now on.{% endif %}
+    {% if summary.saved_message %}Saved as the standard message.{% endif %}
+    {% if dev_mode and summary.sent %}This is the development site: the emails went to {{ test_address or 'no one (no test address is set)' }}, not to the departments.{% endif %}
+  </div>
+  {% endif %}
+  {% if message_reset %}<div class="banner banner-success ff-banner">The standard message is forgotten: the original wording is back.</div>{% endif %}
+  {% if not log_ok %}<div class="banner banner-error ff-banner">Sending is switched off until the reminder log (migration 104) is set up on this site.</div>{% endif %}
+  {% if log_ok and not reply_to %}<div class="banner banner-error ff-banner">No reply address is set for this diocese, so sending is switched off: a parish could not answer.</div>{% endif %}
+  {% if dev_mode and not summary %}<div class="banner banner-info ff-banner">Development site: every email goes to {{ test_address or 'no one (no test address is set)' }} with a DEV subject, never to a department.</div>{% endif %}
+
+  <details class="rem-message"{% if error %} open{% endif %}>
+    <summary>Message <span class="c-muted">&ndash; {{ subject }}</span></summary>
+    <div class="rem-message-body">
+      <label>Subject <input type="text" name="subject" maxlength="200" value="{{ subject }}"></label>
+      <label>Message <textarea name="body" rows="9" maxlength="3000">{{ body }}</textarea></label>
+      <p class="c-muted">Write <code>{department}</code> where the department&rsquo;s name should go. One email is made for each ticked department. Leave square brackets out of the subject: the mail system drops mail that has them.</p>
+      <div class="rem-save-row">
+        <label class="rem-save"><input type="checkbox" name="save_message" value="1"{% if save_ticked %} checked{% endif %}> Save this wording as the standard message</label>
+        <span class="c-muted">{% if message_saved %}A standard message is saved: it starts every reminder. This pay period&rsquo;s dates are kept as <code>{period}</code> and <code>{deadline}</code> so it is right for every pay period.{% else %}It is kept when you send, and starts every reminder from then on. This pay period&rsquo;s dates are kept as <code>{period}</code> and <code>{deadline}</code>.{% endif %}</span>
+        {% if message_saved %}<button type="submit" class="btn btn-sm btn-secondary" data-plain formnovalidate
+                formaction="/admin/timekeeping/status/{{ period.id }}/reminders/reset-message"
+                data-tip="Forgets the saved standard message and goes back to the original wording">Use the original wording</button>{% endif %}
+      </div>
+    </div>
+  </details>
+
+  <div class="ff-filters">
+    <button type="button" class="btn btn-sm btn-secondary" id="remTickSenders" data-tip="Ticks every department that has a sender learned from its emails">Tick all with a sender</button>
+    <button type="button" class="btn btn-sm btn-secondary" id="remUntickAll">Untick all</button>
+    <span class="c-muted">A department reminded in the last {{ recent_hours }} hours starts unticked.</span>
+  </div>
+
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      <table class="ff-table rem-table">
+        <colgroup>
+          <col style="width:38px"><col style="width:17%"><col style="width:11%"><col style="width:15%"><col><col style="width:19%">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="c-center" aria-label="Send">&#10003;</th>
+            <th data-sort="1" data-dir="asc">Department<span class="arrow">&#9650;</span></th>
+            <th data-sort="1">Status<span class="arrow"></span></th>
+            <th data-sort="1">Last reminded<span class="arrow"></span></th>
+            <th>Send to</th>
+            <th>Another address</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr class="ff-row rem-row{{ ' is-miss' if r.state == 'miss' else '' }}" data-has-sender="{{ 1 if r.senders else 0 }}">
+            <td class="c-center"><input type="checkbox" class="rem-send" name="send_{{ r.parish_id }}" value="1"{% if r.checked %} checked{% endif %}
+                                        aria-label="Send a reminder to {{ r.label }}"></td>
+            <td data-v="{{ r.label }}" data-tip="{{ r.name }}"><a href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{{ r.label }}</a></td>
+            <td data-v="{{ r.status }}">{{ r.status }}</td>
+            <td data-v="{{ r.reminded }}">
+              {% if r.reminded %}<span{% if r.reminded_to %} data-tip="Sent to {{ r.reminded_to }}"{% endif %}>{{ r.reminded }}</span>{% else %}<span class="c-muted">&mdash;</span>{% endif %}
+              {% if r.failed_why %}<div class="rem-failed" data-tip="{{ r.failed_why }}">Last send failed</div>{% endif %}
+            </td>
+            <td class="rem-to">
+              {% for a in r.senders %}
+              <label class="rem-addr"{% if a.name %} data-tip="{{ a.name }}"{% endif %}><input type="checkbox" class="rem-address" name="to_{{ r.parish_id }}" value="{{ a.email }}"{% if a.email in r.ticked %} checked{% endif %}> {{ a.email }}</label>
+              {% endfor %}
+              {% for a in r.recipients %}
+              <label class="rem-addr rem-other" data-tip="Payroll contact on file{% if a.name %}: {{ a.name }}{% endif %}"><input type="checkbox" class="rem-address" name="to_{{ r.parish_id }}" value="{{ a.email }}"{% if a.email in r.ticked %} checked{% endif %}> {{ a.email }}</label>
+              {% endfor %}
+              {% if not r.senders %}<span class="c-muted rem-note">No sender learned from its emails yet.{% if not r.recipients %} Type an address.{% endif %}</span>{% endif %}
+            </td>
+            <td>
+              <input type="text" class="rem-extra" name="extra_{{ r.parish_id }}" value="{{ r.extra }}" placeholder="name@example.org" autocomplete="off">
+              <label class="rem-remember" data-tip="Adds a typed address to this department as a sender, so it is ticked next time. The payroll inbox reader also uses a department's senders to tell which department an email belongs to."><input type="checkbox" name="remember_{{ r.parish_id }}" value="1"{% if r.remember %} checked{% endif %}> Remember</label>
+            </td>
+          </tr>
+          {% else %}
+          <tr class="ff-empty"><td colspan="6">Every department&rsquo;s hours have come in, or are not expected. Nobody needs a reminder.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count">{{ rows|length }} department{{ '' if rows|length == 1 else 's' }} without hours</span>
+      <span class="ff-count" id="remCount" aria-live="polite"></span>
+    </div>
+  </div>
+</form>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
+<script src="/static/js/payroll_reminders.js?v={{ asset_version('js/payroll_reminders.js') }}"></script>
+{% endblock %}

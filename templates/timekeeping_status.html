@@ -79,6 +79,7 @@
           <form method="post" action="/admin/timekeeping/status/{{ period.id }}/standing"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit" data-tip="Records every standing person's hours for this period. A parish with only standing hours turns green; a parish with other hours still needs its approval.">Confirm all standing hours</button></form>
           {% if period.status == 'open' %}
           <form method="post" action="/admin/timekeeping/status/{{ period.id }}/approve-all" data-confirm="Approve every department that is ready? A department with something still waiting for a decision is left alone."><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit" data-tip="Approves every department whose hours are in and that has nothing waiting for a decision. It never approves over something that needs a look, and it never decides 'no hours'.">Approve all</button></form>
+          <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/reminders" data-tip="Pick the departments whose hours have not come in and email them a reminder. The addresses are the people who emailed their hours.">Send reminder emails</a>
           {% endif %}
           {% endif %}
         </div>
