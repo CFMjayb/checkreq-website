@@ -24,12 +24,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 import cornerstone_mode
 import db
+import hr_documents
 import hr_template_editor
 import org_features
 import org_time
 import rbac
 from logic.hr_lifecycle import board as board_mod
-from logic.hr_lifecycle import cases, clock, conditions, template_edit, templates
+from logic.hr_lifecycle import cases, clock, conditions, documents, template_edit, templates
 from logic.hr_lifecycle.errors import HrError
 
 router = APIRouter()
@@ -49,6 +50,8 @@ def register(app, *, current_user, current_org, render) -> None:
     app.include_router(router)
     # the checklist editor is its own module; it is handed this module's gate and renderer, never imports them
     hr_template_editor.register(app, gate=_gate, render=lambda *a, **k: _render(*a, **k))
+    # the case's documents (upload and view, Phase 2) are their own module too, handed the same gate and the entity lookup
+    hr_documents.register(app, gate=_gate, allowed_org_ids=allowed_org_ids)
 
 
 # ------------------------------------------------------------------ access
@@ -202,6 +205,14 @@ def case_page(request: Request, case_id: int):
                          "buckets": [{"label": k[1], "items": v} for k, v in sorted(buckets.items())],
                          "done": sum(1 for i in req if i["status"] in ("done", "waived")), "total": len(req)})
     zone = org_time.zone_name_for_org(c["org_id"])
+    # documents (Phase 2): metadata only here, never a file read. An item that expects a document shows its filed copies and, for a role
+    # that may file that kind, an Upload File button; the right-hand pane lists everything filed and views it.
+    docs = documents.list_for_case(case_id, allowed_org_ids(user["id"]) or [org["id"]], user["id"])
+    doc_options = documents.doc_type_options(user["id"], c["org_id"])
+    item_docs: dict[str, list] = {}
+    for d in docs:
+        if d["is_current"] and d["item_key"]:
+            item_docs.setdefault(d["item_key"], []).append(d)
 
     def local_date(v):
         """A timestamp as MM/DD/YY in the entity's time zone (the server runs in UTC)."""
@@ -217,6 +228,10 @@ def case_page(request: Request, case_id: int):
         "local_date": local_date, "local_time": lambda v: org_time.format_local(v, zone) if v else "",
         "enrollments": {e["coverage"]: e for e in c["enrollments"]},
         "item_labels": {i["item_key"]: i["label"] for i in c["items"]},
+        "docs": docs, "current_docs": [d for d in docs if d["is_current"]], "old_docs": [d for d in docs if not d["is_current"]],
+        "item_docs": item_docs, "doc_options": doc_options, "fileable": {o["key"] for o in doc_options},
+        "doc_labels": {r["key"]: r["label"] for r in db.query("SELECT key, label FROM hr.doc_types")},
+        "max_upload_mb": documents.MAX_BYTES // (1024 * 1024),
     })
 
 

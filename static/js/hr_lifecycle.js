@@ -60,6 +60,57 @@
       try { localStorage.setItem('hr-show-na', on ? '1' : '0'); } catch (e) { /* not remembered */ }
     });
   });
+  // Documents (Phase 2, Standing UI-UX Rules 6, 7 and 8).
+  // Rule 7: ONE "Upload File" button per upload form. It opens the file picker directly (the real input is hidden); choosing a file
+  // posts the form at once. The general upload (the right-hand pane) needs the kind of document first: pressing Upload File without one
+  // points at the list instead of opening the picker. A file over the limit is refused here, before anything is sent (the server checks again).
+  document.querySelectorAll('form[data-hr-upload-form]').forEach(function (form) {
+    var input = form.querySelector('input[type=file]');
+    var btn = form.querySelector('[data-hr-upload]');
+    var kind = form.querySelector('select[name=doc_type]');
+    var msg = form.querySelector('.hr-upload-msg');
+    var maxMb = parseInt(form.getAttribute('data-max') || '25', 10);
+    if (!input || !btn) return;
+    function say(t) { if (msg) msg.textContent = t || ''; }
+    if (kind) kind.addEventListener('change', function () { kind.classList.remove('needs'); say(''); });
+    btn.addEventListener('click', function () {
+      if (kind && !kind.value) { kind.classList.add('needs'); kind.focus(); say('Pick the kind of document first.'); return; }
+      say(''); input.click();
+    });
+    input.addEventListener('change', function () {
+      if (!input.files || !input.files.length) return;
+      var f = input.files[0];
+      if (f.size > maxMb * 1024 * 1024) { say('That file is over ' + maxMb + ' MB.'); input.value = ''; return; }
+      if (f.size === 0) { say('That file is empty.'); input.value = ''; return; }
+      say('Filing ' + f.name + '...');
+      // Rule 6: the button pulses while the file goes up (form.submit() does not fire a submit event, so it is started here).
+      if (typeof window.showButtonLoading === 'function') window.showButtonLoading(btn);
+      form.submit();
+    });
+  });
+  // Rule 8: a real viewer on the right. View links open the file in the viewer pane (an iframe for a PDF, an image for a picture),
+  // never in a new page; the address is the same private, never-cached route the Download link uses. Built with createElement, no innerHTML.
+  var viewer = document.getElementById('hrViewer');
+  document.querySelectorAll('a[data-hr-view]').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      if (!viewer) return;
+      e.preventDefault();
+      var type = a.getAttribute('data-ctype') || '';
+      viewer.textContent = '';
+      var node;
+      if (type === 'application/pdf') {
+        node = document.createElement('iframe'); node.src = a.href; node.title = 'Document viewer';
+      } else if (type.indexOf('image/') === 0) {
+        node = document.createElement('img'); node.src = a.href; node.alt = 'Filed document';
+      } else {
+        node = document.createElement('p'); node.className = 'hr-muted'; node.textContent = 'This kind of file cannot be shown here. Use Download.';
+      }
+      viewer.appendChild(node);
+      document.querySelectorAll('.hr-doclist li.is-viewing').forEach(function (li) { li.classList.remove('is-viewing'); });
+      var li = a.closest('li'); if (li) li.classList.add('is-viewing');
+      var pane = viewer.closest('.hr-viewer-panel'); if (pane && pane.scrollIntoView) pane.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  });
   // Rule 6: the clicked button pulses while the post is in flight. The button's own name/value is copied into a hidden
   // field first, because a disabled button is not sent with the form.
   document.querySelectorAll('.hr-page form, dialog.hr-dialog form').forEach(function (form) {

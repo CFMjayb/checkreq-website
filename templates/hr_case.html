@@ -8,7 +8,9 @@
       then Waive, Not applicable and Done at the far right, Done rightmost (the long help text is a hover tip);
     - items marked not applicable are hidden until the "Show not applicable items" button at the top is pressed;
     - still: a status in words as well as color, times in the entity's time zone (local_date / local_time), Reopen on a closed item.
-  Documents (Phase 2) will add a viewer; the checklist flow editor is a separate piece.
+  Documents (Phase 2, 2026-10-26): an item that expects a document shows what is filed for it and an Upload File button (one button, Standing
+  UI-UX Rule 7); the right-hand pane lists everything filed on the case and shows a real viewer (Rule 8). The files live in SharePoint in two
+  places (hr_documents.py, logic/hr_lifecycle/documents.py); this page only reads metadata. The checklist flow editor is a separate piece.
 #}
 {% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
 {% macro yn(v) %}{{ 'Yes' if v else ('No' if v is not none and v != '' else 'Not set') }}{% endmacro %}
@@ -62,7 +64,7 @@
     {% endfor %}
   </nav>
 
-  <div class="hr-panes">
+  <div class="hr-panes has-docs">
     <div class="hr-pane">
       {% for s in sections %}
       {% set svis = namespace(n=0) %}
@@ -85,6 +87,20 @@
                 {% if it.hard_deadline_date %} &middot; <strong>hard deadline {{ dt(it.hard_deadline_date) }}</strong>{% endif %}
                 {% if it.status in ('done', 'waived') and it.done_at %} &middot; {{ 'waived' if it.status == 'waived' else 'done' }} {{ local_date(it.done_at) }}{% if it.done_by_name %} by {{ it.done_by_name }}{% endif %}{% endif %}
               </span>
+              {% if it.doc_type_key %}
+              {# the document this item expects: what is filed for it, and one Upload File button for a role that may file that kind #}
+              <span class="docline">
+                {% for d in item_docs.get(it.item_key, []) %}{% if d.can_view %}<a href="/hr/onboarding/case/{{ c.id }}/documents/{{ d.id }}/file" data-hr-view data-ctype="{{ d.content_type }}">{{ d.file_name }}</a>{% else %}<span class="hr-muted">{{ d.file_name }} (restricted)</span>{% endif %}{{ ', ' if not loop.last }}{% else %}<span class="hr-muted">Nothing filed yet</span>{% endfor %}
+                {% if it.doc_type_key in fileable %}
+                <form method="post" action="/hr/onboarding/case/{{ c.id }}/documents/upload" enctype="multipart/form-data" class="hr-upload-form" data-hr-upload-form data-max="{{ max_upload_mb }}">
+                  <input type="hidden" name="csrf_token" value="{{ tok }}">
+                  <input type="hidden" name="item_key" value="{{ it.item_key }}">
+                  <input type="file" name="file" accept="application/pdf,image/jpeg,image/png,image/gif,image/webp" hidden tabindex="-1" aria-label="File for {{ it.label }}">
+                  <button type="button" class="btn btn-sm btn-secondary" data-hr-upload>Upload File</button><span class="hr-upload-msg" role="alert"></span>
+                </form>
+                {% endif %}
+              </span>
+              {% endif %}
             </div>
             {% if is_open and it.status == 'open' %}
             <form method="post" action="/hr/onboarding/case/{{ c.id }}/item/{{ it.item_key }}" class="hr-item-form" data-hr-needs-note>
@@ -115,6 +131,54 @@
       </section>
       {% endfor %}
     </div>
+
+    {# ---- Documents: everything filed on this case, and the viewer (Standing UI-UX Rules 7 and 8) ---- #}
+    <aside class="hr-pane hr-docs-pane" id="hrDocs" aria-label="Documents">
+      <section class="hr-panel">
+        <h2>Documents <span class="hr-count">{{ current_docs|length }} filed</span></h2>
+        {% if doc_options %}
+        <form method="post" action="/hr/onboarding/case/{{ c.id }}/documents/upload" enctype="multipart/form-data" class="hr-upload-form general" data-hr-upload-form data-max="{{ max_upload_mb }}">
+          <input type="hidden" name="csrf_token" value="{{ tok }}">
+          <select name="doc_type" aria-label="Kind of document"><option value="">Kind of document...</option>{% for o in doc_options %}<option value="{{ o.key }}">{{ o.label }}</option>{% endfor %}</select>
+          <input type="file" name="file" accept="application/pdf,image/jpeg,image/png,image/gif,image/webp" hidden tabindex="-1" aria-label="File to upload">
+          <button type="button" class="btn btn-sm btn-primary" data-hr-upload>Upload File</button><span class="hr-upload-msg" role="alert"></span>
+        </form>
+        <p class="hr-muted hr-docnote">PDF or an image, up to {{ max_upload_mb }} MB. Each file is kept in two places in SharePoint (an I-9 in one). Pick the kind first; an item's own button needs no choice.</p>
+        {% else %}<p class="hr-muted hr-docnote">Your role cannot file documents on this case.</p>{% endif %}
+        {% if current_docs %}
+        <ul class="hr-doclist">
+          {% for d in current_docs %}
+          <li>
+            <div class="top"><b>{{ d.doc_label }}</b>{% if d.item_label %} <span class="hr-muted">for {{ d.item_label }}</span>{% endif %}</div>
+            <div class="sub hr-muted">{{ d.file_name }} &middot; {{ local_date(d.uploaded_at) }}{% if d.uploaded_by_name %} by {{ d.uploaded_by_name }}{% endif %}{% if d.size_bytes %} &middot; {{ ((d.size_bytes or 0) / 1024)|round|int }} KB{% endif %}</div>
+            <div class="acts">
+              {% if d.can_view %}
+              <a href="/hr/onboarding/case/{{ c.id }}/documents/{{ d.id }}/file" class="btn btn-sm btn-secondary" data-hr-view data-ctype="{{ d.content_type }}">View</a>
+              <a href="/hr/onboarding/case/{{ c.id }}/documents/{{ d.id }}/file?download=1" class="hr-linkbtn">Download</a>
+              {% else %}<span class="hr-muted">{{ 'HR Admin only' if d.sensitivity == 'i9' else 'Your role cannot open this' }}</span>{% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}<p class="hr-muted hr-docnote">Nothing filed on this case yet.</p>{% endif %}
+        {% if old_docs %}
+        <details class="hr-olddocs"><summary>Earlier versions ({{ old_docs|length }})</summary>
+          <ul class="hr-doclist">
+            {% for d in old_docs %}
+            <li><div class="top">{{ d.doc_label }} <span class="hr-muted">(replaced)</span></div>
+              <div class="sub hr-muted">{{ d.file_name }} &middot; {{ local_date(d.uploaded_at) }}{% if d.uploaded_by_name %} by {{ d.uploaded_by_name }}{% endif %}</div>
+              <div class="acts">{% if d.can_view %}<a href="/hr/onboarding/case/{{ c.id }}/documents/{{ d.id }}/file" class="btn btn-sm btn-secondary" data-hr-view data-ctype="{{ d.content_type }}">View</a>
+                <a href="/hr/onboarding/case/{{ c.id }}/documents/{{ d.id }}/file?download=1" class="hr-linkbtn">Download</a>{% endif %}</div></li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endif %}
+      </section>
+      <section class="hr-panel hr-viewer-panel">
+        <h2>Viewer</h2>
+        <div id="hrViewer" class="hr-viewer" aria-live="polite"><p class="hr-muted hr-docnote">Press View on a document to read it here.</p></div>
+      </section>
+    </aside>
   </div>
 
 </div>
@@ -176,6 +240,7 @@
       {% elif e.event == 'item_status' %}{{ item_labels.get(d.item, d.item) }}: {{ {'open': 'reopened', 'done': 'done', 'waived': 'waived', 'not_applicable': 'marked not applicable'}.get(d.to, d.to) }}
       {% elif e.event == 'updated' %}changed {{ (d.fields or [])|join(', ') }}{% if d.items_rechecked %}; {{ d.items_rechecked }} item(s) updated{% endif %}
       {% elif e.event == 'enrollment' %}{{ coverages.get(d.coverage, d.coverage) }}: {{ d.election }}, {{ d.status }}
+      {% elif e.event == 'document_added' %}filed {{ doc_labels.get(d.doc_type, d.doc_type) }}{% if d.item %} for {{ item_labels.get(d.item, d.item) }}{% endif %}{% if d.replaced %} (replaced an earlier one){% endif %}
       {% elif e.event == 'closed' %}closed as {{ outcomes.get(d.outcome, d.outcome)|lower }}{% if d.roster %} ({{ d.roster }}){% endif %}
       {% else %}{{ e.event }}{% endif %}</li>
     {% endfor %}

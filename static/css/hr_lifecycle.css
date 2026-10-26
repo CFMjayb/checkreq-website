@@ -110,3 +110,29 @@ dialog.hr-dialog h2 { margin: 0 0 10px; font-size: 1.12rem; }
 .hr-page:not(.show-na) .hr-panel.all-na { display: none; }
 dialog.hr-dialog.wide { width: min(760px, 94vw); }
 dialog.hr-dialog h2 .btn { font-size: 0.8rem; }
+
+/* ---- documents (26-162 Phase 2, 2026-10-26): an item's own Upload File line, and the right-hand Documents list and viewer ---- */
+.hr-panes.has-docs { grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); }
+@media (max-width: 960px) { .hr-panes.has-docs { grid-template-columns: minmax(0, 1fr); } }
+.hr-item .lbl .docline { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 0.78rem; margin-top: 2px; }
+.hr-item .lbl .docline a { overflow-wrap: anywhere; }
+.hr-upload-form { display: inline-flex; align-items: center; gap: 6px; margin: 0; flex-wrap: wrap; }
+.hr-upload-form .btn { padding: 1px 10px; font-size: 0.78rem; margin: 0; }
+.hr-upload-form select { margin: 0; font-size: 0.82rem; max-width: 100%; }
+.hr-upload-form select.needs { border-color: var(--color-danger, #a3352b); background: #fff5f5; }
+.hr-upload-form.general { display: flex; margin-bottom: 4px; }
+.hr-upload-form.general select { flex: 1 1 160px; min-width: 0; }
+.hr-upload-msg { font-size: 0.76rem; color: var(--color-danger, #a3352b); }
+.hr-docnote { font-size: 0.8rem; margin: 4px 0 8px; }
+.hr-doclist { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hr-doclist li { border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; padding: 5px 9px; background: #fff; }
+.hr-doclist li.is-viewing { border-color: var(--color-franciscan-green, #2f5d50); box-shadow: inset 0 0 0 1px var(--color-franciscan-green, #2f5d50); }
+.hr-doclist .top { font-size: 0.88rem; }
+.hr-doclist .sub { font-size: 0.76rem; overflow-wrap: anywhere; }
+.hr-doclist .acts { display: flex; gap: 10px; align-items: center; margin-top: 3px; font-size: 0.8rem; }
+.hr-doclist .acts .btn { padding: 1px 10px; font-size: 0.78rem; margin: 0; }
+.hr-olddocs { margin-top: 10px; font-size: 0.84rem; }
+.hr-olddocs summary { cursor: pointer; color: var(--color-text-muted, #6b645a); }
+.hr-viewer { min-height: 240px; }
+.hr-viewer iframe { width: 100%; height: min(70vh, 640px); border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; background: #fff; }
+.hr-viewer img { max-width: 100%; max-height: 70vh; display: block; border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; }
