@@ -4,6 +4,21 @@
    hover tip over the Source; the email's stored PDF opens from the PDF button (hover for a preview, click for a
    large view). People an email named that nobody entered yet come first, with a name list to pick the right
    employee. Included only on the diocese's backfill screen; its banners are on the page. #}
+{# Emails that only named people, every one of whom has been dealt with (dismissed or entered), and that brought no hours: shown here so the
+   email can still be seen once nothing waits on it (074 Bath, 2026-10-26: "it says emailed but we can't see anything"). Read-only. #}
+{% if payroll_totals and payroll_totals.settled_emails %}
+<div class="card te-settled">
+  <h3>Emails received, nothing left to enter <span class="c-muted">({{ payroll_totals.settled_emails|length }})</span></h3>
+  {% for e in payroll_totals.settled_emails %}
+  <div class="te-settled-email">
+    <p class="sub"><strong>{{ e.received_label or "Received" }}</strong>{% if e.sender %} &middot; {{ e.sender }}{% endif %}{% if e.subject %} &middot; {{ e.subject }}{% endif %}
+      {% if e.pdf_url %}<a class="btn btn-sm" href="{{ e.pdf_url }}" target="_blank" rel="noopener" data-email-pdf="{{ e.pdf_url }}">PDF</a>{% endif %}</p>
+    {% for n in e.notes %}<p class="sub">{{ n }}</p>{% endfor %}
+    <p class="c-muted">{{ e.set_aside }} named {{ 'person was' if e.set_aside == 1 else 'people were' }} dealt with and no hours came in this email. If no hours are due this period, use Confirm no hours this week.</p>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 {% if payroll_totals and (payroll_totals.people or payroll_totals.unentered or payroll_totals.emails or payroll_totals.standing) %}
 {% set pt_ = payroll_totals %}
 <div class="te-tframe">

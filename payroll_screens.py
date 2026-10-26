@@ -245,8 +245,15 @@ def section_context(org_id: int, period: dict, parish_id: int) -> dict:
             status = "waiting"
         standing.append({"id": s["id"], "name": f"{s['last_name']}, {s['first_name']}", "employee_number": s["employee_number"],
                          "hours": float(s["standing_hours"]), "status": status})
+    # Emails that only named people, all of whom have been dealt with: shown so the email can still be seen (074 Bath).
+    settled = pt.list_settled_emails(org_id, period["id"], parish_id)
+    zone_s = org_time.zone_name_for_org(org_id)
+    for s in settled:
+        s["pdf_url"] = email_pdf.url_for(org_id, s["source_ref"])
+        s["received_label"] = org_time.format_local(s["received_at"], zone_s) if s["received_at"] else ""
     return {"rows": rows, "people": people, "cat_cols": cat_cols, "unentered": unentered, "roster": roster, "writable": writable,
             "parish_id": parish_id, "period_id": period["id"], "add_roster": add_roster, "emails": emails,
+            "settled_emails": settled,
             "standing": standing, "standing_total": sum(s["hours"] for s in standing),
             "standing_open": sum(1 for s in standing if s["status"] in ("pending", "waiting"))}
 
@@ -268,7 +275,7 @@ def board_rows(org_id: int, period: dict, rows: list[dict]) -> list[dict]:
         r["recorded"] = e.get("recorded", 0) > 0
         if r["recorded"]:
             r["total_hours"] = float(e["hours"])
-        r["emails"] = e.get("emails", 0)
+        r["emails"] = e.get("emails", 0) + e.get("settled_emails", 0)   # every email that arrived, waiting or dealt with
         r["first_received"] = org_time.format_local(e.get("first_received_at"), zone) if e.get("first_received_at") else None
         # a person an email named that nobody entered counts as something to review, so the row turns red
         r["needs_review"] = e.get("needs_review", 0) + e.get("pending_hires", 0) + e.get("unentered", 0)
@@ -276,7 +283,7 @@ def board_rows(org_id: int, period: dict, rows: list[dict]) -> list[dict]:
         r["proposals"] = e.get("proposals", 0)
         r["by_email"] = (e.get("channel") == "email" and r.get("submission_status") != "submitted")
         # emailed, but nothing could be recorded from it yet: a person has to look (the row is red for the same reason)
-        r["named_only"] = bool(r["emails"] and not r["recorded"] and not r.get("submission_id"))
+        r["named_only"] = bool(e.get("emails", 0) and not r["recorded"] and not r.get("submission_id"))
         # standing hours and everything else, side by side (Std, Entered, Total)
         r["std_hours"] = float(e["std"]) if e.get("std") else None
         r["entered_hours"] = float(e["entered"]) if e.get("entered") else None

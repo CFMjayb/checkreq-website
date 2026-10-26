@@ -261,7 +261,11 @@ def build_grid_context(parish: dict, diocese_org_id: int, period: dict | None,
     if not locked and not bypass_submission_lock and submission and submission["status"] == "submitted":
         locked = True
     cells, emp, grand_total = entry_model(parish, diocese_org_id, period, staff, categories, entries, diocese_mode)
+    # the active people on the roster who do NOT record hours (salaried / housing only), so an empty grid can say why (074 Bath)
+    salaried_staff = (db.query_one("SELECT count(*) AS n FROM portal.staff_roster WHERE parish_id = %s AND is_active AND NOT captures_hours",
+                                   (parish["id"],)) or {}).get("n", 0) if not staff else 0
     return {
+        "salaried_staff": salaried_staff,
         "parish": parish, "period": period, "staff": staff, "categories": categories,
         "dates": dates, "entries": entries, "can_enter": can_enter,
         "submission": submission, "locked": locked,
