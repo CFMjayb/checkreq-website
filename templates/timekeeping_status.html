@@ -147,6 +147,7 @@
               {% elif r.pill == 'not_expected' %}<span class="badge badge-approved" data-tip="This parish is set to No hours expected.">Not Expected</span>
               {% elif r.pill == 'ready' %}<span class="badge badge-submitted" data-tip="Hours are in and nothing is waiting. Approve it from the row menu.">Ready to approve</span>
               {% elif not r.submission_id and r.recorded %}<span class="badge badge-submitted">Hours recorded</span>
+              {% elif r.pill == 'emailed_none' %}<span class="badge badge-pending" data-tip="The email only named staff, no hours, and everything in it has been dealt with. If no hours are due, use Confirm no hours from the row menu or the department's page.">Emailed, nothing to enter</span>
               {% elif r.named_only %}<span class="badge badge-pending">Emailed, needs a person</span>
               {% elif not r.submission_id %}<span class="badge badge-cancelled">Not Started</span>
               {% elif r.by_email %}<span class="badge badge-submitted">Received by email</span>

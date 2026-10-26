@@ -13,7 +13,8 @@ line it touches belongs to it. The API takes org_id from the API key, never from
 
 THE RULES (plan A5) in one place:
   * One line per employee, period and category.
-  * Same hours as the line already holds: nothing changes (re-runs are safe).
+  * Same hours as the line already holds: nothing changes (re-runs are safe). The one exception is a REJECTED line: the same
+    figure from a different email, or typed by a person, brings it back (the same email read again does not).
   * Different hours on a needs_review or rejected line: the line takes the new figure and goes
     (back) to needs_review.
   * Different hours on a CONFIRMED line: the confirmed figure stays in force, the new one is
@@ -465,7 +466,12 @@ def record_period_hours(org_id: int, *, period_id: int, parish_code: str, catego
 
             line = cur_line
             old = Decimal(line["hours"])
-            if h == old:
+            # A REJECTED line is not "already entered". The same figure brings it back when it comes from a DIFFERENT email, or when a
+            # person types it (diocese or parish): Terri Cobb's 4.00 had been rejected as misfiled, and today's 4 was swallowed.
+            # The same email read again (an automated re-run) still changes nothing.
+            reopen_same = (h == old and line["review_status"] == "rejected"
+                           and (source in ("diocese", "parish") or source != line["source"] or (line["source_ref"] or None) != ref))
+            if h == old and not reopen_same:
                 # same figure: nothing changes. (A proposal equal to the confirmed figure is moot.)
                 conn.commit()
                 return {"action": "unchanged", "line_id": line["id"], "review_status": line["review_status"],
@@ -505,7 +511,8 @@ def record_period_hours(org_id: int, *, period_id: int, parish_code: str, catego
                  actor if new_status == "confirmed" else None,
                  dt.datetime.now(dt.timezone.utc) if new_status == "confirmed" else None, line["id"]))
             _log_edit(cur, line["id"], old, h, line["review_status"], new_status, actor, source,
-                      "Updated by a later source" + (f" ({ref})" if ref else "") + (f". {auto_note}" if auto_note else ""))
+                      ("Reopened a rejected line: the same figure arrived again" if reopen_same else "Updated by a later source")
+                      + (f" ({ref})" if ref else "") + (f". {auto_note}" if auto_note else ""))
             _unfinalize(cur, period_id)
             conn.commit()
             return {"action": "updated", "line_id": line["id"], "review_status": new_status, "flags": flags,
@@ -764,6 +771,34 @@ def list_unentered(org_id: int, period_id: int, parish_id: int | None = None, st
         if r["inactive_match"]:
             r["reason_label"] = "On the roster but inactive. Reactivate her and these hours are entered."
     return rows
+
+
+def list_settled_emails(org_id: int, period_id: int, parish_id: int) -> list[dict]:
+    """The emails of ONE parish that only named people, every one of whom has been dealt with (dismissed or entered), and that
+    recorded no hours. Read-only. They show on the parish's page so the email can still be seen once nothing waits on it (074 Bath:
+    "it says emailed but we can't see anything"). Each: source_ref, subject, sender, received_at, notes (the texts the reader kept)
+    and set_aside (how many named people were dealt with)."""
+    get_period(org_id, period_id)
+    rows = db.query(
+        "SELECT u.source_ref, count(*) AS n, bool_or(u.status = 'open') AS has_open, min(u.created_at) AS created "
+        "FROM portal.time_email_unentered u JOIN portal.parishes p ON p.id = u.parish_id "
+        "WHERE u.period_id = %s AND u.parish_id = %s AND p.org_id = %s AND NOT EXISTS (SELECT 1 FROM portal.time_email_receipts e "
+        "WHERE e.period_id = u.period_id AND e.parish_id = u.parish_id AND e.source_ref = u.source_ref) "
+        "GROUP BY u.source_ref", (period_id, parish_id, org_id))
+    out = []
+    for r in rows:
+        if r["has_open"]:
+            continue
+        notes = db.query("SELECT email_subject, email_sender, received_at, note_text FROM portal.time_email_notes "
+                         "WHERE period_id = %s AND parish_id = %s AND source_ref = %s ORDER BY seq",
+                         (period_id, parish_id, r["source_ref"]))
+        out.append({"source_ref": r["source_ref"], "set_aside": r["n"],
+                    "subject": next((x["email_subject"] for x in notes if x["email_subject"]), None),
+                    "sender": next((x["email_sender"] for x in notes if x["email_sender"]), None),
+                    "received_at": next((x["received_at"] for x in notes if x["received_at"]), r["created"]),
+                    "notes": [x["note_text"] for x in notes if x["note_text"]]})
+    out.sort(key=lambda e: (e["received_at"] is None, e["received_at"]))
+    return out
 
 
 def count_unentered(org_id: int, period_id: int) -> dict[int, int]:
@@ -1641,7 +1676,7 @@ def board_extras(org_id: int, period_id: int) -> dict[int, dict]:
                                     # standing hours (source = standing) and everything else, for the Std / Entered columns
                                     "std": Decimal(0), "entered": Decimal(0), "entered_lines": 0,
                                     "standing_expected": Decimal(0), "standing_people": 0,
-                                    "sub_id": None, "sub_status": None, "unentered": 0, "_fp": []})
+                                    "sub_id": None, "sub_status": None, "unentered": 0, "settled_emails": 0, "_fp": []})
 
     for r in db.query("SELECT p.id, pr.pattern FROM portal.parishes p JOIN portal.parish_payroll_profile pr "
                       "ON pr.parish_id = p.id WHERE p.org_id = %s", (org_id,)):
@@ -1660,18 +1695,25 @@ def board_extras(org_id: int, period_id: int) -> dict[int, dict]:
         d["emails"], d["first_received_at"] = r["n"], r["first"] or d["first_received_at"]
         d["_fp"].append(("rcpt", str(r["n"])))
     # An email that only produced "named, not entered" people recorded no hours, so it has no receipt row, but it DID arrive.
-    # Count it (once per email) so the board does not say "Not Started" for a parish that has emailed.
-    for r in db.query("SELECT u.parish_id, count(DISTINCT u.source_ref) AS n, min(coalesce(nt.received_at, u.created_at)) AS first "
+    # Count it (once per email) so the board does not say "Not Started" for a parish that has emailed. An email whose named
+    # people have ALL been dealt with (dismissed or entered) is SETTLED: nothing in it waits for anyone, so it does not count as
+    # a waiting email (it would block Confirm no hours and read "needs a person" forever; 074 Bath, 2026-10-26). It is still
+    # counted in settled_emails so the board can say it arrived. The fingerprint part is the same total as before.
+    named_total: dict = {}
+    for r in db.query("SELECT u.parish_id, u.source_ref, bool_or(u.status = 'open') AS has_open, "
+                      "min(coalesce(nt.received_at, u.created_at)) AS first "
                       "FROM portal.time_email_unentered u JOIN portal.parishes p ON p.id = u.parish_id "
                       "LEFT JOIN portal.time_email_notes nt ON nt.period_id = u.period_id AND nt.source_ref = u.source_ref "
                       "WHERE u.period_id = %s AND p.org_id = %s AND NOT EXISTS (SELECT 1 FROM portal.time_email_receipts e "
                       "WHERE e.period_id = u.period_id AND e.parish_id = u.parish_id AND e.source_ref = u.source_ref) "
-                      "GROUP BY u.parish_id", (period_id, org_id)):
+                      "GROUP BY u.parish_id, u.source_ref", (period_id, org_id)):
         d = slot(r["parish_id"])
-        d["emails"] += r["n"]
-        d["_fp"].append(("named", str(r["n"])))
+        d["emails" if r["has_open"] else "settled_emails"] += 1
+        named_total[r["parish_id"]] = named_total.get(r["parish_id"], 0) + 1
         if r["first"] and (d["first_received_at"] is None or r["first"] < d["first_received_at"]):
             d["first_received_at"] = r["first"]
+    for pid_, n in named_total.items():
+        out[pid_]["_fp"].append(("named", str(n)))
     for r in _period_rows(org_id, period_id):
         d = slot(r["parish_id"])
         # what the parish's period holds: counted hours, plus the grid's hours where a conflict holds them back
@@ -1768,7 +1810,8 @@ def classify_parish(ex: dict, sub_id, sub_status, approval: dict | None) -> dict
         out["state"], out["pill"] = "ready", "only_std"
     elif not recorded and not sub_id:
         out["state"] = "miss" if pattern in ("every_period", "most_periods") else "wait"
-        out["pill"] = "legacy"
+        # the parish did email, but everything in it was dealt with and no hours came: "Emailed, nothing to enter" (074 Bath)
+        out["pill"] = "emailed_none" if ex.get("settled_emails") else "legacy"
     elif sub_status == "draft" and not recorded:
         out["state"], out["pill"] = "wait", "legacy"
     else:
@@ -1827,7 +1870,9 @@ def approve_parish(org_id: int, period_id: int, parish_id: int, user_id: int) ->
 
 
 def confirm_no_hours(org_id: int, period_id: int, parish_id: int, user_id: int) -> dict:
-    """HR confirms this parish has no hours this period. Refused when it has hours, an email or anything waiting."""
+    """HR confirms this parish has no hours this period. Refused when it has hours, an email that still waits (one that recorded
+    hours, or that still has a person nobody has dealt with) or anything else waiting. An email whose named people were all
+    dismissed (a salaried parish saying "paid as usual") does not block it."""
     _open_period(org_id, period_id)
     ex = _parish_extras(org_id, period_id, parish_id)
     c = classify_parish(ex, ex.get("sub_id"), ex.get("sub_status"), None)

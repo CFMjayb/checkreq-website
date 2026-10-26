@@ -113,7 +113,7 @@
   {% if diocese_mode and payroll_totals is defined %}{% include "_payroll_totals_section.html" %}{% endif %}
 
   {% if not staff %}
-  <div class="card"><p class="sub">No staff who record hours are on the roster yet. <a href="/timekeeping/roster">Add staff to the roster</a> before entering time.</p></div>
+  <div class="card"><p class="sub">{% if salaried_staff %}This department's roster has {{ salaried_staff }} active staff, none of whom record hours.{% if diocese_mode %} There is nothing to enter here unless an email brings hours; if none are due this period, use Confirm no hours this week.{% endif %}{% else %}No staff who record hours are on the roster yet. <a href="/timekeeping/roster">Add staff to the roster</a> before entering time.{% endif %}</p></div>
   {% elif not categories %}
   <div class="card"><p class="sub">No active time categories are configured for this diocese yet.</p></div>
   {% else %}
