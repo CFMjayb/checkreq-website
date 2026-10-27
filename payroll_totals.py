@@ -155,6 +155,20 @@ def _staff(parish_id: int, employee_number: str) -> dict:
 def _unfinalize(cur, period_id: int) -> None:
     cur.execute("UPDATE portal.payroll_periods SET hours_finalized_at = NULL, hours_finalized_by_user_id = NULL "
                 "WHERE id = %s AND hours_finalized_at IS NOT NULL", (period_id,))
+    # Jay, 2026-10-27: Close is now the next-to-last step, so a period stays OPEN after it is Actualized. An Actualized stamp
+    # says "Beacon's hours equal the paid hours": it is true only while the hours stay as they were, so a change (or taking Final
+    # back, which lets them change) clears it, and the checklist asks for Actualize again.
+    cur.execute("UPDATE portal.payroll_periods SET actualized_at = NULL, actualized_by_user_id = NULL, "
+                "actualized_automatically = FALSE WHERE id = %s AND actualized_at IS NOT NULL", (period_id,))
+
+
+def settle_ready(period: dict) -> bool:
+    """Can this period's differences be settled (tie-out decisions, Actualize), and its reports be marked filed? Yes once the hours are
+    marked FINAL (entered into Checkwriters, so emailed hours are held from then on) or the period is already Closed (every period closed
+    before this rule never had to be Final). A period that has not started never is. Jay, 2026-10-27: Close used to be required first."""
+    if period["status"] == "future":
+        return False
+    return period["status"] == "closed" or period.get("hours_finalized_at") is not None
 
 
 def _log_edit(cur, total_id, old_hours, new_hours, old_status, new_status, user_id, source, note=None):
@@ -1640,7 +1654,8 @@ def unresolved(rows: list[dict]) -> list[dict]:
 
 
 def finalize_period(org_id: int, period_id: int, user_id: int, require_all_done: bool = True) -> dict:
-    """Marks the hours Final for Checkwriters. Refused while any line still needs a decision and, unless
+    """Marks the hours Final: they were entered into Checkwriters (Jay, 2026-10-27; the Excel sheet and the CSV are made from APPROVED
+    hours before this, and an emailed figure is held in the Late emails queue after it). Refused while any line still needs a decision and, unless
     require_all_done is False, while any parish row is not green (approved, confirmed no hours, confirmed
     standing hours or not expected)."""
     get_period(org_id, period_id)

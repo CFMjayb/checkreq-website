@@ -17,9 +17,10 @@ in force (Regular standing hours included), one row per employee and kind of hou
 for a decision, hours a manual check or void-and-reissue already paid (they are not in period_rows at all), pay of any kind.
 
 WHEN IT WILL NOT BUILD (a bare CSV cannot carry the "NOT FINAL" banner the Excel sheet shows, and a wrong import is easy to
-miss): the period's hours must be marked Final, nothing may still need a decision, nobody named in an email may be waiting
-to be entered, every hour must belong to a person with a plain numeric Checkwriters number, and every kind of hours that has
-hours must have a Checkwriters code. Each refusal says which. The file is never built "as far as it can".
+miss): the hours must be APPROVED (Jay, 2026-10-27: Final now means they were ENTERED into Checkwriters, so the file is made before
+Final: every department green and no late email waiting, or the hours already Final), nothing may still need a decision, nobody
+named in an email may be waiting to be entered, every hour must belong to a person with a plain numeric Checkwriters number, and
+every kind of hours that has hours must have a Checkwriters code. Each refusal says which. The file is never built "as far as it can".
 
 CODES: default 2Reg / OT / Sick / Vaca / Holi (the codes DME's paid register and Labor Distribution already show). A
 different company setting lives in checkreq.app_settings, key  payroll_import_codes:<org id>, as JSON
@@ -36,6 +37,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse, Response
 
 import app_settings
+import payroll_late_rules as late_rules
 import payroll_totals as pt
 
 DEFAULT_CODES = {"regular": "2Reg", "overtime": "OT", "sick": "Sick", "vacation": "Vaca", "holiday": "Holi"}
@@ -101,15 +103,36 @@ def _who(r: dict) -> str:
     return f"{name} ({r.get('dept_name') or r.get('parish_code') or 'department'})"
 
 
-def check_ready(period: dict, rows: list[dict], unentered: int) -> None:
-    """The refusals that do not depend on the codes. Raises PayrollImportError with the reason."""
+def approval_waiting(org_id: int, period_id: int) -> list[str]:
+    """What still stands between this period's hours and 'approved' (the rest of what Mark hours Final waits on): departments that are
+    not green yet, and late emails waiting in the queue. [] means nothing is waiting."""
+    out = []
+    notdone = pt.parishes_not_done(org_id, period_id)
+    if notdone:
+        codes = ", ".join(p["code"] or p["name"] for p in notdone[:8]) + (" and more" if len(notdone) > 8 else "")
+        out.append(f"{len(notdone)} department(s) are not approved yet ({codes})")
+    late = late_rules.waiting_count(org_id)
+    if late:
+        out.append(f"{late} late email(s) are waiting in the Late emails queue")
+    return out
+
+
+def check_ready(period: dict, rows: list[dict], unentered: int, waiting: list[str] | None = None) -> None:
+    """The refusals that do not depend on the codes. Raises PayrollImportError with the reason.
+
+    Jay, 2026-10-27: Final now means the hours were ENTERED INTO Checkwriters, so this file is made BEFORE Final, from approved hours.
+    A period that is not Final yet needs `waiting` (approval_waiting(): [] = checked and nothing is waiting); None means nobody
+    checked, which is refused, so a caller that forgets cannot get a file. A Final period was checked when it was marked Final."""
     if not period.get("hours_finalized_at"):
-        raise PayrollImportError("Mark the hours Final first (Time Review > Actions). The Checkwriters file is only made from Final hours.")
+        if waiting is None:
+            raise PayrollImportError("The approvals could not be checked, so the file was not built.")
     left = pt.unresolved(rows)
     if left:
-        raise PayrollImportError(f"{len(left)} line(s) still need a decision, so the file was not built. Settle them, then mark the hours Final again.")
+        raise PayrollImportError(f"{len(left)} line(s) still need a decision, so the file was not built. Settle them, then try again.")
     if unentered:
         raise PayrollImportError(f"{unentered} person(s) named in emails were not entered yet, so the file was not built.")
+    if not period.get("hours_finalized_at") and waiting:
+        raise PayrollImportError("; ".join(waiting).capitalize() + ", so the file was not built. Approve each department on Time Review first.")
 
 
 def build_lines(rows: list[dict], codes: dict[str, str]) -> list[dict]:
@@ -184,7 +207,8 @@ def build_for_period(org: dict, period_id: int) -> tuple[bytes, str, dict]:
     """(file bytes, file name, {"lines","employees","hours"}). PayrollImportError / pt.PayrollError when it cannot be built."""
     period = pt.get_period(org["id"], period_id)
     rows = pt.period_rows(org["id"], period_id)
-    check_ready(period, rows, sum(pt.count_unentered(org["id"], period_id).values()))
+    waiting = None if period.get("hours_finalized_at") else approval_waiting(org["id"], period_id)
+    check_ready(period, rows, sum(pt.count_unentered(org["id"], period_id).values()), waiting)
     lines = build_lines(rows, codes_for_org(org["id"]))
     return render_csv(lines), filename_for(org, period), summarize(lines)
 

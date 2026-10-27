@@ -5,8 +5,9 @@ Sheets: Review (first: everything still needing a decision, and whether the hour
 Hours (one row per employee and category: the hours counted, where they came from, the review
 status and a link to the email), Detail (the parish's own daily-grid cells, as before).
 
-The export always runs. It says FINAL only when an hr_admin has marked the period's hours Final,
-which payroll_totals.finalize_period allows only when nothing is left to review. A line that
+The export always runs. It says FINAL only when an hr_admin has marked the period's hours Final (Jay, 2026-10-27: that means they
+were entered into Checkwriters, so the sheet says READY TO KEY before that), which payroll_totals.finalize_period allows only when
+nothing is left to review. A line that
 still needs a decision shows its hours in the "Period total" column but leaves "Counted hours"
 blank, so it cannot be keyed by mistake.
 
@@ -217,13 +218,16 @@ def build_export_workbook(org: dict, period: dict, base_url: str | None = None) 
 
     ws = wb.active
     ws.title = "Review"
+    # Jay, 2026-10-27: Final means the hours were ENTERED INTO Checkwriters. This sheet is what is keyed from, so it is made before that.
     if final and not left:
-        banner = "FINAL: these hours are approved and ready to key into Checkwriters."
+        banner = "FINAL: these hours were marked as entered into Checkwriters."
     elif left:
         banner = f"NOT FINAL: {len(left)} line(s) below still need a decision. Do not key those hours yet."
     else:
-        banner = "NOT FINAL: nothing is waiting, but an hr_admin has not marked the hours Final yet."
-    ws.cell(row=1, column=1, value=banner).font = Font(bold=True, size=12, color=("1F3D2E" if final and not left else "9C0006"))
+        banner = ("READY TO KEY: nothing is waiting. Key these hours into Checkwriters, then mark the hours Final "
+                  "(Time Review > Actions > Mark hours Final).")
+    ready = not left
+    ws.cell(row=1, column=1, value=banner).font = Font(bold=True, size=12, color=("1F3D2E" if ready else "9C0006"))
     label = period.get("label") or f"{period['period_start']} to {period['period_end']}"
     pay = f"  Pay date {period['pay_date']}" if period.get("pay_date") else ""
     ws.cell(row=2, column=1, value=f"{org['code']} {label}{pay}")

@@ -40,7 +40,7 @@
   <div class="ff-title-row">
     <h1>Time Review {{ guide_link("payroll-hours", "How payroll hours from email work") }}</h1>
     <span class="ff-state {{ period.status }}" data-tip="This period is {{ period.status }}. Only an Open period accepts hours.">{{ period.status|capitalize }}</span>
-    {% if payroll.final and not payroll.left %}<span class="ff-state final" data-tip="Hours were marked Final{% if payroll.final_at %} {{ payroll.final_at }}{% endif %}">Final</span>{% endif %}
+    {% if payroll.final and not payroll.left %}<span class="ff-state final" data-tip="Hours were marked Final (entered into Checkwriters){% if payroll.final_at %} {{ payroll.final_at }}{% endif %}">Final</span>{% endif %}
     <a class="ff-back" href="/hr">&larr; Back to HR &amp; Payroll</a>
     <div class="ff-actions">
       {# Review Inbox is a PROCESS button (Jay, 2026-10-25): blue, not gold like the page's other buttons, and a ring pulses around it
@@ -62,18 +62,18 @@
         <div class="ff-dropdown-menu" role="menu" hidden>
           <button type="button" role="menuitem" data-ff-dialog="setPeriodDialog">Set status (open / close)</button>
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/export">Excel for Checkwriters</a>
-          {% if payroll.final %}
-          <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/checkwriters-csv" data-tip="The Final hours as a Checkwriters payroll import file (CSV, hours only, no pay).">CSV for Checkwriters import</a>
+          {% if payroll.final or payroll.ready_to_key %}
+          <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/checkwriters-csv" data-tip="The approved hours as a Checkwriters payroll import file (CSV, hours only, no pay). Import or key them, then mark the hours Final.">CSV for Checkwriters import</a>
           {% else %}
-          <button type="button" role="menuitem" disabled data-tip="Mark the hours Final first. The import file is only made from Final hours.">CSV for Checkwriters import</button>
+          <button type="button" role="menuitem" disabled data-tip="Approve every department first (and settle anything waiting). The import file is made from approved hours, before they are marked Final.">CSV for Checkwriters import</button>
           {% endif %}
           {% if payroll.final %}
           <form method="post" action="/admin/timekeeping/status/{{ period.id }}/unfinal"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit">Mark hours not final</button></form>
           {% else %}
-          <form method="post" action="/admin/timekeeping/status/{{ period.id }}/final"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit" data-tip="Needs every row green{% if payroll.not_done %}. {{ payroll.not_done }} not green yet{% endif %}">Mark hours Final</button></form>
+          <form method="post" action="/admin/timekeeping/status/{{ period.id }}/final" data-confirm="Mark the hours Final? Do this once they are entered into Checkwriters. After this, emailed hours for this pay period are held in the Late emails queue."><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit" data-tip="Press this once the hours are entered into Checkwriters. Needs every row green{% if payroll.not_done %}. {{ payroll.not_done }} not green yet{% endif %}">Mark hours Final</button></form>
           {% endif %}
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/variance">Variance report</a>
-          <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/closeout" data-tip="After payroll is processed: close the period, match the paid hours, file the reports, open the next period.">Close out this pay period</a>
+          <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/closeout" data-tip="After the hours are Final: load the paid hours, tie out, match, file the reports, close the period and open the next one.">Close out this pay period</a>
           <a role="menuitem" href="/admin/timekeeping/late" data-tip="Payroll emails with hours that were not recorded: they arrived after Final or after Close, the church is unknown, or no pay period fits. You decide each one.">Late emails{% if payroll.late %} ({{ payroll.late }}){% endif %}</a>
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/notes">Payroll notes (print or export)</a>
           {% if period.status in ('open', 'future') %}
