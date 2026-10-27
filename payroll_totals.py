@@ -38,6 +38,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import category_order
 import db
 import payroll_decisions as pdec
+import payroll_late_rules as late_rules
 
 MAX_HOURS = Decimal("300")
 QUOTE_MAX = 300
@@ -398,6 +399,11 @@ def record_period_hours(org_id: int, *, period_id: int, parish_code: str, catego
     if period["status"] not in WRITABLE_PERIOD_STATUSES and not allow_closed:
         raise PayrollError("refused", f"This pay period is {period['status']}: hours are not accepted. "
                                       "A reviewer must reopen it first.")
+    # Jay, 2026-10-27: once the hours are Final, no EMAILED hours are recorded. They wait in the Late emails queue (payroll_late.py) for a
+    # person to decide. A figure a person types (diocese or parish) still reopens Final as before. The queue's own buttons reopen first.
+    if source == "email" and period.get("hours_finalized_at") and not allow_closed:
+        raise PayrollError("refused", "This pay period's hours are marked Final, so emailed hours are not recorded. "
+                                      "They are held in the Late emails queue for a person to decide.")
     parish = _parish(org_id, parish_code)
     cat = _category(org_id, category_key)
     staff = None
@@ -1634,12 +1640,15 @@ def finalize_period(org_id: int, period_id: int, user_id: int, require_all_done:
     get_period(org_id, period_id)
     left = unresolved(_period_rows(org_id, period_id))
     unentered = sum(count_unentered(org_id, period_id).values())
-    if left or unentered:
+    late = late_rules.waiting_count(org_id)        # held emails nobody has decided yet (Jay, 2026-10-27: the queue must be empty)
+    if left or unentered or late:
         parts = []
         if left:
             parts.append(f"{len(left)} line(s) still need a decision")
         if unentered:
             parts.append(f"{unentered} person(s) named in emails were not entered")
+        if late:
+            parts.append(f"{late} late email(s) are waiting in the Late emails queue")
         raise PayrollError("refused", " and ".join(parts).capitalize() + ", so the hours cannot be marked Final.")
     if require_all_done:
         notdone = parishes_not_done(org_id, period_id)

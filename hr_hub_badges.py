@@ -20,7 +20,7 @@ import db
 
 # the tile's url -> (function name, what the number counts: shown when the pointer rests on the dot)
 _TIPS = {
-    "/admin/timekeeping/status": "Lines and emailed names waiting for a decision in the open pay period.",
+    "/admin/timekeeping/status": "Lines and emailed names waiting for a decision in the open pay period, plus late emails held for a decision.",
     "/admin/timekeeping/review": "Roster changes waiting for you to approve or reject.",
     "/hr/onboarding": "Cases with an item past due, or a parish request waiting.",
 }
@@ -29,11 +29,13 @@ _TIPS = {
 def time_review(org_id: int) -> int:
     import timekeeping                      # loaded here: these modules import each other at import time
     import payroll_totals as pt
+    import payroll_late_rules as late_rules
+    late = late_rules.waiting_count(org_id)                 # held emails wait whatever period is open, so count them first
     period = timekeeping.get_current_open_period(org_id)
     if not period:
-        return 0
+        return late
     prows = pt.period_rows(org_id, period["id"])
-    return len(pt.unresolved(prows)) + sum(pt.count_unentered(org_id, period["id"]).values())
+    return len(pt.unresolved(prows)) + sum(pt.count_unentered(org_id, period["id"]).values()) + late
 
 
 def roster_review(org_id: int) -> int:

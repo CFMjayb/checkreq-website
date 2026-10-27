@@ -585,6 +585,10 @@ def final_blockers(org_id: int, period_id: int) -> list[str]:
         out.append(f"{len(left)} line(s) still need a decision on Time Review")
     if unentered:
         out.append(f"{unentered} person(s) named in emails were not entered")
+    import payroll_late_rules as late_rules          # the same rule as payroll_totals.finalize_period: held emails block Final
+    late = late_rules.waiting_count(org_id)
+    if late:
+        out.append(f"{late} late email(s) are waiting in the Late emails queue")
     notdone = pt.parishes_not_done(org_id, period_id)
     if notdone:
         codes = ", ".join(p["code"] or p["name"] for p in notdone[:8]) + (" and more" if len(notdone) > 8 else "")

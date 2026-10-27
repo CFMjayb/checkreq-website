@@ -40,7 +40,7 @@
       <li>It never changes Checkwriters, Gmail or the paid register, and it never stores or shows pay.</li>
       <li>It never overwrites hours you have confirmed. A different figure in a later email waits as a proposal for you to decide.</li>
       <li>It never changes the roster by itself. New hires and terminations wait for approval.</li>
-      <li>It never records hours into a closed pay period, and it never records more than 300 hours for one person on one line.</li>
+      <li>It never records hours into a pay period whose hours are <strong>Final</strong> or that is closed, and it never records more than 300 hours for one person on one line. Mail like that is <strong>held</strong> for a person (see <a href="#late">Late emails</a>).</li>
       <li>It handles each email once, so running it again does not double anything. Beacon applies the same rules whether the hours came from the routine, a parish or a person.</li>
     </ul>
   </section>
@@ -119,6 +119,20 @@
     </ul>
   </section>
 
+  <section class="hiw-section" id="late">
+    <h2>Late emails</h2>
+    <p>Once a pay period's hours are marked <strong>Final</strong>, the reader stops recording hours from email for it. An email with hours that arrives after Final or after the period is closed, or that the reader cannot place (no church it can tell, or no pay period that fits), is <strong>held</strong> instead. <strong>Actions &rarr; Late emails</strong> on Time Review lists each one with who sent it, when, its PDF, and the people and hours the reader found. A red number on the Time Review tile and a red banner on the board show how many are waiting. <strong>Nothing is recorded until a person presses a button.</strong></p>
+    <ul>
+      <li><strong>Reopen and record.</strong> The pay period is no longer Final (a closed one is reopened), the hours are recorded waiting for review, and the period has to be marked Final again.</li>
+      <li><strong>Carry to next period.</strong> The same, into the next pay period.</li>
+      <li><strong>Pay by manual check.</strong> The hours are recorded in the pay period they belong to, with a note, the same way the tie-out treats a manual check. The paid register will not have them, so the Variance report shows the difference: mark it <strong>Manual check</strong> there. Nothing is decided on this screen.</li>
+      <li><strong>Dismiss as not hours.</strong> Nothing is recorded. The email stays in the Decided list.</li>
+      <li><strong>Pick the church</strong> for an email whose church could not be told. Then the buttons above work.</li>
+      <li><strong>Repeats.</strong> Beacon checks every line against hours already entered (and not rejected) for that person and kind of hours. A line that matches is marked <em>already entered</em>; a different figure shows what Beacon already has. An email whose every line is already entered is tagged <strong>Looks like a repeat</strong> and offers <strong>Dismiss as already entered</strong>; <strong>Dismiss all repeats</strong> does every such email at once. The check runs again when you press a button, an already-entered line is never entered twice, and nothing dismisses itself.</li>
+    </ul>
+    <p><strong>Mark hours Final</strong> is refused while anything waits in this list. When mail arrives after Final, Beacon sends <strong>one email per reader run</strong> to the diocese's accounting address (for Maine, accounting@episcopalmaine.org) naming the department, the sender and the subject, with no hours in it. Only emails with hours are held: questions, administrative mail and funding-report replies are set aside as before.</p>
+  </section>
+
   <section class="hiw-section" id="entry">
     <h2>The Timekeeping screen (View / edit hours)</h2>
     <p>The same screen the parish uses, opened on the parish's behalf. The title row, the period and the grand total stay at the top and the bottom, with a gold <strong>Save</strong> at each end. Only the people scroll.</p>
@@ -148,7 +162,7 @@
     <h2>Final, the Excel sheet and the variance report</h2>
     <ul>
       <li><strong>Excel for Checkwriters</strong> (in the Actions menu) always works. Its first sheet, <strong>Summary</strong>, has one row per employee with Reg, OT, Sick, Vac and Holiday, then <strong>Entered total</strong>, <strong>Standing</strong> and <strong>Grand total</strong>, a subtotal after each department and a grand total at the bottom, so each department can be compared with the Labor Summary. The <strong>Review</strong> sheet says whether the hours are FINAL and lists everything still unresolved. Do not key a line that is listed there.</li>
-      <li><strong>Mark hours Final</strong> (in the Actions menu) needs nothing waiting for a decision and <strong>every parish row green</strong>. It tells you how many are not. A new figure arriving afterwards takes the stamp away.</li>
+      <li><strong>Mark hours Final</strong> (in the Actions menu) needs nothing waiting for a decision, <strong>every parish row green</strong> and <strong>nothing waiting in Late emails</strong>. It tells you how many are not. A figure a person types afterwards takes the stamp away; an email can no longer change it (it is held in Late emails instead).</li>
       <li><strong>Variance report</strong>, after payroll runs: Beacon's hours against the paid register, for employees who report hours. It lists matches, differences, people paid with no Beacon hours and Beacon hours with no pay, with the Std and Entered hours Beacon counted.</li>
     </ul>
   </section>

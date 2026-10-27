@@ -74,6 +74,7 @@
           {% endif %}
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/variance">Variance report</a>
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/closeout" data-tip="After payroll is processed: close the period, match the paid hours, file the reports, open the next period.">Close out this pay period</a>
+          <a role="menuitem" href="/admin/timekeeping/late" data-tip="Payroll emails with hours that were not recorded: they arrived after Final or after Close, the church is unknown, or no pay period fits. You decide each one.">Late emails{% if payroll.late %} ({{ payroll.late }}){% endif %}</a>
           <a role="menuitem" href="/admin/timekeeping/status/{{ period.id }}/notes">Payroll notes (print or export)</a>
           {% if period.status in ('open', 'future') %}
           <form method="post" action="/admin/timekeeping/status/{{ period.id }}/standing"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><button role="menuitem" type="submit" data-tip="Records every standing person's hours for this period. A parish with only standing hours turns green; a parish with other hours still needs its approval.">Confirm all standing hours</button></form>
@@ -97,6 +98,9 @@
 
   {% if request.query_params.get('error') %}<div class="banner banner-error ff-banner">{{ request.query_params.get('error') }}</div>{% endif %}
   {% if request.query_params.get('saved') %}<div class="banner banner-success ff-banner">{{ request.query_params.get('saved') }}</div>{% endif %}
+  {% if payroll.late %}
+  <div class="banner banner-error ff-banner"><strong>{{ payroll.late }} late email{{ '' if payroll.late == 1 else 's' }} waiting.</strong> Payroll mail with hours was held instead of recorded. The hours cannot be marked Final until each one is decided. <a href="/admin/timekeeping/late">Open Late emails</a></div>
+  {% endif %}
   {% if other_open %}
   <div class="banner banner-info ff-banner">
     {% for o in other_open %}<strong>{{ o.label }}</strong> ({{ dt(o.period_start) }} to {{ dt(o.period_end) }}){% if not loop.last %}, {% endif %}{% endfor %}

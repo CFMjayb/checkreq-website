@@ -69,6 +69,11 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
                     "Approve every department on Time Review, then Actions > Mark hours Final.")
     if not st["final"]:
         s1["link"] = {"label": "Go to Time Review", "url": base}
+        import payroll_late_rules as late_rules      # held emails block Final (payroll_totals.finalize_period refuses too)
+        late_n = late_rules.waiting_count(org_id)
+        if late_n:
+            s1["detail"] += f" {late_n} late email(s) are waiting in the Late emails queue and must be decided first."
+            s1["link"] = {"label": "Open Late emails", "url": "/admin/timekeeping/late"}
     steps.append(s1)
 
     s2 = {"n": 2, "title": "Close the pay period"}
