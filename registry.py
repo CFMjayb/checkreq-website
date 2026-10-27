@@ -31,20 +31,23 @@ import db
 import databank_mcp_client
 
 
-def list_parishes(org_id: int, include_inactive: bool = False) -> list[dict]:
+def list_parishes(org_id: int, include_inactive: bool = False, churches_only: bool = True) -> list[dict]:
     """All parishes for one diocese. include_inactive=False (default) hides
     soft-deleted rows -- this app never hard-deletes (matching its standing
     philosophy), so a "removed" parish's history stays queryable but out of
-    normal listings."""
-    if include_inactive:
-        return db.query(
-            "SELECT * FROM portal.parishes WHERE org_id = %s ORDER BY name",
-            (org_id,),
-        )
-    return db.query(
-        "SELECT * FROM portal.parishes WHERE org_id = %s AND is_active ORDER BY name",
-        (org_id,),
-    )
+    normal listings.
+
+    churches_only=True (default, 2026-10-27, Jay) leaves out the diocese's units that are not churches
+    (portal.parishes.is_congregation = false: EDOM's Diocesan Office, Claggett's Claggett Center, DME's
+    payroll-only entities). They sit in this table so HR and payroll can use them, but they must never show
+    up in a church list (Allocation Statements, the Parish Mode picker, Announcements, Parish Documents,
+    User Access). Pass churches_only=False only where every row is wanted: the Manage Parishes admin screen."""
+    sql = "SELECT * FROM portal.parishes WHERE org_id = %s"
+    if not include_inactive:
+        sql += " AND is_active"
+    if churches_only:
+        sql += " AND coalesce(is_congregation, true)"
+    return db.query(sql + " ORDER BY name", (org_id,))
 
 
 def list_all_parishes(include_inactive: bool = False) -> list[dict]:
