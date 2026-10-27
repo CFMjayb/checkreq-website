@@ -111,6 +111,22 @@ def parse_hours(value) -> Decimal:
     return d
 
 
+def parse_paid_hours(value) -> Decimal:
+    """PAID-register hours: a Decimal with two places, -300 to 300 (Jay, 2026-10-27). A voided check is a NEGATIVE line on the register
+    (Roberge, Pay #22: +14, -80 for the void, +14 for the reissue = -52 net), so unlike Beacon's own hours (parse_hours, 0 to 300) a paid
+    figure may be below zero. Refuses NaN, infinity, anything that is not a number, and more than 300 either way."""
+    try:
+        d = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError, AttributeError):
+        raise PayrollError("invalid", "Hours must be a number.")
+    if not d.is_finite():
+        raise PayrollError("invalid", "Hours must be a number.")
+    d = d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if abs(d) > MAX_HOURS:
+        raise PayrollError("refused", f"{d} hours is more than the 300 hours one line may hold, either way.")
+    return d
+
+
 def _num(v) -> float | None:
     return None if v is None else float(v)
 
@@ -580,8 +596,8 @@ def record_register_hours(org_id: int, *, period_id: int, parish_code: str, empl
                           category_key: str, hours, source_ref: str | None = None,
                           actor_user_id: int | None = None) -> dict:
     """One paid-register line (hours only) for the variance report. Allowed in a closed period
-    (that is when the register exists). Overwrites the same line's previous figure."""
-    h = parse_hours(hours)
+    (that is when the register exists). Overwrites the same line's previous figure. May be negative (a voided check)."""
+    h = parse_paid_hours(hours)
     get_period(org_id, period_id)
     parish = _parish(org_id, parish_code)
     staff = _staff(parish["id"], employee_number)
@@ -2027,6 +2043,25 @@ def variance(org_id: int, period_id: int) -> dict:
     decisions = pdec.for_period(period_id)      # how each differing line was settled at close-out (26-158, 2026-10-22)
     manual_exp = pdec.manual_expected(period_id)  # hours the previous period paid by interpay manual check, due on THIS register
     manual_left = dict(manual_exp)
+    # PERSON-LEVEL TIE (Jay, 2026-10-27, negative paid hours). With a void and reissue on the register (Roberge, Pay #22: Beacon 14
+    # regular and 2 holiday; expected -68 and +2; the register nets -52 and 2) the person's own total ties exactly once the expected
+    # amounts are counted: Beacon 16 + expected -66 = register -50. When it does, every expected amount of that person IS on the
+    # register, whatever the category mix (the reissue was coded all Regular), so each is applied and none is listed as missing.
+    # When it does not tie, the per-line rule below (manual_expectation_seen) still decides, as before.
+    p_beacon: dict = {}
+    p_reg: dict = {}
+    p_exp: dict = {}
+    for (sid, _cid), b in beacon.items():
+        p_beacon[sid] = p_beacon.get(sid, Decimal(0)) + b["counted_hours"]
+    for (sid, _cid), g in rmap.items():
+        p_reg[sid] = p_reg.get(sid, Decimal(0)) + Decimal(g["hours"])
+    for (sid, _cid), h in manual_exp.items():
+        p_exp[sid] = p_exp.get(sid, Decimal(0)) + h
+
+    def person_tied(sid) -> bool:
+        return sid in p_reg and abs(p_beacon.get(sid, Decimal(0)) + p_exp.get(sid, Decimal(0)) - p_reg[sid]) < Decimal("0.005")
+
+    unrowed: dict = {}   # per person: expected amounts of a tied person that have NO register line (paid inside another category)
     rows = []
     tot_b: dict = {}  # per person, ALL categories together: what Beacon counts and what was paid
     tot_g: dict = {}
@@ -2051,7 +2086,10 @@ def variance(org_id: int, period_id: int) -> dict:
         exp_h = manual_exp.get(key, Decimal(0))
         open_h = Decimal(0)
         if key in manual_exp:
-            if manual_expectation_seen(exp_h, bh, gh_raw):
+            if g is None and person_tied(key[0]):
+                unrowed[key[0]] = unrowed.get(key[0], Decimal(0)) + exp_h   # on the register inside another category: counted below
+                manual_left.pop(key, None)
+            elif person_tied(key[0]) or manual_expectation_seen(exp_h, bh, gh_raw):
                 mc = exp_h
                 manual_left.pop(key, None)
             else:
@@ -2090,11 +2128,15 @@ def variance(org_id: int, period_id: int) -> dict:
                      "beacon_hours": None if bh is None else float(bh),
                      "register_hours": None if gh_raw is None else float(gh_raw),  # as the register shows it
                      "difference": float(diff)})  # Beacon minus paid (less any manual-check hours due from the earlier period); a missing side is 0, so a person's rows add up
+    for key in list(manual_left):      # a tied person's expected amount in a category neither side has a line for
+        if person_tied(key[0]) and key not in beacon and key not in rmap:
+            unrowed[key[0]] = unrowed.get(key[0], Decimal(0)) + manual_left.pop(key)
     # A person whose categories differ but whose TOTAL hours tie to the paid hours is not a difference (Jay, 2026-10-17):
     # for example Holiday or Sick hours Beacon keeps as entered that payroll paid as Regular. Such rows are marked
     # category_only; Actualize leaves them alone and notes them for review.
     for r in rows:
-        tb, tg = tot_b.get(r["staff_id"], Decimal(0)), tot_g.get(r["staff_id"], Decimal(0))
+        tb = tot_b.get(r["staff_id"], Decimal(0))
+        tg = tot_g.get(r["staff_id"], Decimal(0)) - unrowed.get(r["staff_id"], Decimal(0))
         r["person_beacon_total"] = float(tb)
         r["person_register_total"] = float(tg)
         if r["kind"] != "match" and abs(tb - tg) < Decimal("0.005"):

@@ -101,10 +101,17 @@ def load_register_batch(org_id: int, *, pay_date, lines: list, source_ref: str |
             raise PayrollError("invalid", f"Line {i} has no employee number.")
         if key not in cats:
             raise PayrollError("not_found", f"No active category {key!r} for this diocese (line {i}).")
-        h = pt.parse_hours(ln.get("hours"))
+        h = pt.parse_paid_hours(ln.get("hours"))      # may be negative: a voided check is a negative line (migration 107)
         if h == 0:
             continue
         want[(emp, cats[key])] = want.get((emp, cats[key]), Decimal(0)) + h
+    # the register holds the NET per person and category (Roberge: +14, -80, +14 = -52). A net of zero stores nothing, and a net
+    # beyond 300 either way is refused here, before anything is written.
+    for k, net in list(want.items()):
+        if net == 0:
+            del want[k]
+        elif abs(net) > pt.MAX_HOURS:
+            raise PayrollError("refused", f"Employee {k[0]}: the net paid hours ({net}) are more than the 300 hours one line may hold, either way.")
     emps = sorted({e for e, _ in want})
     staff_rows = db.query(
         "SELECT s.id, s.employee_number FROM portal.staff_roster s JOIN portal.parishes p ON p.id = s.parish_id "
@@ -218,6 +225,11 @@ def _decide_rows(org_id: int, period: dict, rows: list, decision: str, user_id: 
                 if existing.get(key) and existing[key]["applied_at"]:
                     n_skipped += 1
                     first_reason = first_reason or "A decision that was already applied cannot be changed."
+                    continue
+                if decision != pdec.MANUAL_CHECK and r.get("register_hours") is not None and r["register_hours"] < 0:
+                    n_skipped += 1
+                    first_reason = first_reason or ("The paid hours for this line are negative (a voided check). Beacon never takes a "
+                                                    "negative figure, so it can only be settled as a Manual check / void-reissue.")
                     continue
                 why = pdec.valid_for(decision, r["difference"])
                 if why:
@@ -383,6 +395,8 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
                 mode = dec["decision"] if dec else pdec.BEACON_WRONG
                 extra = f" Note: {dec['note']}" if dec and dec["note"] else ""
                 paid = Decimal(str(r["register_hours"])) if r["register_hours"] is not None else Decimal(0)
+                if paid < 0 and mode != pdec.MANUAL_CHECK:
+                    continue   # a negative paid figure (a voided check) is never taken into Beacon's own line: it stays differing
                 flags = ["actualized"] + (["resolved_total"] if key in grid else [])
                 cur.execute("SELECT id, hours, review_status FROM portal.time_period_totals "
                             "WHERE period_id = %s AND staff_id = %s AND category_id = %s FOR UPDATE",
