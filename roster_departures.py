@@ -1,0 +1,151 @@
+"""
+roster_departures.py -- a termination that takes effect AFTER the last day (26-158 / 26-129, 2026-10-27; Jay: "some terminations
+occur after the current pay period").
+
+THE RULE. A request to make someone inactive carries a LAST DAY (portal.staff_roster_changes.as_of_date). When an HR Admin
+approves it:
+  - last day in the past (or none)       -> the person is switched off at once, exactly as before;
+  - last day TODAY OR LATER (the diocese's own "today", org_time.py: the entity's time zone, not the server's
+    UTC) -> the request is approved and recorded, the person STAYS ACTIVE and keeps getting hours, and becomes inactive
+    automatically once the last day has passed.
+
+NO SCHEMA CHANGE. The meaning of the two existing columns on portal.staff_roster is:
+  is_active TRUE,  inactive_as_of NULL      -> an ordinary active person;
+  is_active TRUE,  inactive_as_of = a date  -> LEAVING: still active, last day = that date (new in this change; until now the
+                                               date was only ever set together with is_active FALSE);
+  is_active FALSE, inactive_as_of = a date  -> inactive; the date is the last day (unchanged);
+  is_active FALSE, inactive_as_of NULL      -> inactive, no date (unchanged).
+Every reader of is_active therefore keeps treating a leaving person as active, which is what is wanted (they keep their row in
+the time-entry grid, on Time Review, in the payroll reader's roster and in the Std hrs / Confirm standing hours rules). The only
+readers of inactive_as_of itself are the four listed in the 2026-10-27 report: payroll_totals.get_roster (passes it through to the
+service API; the payroll email reader ignores it), timekeeping_employees (marks "Leaving"), timekeeping_roster_changes (writes
+it) and logic/hr_lifecycle/roster_link (the HR offboarding case closes a person at once with the separation date).
+
+THE SWITCH-OFF. apply_due_departures() is idempotent and cheap (one small SELECT when nobody is leaving). It is called lazily at
+the top of the roster-reading paths (see the call sites in the report; there is no scheduled job, and a scheduler could call it
+later). It switches off a person whose last day has passed (last day < today in the diocese's zone) and writes the same APPROVED
+history row the other doors write (portal.staff_roster_changes, change_type 'deactivate', as_of = the last day, no creator: the
+system did it), so the roster keeps one dated history.
+
+SAFETY GUARD. A person is switched off only when the staff row's date is backed by an approved 'deactivate' history row with the
+same date. That protects an active person who happens to carry a stale inactive_as_of from an older script (none on dev; the
+approve / Employees / HR-offboarding doors all write that history row): a wrongly deactivated payroll person is far worse than a
+leaving mark that never switches off, which is visible on the Employees screen and can be cancelled there.
+
+FAIL OPEN. A read path must never break because this sweep had a problem: apply_due_departures() catches, prints the error type
+(never a name or number) and returns 0.
+
+Depends only on db.py and org_time.py. (The zone rule is the same as logic/hr_lifecycle/clock.today(), written out here so nothing from
+logic/* is needed: this module is read by the roster screens, which must load wherever those screens load.)
+"""
+from __future__ import annotations
+
+import datetime as dt
+from zoneinfo import ZoneInfo
+
+import db
+import org_time
+
+# The note on the history row the switch-off writes (also how the screens recognise it).
+AUTO_NOTE = "The last day has passed: the person was switched to inactive automatically (the termination was approved earlier)."
+
+
+def fmt(d) -> str:
+    """MM/DD/YY, the date style every roster screen uses."""
+    return d.strftime("%m/%d/%y") if d else ""
+
+
+def today_for_org(org_id: int | None) -> dt.date:
+    """Today in the diocese's own time zone (its zone setting, the default zone when none is set)."""
+    try:
+        zone = ZoneInfo(org_time.zone_name_for_org(org_id))
+    except Exception:
+        zone = ZoneInfo(org_time.DEFAULT_ZONE)
+    return dt.datetime.now(zone).date()
+
+
+def org_of_parish(parish_id: int) -> int | None:
+    row = db.query_one("SELECT org_id FROM portal.parishes WHERE id = %s", (parish_id,))
+    return row["org_id"] if row else None
+
+
+def is_leaving(staff: dict | None) -> bool:
+    """True for an ACTIVE person who carries a last day (approved, not yet passed or not yet swept)."""
+    return bool(staff) and bool(staff.get("is_active")) and staff.get("inactive_as_of") is not None
+
+
+def leaves_later(as_of, today: dt.date) -> dt.date | None:
+    """The last day when it is today or later (so approving it keeps the person on the roster until then), else None."""
+    if as_of is None:
+        return None
+    if isinstance(as_of, dt.datetime):
+        as_of = as_of.date()
+    return as_of if as_of >= today else None
+
+
+def apply_due_departures(org_id: int | None = None, *, parish_id: int | None = None, today: dt.date | None = None) -> int:
+    """Switch off every person whose last day has passed. Returns how many were switched off. Idempotent.
+
+    org_id / parish_id narrow the sweep (None for both = every diocese, each against its own "today"). today overrides the
+    clock for every diocese (tests; a scheduler never passes it)."""
+    try:
+        return _sweep(org_id, parish_id, today)
+    except Exception as exc:  # noqa: BLE001 - a read path must never fail because of this
+        print(f"[roster_departures] sweep failed: {type(exc).__name__}")
+        return 0
+
+
+def _sweep(org_id, parish_id, today) -> int:
+    where, params = [], []
+    if org_id is not None:
+        where.append("p.org_id = %s")
+        params.append(org_id)
+    if parish_id is not None:
+        where.append("s.parish_id = %s")
+        params.append(parish_id)
+    rows = db.query(
+        "SELECT s.id, s.inactive_as_of, p.org_id FROM portal.staff_roster s JOIN portal.parishes p ON p.id = s.parish_id "
+        "WHERE s.is_active AND s.inactive_as_of IS NOT NULL" + "".join(" AND " + w for w in where), tuple(params))
+    if not rows:
+        return 0
+    cutoff: dict = {}
+    switched = 0
+    for r in rows:
+        if today is not None:
+            day = today
+        else:
+            if r["org_id"] not in cutoff:
+                cutoff[r["org_id"]] = today_for_org(r["org_id"])
+            day = cutoff[r["org_id"]]
+        if r["inactive_as_of"] >= day:
+            continue                                    # the last day is today or later: still working
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                # the guard in the module docstring, and the conditions again so two requests at once switch off once
+                cur.execute(
+                    "UPDATE portal.staff_roster s SET is_active = FALSE, updated_at = now() "
+                    "WHERE s.id = %s AND s.is_active AND s.inactive_as_of IS NOT NULL AND s.inactive_as_of < %s "
+                    "AND EXISTS (SELECT 1 FROM portal.staff_roster_changes c WHERE c.staff_id = s.id "
+                    "            AND c.change_type = 'deactivate' AND c.status = 'approved' AND c.as_of_date = s.inactive_as_of) "
+                    "RETURNING s.parish_id, s.first_name, s.last_name, s.position, s.employee_number, s.captures_hours",
+                    (r["id"], day))
+                s = cur.fetchone()
+                if s:
+                    cur.execute(
+                        "INSERT INTO portal.staff_roster_changes "
+                        "(parish_id, staff_id, change_type, proposed_first_name, proposed_last_name, proposed_position, "
+                        " proposed_employee_number, proposed_captures_hours, as_of_date, status, reviewed_at, review_note) "
+                        "VALUES (%s, %s, 'deactivate', %s, %s, %s, %s, %s, %s, 'approved', now(), %s)",
+                        (s["parish_id"], r["id"], s["first_name"], s["last_name"], s["position"], s["employee_number"],
+                         s["captures_hours"], r["inactive_as_of"], AUTO_NOTE))
+                    switched += 1
+    return switched
+
+
+def cancel_leaving(cur, staff_id: int, parish_id: int) -> bool:
+    """Take the leaving date off an ACTIVE person (the caller's cursor and transaction). True when there was one to cancel.
+    Does not touch an inactive person: bringing one back is a reactivation, which clears the date itself."""
+    cur.execute("UPDATE portal.staff_roster SET inactive_as_of = NULL, updated_at = now() "
+                "WHERE id = %s AND parish_id = %s AND is_active AND inactive_as_of IS NOT NULL RETURNING id",
+                (staff_id, parish_id))
+    return cur.fetchone() is not None

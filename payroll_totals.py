@@ -39,6 +39,7 @@ import category_order
 import db
 import payroll_decisions as pdec
 import payroll_late_rules as late_rules
+import roster_departures
 
 MAX_HOURS = Decimal("300")
 QUOTE_MAX = 300
@@ -232,7 +233,11 @@ def list_periods(org_id: int) -> list[dict]:
 
 
 def get_roster(org_id: int, parish_code: str | None = None) -> dict:
-    """Roster rows (no pay) plus pending new hires. Optionally one parish."""
+    """Roster rows (no pay) plus pending new hires. Optionally one parish.
+
+    A person with is_active true and inactive_as_of set is LEAVING (a termination approved with a last day still ahead,
+    roster_departures.py): still active, so the email reader keeps matching hours to them; the date is passed through."""
+    roster_departures.apply_due_departures(org_id)   # a person whose last day has passed is inactive in what the reader sees
     args: list = [org_id]
     extra = ""
     if parish_code:
@@ -1498,6 +1503,7 @@ def carry_forward_standing(org_id: int, period_id: int, user_id: int, parish_id:
     period = get_period(org_id, period_id)
     if period["status"] not in WRITABLE_PERIOD_STATUSES:
         raise PayrollError("refused", f"This pay period is {period['status']}.")
+    roster_departures.apply_due_departures(org_id)   # no standing line for someone whose last day has passed
     svc = service_user_id()
     people = db.query(
         "SELECT s.id, s.employee_number, s.standing_hours, p.code FROM portal.staff_roster s "
@@ -1676,6 +1682,7 @@ def board_extras(org_id: int, period_id: int) -> dict[int, dict]:
     """Per parish id: pattern, channel, emails received (count and first time), lines needing
     review, conflicts and waiting proposals. For the Time Review board."""
     get_period(org_id, period_id)
+    roster_departures.apply_due_departures(org_id)   # the standing-hours people counted below are the ones still on the roster today
     out: dict[int, dict] = {}
 
     def slot(pid):

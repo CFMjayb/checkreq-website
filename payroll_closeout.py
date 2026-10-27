@@ -20,6 +20,7 @@ from decimal import Decimal
 import db
 import payroll_decisions as pdec
 import payroll_totals as pt
+import roster_departures
 from payroll_totals import PayrollError
 
 AUTO_ACTUALIZE_KEY = "payroll_auto_actualize:{org_id}"
@@ -503,6 +504,7 @@ def open_next_period(org_id: int, period_id: int, user_id: int) -> dict:
 def closeout_state(org_id: int, period_id: int) -> dict:
     """Everything the close-out checklist shows for one period (hours only)."""
     period = pt.get_period(org_id, period_id)
+    roster_departures.apply_due_departures(org_id)   # the roster the checklist reads is current: a last day that has passed is inactive
     rep = pt.variance(org_id, period_id) if period["register_loaded_at"] is not None else None
     who = None
     if period["actualized_by_user_id"]:

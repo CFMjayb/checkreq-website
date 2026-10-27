@@ -23,6 +23,7 @@
   var menu = document.getElementById('empMenu');
   var menuToggle = document.getElementById('empMenuToggle');
   var menuHistory = document.getElementById('empMenuHistory');
+  var menuCancelLeaving = document.getElementById('empMenuCancelLeaving');
   var menuRow = null;
   var leaving = false;           // set once we are deliberately navigating away
 
@@ -127,6 +128,12 @@
     menuRow = tr;
     btn.setAttribute('aria-expanded', 'true');
     menuToggle.textContent = effectiveActive(tr) ? 'Inactivate' : 'Activate';
+    // a LEAVING person (a last day still ahead) can have the date cancelled: they stay on staff (nothing is written until Save)
+    if (menuCancelLeaving) {
+      var pendingCancel = actionInput(tr).value === 'cancel_leaving';
+      menuCancelLeaving.hidden = !(tr.dataset.leaving && effectiveActive(tr));
+      menuCancelLeaving.textContent = pendingCancel ? 'Keep the leaving date' : 'Cancel leaving date';
+    }
     if (menuHistory) menuHistory.href = '/admin/timekeeping/employees/' + tr.dataset.id + '/hours-history';
     menu.hidden = false;
     var r = btn.getBoundingClientRect();
@@ -144,6 +151,15 @@
     var act = actionInput(tr);
     // back to the stored state = no pending change; otherwise record the change
     act.value = (newActive === originalActive(tr)) ? '' : (newActive ? 'reactivate' : 'deactivate');
+    paint(tr);
+    refresh();
+    closeMenu();
+  });
+  if (menuCancelLeaving) menuCancelLeaving.addEventListener('click', function () {
+    var tr = menuRow;
+    if (!tr || !tr.dataset.leaving) return;
+    var act = actionInput(tr);
+    act.value = act.value === 'cancel_leaving' ? '' : 'cancel_leaving';
     paint(tr);
     refresh();
     closeMenu();

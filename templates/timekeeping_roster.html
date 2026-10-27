@@ -85,6 +85,8 @@
             <td>{{ s.employee_number or "—" }}</td>
             <td data-v="{{ 'a' if s.is_active else 'b' }}">
               {% if s.is_active %}<span class="badge badge-approved">Active</span>{% else %}<span class="c-muted">Inactive</span>{% endif %}
+              {% set leaving_on = leaving_by_staff.get(s.id) %}
+              {% if leaving_on %}<span class="badge badge-pending" data-tip="The diocese approved the end of this person's employment. They stay on staff, and their hours keep coming in, until the last day; then they become inactive automatically.">Leaving {{ dt(leaving_on) }}</span>{% endif %}
               {% if pc %}<span class="badge badge-pending" data-tip="{{ 'Queued: it goes to the diocese with your next Submit.' if not pc.payroll_period_id else 'With the diocese for review.' }}">{{ CT[pc.change_type] }} waiting</span>{% endif %}
             </td>
             {% if can_manage %}
@@ -98,7 +100,11 @@
               <button type="button" class="btn btn-sm btn-secondary ff-rowbtn" data-staff-edit data-id="{{ s.id }}"
                       data-first="{{ s.first_name }}" data-last="{{ s.last_name }}" data-position="{{ s.position or '' }}" data-emp="{{ s.employee_number or '' }}">Edit</button>
               <button type="button" class="btn btn-sm btn-secondary ff-rowbtn" data-staff-status data-id="{{ s.id }}"
-                      data-name="{{ s.first_name }} {{ s.last_name }}" data-active="{{ '1' if s.is_active else '0' }}">Status change</button>
+                      data-name="{{ s.first_name }} {{ s.last_name }}" data-active="{{ '1' if s.is_active else '0' }}"{% if leaving_on %} data-leaving="{{ dt(leaving_on) }}"{% endif %}>Status change</button>
+              {% if leaving_on %}
+              <button type="button" class="btn btn-sm btn-secondary ff-rowbtn" data-staff-status data-mode="stay" data-id="{{ s.id }}"
+                      data-name="{{ s.first_name }} {{ s.last_name }}" data-active="1" data-leaving="{{ dt(leaving_on) }}">Keep on staff</button>
+              {% endif %}
               {% endif %}
             </td>
             {% endif %}
@@ -173,6 +179,7 @@
   <h2 data-status-title>Status change</h2>
   <form method="post" action="" data-staff-status-form>
     <input type="hidden" name="csrf_token" value="{{ tok }}">
+    <input type="hidden" name="stay" value="" data-stay-flag>
     <div data-status-step="1">
       <p class="ff-help" data-status-help></p>
       <div class="field"><label>What is the change?</label>
@@ -183,6 +190,10 @@
         <select name="reason" data-reason-select="reactivate" required hidden disabled>
           <option value="">Choose&hellip;</option>
           {% for k, l in reactivate_reasons.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}
+        </select>
+        <select name="reason" data-reason-select="stay" required hidden disabled>
+          <option value="">Choose&hellip;</option>
+          {% for k, l in stay_reasons.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}
         </select>
       </div>
       <div class="field"><label data-status-date-label>Effective date</label><input type="date" name="effective_date" value="{{ today }}" required></div>
@@ -224,6 +235,7 @@
           <td style="white-space:normal">
             {% if c.status == 'rejected' and c.review_note and c.review_note != withdrawn_note %}{{ c.review_note }}
             {% elif c.change_type in ('deactivate', 'reactivate') %}{{ change_reason(c) or '' }}{% if c.as_of_date %} &middot; {{ dt(c.as_of_date) }}{% endif %}{% if c.proposed_note %} &middot; {{ c.proposed_note }}{% endif %}
+              {% if c.status == 'approved' and c.change_type == 'deactivate' and c.staff_id in leaving_by_staff and c.as_of_date == leaving_by_staff[c.staff_id] %}<br><strong>Takes effect {{ dt(c.as_of_date) }}:</strong> stays on staff until their last day, then becomes inactive automatically.{% endif %}
             {% else %}&mdash;{% endif %}
           </td>
           <td>{{ dt(c.created_at) }}</td>

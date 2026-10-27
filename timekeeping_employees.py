@@ -35,6 +35,10 @@ AS-OF DATE semantics, per the design approved 2026-08-17:
 is_active is kept alongside inactive_as_of rather than replaced by it, so
 every existing `WHERE is_active` query keeps working untouched.
 
+LEAVING (2026-10-27, roster_departures.py): an ACTIVE person with inactive_as_of set is "leaving": an approved termination whose
+last day has not passed yet. The list marks them "Leaving MM/DD/YY"; the row menu's "Cancel leaving date" removes the date
+(they stay on staff); "Inactivate" still switches them off at once (as of today).
+
 GATE: hr_admin or beacon_admin -- the OPERATIONAL half of the HR group's own
 split (Timekeeping Review / Timekeeping Status), not the setup_admin
 CONFIGURATION half (Payroll Periods / Time Categories / HR Activation). Day-to-
@@ -77,6 +81,7 @@ import cornerstone_mode
 import db
 import payroll_totals
 import rbac
+import roster_departures
 
 router = APIRouter()
 
@@ -213,6 +218,7 @@ def _log_change(cur, *, parish_id: int, staff_id: int | None, change_type: str,
 def list_employees(org_id: int, *, parish_id: int | None = None,
                    q: str = "", show: str = "active",
                    hours: str = "all") -> list[dict]:
+    roster_departures.apply_due_departures(org_id)   # anyone whose last day has passed is inactive before the list is read (26-158)
     where = ["p.org_id = %s"]
     params: list = [org_id]
     if parish_id:
@@ -379,7 +385,7 @@ async def employees_save(request: Request):
     posted = [k[len("present_"):] for k in form.keys() if k.startswith("present_")]
     owned = {str(e["id"]): e for e in list_employees(org["id"], show="all")}
 
-    edited, activated, deactivated, problems = 0, 0, 0, []
+    edited, activated, deactivated, cancelled, problems = 0, 0, 0, 0, []
     reactivated_ids: list[int] = []
     with db.connect() as conn:
         with conn.cursor() as cur:
@@ -427,8 +433,10 @@ async def employees_save(request: Request):
                 wants_active = action == "reactivate"
                 state_change = action in ("deactivate", "reactivate") and \
                     bool(row["is_active"]) != wants_active
+                # a LEAVING person (active, with a last day) whose date is taken off: they stay on staff
+                cancel_leaving = action == "cancel_leaving" and roster_departures.is_leaving(row)
 
-                if not field_change and not state_change:
+                if not field_change and not state_change and not cancel_leaving:
                     continue
                 if not as_of:
                     problems.append(f"{who}: skipped -- a change needs an as-of date.")
@@ -495,6 +503,13 @@ async def employees_save(request: Request):
                         cur, parish_id=row["parish_id"], staff_id=sid,
                         change_type="reactivate" if wants_active else "deactivate",
                         as_of=as_of, actor_id=user["id"])
+
+                if cancel_leaving and not state_change:
+                    if roster_departures.cancel_leaving(cur, sid, row["parish_id"]):
+                        cancelled += 1
+                        _log_change(cur, parish_id=row["parish_id"], staff_id=sid, change_type="reactivate",
+                                    as_of=as_of, actor_id=user["id"],
+                                    note="Direct diocese-side HR edit: the leaving date was cancelled (the person stays on staff).")
         conn.commit()
 
     # 26-158: hours an email gave for a person who was inactive are entered now (they wait for review), and her
@@ -513,6 +528,8 @@ async def employees_save(request: Request):
         bits.append(f"{deactivated} inactivated")
     if activated:
         bits.append(f"{activated} activated")
+    if cancelled:
+        bits.append(f"{cancelled} leaving date{'' if cancelled == 1 else 's'} cancelled")
     if hours_entered:
         bits.append(f"{hours_entered} hours line(s) from emails entered for them, waiting for review")
     saved = ", ".join(bits) + "." if bits else "No changes to save."
