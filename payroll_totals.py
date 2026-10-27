@@ -1960,9 +1960,35 @@ def parish_view(org_id: int, parish_id: int, period_id: int) -> list[dict]:
     return [r for r in _period_rows(org_id, period_id) if r["parish_id"] == parish_id and r["line_id"] is not None]
 
 
+def manual_expectation_seen(expected, beacon_hours, register_hours) -> bool:
+    """Is the signed amount the PREVIOUS period expects on THIS register (decisions.manual_expected) actually on it?
+      positive (an interpay manual check): the register holds at least that many hours.
+      negative (the net of a void and reissue): the register is at least that far BELOW Beacon's own hours for this period.
+    The old test for both was `register >= amount`, which can never fail for a negative amount, so a void that did NOT show was
+    still taken off the register and the line came out 68 hours wrong on Pay #22 (Beacon 14, register 28, shown as -82;
+    Jay, 2026-10-27). An amount that is not seen is not applied: the line is compared on the register as it is and the amount
+    is reported as still expected (variance()['manual_missing'])."""
+    if register_hours is None:
+        return False
+    if expected == 0:
+        return True
+    if expected > 0:
+        return register_hours >= expected
+    base = beacon_hours if beacon_hours is not None else Decimal(0)
+    return register_hours <= base + expected + Decimal("0.005")
+
+
 def variance(org_id: int, period_id: int) -> dict:
     """Beacon's counted hours against the paid register's hours, per employee and category, for
-    employees who report hours. Hours only."""
+    employees who report hours. Hours only.
+
+    Each row carries the numbers the screen needs to be read without guessing (all hours, signed):
+      register_hours           the register as it is
+      manual_expected_hours    what the previous period's manual checks / void-reissues expect on this register for this line
+      manual_check_hours       the part of that which IS on the register and was taken off before comparing (see manual_expectation_seen)
+      manual_open_hours        the part which is NOT on the register (not taken off; also listed in manual_missing)
+      adjusted_register_hours  the register that was compared: register_hours minus manual_check_hours
+      difference               beacon_hours minus adjusted_register_hours, so a reader can always check it from the row"""
     get_period(org_id, period_id)
     beacon: dict = {}
     for r in _period_rows(org_id, period_id):
@@ -1995,11 +2021,19 @@ def variance(org_id: int, period_id: int) -> dict:
         bh = None if b is None else b["counted_hours"]
         gh_raw = None if g is None else Decimal(g["hours"])
         # Hours the previous period paid by an interpay manual check show on THIS register but are not Beacon hours of this
-        # period (they were counted in the earlier one), so they are taken off the register side before comparing.
+        # period (they were counted in the earlier one), so they are taken off the register side before comparing. The net of a
+        # void and reissue (a negative amount) is the same idea the other way round. An amount that is NOT on the register is
+        # not taken off (manual_expectation_seen): the line is compared on the register as it is, and the amount stays in
+        # manual_left so it is reported as expected and not found.
         mc = Decimal(0)
-        if gh_raw is not None and key in manual_exp and gh_raw >= manual_exp[key]:
-            mc = manual_exp[key]
-            manual_left.pop(key, None)
+        exp_h = manual_exp.get(key, Decimal(0))
+        open_h = Decimal(0)
+        if key in manual_exp:
+            if manual_expectation_seen(exp_h, bh, gh_raw):
+                mc = exp_h
+                manual_left.pop(key, None)
+            else:
+                open_h = exp_h
         gh = None if gh_raw is None else gh_raw - mc
         if (g is None and bh == 0) or (b is None and gh == 0):
             continue  # nothing paid and nothing counted is agreement (an actualized "not paid" line holds 0)
@@ -2019,7 +2053,10 @@ def variance(org_id: int, period_id: int) -> dict:
                      "decision": dec["decision"] if dec else None, "decision_note": dec["note"] if dec else None,
                      "decision_applied": bool(dec and dec["applied_at"]),
                      "decision_stale": bool(dec and pdec.is_stale(dec, diff)),
-                     "manual_check_hours": float(mc),
+                     "manual_check_hours": float(mc),          # taken off the register before comparing (it IS on the register)
+                     "manual_expected_hours": float(exp_h),    # what the earlier period expects here, on the register or not
+                     "manual_open_hours": float(open_h),       # expected and NOT on the register: not taken off, listed as missing
+                     "adjusted_register_hours": None if gh is None else float(gh),  # the register that was compared
                      "parish_code": src["parish_code"], "parish_name": src["parish_name"],
                      "dept_name": src.get("dept_name") or src["parish_name"],
                      "employee_number": src["employee_number"], "last_name": src["last_name"],

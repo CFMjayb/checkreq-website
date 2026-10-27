@@ -21,6 +21,8 @@
 .vd-select.is-set { border-color: #1f6b3a; background: #eef7f0; }
 .vd-note { height: 24px; padding: 2px 6px; font-size: 0.8rem; margin: 0; width: 100%; max-width: 15rem; }
 .vd-sub { font-size: 0.75rem; line-height: 1.25; }
+/* the Variance report's explanatory lines may use more than one line: the shared frame cuts a cell at one (2026-10-27) */
+.ff-table td .vd-wrap { white-space: normal; padding: 2px 0; }
 .vd-help span { line-height: 1.35; }
 .ff-foot .vd-all { margin-left: auto; }
 

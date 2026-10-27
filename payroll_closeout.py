@@ -682,7 +682,7 @@ def tie_out_report(org_id: int, period_id: int) -> dict:
                       "beacon_hours": r["beacon_hours"], "paid_hours": r["register_hours"], "difference": r["difference"],
                       "kind": r["kind"], "decision": pdec.LABELS.get(r["decision"]) if r["decision"] else None,
                       "decision_stale": r["decision_stale"], "decision_note": r["decision_note"],
-                      "manual_check_hours": r["manual_check_hours"]})
+                      "manual_check_hours": r["manual_check_hours"], "manual_open_hours": r["manual_open_hours"]})
     out.update(counts=rep["counts"], undecided=rep["undecided"], decided=rep["decided"], category_only_people=rep["category_only_people"],
                departments=[{"code": d["parish_code"], "name": d["dept_name"], "beacon_hours": d["beacon_hours"],
                              "paid_hours": d["register_hours"], "difference": d["difference"], "differing": d["differing"]}
