@@ -86,7 +86,7 @@
             <td data-v="{{ 'a' if s.is_active else 'b' }}">
               {% if s.is_active %}<span class="badge badge-approved">Active</span>{% else %}<span class="c-muted">Inactive</span>{% endif %}
               {% set leaving_on = leaving_by_staff.get(s.id) %}
-              {% if leaving_on %}<span class="badge badge-pending" data-tip="The diocese approved the end of this person's employment. They stay on staff, and their hours keep coming in, until the last day; then they become inactive automatically.">Leaving {{ dt(leaving_on) }}</span>{% endif %}
+              {% if leaving_on %}<span class="badge badge-pending" data-tip="The diocese approved the end of this person's employment. They stay on staff, and their hours keep coming in, until the last day has passed and its pay period is closed; then they become inactive automatically.">Leaving {{ dt(leaving_on) }}</span>{% endif %}
               {% if pc %}<span class="badge badge-pending" data-tip="{{ 'Queued: it goes to the diocese with your next Submit.' if not pc.payroll_period_id else 'With the diocese for review.' }}">{{ CT[pc.change_type] }} waiting</span>{% endif %}
             </td>
             {% if can_manage %}
@@ -235,7 +235,7 @@
           <td style="white-space:normal">
             {% if c.status == 'rejected' and c.review_note and c.review_note != withdrawn_note %}{{ c.review_note }}
             {% elif c.change_type in ('deactivate', 'reactivate') %}{{ change_reason(c) or '' }}{% if c.as_of_date %} &middot; {{ dt(c.as_of_date) }}{% endif %}{% if c.proposed_note %} &middot; {{ c.proposed_note }}{% endif %}
-              {% if c.status == 'approved' and c.change_type == 'deactivate' and c.staff_id in leaving_by_staff and c.as_of_date == leaving_by_staff[c.staff_id] %}<br><strong>Takes effect {{ dt(c.as_of_date) }}:</strong> stays on staff until their last day, then becomes inactive automatically.{% endif %}
+              {% if c.status == 'approved' and c.change_type == 'deactivate' and c.staff_id in leaving_by_staff and c.as_of_date == leaving_by_staff[c.staff_id] %}<br><strong>Takes effect {{ dt(c.as_of_date) }}:</strong> stays on staff until their last day has passed and its pay period is closed, then becomes inactive automatically.{% endif %}
             {% else %}&mdash;{% endif %}
           </td>
           <td>{{ dt(c.created_at) }}</td>

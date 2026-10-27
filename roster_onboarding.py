@@ -159,7 +159,7 @@ def _link(case_id: int, staff_id, change: dict, actor_id: int) -> bool:
                 "FROM portal.staff_roster s WHERE hr.cases.id = %s AND s.id = %s AND s.parish_id = hr.cases.parish_id "
                 "AND hr.cases.staff_id IS NULL", (case_id, staff_id))
             linked = cur.rowcount == 1
-            # hr.cases.source only allows 'hr' or 'parish', so the origin is kept as a history line on the case (ids only)
+            # the case's source is 'roster_review' (migration 108); this history line adds which request and roster row (ids only)
             cur.execute(
                 "INSERT INTO hr.case_events (case_id, event, detail, actor_user_id) VALUES (%s, 'from_roster_review', %s, %s)",
                 (case_id, json.dumps({"roster_change_id": change.get("id"), "staff_id": staff_id, "linked": linked}), actor_id))
@@ -189,7 +189,7 @@ def open_for_new_hire(org_id: int, change: dict, staff_id, actor_id: int) -> dic
         except HrError:
             return _fail("duplicate")
         try:
-            case_id = cases.open_case(org_id, "onboard", raw, actor_id, source="hr")
+            case_id = cases.open_case(org_id, "onboard", raw, actor_id, source="roster_review")
         except HrError as e:
             return _fail("details" if e.code in ("invalid", "pii") else "refused")
         number = None

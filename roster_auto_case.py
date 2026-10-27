@@ -137,14 +137,16 @@ def ensure_case(staff_id, *, origin: str, actor_id: int | None = None, hire_date
         if hire_date_known and st.get("effective_date"):
             raw["start_date"] = st["effective_date"]
         try:
-            case_id = cases.open_case(st["org_id"], "onboard", raw, actor_id, source="hr")
+            case_id = cases.open_case(st["org_id"], "onboard", raw, actor_id,
+                                      source="roster_review" if origin == "roster_review" else "hr")
         except HrError as e:
             return _result("skipped" if e.code == "refused" else "failed", "duplicate" if e.code == "refused" else "details")
         with db.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("UPDATE hr.cases SET staff_id = %s, last_activity_at = now(), updated_at = now() "
                             "WHERE id = %s AND staff_id IS NULL", (st["id"], case_id))
-                # hr.cases.source allows only 'hr' or 'parish', so where the case came from is kept as a history line (ids only)
+                # hr.cases.source is 'roster_review' for a Roster Review hire (migration 108), else 'hr'; where the case came from is also
+                # kept as a history line (ids only)
                 cur.execute("INSERT INTO hr.case_events (case_id, event, detail, actor_user_id) VALUES (%s, 'from_roster_add', %s, %s)",
                             (case_id, json.dumps({"origin": origin, "staff_id": st["id"]}), actor_id))
             conn.commit()
