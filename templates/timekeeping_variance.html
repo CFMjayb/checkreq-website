@@ -33,6 +33,13 @@
       <em>Beacon wrong</em>: Beacon takes the paid hours.</span>
   </div>
   {% endif %}
+  {% if report.register_loaded and report.manual_missing %}
+  <div class="banner banner-error ff-banner">
+    <strong>Expected from the last pay period, not on this register:</strong>
+    {% for m in report.manual_missing[:8] %}{{ m.last_name }}, {{ m.first_name }}{% if m.employee_number %} #{{ m.employee_number }}{% endif %} {{ m.category_label }} {{ "%+.2f"|format(m.hours) }} {{ 'void/reissue adjustment' if m.hours < 0 else 'manual check' }}{{ '; ' if not loop.last }}{% endfor %}{% if report.manual_missing|length > 8 %}; and {{ report.manual_missing|length - 8 }} more{% endif %}.
+    They are not counted in any difference below. The closing checklist lists them too.
+  </div>
+  {% endif %}
   {% if not report.register_loaded %}
   <div class="banner banner-info ff-banner">No register hours have been loaded for this period yet, so nothing can be compared.</div>
   {% else %}
@@ -40,7 +47,7 @@
     <div class="ff-scroll">
       <table class="ff-table">
         <colgroup>
-          <col style="width:11%"><col style="width:16%"><col style="width:8%"><col style="width:5%"><col style="width:6%"><col style="width:6%"><col style="width:7%"><col style="width:7%"><col style="width:12%"><col style="width:22%">
+          <col style="width:11%"><col style="width:15%"><col style="width:7%"><col style="width:4%"><col style="width:6%"><col style="width:6%"><col style="width:7%"><col style="width:7%"><col style="width:20%"><col style="width:17%">
         </colgroup>
         <thead>
           <tr>
@@ -84,7 +91,7 @@
             <td class="c-num" data-v="{{ r.beacon_hours if r.beacon_hours is not none else '' }}">{{ "%.2f"|format(r.beacon_hours) if r.beacon_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.register_hours if r.register_hours is not none else '' }}">{{ "%.2f"|format(r.register_hours) if r.register_hours is not none else "—" }}</td>
             <td class="c-num" data-v="{{ r.difference if r.difference is not none else '' }}">{{ "%+.2f"|format(r.difference) if r.difference is not none else "—" }}</td>
-            <td>{% if r.kind == 'category_only' %}<span class="c-muted" data-tip="This person's total hours are the same as paid ({{ '%.2f'|format(r.person_beacon_total) }}). Only the categories differ. Left as entered, for review.">Total matches, categories differ</span>{% elif r.kind == 'manual_check' %}<span class="c-muted" data-tip="Settled by a manual check or a void and reissue. Beacon keeps its hours for this period and the correction is expected on the next period's register.">Manual check / void-reissue, kept as entered</span>{% else %}<span class="ph-state-attn">{{ {'differs': 'Hours differ', 'paid_no_beacon_hours': 'Paid, no Beacon hours', 'beacon_hours_not_paid': 'Beacon hours, none paid'}[r.kind] }}</span>{% endif %}{% if r.manual_check_hours %}<div class="c-muted vd-sub">includes {{ "%.2f"|format(r.manual_check_hours) }} hours paid by manual check last period</div>{% endif %}</td>
+            <td>{% if r.kind == 'category_only' %}<span class="c-muted" data-tip="This person's total hours are the same as paid ({{ '%.2f'|format(r.person_beacon_total) }}). Only the categories differ. Left as entered, for review.">Total matches, categories differ</span>{% elif r.kind == 'manual_check' %}<span class="c-muted" data-tip="Settled by a manual check or a void and reissue. Beacon keeps its hours for this period and the correction is expected on the next period's register.">Manual check / void-reissue, kept as entered</span>{% else %}<span class="ph-state-attn">{{ {'differs': 'Hours differ', 'paid_no_beacon_hours': 'Paid, no Beacon hours', 'beacon_hours_not_paid': 'Beacon hours, none paid'}[r.kind] }}</span>{% endif %}{% if r.manual_check_hours %}<div class="c-muted vd-sub vd-wrap">Register {{ "%.2f"|format(r.register_hours) }} less the {{ "%+.2f"|format(r.manual_check_hours) }} {{ 'void/reissue adjustment' if r.manual_check_hours < 0 else 'manual check' }} from the last period = {{ "%.2f"|format(r.adjusted_register_hours) }}</div>{% endif %}{% if r.manual_open_hours %}<div class="ph-state-attn vd-sub vd-wrap">Expected from the last period, not on this register: {{ "%+.2f"|format(r.manual_open_hours) }} {{ 'void/reissue adjustment' if r.manual_open_hours < 0 else 'manual check' }}</div>{% endif %}</td>
             <td data-v="{{ r.decision or '~' }}">
               {% if r.kind == 'category_only' %}<span class="c-muted">None needed</span>
               {% elif r.kind == 'manual_check' %}<span>{{ decision_labels['manual_check'] }}</span>{% if r.decision_note %}<div class="c-muted vd-sub">{{ r.decision_note }}</div>{% endif %}
