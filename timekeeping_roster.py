@@ -44,6 +44,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import db
+import roster_auto_case
 import roster_departures
 import timekeeping
 import timekeeping_roster_changes
@@ -113,7 +114,11 @@ def create_staff(parish_id: int, first_name: str, last_name: str, position: str 
                 "VALUES (%s, %s, %s, %s, %s, %s) RETURNING *",
                 (parish_id, first_name, last_name, position or None, employee_number or None, created_by_user_id),
             )
-            return cur.fetchone()
+            row = cur.fetchone()
+    # 26-162: every roster add makes an onboarding case (roster_auto_case.py); the add above is saved either way
+    if row:
+        roster_auto_case.ensure_case(row["id"], origin="parish_staff", actor_id=created_by_user_id)
+    return row
 
 
 def update_staff(staff_id: int, parish_id: int, **fields) -> dict | None:

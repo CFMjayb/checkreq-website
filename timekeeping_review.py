@@ -30,6 +30,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 import rbac
 import cornerstone_mode
 import email_pdf
+import roster_auto_case
 import roster_onboarding
 import timekeeping_entries
 import timekeeping_roster_changes
@@ -128,7 +129,12 @@ async def roster_change_approve(change_id: int, request: Request):
     if leaves_on is not None:
         # a termination whose last day is still ahead: the banner says the person stays on the roster until then
         tail += "&leaves=" + quote(leaves_on.strftime("%m/%d/%y"), safe="")
-    if roster_onboarding.ticked(form):
+    auto = roster_auto_case.case_for_staff(new_staff_id) if new_staff_id else None
+    if auto:
+        # 26-162: every roster add makes an onboarding case, so approving a new hire has already opened one: the page says so
+        # (the old Move to Onboarding box, if an open page still sends it, changes nothing)
+        tail += f"&onboarding_case={int(auto['id'])}"
+    elif roster_onboarding.ticked(form):
         # "Move to Onboarding" was ticked. The approval above has already happened and always stands: whatever this step
         # cannot do becomes one sentence on the page (roster_onboarding.py has every rule, and checks them again here).
         tail += roster_onboarding.redirect_query(roster_onboarding.open_for_new_hire(org["id"], change, new_staff_id, user["id"]))
