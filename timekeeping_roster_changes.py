@@ -50,6 +50,7 @@ import time
 import db
 import notifications
 import payroll_totals
+import roster_auto_case
 import roster_departures
 
 _CHANGE_TYPE_LABELS = {
@@ -437,6 +438,8 @@ def approve_change_detailed(change: dict, reviewer_user_id: int, review_note: st
     if change["change_type"] == "add" and new_staff_id:
         # 26-158: hours already recorded for this pending new hire move onto the new roster row.
         payroll_totals.on_roster_add_approved(change["id"], new_staff_id)
+        # 26-162: every roster add makes an onboarding case (roster_auto_case.py); the approval above always stands
+        roster_auto_case.ensure_case(new_staff_id, origin="roster_review", actor_id=reviewer_user_id)
     if change["change_type"] == "reactivate" and change.get("staff_id"):
         # 26-158: hours an email gave for her (waiting in "named, not entered yet") are entered now, to wait for review.
         payroll_totals.on_staff_reactivated(change["staff_id"], reviewer_user_id)

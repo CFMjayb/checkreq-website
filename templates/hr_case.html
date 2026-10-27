@@ -249,6 +249,7 @@
       {% elif e.event == 'enrollment' %}{{ coverages.get(d.coverage, d.coverage) }}: {{ d.election }}, {{ d.status }}
       {% elif e.event == 'document_added' %}filed {{ doc_labels.get(d.doc_type, d.doc_type) }}{% if d.item %} for {{ item_labels.get(d.item, d.item) }}{% endif %}{% if d.replaced %} (replaced an earlier one){% endif %}
       {% elif e.event == 'from_roster_review' %}opened this case from a Roster Review approval of the new hire{% if d.linked %} (linked to the roster entry){% endif %}
+      {% elif e.event == 'from_roster_add' %}opened this case automatically when the person was added to the roster ({{ {'employees_add': 'on the Employees screen', 'roster_review': 'approved in Roster Review', 'parish_staff': 'on a parish staff roster', 'payroll_register': 'found on the payroll register'}.get(d.origin, 'added') }})
       {% elif e.event == 'closed' %}closed as {{ outcomes.get(d.outcome, d.outcome)|lower }}{% if d.roster %} ({{ d.roster }}){% endif %}
       {% else %}{{ e.event }}{% endif %}</li>
     {% endfor %}

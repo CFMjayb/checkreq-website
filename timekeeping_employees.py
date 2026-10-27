@@ -81,6 +81,7 @@ import cornerstone_mode
 import db
 import payroll_totals
 import rbac
+import roster_auto_case
 import roster_departures
 
 router = APIRouter()
@@ -356,6 +357,8 @@ async def employees_add(request: Request):
                         note=(f"Direct diocese-side HR edit (no parish proposal step). Standing hours set to {std}."
                               if std is not None else ""))
         conn.commit()
+    # 26-162: every roster add makes an onboarding case (roster_auto_case.py). The add above is saved either way.
+    roster_auto_case.ensure_case(new_id, origin="employees_add", actor_id=user["id"])
     return _redirect_back(request, saved=f"Added {last}, {first} (effective "
                                          f"{as_of.strftime('%m/%d/%y')}).")
 

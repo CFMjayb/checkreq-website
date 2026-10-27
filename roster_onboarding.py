@@ -31,6 +31,7 @@ import json
 
 import db
 import org_features
+import roster_auto_case
 
 FEATURE = "hr_lifecycle"
 FORM_FIELD = "move_to_onboarding"
@@ -38,6 +39,7 @@ FORM_FIELD = "move_to_onboarding"
 # One plain sentence per reason code (the code travels in the redirect, never the sentence: nothing typed in a link is shown back).
 REASONS = {
     "not_offered": "onboarding is not offered for this request",
+    "automatic": "a case is opened automatically when a new hire is approved",
     "not_available": "onboarding is not turned on here",
     "no_checklist": "there is no active onboarding checklist for this entity",
     "duplicate": "this person already has an open onboarding case",
@@ -99,6 +101,10 @@ def why_not_offered(org_id, change) -> str | None:
     if change.get("existing_staff_id"):
         # the page's own "already on the roster" flow (Reactivate / Add anyway) is left exactly as it is
         return "not_offered"
+    if roster_auto_case.applies(org_id, change.get("parish_id")) is None:
+        # 26-162 (Jay, 2026-10-27: "every roster add makes a case"): approving a new hire opens the case itself, so there is nothing
+        # to ask. This box and pop-up are kept only for a request the automatic rule does not cover.
+        return "automatic"
     return _why_not_available(org_id)
 
 
@@ -109,7 +115,9 @@ def offered(org_id, change) -> bool:
 def offered_ids(org_id, changes) -> set:
     """The ids of the pending requests the page gives the Move to Onboarding pop-up (one availability check for the whole page)."""
     try:
-        adds = [c for c in (changes or []) if c.get("change_type") == "add" and not c.get("existing_staff_id")]
+        # a request the automatic rule covers (every roster add makes a case) is not asked about
+        adds = [c for c in (changes or []) if c.get("change_type") == "add" and not c.get("existing_staff_id")
+                and roster_auto_case.applies(org_id, c.get("parish_id")) is not None]
         if not adds or _why_not_available(org_id) is not None:
             return set()
         return {c["id"] for c in adds}
