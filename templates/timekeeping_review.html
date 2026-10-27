@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Roster Review — {{ current_org.name }}{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/timekeeping_entry.css?v={{ asset_version('css/timekeeping_entry.css') }}">
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">{# only its small pop-up (dialog.ff-dialog) is used here #}
+{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
 <h1>Roster Review</h1>
@@ -8,20 +12,24 @@
 under {{ current_org.name }}.</p>
 
 {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
-{% if request.query_params.get('approved') %}<div class="banner banner-success">Change approved and applied to the roster.</div>{% endif %}
+{% if request.query_params.get('approved') %}{% set leaves = request.query_params.get('leaves') %}<div class="banner banner-success">{% if leaves and leaves|length <= 8 %}Termination approved. The person stays on the roster until {{ leaves }}, then becomes inactive automatically.{% else %}Change approved and applied to the roster.{% endif %}</div>{% endif %}
 {% if request.query_params.get('reactivated') %}<div class="banner banner-success">Reactivated. The person is back on the roster, and the hours recorded for her moved onto her record.</div>{% endif %}
 {% if request.query_params.get('rejected') %}<div class="banner banner-success">Change rejected. The parish has been notified.</div>{% endif %}
+{# Move to Onboarding (26-158 / 26-162): the case that was opened after Approve, or the one sentence saying why not #}
+{% if onboarding and onboarding.case %}<div class="banner banner-success">An onboarding case was opened: <a href="/hr/onboarding/case/{{ onboarding.case.id }}/setup?new=1">{{ onboarding.case.case_number }}</a>. Review its checklist there.{% if onboarding.case.unlinked %} It could not be linked to the new roster entry, so check the roster when you complete it.{% endif %}</div>{% endif %}
+{% if onboarding and onboarding.note %}<div class="banner banner-info">{{ onboarding.note }}</div>{% endif %}
 
 <h2>Pending Roster Changes</h2>
 {% if only_parish %}<p class="banner banner-info">Showing only {{ only_parish.name }}. <a href="/admin/timekeeping/review">Show every department</a></p>{% endif %}
-<p class="sub">Approving applies the change to the real staff roster immediately. Rejecting requires a
+<p class="sub">Approving applies the change to the real staff roster immediately (a termination whose last day is
+still ahead keeps the person on the roster until that day). Rejecting requires a
 reason — the parish sees it and can correct and resubmit.</p>
 <div class="card">
 <div class="table-scroll">
 <table class="simple-table">
   <tr>
     <th>Parish</th><th>Change</th><th>Staff Member</th><th>Proposed Values</th>
-    <th>Proposed By</th><th>Period</th><th>Submitted</th><th></th>
+    <th>Proposed By</th><th>Period</th><th>Submitted</th><th>Email</th><th></th>
   </tr>
   {% for c in roster_changes %}
   <tr>
@@ -48,6 +56,7 @@ reason — the parish sees it and can correct and resubmit.</p>
       {% elif c.change_type in ('deactivate', 'reactivate') and (c.proposed_reason or c.as_of_date or c.proposed_note) %}
         {{ roster_reason(c) or '' }}{% if c.as_of_date %}<span class="sub"> &middot; {{ 'last day' if c.change_type == 'deactivate' else 'returns' }} {{ c.as_of_date.strftime('%m/%d/%y') }}</span>{% endif %}
         {% if c.proposed_note %}<div class="sub">{{ c.proposed_note }}</div>{% endif %}
+        {% if c.leaves_on %}<div class="sub" style="color:#7a5a00">Stays on the roster until {{ c.leaves_on.strftime('%m/%d/%y') }}, then becomes inactive automatically.</div>{% endif %}
       {% else %}
         &mdash;
       {% endif %}
@@ -55,6 +64,7 @@ reason — the parish sees it and can correct and resubmit.</p>
     <td>{{ c.created_by_name or c.created_by_email or "—" }}</td>
     <td>{{ c.period_label or (c.period_start|string ~ " to " ~ c.period_end|string) }}</td>
     <td>{{ c.submitted_at.strftime("%Y-%m-%d") if c.submitted_at else "—" }}</td>
+    <td class="nowrap">{% if c.pdf_url %}<button type="button" class="te-pdf" style="margin-left:0" data-pdf-pop data-pdf-src="{{ c.pdf_url }}" aria-label="Open the email PDF">PDF</button>{% else %}—{% endif %}</td>
     <td>
       {% if c.existing_staff_id and not c.existing_active %}
       <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/reactivate" style="display:inline" data-confirm="Reactivate {{ c.existing_name }} instead of adding a new person?">
@@ -62,10 +72,16 @@ reason — the parish sees it and can correct and resubmit.</p>
         <button type="submit" class="btn btn-primary btn-sm">Reactivate</button>
       </form>
       {% endif %}
-      <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/approve" style="display:inline"{% if c.existing_staff_id %} data-confirm="This person looks like someone already on the roster. Add a second person anyway?"{% endif %}>
+      {% if onboarding_offered_ids and c.id in onboarding_offered_ids %}
+      {# a new hire where onboarding exists: Approve opens the small Move to Onboarding pop-up (below). Without script this button
+         still submits the pop-up's form with the box unticked, which is a plain approve. #}
+      <button type="submit" form="onboardForm" formaction="/admin/timekeeping/review/roster-changes/{{ c.id }}/approve" class="btn btn-primary btn-sm" data-onb-open data-who="{{ c.proposed_first_name }} {{ c.proposed_last_name }}">Approve</button>
+      {% else %}
+      <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/approve" style="display:inline"{% if c.existing_staff_id %} data-confirm="This person looks like someone already on the roster. Add a second person anyway?"{% elif c.leaves_on %} data-confirm="Approve this termination? The person stays on the roster until {{ c.leaves_on.strftime('%m/%d/%y') }} (their last day), then becomes inactive automatically."{% endif %}>
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-        <button type="submit" class="btn {% if c.existing_staff_id %}btn-secondary{% else %}btn-primary{% endif %} btn-sm">{% if c.existing_staff_id %}Add anyway{% elif c.change_type == 'reactivate' %}Reactivate{% else %}Approve{% endif %}</button>
+        <button type="submit" class="btn {% if c.existing_staff_id %}btn-secondary{% else %}btn-primary{% endif %} btn-sm">{% if c.existing_staff_id %}Add anyway{% elif c.change_type == 'reactivate' and c.proposed_reason == 'staying' %}Keep on staff{% elif c.change_type == 'reactivate' %}Reactivate{% else %}Approve{% endif %}</button>
       </form>
+      {% endif %}
       <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/reject" style="display:inline" onsubmit="return promptRejectReason(this)">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <input type="hidden" name="review_note" value="">
@@ -74,11 +90,29 @@ reason — the parish sees it and can correct and resubmit.</p>
     </td>
   </tr>
   {% else %}
-  <tr><td colspan="8" class="sub">No roster changes awaiting review.</td></tr>
+  <tr><td colspan="9" class="sub">No roster changes awaiting review.</td></tr>
   {% endfor %}
 </table>
 </div>
 </div>
+
+{% if onboarding_offered_ids %}
+{# ONE shared pop-up for every new-hire row: the row's Approve button sets its address and the person's name, the box starts UNTICKED #}
+<dialog class="ff-dialog" id="onboardDialog">
+  <form method="post" action="" id="onboardForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <h2>Approve this new hire</h2>
+    <p class="ff-help" id="onboardWho"></p>
+    <label class="ff-check"><input type="checkbox" name="move_to_onboarding" value="1" autocomplete="off"> Move to Onboarding</label>
+    <p class="sub">Approving adds the person to the roster. Tick the box to also open an onboarding checklist for them at this department.
+      Leave it unticked and nothing else starts.</p>
+    <div class="ff-dialog-actions">
+      <button type="button" class="btn btn-sm btn-secondary" data-onb-close>Cancel</button>
+      <button type="submit" class="btn btn-sm btn-primary">Confirm</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
 
 </div>
 <script>
@@ -91,6 +125,8 @@ function promptRejectReason(form) {
 </script>
 {% endblock %}
 {% block extra_js %}
+<script src="/static/js/email_pdf_pop.js?v={{ asset_version('js/email_pdf_pop.js') }}"></script>
+<script src="/static/js/roster_review_onboarding.js?v={{ asset_version('js/roster_review_onboarding.js') }}"></script>
 <script>
 // Standing UI-UX Rule 6 (2026-09-23): Approve/Reject pulse (dark green)
 // while their POST is in flight -- wired per-form, not a blanket

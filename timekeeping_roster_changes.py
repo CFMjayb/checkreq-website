@@ -50,6 +50,7 @@ import time
 import db
 import notifications
 import payroll_totals
+import roster_departures
 
 _CHANGE_TYPE_LABELS = {
     "add": "Add staff member",
@@ -71,6 +72,12 @@ DEACTIVATE_REASONS = {
 REACTIVATE_REASONS = {
     "rehired": "Rehired",
     "returned": "Returned from leave",
+    "other": "Other (explain in the note)",
+}
+# A person whose termination is approved but whose last day has not come (see roster_departures.py) is "leaving": the parish can
+# ask to keep them on. It is a 'reactivate' request (approving one cancels the leaving date), with these reasons.
+STAY_REASONS = {
+    "staying": "Staying on staff (cancel the leaving date)",
     "other": "Other (explain in the note)",
 }
 # A parish can take back a change nobody has answered yet. The table's status only allows pending / approved / rejected, so a
@@ -103,7 +110,10 @@ def reasons_kept() -> bool:
 
 def reason_label(change: dict) -> str | None:
     key = change.get("proposed_reason")
-    table = DEACTIVATE_REASONS if change.get("change_type") == "deactivate" else REACTIVATE_REASONS
+    if change.get("change_type") == "deactivate":
+        table = DEACTIVATE_REASONS
+    else:
+        table = {**REACTIVATE_REASONS, **STAY_REASONS}
     return table.get(key) if key else None
 
 
@@ -238,9 +248,10 @@ def list_pending_review_for_org(org_id: int) -> list[dict]:
     payroll_periods.org_id (the diocese that owns the period it rode in
     on), never a bare parish_id join alone, so a change can never surface
     under the wrong diocese's queue."""
+    roster_departures.apply_due_departures(org_id)   # a person whose last day has passed is inactive before Roster Review reads the roster
     rows = db.query(
         "SELECT src.*, p.name AS parish_name, "
-        "       sr.first_name AS current_first_name, sr.last_name AS current_last_name, "
+        "       sr.first_name AS current_first_name, sr.last_name AS current_last_name, sr.is_active AS current_active, "
         "       u.display_name AS created_by_name, u.email AS created_by_email, "
         "       pp.label AS period_label, pp.period_start, pp.period_end "
         "FROM portal.staff_roster_changes src "
@@ -254,7 +265,11 @@ def list_pending_review_for_org(org_id: int) -> list[dict]:
     )
     # A pending ADD for someone who is already on the roster (Roster Review shows it and offers Reactivate when she is
     # inactive, instead of approving a duplicate).
+    today = roster_departures.today_for_org(org_id)
     for r in rows:
+        # 26-158: approving a termination whose last day is today or later keeps the person on the roster until then (the screen says so)
+        r["leaves_on"] = (roster_departures.leaves_later(r["as_of_date"], today)
+                          if r["change_type"] == "deactivate" and r["current_active"] else None)
         ex = existing_staff_for_add(r)
         r["existing_staff_id"] = ex["id"] if ex else None
         r["existing_active"] = bool(ex["is_active"]) if ex else None
@@ -312,12 +327,33 @@ def get_change_for_review(change_id: int, org_id: int) -> dict | None:
     )
 
 
-def _apply_change(change: dict) -> int | None:
+_UNSET = object()
+
+
+def leaving_date_for(change: dict):
+    """26-158: for a DEACTIVATE whose last day is today or later (the diocese's own today) and whose person is still active,
+    that last day: approving it keeps the person on the roster until then (roster_departures.py). Otherwise None: it takes
+    effect at once, exactly as before."""
+    if change.get("change_type") != "deactivate" or not change.get("staff_id"):
+        return None
+    st = db.query_one("SELECT s.is_active, p.org_id FROM portal.staff_roster s JOIN portal.parishes p ON p.id = s.parish_id "
+                      "WHERE s.id = %s AND s.parish_id = %s", (change["staff_id"], change["parish_id"]))
+    if not st or not st["is_active"]:
+        return None
+    return roster_departures.leaves_later(change.get("as_of_date"), roster_departures.today_for_org(st["org_id"]))
+
+
+def _apply_change(change: dict, leaves_on=_UNSET) -> int | None:
     """Writes the approved change into the REAL portal.staff_roster —
     duplicates timekeeping_roster.create_staff()/update_staff()'s exact
     field shape rather than importing that module (see this file's own
     docstring for why: timekeeping_roster.py imports THIS module for its
-    propose_* calls, so importing it back here would be circular)."""
+    propose_* calls, so importing it back here would be circular).
+
+    leaves_on (26-158): the last day of a termination that takes effect LATER (leaving_date_for); the person stays active and
+    only the date is recorded. Left out, it is worked out here."""
+    if leaves_on is _UNSET:
+        leaves_on = leaving_date_for(change)
     parish_id = change["parish_id"]
     ct = change["change_type"]
     new_staff_id = None
@@ -363,6 +399,12 @@ def _apply_change(change: dict) -> int | None:
                      change["proposed_position"], change["proposed_employee_number"],
                      change["staff_id"], parish_id),
                 )
+            elif ct == "deactivate" and leaves_on is not None:
+                # a last day still ahead: stays active, only the date is recorded (a person already leaving gets the new date);
+                # roster_departures.apply_due_departures switches them off once the day has passed
+                cur.execute(
+                    "UPDATE portal.staff_roster SET inactive_as_of = %s, updated_at = NOW() WHERE id = %s AND parish_id = %s",
+                    (leaves_on, change["staff_id"], parish_id))
             elif ct in ("deactivate", "reactivate"):
                 # a reactivated person is no longer "inactive as of" any date (the Employees screen does the same)
                 cur.execute(
@@ -374,12 +416,17 @@ def _apply_change(change: dict) -> int | None:
     return new_staff_id
 
 
-def approve_change(change: dict, reviewer_user_id: int, review_note: str | None = None) -> None:
+def approve_change_detailed(change: dict, reviewer_user_id: int, review_note: str | None = None) -> tuple:
     """Applies the change to the real roster FIRST, then stamps this row
     approved — if _apply_change() somehow raised, the row stays 'pending'
     rather than being marked approved with nothing having actually
-    happened."""
-    new_staff_id = _apply_change(change)
+    happened.
+
+    Returns (leaves_on, new_staff_id): leaves_on is the last day when this was a termination that takes effect LATER (the person
+    stays on the roster until then; the screen and the notice to the parish say so), else None; new_staff_id is the id of the
+    roster row an 'add' created, else None (roster_onboarding links an onboarding case to it)."""
+    leaves_on = leaving_date_for(change)
+    new_staff_id = _apply_change(change, leaves_on)
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -393,7 +440,14 @@ def approve_change(change: dict, reviewer_user_id: int, review_note: str | None 
     if change["change_type"] == "reactivate" and change.get("staff_id"):
         # 26-158: hours an email gave for her (waiting in "named, not entered yet") are entered now, to wait for review.
         payroll_totals.on_staff_reactivated(change["staff_id"], reviewer_user_id)
-    _notify_outcome(change, approved=True, review_note=review_note)
+    _notify_outcome(change, approved=True, review_note=review_note, leaves_on=leaves_on)
+    return leaves_on, new_staff_id
+
+
+def approve_change(change: dict, reviewer_user_id: int, review_note: str | None = None):
+    """approve_change_detailed(), keeping only its first answer: the last day when this was a termination that takes effect
+    LATER (else None). Every caller that does not need the new roster id uses this one."""
+    return approve_change_detailed(change, reviewer_user_id, review_note)[0]
 
 
 def reactivate_existing_instead(change: dict, reviewer_user_id: int, review_note: str | None = None) -> int | None:
@@ -436,7 +490,7 @@ def reject_change(change: dict, reviewer_user_id: int, review_note: str | None =
     _notify_outcome(change, approved=False, review_note=review_note)
 
 
-def _notify_outcome(change: dict, approved: bool, review_note: str | None) -> None:
+def _notify_outcome(change: dict, approved: bool, review_note: str | None, leaves_on=None) -> None:
     """Bell-only notification to the ORIGINAL PROPOSER (created_by_user_id)
     — per the plan's decision 3, the existing generic notification bell is
     enough for v1, no new email plumbing. Fails open via
@@ -451,6 +505,8 @@ def _notify_outcome(change: dict, approved: bool, review_note: str | None) -> No
     name = _staff_name_from_change(change)
     if approved:
         message = f"{label} ({name}) for {parish_name} was approved."
+        if leaves_on is not None:
+            message += f" {name} stays on the roster until {roster_departures.fmt(leaves_on)}, then becomes inactive automatically."
     else:
         reason = f" Reason: {review_note}" if review_note else ""
         message = f"{label} ({name}) for {parish_name} was rejected.{reason}"

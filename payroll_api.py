@@ -408,6 +408,23 @@ def beacon_email_pdfs_present(request: Request, body: dict = Body(...)):
     return _ok({"present": email_pdf.present_refs(org["id"], refs)})
 
 
+@router.get("/api/payroll/roster-changes/pending-refs")
+def beacon_pending_roster_change_refs(request: Request):
+    """The Message-IDs (source_ref) of the emails behind roster changes that still wait in Roster Review, so the reader can make sure
+    each one's PDF is stored (Roster Review shows it beside the request). Read-only; message ids only, no names or numbers. Scoped
+    to the key's diocese through the pay period the change rode in on, exactly like Roster Review's own list. At most 2000 (the same
+    cap as the exists call above); a request a parish typed has no source_ref and is not listed."""
+    org, bad = _auth(request)
+    if bad:
+        return bad
+    rows = db.query(
+        "SELECT DISTINCT src.source_ref FROM portal.staff_roster_changes src "
+        "JOIN portal.payroll_periods pp ON pp.id = src.payroll_period_id "
+        "WHERE pp.org_id = %s AND src.status = 'pending' AND src.source_ref IS NOT NULL AND src.source_ref <> '' "
+        "ORDER BY src.source_ref LIMIT 2000", (org["id"],))
+    return _ok({"source_refs": [r["source_ref"] for r in rows]})
+
+
 # ---------------------------------------------------- the reader's last review (Time Review shows "Last updated")
 
 @router.get("/api/payroll/import-status")

@@ -44,6 +44,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import db
+import roster_departures
 import timekeeping
 import timekeeping_roster_changes
 from logic.hr_lifecycle import privacy
@@ -76,6 +77,8 @@ def list_staff(parish_id: int, include_inactive: bool = False,
     avoid: "Some employees are salaried so we won't be capturing hours for
     those folks."
     """
+    # 26-158: a person whose last day has passed is inactive before this parish's roster is read (the Staff screen, the time-entry grid)
+    roster_departures.apply_due_departures(parish_id=parish_id)
     where = ["parish_id = %s"]
     params: list = [parish_id]
     if not include_inactive:
@@ -156,6 +159,9 @@ def roster_page(request: Request):
         # 2026-10-25 (Jay): a person with a change waiting shows it on their row, with a Withdraw button; a new hire not yet on
         # the roster is a row of its own.
         "pending_by_staff": {c["staff_id"]: c for c in pending if c["staff_id"]},
+        # 26-158: people whose termination was approved but whose last day has not passed ("Leaving MM/DD/YY"; still active)
+        "leaving_by_staff": {s["id"]: s["inactive_as_of"] for s in staff if roster_departures.is_leaving(s)},
+        "stay_reasons": timekeeping_roster_changes.STAY_REASONS,
         "pending_adds": [c for c in pending if c["change_type"] == "add"],
         "pending_count": len(pending),
         "deactivate_reasons": timekeeping_roster_changes.DEACTIVATE_REASONS,
@@ -263,8 +269,14 @@ async def roster_toggle_active(staff_id: int, request: Request):
            for c in timekeeping_roster_changes.list_all_for_parish(parish["id"])):
         return _back(error=f"A change for {name} is already waiting. Withdraw it first, then make the new one.")
     form = await request.form()
-    new_active = not existing["is_active"]
-    table = (timekeeping_roster_changes.REACTIVATE_REASONS if new_active
+    # 26-158: a LEAVING person (termination approved, last day ahead) is still active. "Keep on staff" (stay=1) asks to cancel the
+    # leaving date; anything else sent for them is a new termination request, which replaces the date when approved.
+    stay = form.get("stay") == "1"
+    if stay and not roster_departures.is_leaving(existing):
+        return _back(error=f"{name} is not set to leave, so there is nothing to cancel.")
+    new_active = (not existing["is_active"]) or stay
+    table = (timekeeping_roster_changes.STAY_REASONS if stay
+             else timekeeping_roster_changes.REACTIVATE_REASONS if new_active
              else timekeeping_roster_changes.DEACTIVATE_REASONS)
     reason = (form.get("reason") or "").strip()
     if reason not in table:

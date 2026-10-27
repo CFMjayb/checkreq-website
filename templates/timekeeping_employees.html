@@ -76,8 +76,9 @@
         </thead>
         <tbody>
           {% for e in employees %}
-          <tr class="emp-row {{ 'is-active' if e.is_active else 'is-inactive' }}" data-id="{{ e.id }}" data-active="{{ 1 if e.is_active else 0 }}">
-            <td class="c-parish" title="{{ e.parish_label }}" data-v="{{ e.parish_label|lower }}">{{ e.parish_label }}
+          {% set leaving_on = e.inactive_as_of.strftime('%m/%d/%y') if (e.is_active and e.inactive_as_of) else '' %}
+          <tr class="emp-row {{ 'is-active' if e.is_active else 'is-inactive' }}{{ ' is-leaving' if leaving_on }}" data-id="{{ e.id }}" data-active="{{ 1 if e.is_active else 0 }}"{% if leaving_on %} data-leaving="{{ leaving_on }}"{% endif %}>
+            <td class="c-parish" title="{{ e.parish_label }}{% if leaving_on %} (leaving {{ leaving_on }}){% endif %}" data-v="{{ e.parish_label|lower }}">{% if leaving_on %}<span class="emp-leaving-tag">Leaving {{ leaving_on }}</span> {% endif %}{{ e.parish_label }}
               <input type="hidden" name="present_{{ e.id }}" value="1">
               <input type="hidden" name="action_{{ e.id }}" value="" class="emp-action"></td>
             <td><input type="text" class="emp-in" name="last_name_{{ e.id }}" value="{{ e.last_name }}" aria-label="Last name"></td>
@@ -105,6 +106,7 @@
   <div class="emp-menu" id="empMenu" role="menu" hidden>
     <a role="menuitem" id="empMenuHistory" href="#">Hours history</a>
     <button type="button" role="menuitem" id="empMenuToggle"></button>
+    <button type="button" role="menuitem" id="empMenuCancelLeaving" hidden>Cancel leaving date</button>
   </div>
 </div>
 </div>

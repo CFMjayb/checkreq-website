@@ -42,9 +42,11 @@
   var summary = dlg.querySelector('[data-status-summary]');
   var selects = {
     deactivate: dlg.querySelector('[data-reason-select="deactivate"]'),
-    reactivate: dlg.querySelector('[data-reason-select="reactivate"]')
+    reactivate: dlg.querySelector('[data-reason-select="reactivate"]'),
+    stay: dlg.querySelector('[data-reason-select="stay"]')
   };
-  var current = { name: '', mode: 'deactivate' };
+  var stayFlag = dlg.querySelector('[data-stay-flag]');
+  var current = { name: '', mode: 'deactivate', leaving: '' };
 
   function setStep(n) {
     step1.hidden = n !== 1;
@@ -59,7 +61,10 @@
   document.querySelectorAll('[data-staff-status]').forEach(function (btn) {
     btn.addEventListener('click', function () {
       current.name = btn.dataset.name;
-      current.mode = btn.dataset.active === '1' ? 'deactivate' : 'reactivate';
+      // "stay" (26-158): someone whose termination was approved but whose last day has not come ("Keep on staff") cancels the leaving date
+      current.mode = btn.dataset.mode === 'stay' ? 'stay' : (btn.dataset.active === '1' ? 'deactivate' : 'reactivate');
+      current.leaving = btn.dataset.leaving || '';
+      stayFlag.value = current.mode === 'stay' ? '1' : '';
       form.action = '/timekeeping/roster/' + btn.dataset.id + '/toggle-active';
       Object.keys(selects).forEach(function (k) {
         var on = k === current.mode;
@@ -67,11 +72,15 @@
         selects[k].disabled = !on;
         selects[k].value = '';
       });
-      title.textContent = current.mode === 'deactivate' ? 'Status change: ' + current.name : 'Bring ' + current.name + ' back';
+      title.textContent = current.mode === 'deactivate' ? 'Status change: ' + current.name
+        : current.mode === 'stay' ? 'Keep ' + current.name + ' on staff' : 'Bring ' + current.name + ' back';
       help.textContent = current.mode === 'deactivate'
         ? 'Tell the diocese why ' + current.name + ' is no longer on staff, and the last day of work.'
-        : 'Tell the diocese why ' + current.name + ' is returning, and the date they return.';
-      dateLabel.textContent = current.mode === 'deactivate' ? 'Last day of work' : 'Return date';
+          + (current.leaving ? ' ' + current.name + ' is already set to leave on ' + current.leaving + '; the date you enter replaces it once the diocese approves.' : '')
+        : current.mode === 'stay'
+          ? current.name + ' is set to leave on ' + current.leaving + '. Tell the diocese why they are staying; if it approves, the leaving date is cancelled.'
+          : 'Tell the diocese why ' + current.name + ' is returning, and the date they return.';
+      dateLabel.textContent = current.mode === 'deactivate' ? 'Last day of work' : (current.mode === 'stay' ? 'As of' : 'Return date');
       form.elements.note.value = '';
       err.hidden = true;
       setStep(1);
@@ -93,7 +102,10 @@
     var reason = sel.options[sel.selectedIndex].text;
     summary.textContent = current.mode === 'deactivate'
       ? 'You are asking the diocese to make ' + current.name + ' inactive as of ' + fmtDate(date) + '. Reason: ' + reason + '.' + (note ? ' Note: ' + note : '')
-      : 'You are asking the diocese to bring ' + current.name + ' back as of ' + fmtDate(date) + '. Reason: ' + reason + '.' + (note ? ' Note: ' + note : '');
+        + ' If that last day is today or later, ' + current.name + ' stays on staff until it has passed.'
+      : current.mode === 'stay'
+        ? 'You are asking the diocese to keep ' + current.name + ' on staff and cancel the leaving date (' + current.leaving + '). Reason: ' + reason + '.' + (note ? ' Note: ' + note : '')
+        : 'You are asking the diocese to bring ' + current.name + ' back as of ' + fmtDate(date) + '. Reason: ' + reason + '.' + (note ? ' Note: ' + note : '');
     setStep(2);
   });
   dlg.querySelector('[data-status-back]').addEventListener('click', function () { setStep(1); });

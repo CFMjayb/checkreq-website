@@ -12,6 +12,9 @@
 /* Row colour: green = active and editable, faded red = inactive and read-only. */
 tr.emp-row.is-active { background: #e8f3e6; }
 tr.emp-row.is-inactive { background: #f6e0e0; color: #8a6666; }
+/* LEAVING (2026-10-27): still active and editable, with a last day ahead (roster_departures.py): amber, with a tag. */
+tr.emp-row.is-active.is-leaving { background: #fdf0d2; }
+.emp-leaving-tag { display: inline-block; font-size: 0.72rem; font-weight: 600; color: #7a5a00; background: #f6d88a; border-radius: 3px; padding: 0 4px; margin-right: 3px; }
 tr.emp-row.row-dirty { box-shadow: inset 4px 0 0 var(--color-franciscan-green, #1f3d2e); }
 tr.emp-row.is-inactive.row-dirty { box-shadow: inset 4px 0 0 #b3261e; }
 

@@ -22,11 +22,15 @@ timekeeping_roster_changes.py are its siblings).
 """
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import rbac
 import cornerstone_mode
+import email_pdf
+import roster_onboarding
 import timekeeping_entries
 import timekeeping_roster_changes
 
@@ -65,6 +69,19 @@ def _require_hr_admin(request: Request):
     return user, org, None
 
 
+def attach_pdf_urls(org_id: int, changes: list[dict]) -> list[dict]:
+    """Roster Review's PDF button (26-158, 2026-10-27): puts `pdf_url` on every request -- the viewer address of the stored, masked
+    copy of the email that raised it, or None. `source_ref` is the email's message id (set by the payroll reader); a request a parish
+    typed has none, and an email whose copy has not been stored yet (the reader stores it on its next run) shows no button either.
+    email_pdf.url_for keeps ONE cached bucket listing per diocese, so a page with many requests costs one call, and a bucket that cannot
+    be read answers 'none stored' rather than breaking the page. The address is the same viewer the Time Review screens use, which has
+    the same gate as this screen (HR Admin or Beacon Admin of this diocese; the diocese's own folder)."""
+    for c in changes:
+        ref = c.get("source_ref")
+        c["pdf_url"] = email_pdf.url_for(org_id, ref) if ref else None
+    return changes
+
+
 @router.get("/admin/timekeeping/review", response_class=HTMLResponse)
 def review_page(request: Request):
     user, org, err = _require_hr_admin(request)
@@ -81,11 +98,15 @@ def review_page(request: Request):
         if shown:
             only_parish = {"id": int(raw), "name": shown[0]["parish_name"]}
             roster_changes = shown
+    attach_pdf_urls(org["id"], roster_changes)
     return _render(request, "timekeeping_review.html", user, {
         "current_org": org,
         "roster_changes": roster_changes,
         "only_parish": only_parish,
         "roster_reason": timekeeping_roster_changes.reason_label,
+        # Move to Onboarding (26-158/26-162): which new-hire rows get the pop-up, and what the redirect after one says
+        "onboarding_offered_ids": roster_onboarding.offered_ids(org["id"], roster_changes),
+        "onboarding": roster_onboarding.banner_context(org["id"], request.query_params),
     })
 
 
@@ -102,8 +123,16 @@ async def roster_change_approve(change_id: int, request: Request):
             "/admin/timekeeping/review?error=That+change+was+not+found+or+has+already+been+reviewed.",
             status_code=303,
         )
-    timekeeping_roster_changes.approve_change(change, user["id"], note)
-    return RedirectResponse("/admin/timekeeping/review?approved=1", status_code=303)
+    leaves_on, new_staff_id = timekeeping_roster_changes.approve_change_detailed(change, user["id"], note)
+    tail = ""
+    if leaves_on is not None:
+        # a termination whose last day is still ahead: the banner says the person stays on the roster until then
+        tail += "&leaves=" + quote(leaves_on.strftime("%m/%d/%y"), safe="")
+    if roster_onboarding.ticked(form):
+        # "Move to Onboarding" was ticked. The approval above has already happened and always stands: whatever this step
+        # cannot do becomes one sentence on the page (roster_onboarding.py has every rule, and checks them again here).
+        tail += roster_onboarding.redirect_query(roster_onboarding.open_for_new_hire(org["id"], change, new_staff_id, user["id"]))
+    return RedirectResponse("/admin/timekeeping/review?approved=1" + tail, status_code=303)
 
 
 @router.post("/admin/timekeeping/review/roster-changes/{change_id}/reactivate")
