@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}New {{ kind_label|lower }} — {{ current_org.name }}{% endblock %}
 {#
-  26-162: open a case. Step 1 the person and the dates; step 2 a preview of every checklist item the template gives this
-  person (applies, or not applicable and why, with its due date), BambooHR-style, before anything is saved.
+  26-162: open a case: the person and the dates, then Open this case, which lands on the checklist setup screen (Jay, 2026-10-27:
+  the read-only preview step was dropped; setup shows the same list and lets the person change it).
   No SSN, birth date, pay or bank details are asked for here: those stay on the signed forms.
 #}
 {% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
@@ -67,34 +67,9 @@
         <textarea name="notes" id="notes" rows="2" maxlength="1000">{{ v.notes or '' }}</textarea></label>
     </div>
     <div class="hr-dialog-actions">
-      <button type="submit" name="action" value="preview" class="btn btn-secondary">Preview the checklist</button>
-      {% if preview %}<button type="submit" name="action" value="create" class="btn btn-primary">Open this case</button>{% endif %}
+      <button type="submit" name="action" value="create" class="btn btn-primary">Open this case</button>
     </div>
   </form>
-
-  {% if preview %}
-  {% set p = preview %}
-  <div class="hr-panel hr-preview">
-    <h2>Checklist preview: {{ p.template.label }} (v{{ p.template.version }})
-      <span class="hr-count">{{ p['items']|selectattr('applies')|list|length }} apply &middot; {{ p['items']|rejectattr('applies')|list|length }} not applicable</span></h2>
-    <p class="hr-muted" style="margin:0 0 6px;font-size:0.84rem">
-      {% if p.case.health_eligible is none %}Hours not entered, so every benefits item is included; mark any that do not apply.
-      {% else %}{{ (p.case.hours_per_week * 52)|round|int }} hours a year: health {{ 'eligible' if p.case.health_eligible else 'not eligible' }} (1,500), lay pension {{ 'eligible' if p.case.pension_eligible else 'not eligible' }} (1,000).{% endif %}
-      {% if p.case.benefits_effective_date %} Benefits effective {{ dt(p.case.benefits_effective_date) }}.{% endif %}
-    </p>
-    <table class="hr-table">
-      <thead><tr><th>Section</th><th>Item</th><th>Owner</th><th>Due</th><th>Hard deadline</th><th>Applies</th></tr></thead>
-      <tbody>
-      {% for it in p['items'] %}
-        <tr><td>{{ section_labels[it.section] }}</td>
-          <td class="{{ '' if it.applies else 'na' }}">{{ it.label }}{% if not it.required %} <span class="hr-req">(optional)</span>{% endif %}</td>
-          <td>{{ it.owner_group }}</td><td>{{ dt(it.due_date) or '—' }}</td><td>{{ dt(it.hard_deadline_date) or '' }}</td>
-          <td class="{{ '' if it.applies else 'na' }}">{{ 'Yes' if it.applies else 'No (only for ' ~ describe(it.condition) ~ ')' }}</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% endif %}
 </div>
 {% endblock %}
 {% block extra_js %}
