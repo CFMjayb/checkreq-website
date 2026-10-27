@@ -428,7 +428,7 @@ def parishes_for_org(request: Request, org_id: int):
         return err
     if not rbac.user_has_any_role(user["id"], list(outreach.ADMIN_ROLES), org_id=org_id):
         return JSONResponse({"error": "Not a Beacon Admin at that entity"}, status_code=403)
-    rows = db.query("SELECT id, name FROM portal.parishes WHERE org_id = %s AND is_active ORDER BY name", (org_id,))
+    rows = db.query("SELECT id, name FROM portal.parishes WHERE org_id = %s AND is_active AND coalesce(is_congregation, true) ORDER BY name", (org_id,))
     return {"parishes": [{"id": r["id"], "name": r["name"]} for r in rows]}
 
 

@@ -159,7 +159,7 @@ def manage_parishes_page(request: Request, error: str = ""):
     # is_active=FALSE (see set_parish_status below) -- without this, the
     # moment someone closes a parish here it would silently vanish from
     # this exact screen, with no way to look at it again or reopen it.
-    parishes = registry.list_parishes(org["id"], include_inactive=True)
+    parishes = registry.list_parishes(org["id"], include_inactive=True, churches_only=False)
     org_ids = [p["linked_org_id"] for p in parishes if p.get("linked_org_id")]
     linked_orgs = {}
     if org_ids:
