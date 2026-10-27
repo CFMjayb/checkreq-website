@@ -1,0 +1,20 @@
+/* "My steps" (26-162; templates/hr_my_steps.html): a plain list of the steps assigned to the signed-in person. */
+.hr-mysteps h1 { margin-bottom: 4px; }
+.ms-intro { margin: 0 0 12px; color: var(--color-muted, #6b645a); font-size: 0.92rem; }
+.ms-count { margin: 0 0 8px; font-weight: 600; }
+.ms-empty { padding: 18px; border: 1px dashed var(--color-border, #ddd4c0); border-radius: 8px; color: var(--color-muted, #6b645a); }
+.ms-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ms-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 320px); gap: 8px 16px; align-items: start;
+  padding: 10px 12px; border: 1px solid var(--color-border, #ddd4c0); border-left: 5px solid #cfc8b6; border-radius: 6px; background: #fff; }
+.ms-item.is-late { border-left-color: var(--color-danger, #a3352b); background: #fdf5f5; }
+.ms-item.is-due { border-left-color: #c58a00; background: #fffaf0; }
+.ms-step { font-weight: 600; font-size: 0.98rem; overflow-wrap: anywhere; }
+.ms-opt { font-weight: 400; font-size: 0.8rem; color: var(--color-muted, #6b645a); }
+.ms-meta { font-size: 0.82rem; color: var(--color-muted, #6b645a); margin-top: 2px; overflow-wrap: anywhere; }
+.ms-state.late { color: var(--color-danger, #a3352b); }
+.ms-state.due { color: #8a5a00; }
+.ms-help { font-size: 0.82rem; margin-top: 4px; }
+.ms-form { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.ms-form textarea { width: 100%; margin: 0; box-sizing: border-box; font-size: 0.85rem; resize: vertical; }
+.ms-form .btn { align-self: flex-end; margin: 0; }
+@media (max-width: 720px) { .ms-item { grid-template-columns: minmax(0, 1fr); } }

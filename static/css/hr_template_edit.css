@@ -1,0 +1,48 @@
+/* The checklist editor (26-162; templates/hr_template_edit.html). Sits on the shared fixed frame (fixed_frame.css); these are
+   only the rules that screen needs: the name/search line, two-line item rows, the change tags, the pop-up grids. */
+
+.te-info { gap: 14px; }
+.te-info label { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 0.85rem; color: var(--color-muted, #6b645a); }
+.te-name input { width: 340px; max-width: 46vw; height: 26px; padding: 2px 8px; font-size: 0.9rem; margin: 0; }
+.te-search input { width: 190px; height: 26px; padding: 2px 8px; font-size: 0.85rem; margin: 0; }
+.te-meta { margin-left: auto; }
+
+.te-note { font-size: 0.85rem; }
+.te-problems { max-height: 140px; overflow: auto; }
+.te-problems ul { margin: 4px 0 0 18px; padding: 0; }
+.te-problems li { margin: 0; }
+
+/* Two lines at most per item: the wording, then its help text. Anything longer is cut with "..." (the hover tip has all of it). */
+.te-table td { height: 40px; padding-top: 3px; padding-bottom: 3px; }
+.te-item { white-space: normal; }
+.te-label, .te-help { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.3; }
+.te-label { font-weight: 600; }
+.te-help { font-size: 0.78rem; color: var(--color-muted, #6b645a); min-height: 1.1em; }
+.te-actions { white-space: nowrap; text-align: right; overflow: visible; }
+.te-actions .ff-rowbtn { margin-right: 3px; }
+.te-actions .ff-rowbtn:last-child { margin-right: 0; }
+.te-actions .ff-rowbtn[disabled] { opacity: 0.35; cursor: default; }
+
+/* What is different from the saved version: new, changed, going away. */
+.ff-table tr.te-row.is-new { background: #e8f3e6; }
+.ff-table tr.te-row.is-changed { background: #fbf0d2; }
+.ff-table tr.te-row.is-removed { background: #f4eaea; color: #8a847a; }
+.ff-table tr.te-row.is-removed .te-label { text-decoration: line-through; }
+.te-tag { display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 999px; font-size: 0.68rem; font-weight: 700; vertical-align: 1px; letter-spacing: 0.02em; }
+.te-tag-new { background: #cfe8cb; color: #1f6b3a; }
+.te-tag-chg { background: #f3dfa2; color: #7a5200; }
+.te-tag-del { background: #ecd0d0; color: #9c0006; text-decoration: none; }
+
+/* The edit pop-up. */
+.te-grid { display: grid; gap: 0 12px; }
+.te-grid-2 { grid-template-columns: 1fr 1fr; }
+.te-grid-3 { grid-template-columns: 1.3fr 1fr 1fr; }
+dialog.ff-dialog .field textarea { resize: vertical; font-family: inherit; }
+.te-dialog-error { background: #fbe6e6; color: #9c0006; border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; font-size: 0.85rem; }
+.te-dialog-error[hidden] { display: none; }
+.te-hist { display: flex; align-items: center; gap: 10px; padding: 7px 10px; font-size: 0.9rem; flex-wrap: wrap; }
+
+@media (max-width: 760px) {
+  .te-grid-2, .te-grid-3 { grid-template-columns: 1fr; }
+  .te-name input { width: 100%; max-width: none; }
+}

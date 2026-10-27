@@ -85,6 +85,7 @@ def review_page(request: Request):
         "current_org": org,
         "roster_changes": roster_changes,
         "only_parish": only_parish,
+        "roster_reason": timekeeping_roster_changes.reason_label,
     })
 
 

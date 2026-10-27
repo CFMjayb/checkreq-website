@@ -119,6 +119,8 @@ EXEMPT_PREFIXES = (
     # 26-158: the payroll inbox service API. Machine-to-machine: each call carries an API key
     # (payroll_api.py), no browser session exists.
     "/api/payroll/",
+    # 26-162: the Onboarding & Offboarding service API (hr_api.py). Machine-to-machine, each call carries an API key.
+    "/api/hr/",
 )
 
 

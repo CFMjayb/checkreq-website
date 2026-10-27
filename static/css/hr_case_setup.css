@@ -1,0 +1,23 @@
+/* The checklist setup screen for one person (26-162; templates/hr_case_setup.html). Sits on the shared fixed frame and borrows the
+   checklist editor's two-line row look (hr_template_edit.css); these are only the extra rules. */
+
+.cs-table td { height: 44px; }
+.cs-step { white-space: normal; }
+.cs-stamp { font-size: 0.74rem; }
+.cs-assign select { width: 100%; height: 26px; padding: 1px 6px; font-size: 0.82rem; margin: 0; }
+.cs-assign select.changed { border-color: #c58a00; background: #fffaf0; }
+.cs-inline { display: inline; margin: 0; }
+
+/* A step a person crossed out stays on the list, struck through, with the stamp under it. */
+.ff-table tr.cs-row.is-crossed { background: #f4eeee; color: #8a847a; }
+.ff-table tr.cs-row.is-crossed .te-label { text-decoration: line-through; }
+.ff-table tr.cs-row.is-rule-na { background: #faf8f3; color: #8a847a; }
+.ff-table tr.cs-row.is-closed { background: #f6faf6; color: #6b645a; }
+/* not applicable by the checklist's own rule: hidden until the button at the top is pressed */
+.hr-page:not(.show-na) tr.cs-row.is-na-item { display: none; }
+
+.cs-dlg-note { font-size: 0.84rem; margin: 0 0 8px; }
+.cs-check { flex-direction: row !important; align-items: center; grid-column: 1 / -1; gap: 6px !important; }
+.cs-check input { width: auto; margin: 0; }
+.cs-reason { display: flex; flex-direction: column; gap: 3px; font-size: 0.85rem; }
+.cs-reason textarea { width: 100%; margin: 0; box-sizing: border-box; }

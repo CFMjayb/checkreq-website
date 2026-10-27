@@ -1,160 +1,246 @@
 {% extends "base.html" %}
-{% block title %}Staff Roster — {{ parish.name }}{% endblock %}
+{% block title %}Staff — {{ parish.name }}{% if parish.city %}, {{ parish.city }}{% endif %}{% endblock %}
+{#
+  The parish Staff screen (Parish Mode > HR & Payroll > Staff), rebuilt 2026-10-25 on Jay's feedback:
+    - the shared fixed frame (locked top and bottom, one slim line per person, only the people scroll);
+    - one Edit button and one Status change button per person, each opening a pop-up (no more "Propose edit" / "Propose deactivate"
+      boxes crowding the row); Status change asks what the change is (resignation, termination ...), the date, then to confirm;
+    - a change that nobody has answered shows on the person's row with a Withdraw button (before, there was no way to undo one);
+    - "Onboard a new staff member" replaces "Propose a new staff member", and offers "Continue to onboarding" afterwards.
+  Everything still goes to the diocese as a PROPOSAL for its HR Admin to approve (timekeeping_roster_changes.py).
+  The two shared pop-ups (Edit, Status change) are filled in by static/js/parish_staff.js from each row's data- attributes.
+#}
+{% from "_guide_link.html" import guide_link %}
+{% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+{% endblock %}
 {% block content %}
-<div class="page-shell-wide">
-<h1>Staff Roster</h1>
-<p class="back-link"><a href="/parish-hr">&larr; Back to HR &amp; Payroll</a></p>
-<p class="sub">Staff whose time is reported for {{ parish.name }}. Name and job title only — this
-table never stores pay rates, salary, or any other compensation data.
-{% if can_manage %}Adding, editing, or deactivating a staff member below submits it as a proposed
-change — it takes effect once your diocese's HR Admin approves it.{% endif %}</p>
+{% set tok = csrf_token(request) %}
+{% set plabel = parish.name ~ (', ' ~ parish.city if parish.city else '') %}
+{% set CT = {'add': 'New staff member', 'edit': 'Edit', 'deactivate': 'Make inactive', 'reactivate': 'Reactivate'} %}
+<div class="page-shell-wide"><div class="ff-shell">
 
-{% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
-{% if request.query_params.get('change_proposed') %}<div class="banner banner-success">Change submitted for diocese review. It will take effect once an HR Admin approves it — see "Your Proposed Changes" below.</div>{% endif %}
-
-{% if can_manage %}
-<div class="card">
-<details>
-  <summary class="btn btn-sm" style="display:inline-block;cursor:pointer">+ Propose a New Staff Member</summary>
-  <form method="post" action="/timekeeping/roster/create" style="margin-top:12px">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-    <div class="field"><label>First Name</label><input type="text" name="first_name" required></div>
-    <div class="field"><label>Last Name</label><input type="text" name="last_name" required></div>
-    <div class="field"><label>Position</label><input type="text" name="position" placeholder="e.g. Sexton"></div>
-    <div class="field"><label>Employee # (optional)</label><input type="text" name="employee_number"></div>
-    <button type="submit" class="btn btn-sm">Submit for Review</button>
-  </form>
-</details>
-</div>
-{% endif %}
-
-<div class="card">
-{# 2026-08-16, Jay: filters at the top of the roster so a parish
-   admin/HR person can find someone quickly once the list gets long --
-   same client-side search-bar pattern as the GL Accounts/Vendors
-   reference screens. #}
-<p style="margin:0 0 12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-  <input type="text" id="rosterFilter" placeholder="Filter by name, position, or employee #&hellip;"
-         style="max-width:320px;">
-  <select id="rosterStatusFilter">
-    <option value="">All statuses</option>
-    <option value="active">Active only</option>
-    <option value="inactive">Inactive only</option>
-  </select>
-  <span class="sub" id="rosterCount">{{ staff|length }} staff member{{ '' if staff|length == 1 else 's' }}</span>
-</p>
-<div class="table-scroll">
-<table class="simple-table" id="rosterTable">
-  <tr>
-    <th>Name</th><th>Position</th><th>Employee #</th><th>Status</th>
-    {% if can_manage %}<th></th>{% endif %}
-  </tr>
-  {% for s in staff %}
-  <tr data-status="{{ 'active' if s.is_active else 'inactive' }}">
-    <td>{{ s.first_name }} {{ s.last_name }}</td>
-    <td>{{ s.position or "—" }}</td>
-    <td>{{ s.employee_number or "—" }}</td>
-    <td>
-      {% if s.is_active %}<span class="badge badge-confirmed">Active</span>
-      {% else %}<span class="sub">Inactive</span>{% endif %}
-    </td>
-    {% if can_manage %}
-    <td>
-      <details>
-        <summary class="btn btn-secondary btn-sm" style="display:inline-block;cursor:pointer">Propose Edit&hellip;</summary>
-        <form method="post" action="/timekeeping/roster/{{ s.id }}/update" style="margin-top:8px">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-          <div class="field"><label>First Name</label><input type="text" name="first_name" value="{{ s.first_name }}" required></div>
-          <div class="field"><label>Last Name</label><input type="text" name="last_name" value="{{ s.last_name }}" required></div>
-          <div class="field"><label>Position</label><input type="text" name="position" value="{{ s.position or '' }}"></div>
-          <div class="field"><label>Employee #</label><input type="text" name="employee_number" value="{{ s.employee_number or '' }}"></div>
-          <button type="submit" class="btn btn-sm">Submit for Review</button>
-        </form>
-      </details>
-      <form method="post" action="/timekeeping/roster/{{ s.id }}/toggle-active" style="display:inline;margin-left:6px">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
-        <button type="submit" class="btn btn-secondary btn-sm">Propose {{ 'Deactivate' if s.is_active else 'Reactivate' }}</button>
-      </form>
-    </td>
-    {% endif %}
-  </tr>
-  {% endfor %}
-  {% if not staff %}
-  <tr><td colspan="5" class="sub">No staff on the roster yet.</td></tr>
-  {% endif %}
-</table>
-</div>
-</div>
-
-{% if can_manage %}
-<h2>Your Proposed Changes</h2>
-<p class="sub">Everything you've proposed for this roster, and its current status. A change queued here
-(not yet submitted) takes effect only once you Submit your next Timekeeping period — see
-<a href="/timekeeping">Time Entry</a>. A rejected change is never reused — propose it again above to
-try again.</p>
-<div class="card">
-<div class="table-scroll">
-<table class="simple-table">
-  <tr><th>Change</th><th>Staff Member</th><th>Status</th><th>Reviewer Note</th><th>Proposed</th></tr>
-  {% for c in pending_changes %}
-  <tr>
-    <td>{{ c.change_type|capitalize }}</td>
-    <td>
-      {% if c.change_type == 'add' %}{{ c.proposed_first_name }} {{ c.proposed_last_name }}
-      {% else %}{{ c.current_first_name }} {{ c.current_last_name }}{% endif %}
-    </td>
-    <td>
-      {% if c.status == 'pending' and not c.payroll_period_id %}
-        <span class="badge badge-draft">Queued for next submission</span>
-      {% elif c.status == 'pending' %}
-        <span class="badge badge-pending">Awaiting diocese review</span>
-      {% else %}
-        <span class="badge badge-{{ c.status }}">{{ c.status|capitalize }}</span>
+  <div class="ff-title-row">
+    <h1>Staff {{ guide_link("parish-staff", "How to use Staff") }}</h1>
+    <a class="ff-back" href="/parish-hr">&larr; Back to HR &amp; Payroll</a>
+    <div class="ff-actions">
+      {% if can_manage %}
+      <button type="button" class="btn btn-sm btn-secondary" data-ff-dialog="changesDialog">Proposed changes{% if pending_count %} ({{ pending_count }}){% endif %}</button>
+      <button type="button" class="btn btn-sm btn-primary" data-ff-dialog="onboardDialog">+ Onboard a new staff member</button>
       {% endif %}
-    </td>
-    <td>{{ c.review_note or "—" }}</td>
-    <td>{{ c.created_at.strftime("%Y-%m-%d") if c.created_at else "—" }}</td>
-  </tr>
-  {% else %}
-  <tr><td colspan="5" class="sub">Nothing proposed yet.</td></tr>
-  {% endfor %}
-</table>
-</div>
-</div>
-{% endif %}
+    </div>
+  </div>
 
-{% if parish.linked_org_id %}
-<p class="back-link"><a href="/timekeeping">Go to Time Entry &rarr;</a></p>
+  <div class="ff-info">
+    <span>Staff whose time is reported for <strong>{{ plabel }}</strong>. Name and job title only: Beacon never stores pay.
+      {% if can_manage %}Every change you make is sent to the diocese for review and takes effect once its HR Admin approves it.{% endif %}</span>
+  </div>
+
+  {% if request.query_params.get('error') %}<div class="banner banner-error ff-banner">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% if request.query_params.get('change_proposed') %}<div class="banner banner-success ff-banner">
+    Change sent for diocese review. It takes effect once an HR Admin approves it. You can take it back with Withdraw until then.
+    {% if added_id and can_onboard %}
+    <strong>Continue to onboarding?</strong>
+    <a class="btn btn-sm btn-primary" href="/timekeeping/roster/onboarding?change_id={{ added_id }}">Continue to onboarding</a>
+    <span class="c-muted">or do it later from the person's row.</span>
+    {% endif %}
+  </div>{% endif %}
+  {% if request.query_params.get('withdrawn') %}<div class="banner banner-success ff-banner">The change was withdrawn. Nothing was sent to the diocese.</div>{% endif %}
+  {% if request.query_params.get('onboarding_sent') %}<div class="banner banner-success ff-banner">
+    Onboarding for <strong>{{ request.query_params.get('onboarding_sent') }}</strong> was sent to the diocese's benefits office{% if request.query_params.get('case') %} ({{ request.query_params.get('case') }}){% endif %}. They will contact you if they need anything.
+  </div>{% endif %}
+
+  <div class="ff-filters">
+    <label>Search <input type="text" data-ff-search placeholder="name, position or employee #"></label>
+    <label>Show
+      <select data-ff-filter="status">
+        <option value="">Everyone</option>
+        <option value="active">Active only</option>
+        <option value="inactive">Inactive only</option>
+        <option value="waiting">Change waiting</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      <table class="ff-table">
+        <colgroup><col style="width:26%"><col style="width:24%"><col style="width:12%"><col style="width:20%">{% if can_manage %}<col>{% endif %}</colgroup>
+        <thead>
+          <tr>
+            <th data-sort="1" data-dir="asc">Name<span class="arrow">&#9650;</span></th>
+            <th data-sort="1">Position<span class="arrow"></span></th>
+            <th data-sort="1">Employee #<span class="arrow"></span></th>
+            <th data-sort="1">Status<span class="arrow"></span></th>
+            {% if can_manage %}<th aria-label="Actions"></th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in staff %}
+          {% set pc = pending_by_staff.get(s.id) %}
+          <tr class="ff-row{{ '' if s.is_active else ' is-idle' }}" data-status="{{ 'waiting' if pc else ('active' if s.is_active else 'inactive') }}">
+            <td data-v="{{ s.last_name }} {{ s.first_name }}">{{ s.first_name }} {{ s.last_name }}</td>
+            <td>{{ s.position or "—" }}</td>
+            <td>{{ s.employee_number or "—" }}</td>
+            <td data-v="{{ 'a' if s.is_active else 'b' }}">
+              {% if s.is_active %}<span class="badge badge-approved">Active</span>{% else %}<span class="c-muted">Inactive</span>{% endif %}
+              {% if pc %}<span class="badge badge-pending" data-tip="{{ 'Queued: it goes to the diocese with your next Submit.' if not pc.payroll_period_id else 'With the diocese for review.' }}">{{ CT[pc.change_type] }} waiting</span>{% endif %}
+            </td>
+            {% if can_manage %}
+            <td>
+              {% if pc %}
+              <form method="post" action="/timekeeping/roster/changes/{{ pc.id }}/withdraw" data-confirm="Withdraw this change for {{ s.first_name }} {{ s.last_name }}? Nothing will be sent to the diocese.">
+                <input type="hidden" name="csrf_token" value="{{ tok }}">
+                <button type="submit" class="btn btn-sm btn-secondary ff-rowbtn">Withdraw</button>
+              </form>
+              {% else %}
+              <button type="button" class="btn btn-sm btn-secondary ff-rowbtn" data-staff-edit data-id="{{ s.id }}"
+                      data-first="{{ s.first_name }}" data-last="{{ s.last_name }}" data-position="{{ s.position or '' }}" data-emp="{{ s.employee_number or '' }}">Edit</button>
+              <button type="button" class="btn btn-sm btn-secondary ff-rowbtn" data-staff-status data-id="{{ s.id }}"
+                      data-name="{{ s.first_name }} {{ s.last_name }}" data-active="{{ '1' if s.is_active else '0' }}">Status change</button>
+              {% endif %}
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+          {% for c in pending_adds %}
+          <tr class="ff-row" data-status="waiting">
+            <td data-v="{{ c.proposed_last_name }} {{ c.proposed_first_name }}">{{ c.proposed_first_name }} {{ c.proposed_last_name }} <span class="c-muted">(new)</span></td>
+            <td>{{ c.proposed_position or "—" }}</td>
+            <td>{{ c.proposed_employee_number or "—" }}</td>
+            <td data-v="c"><span class="badge badge-pending" data-tip="{{ 'Queued: it goes to the diocese with your next Submit.' if not c.payroll_period_id else 'With the diocese for review.' }}">New staff member waiting</span></td>
+            {% if can_manage %}
+            <td>
+              {% if can_onboard %}<a class="btn btn-sm btn-primary ff-rowbtn" href="/timekeeping/roster/onboarding?change_id={{ c.id }}" style="display:inline-block;text-decoration:none">Onboarding</a>{% endif %}
+              <form method="post" action="/timekeeping/roster/changes/{{ c.id }}/withdraw" data-confirm="Withdraw this new staff member? Nothing will be sent to the diocese.">
+                <input type="hidden" name="csrf_token" value="{{ tok }}">
+                <button type="submit" class="btn btn-sm btn-secondary ff-rowbtn">Withdraw</button>
+              </form>
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+          {% if not staff and not pending_adds %}
+          <tr class="ff-empty"><td colspan="{{ 5 if can_manage else 4 }}">No staff on the roster yet.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count" data-ff-count>{{ staff|length + pending_adds|length }} shown</span>
+      {% if pending_count %}<span class="ff-count">{{ pending_count }} change{{ '' if pending_count == 1 else 's' }} waiting for the diocese</span>{% endif %}
+    </div>
+  </div>
+
+</div></div>
+
+{% if can_manage %}
+<dialog class="ff-dialog" id="onboardDialog">
+  <h2>Onboard a new staff member</h2>
+  <form method="post" action="/timekeeping/roster/create">
+    <input type="hidden" name="csrf_token" value="{{ tok }}">
+    <p class="ff-help">Tell the diocese who is joining {{ parish.name }}. It reviews the new staff member before adding them to your roster.{% if can_onboard %} After you submit, you can continue to onboarding to send the benefits request.{% endif %}</p>
+    <div class="field"><label>First name</label><input type="text" name="first_name" required maxlength="80"></div>
+    <div class="field"><label>Last name</label><input type="text" name="last_name" required maxlength="80"></div>
+    <div class="field"><label>Position</label><input type="text" name="position" placeholder="e.g. Sexton" maxlength="120"></div>
+    <div class="field"><label>Employee # (if you have one)</label><input type="text" name="employee_number" maxlength="40"></div>
+    <div class="field"><label>Hire date</label><input type="date" name="hire_date"></div>
+    <div class="ff-dialog-actions">
+      <button type="button" class="btn btn-sm btn-secondary" data-ff-close>Cancel</button>
+      <button type="submit" class="btn btn-sm btn-primary">Submit</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="ff-dialog" id="editStaffDialog">
+  <h2>Edit staff member</h2>
+  <form method="post" action="" data-staff-edit-form>
+    <input type="hidden" name="csrf_token" value="{{ tok }}">
+    <p class="ff-help">Correct the name, position or employee number. The diocese reviews the change before it shows on your roster.</p>
+    <div class="field"><label>First name</label><input type="text" name="first_name" required maxlength="80"></div>
+    <div class="field"><label>Last name</label><input type="text" name="last_name" required maxlength="80"></div>
+    <div class="field"><label>Position</label><input type="text" name="position" maxlength="120"></div>
+    <div class="field"><label>Employee #</label><input type="text" name="employee_number" maxlength="40"></div>
+    <div class="ff-dialog-actions">
+      <button type="button" class="btn btn-sm btn-secondary" data-ff-close>Cancel</button>
+      <button type="submit" class="btn btn-sm btn-primary">Submit</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="ff-dialog" id="statusStaffDialog">
+  <h2 data-status-title>Status change</h2>
+  <form method="post" action="" data-staff-status-form>
+    <input type="hidden" name="csrf_token" value="{{ tok }}">
+    <div data-status-step="1">
+      <p class="ff-help" data-status-help></p>
+      <div class="field"><label>What is the change?</label>
+        <select name="reason" data-reason-select="deactivate" required>
+          <option value="">Choose&hellip;</option>
+          {% for k, l in deactivate_reasons.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}
+        </select>
+        <select name="reason" data-reason-select="reactivate" required hidden disabled>
+          <option value="">Choose&hellip;</option>
+          {% for k, l in reactivate_reasons.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field"><label data-status-date-label>Effective date</label><input type="date" name="effective_date" value="{{ today }}" required></div>
+      <div class="field"><label>Note (required for Other)</label><input type="text" name="note" maxlength="300" placeholder="No Social Security numbers or birth dates, please"></div>
+      <p class="ff-help" data-status-error style="color:#9c0006" hidden></p>
+      <div class="ff-dialog-actions">
+        <button type="button" class="btn btn-sm btn-secondary" data-ff-close>Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" data-status-review>Review</button>
+      </div>
+    </div>
+    <div data-status-step="2" hidden>
+      <p data-status-summary style="font-size:0.95rem"></p>
+      <p class="ff-help">This goes to the diocese for approval. Until then the person stays as they are, and you can withdraw the change.</p>
+      <div class="ff-dialog-actions">
+        <button type="button" class="btn btn-sm btn-secondary" data-status-back>Back</button>
+        <button type="submit" class="btn btn-sm btn-primary" data-status-confirm>Confirm</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="ff-dialog wide" id="changesDialog">
+  <h2>Proposed changes</h2>
+  <p class="ff-help">Everything you have sent to the diocese for this staff list, newest first. A change that is waiting can be withdrawn on the staff list.</p>
+  <div style="max-height:60vh;overflow:auto">
+    <table class="ff-table" style="table-layout:auto">
+      <thead><tr><th>Change</th><th>Person</th><th>Status</th><th>Details</th><th>Sent</th></tr></thead>
+      <tbody>
+        {% for c in pending_changes %}
+        <tr>
+          <td>{{ CT[c.change_type] }}</td>
+          <td>{% if c.change_type == 'add' %}{{ c.proposed_first_name }} {{ c.proposed_last_name }}{% else %}{{ c.current_first_name }} {{ c.current_last_name }}{% endif %}</td>
+          <td>
+            {% if c.status == 'pending' and not c.payroll_period_id %}<span class="badge badge-draft">Queued for your next submission</span>
+            {% elif c.status == 'pending' %}<span class="badge badge-pending">With the diocese</span>
+            {% elif c.status == 'rejected' and c.review_note == withdrawn_note %}<span class="badge badge-cancelled">Withdrawn</span>
+            {% else %}<span class="badge badge-{{ c.status }}">{{ c.status|capitalize }}</span>{% endif %}
+          </td>
+          <td style="white-space:normal">
+            {% if c.status == 'rejected' and c.review_note and c.review_note != withdrawn_note %}{{ c.review_note }}
+            {% elif c.change_type in ('deactivate', 'reactivate') %}{{ change_reason(c) or '' }}{% if c.as_of_date %} &middot; {{ dt(c.as_of_date) }}{% endif %}{% if c.proposed_note %} &middot; {{ c.proposed_note }}{% endif %}
+            {% else %}&mdash;{% endif %}
+          </td>
+          <td>{{ dt(c.created_at) }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="c-muted">Nothing sent yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="ff-dialog-actions"><button type="button" class="btn btn-sm btn-secondary" data-ff-close>Close</button></div>
+</dialog>
 {% endif %}
-</div>
 {% endblock %}
 {% block extra_js %}
-<script>
-(function () {
-  var input = document.getElementById('rosterFilter');
-  var statusSel = document.getElementById('rosterStatusFilter');
-  var table = document.getElementById('rosterTable');
-  var countEl = document.getElementById('rosterCount');
-  if (!table) return;
-  var rows = Array.prototype.slice.call(table.querySelectorAll('tr[data-status]'));
-
-  function apply() {
-    var q = (input ? input.value : '').trim().toLowerCase();
-    var status = statusSel ? statusSel.value : '';
-    var shown = 0;
-    rows.forEach(function (tr) {
-      var textHit = !q || tr.textContent.toLowerCase().indexOf(q) !== -1;
-      var statusHit = !status || tr.dataset.status === status;
-      var hit = textHit && statusHit;
-      tr.hidden = !hit;
-      if (hit) shown++;
-    });
-    if (countEl) countEl.textContent = shown + ' of ' + rows.length + ' staff member' + (rows.length === 1 ? '' : 's') + ' shown';
-  }
-  if (input) input.addEventListener('input', apply);
-  if (statusSel) statusSel.addEventListener('change', apply);
-})();
-</script>
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
+<script src="/static/js/parish_staff.js?v={{ asset_version('js/parish_staff.js') }}"></script>
 <script>
 document.querySelectorAll('form[method="post" i]').forEach(function (form) {
   form.addEventListener('submit', function (e) {

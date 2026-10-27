@@ -135,11 +135,14 @@ import org_features
 import timekeeping
 import timekeeping_activation
 import timekeeping_roster
+import parish_onboarding  # "Continue to onboarding" for a new parish staff member (2026-10-25)
 import timekeeping_employees
 import timekeeping_entries
 import timekeeping_review
 import hr_hub  # the HR & Payroll menu (2026-10-17)
 import parish_hr_hub  # the same menu in Parish Mode (2026-10-23)
+import hr_cases  # 26-162 Onboarding & Offboarding screens (HR Status Board, cases, templates)
+import hr_api  # 26-162 Onboarding & Offboarding service API (one endpoint = one tool)
 import timekeeping_status
 import payroll_api
 import payroll_screens
@@ -805,6 +808,10 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # 2026-10-17: now the gate of the single HR & Payroll tile (hr_hub.py); setup_admin joins because the HR Administrative
     # Tasks submenu holds screens a Setup Admin may use (HR Activation, Payroll Periods, Time Categories).
     if org_id is not None and entity_roles & {"hr_admin", "beacon_admin", "setup_admin"} and org_features.is_enabled(org_id, "timekeeping"):
+        entity_roles = entity_roles | {"hr_menu"}
+    # 26-162: the same tile also opens for Onboarding & Offboarding (its own switch, hr_lifecycle), so EDOM and Claggett --
+    # Timekeeping off -- get HR & Payroll with just that card. benefits_admin is the new benefits role.
+    if org_id is not None and entity_roles & {"hr_admin", "benefits_admin", "beacon_admin"} and org_features.is_enabled(org_id, "hr_lifecycle"):
         entity_roles = entity_roles | {"hr_menu"}
     # 26-XXX Congregational Vitality: the diocese's pages are for Beacon Admin or Setup Admin at the CURRENT diocese (the same two the
     # parish Finance page accepts for diocesan staff). A served parish's own entity (Cornerstone Mode) is not a diocese.
@@ -9583,10 +9590,15 @@ timekeeping_activation.register(app, current_user=_current_user, current_org=_cu
 # timekeeping_* siblings; its own _require_hr_admin() does the gating.
 timekeeping_employees.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 timekeeping_roster.register(app, render=_render)
+parish_onboarding.register(app, render=_render)
 timekeeping_entries.register(app, render=_render)
 timekeeping_review.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 hr_hub.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 parish_hr_hub.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+# 26-162 Onboarding & Offboarding: the screens (gated per route on hr_lifecycle + hr_admin/benefits_admin/beacon_admin) and the
+# service API (X-API-Key from Secret Manager beacon-hr-api-keys; /api/hr/ is CSRF-exempt in csrf_guard.py).
+hr_cases.register(app, current_user=_current_user, current_org=_current_org, render=_render, templates=templates)
+hr_api.register(app)
 # Diocese status board / "enter missing data" backfill / Excel export
 # (2026-08-16, per Jay's direct request) -- new sibling module, same
 # current_user/current_org/render signature as timekeeping.py/

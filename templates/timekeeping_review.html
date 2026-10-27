@@ -45,6 +45,9 @@ reason — the parish sees it and can correct and resubmit.</p>
         {% if c.proposed_captures_hours is not none %}<span class="sub"> &middot; {{ 'reports hours' if c.proposed_captures_hours else 'does not report hours' }}</span>{% endif %}
       {% elif c.change_type == 'add' %}
         {{ c.proposed_position or "—" }}{% if c.proposed_employee_number %} (#{{ c.proposed_employee_number }}){% endif %}
+      {% elif c.change_type in ('deactivate', 'reactivate') and (c.proposed_reason or c.as_of_date or c.proposed_note) %}
+        {{ roster_reason(c) or '' }}{% if c.as_of_date %}<span class="sub"> &middot; {{ 'last day' if c.change_type == 'deactivate' else 'returns' }} {{ c.as_of_date.strftime('%m/%d/%y') }}</span>{% endif %}
+        {% if c.proposed_note %}<div class="sub">{{ c.proposed_note }}</div>{% endif %}
       {% else %}
         &mdash;
       {% endif %}

@@ -37,12 +37,17 @@ module's docstring) -- they're just no longer called directly by any route
 in THIS file."""
 from __future__ import annotations
 
+import datetime as dt
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import db
 import timekeeping
 import timekeeping_roster_changes
+from logic.hr_lifecycle import privacy
+from logic.hr_lifecycle.errors import HrError
 
 router = APIRouter()
 
@@ -135,6 +140,11 @@ def roster_page(request: Request):
     if err:
         return err
     staff = list_staff(parish["id"], include_inactive=True)
+    changes = timekeeping_roster_changes.list_all_for_parish(parish["id"])
+    pending = [c for c in changes if c["status"] == "pending"]
+    # onboarding is offered only where the diocese has switched parish benefits requests on (parish_onboarding.available)
+    import parish_onboarding
+    added = request.query_params.get("added")
     return _render(request, "timekeeping_roster.html", user, {
         "parish": parish,
         "staff": staff,
@@ -142,7 +152,20 @@ def roster_page(request: Request):
         # Roster Review & Approval (2026-08-16): the parish's own view of
         # everything they've proposed -- queued, submitted-awaiting-review,
         # approved, or rejected -- so they can see status without asking.
-        "pending_changes": timekeeping_roster_changes.list_all_for_parish(parish["id"]),
+        "pending_changes": changes,
+        # 2026-10-25 (Jay): a person with a change waiting shows it on their row, with a Withdraw button; a new hire not yet on
+        # the roster is a row of its own.
+        "pending_by_staff": {c["staff_id"]: c for c in pending if c["staff_id"]},
+        "pending_adds": [c for c in pending if c["change_type"] == "add"],
+        "pending_count": len(pending),
+        "deactivate_reasons": timekeeping_roster_changes.DEACTIVATE_REASONS,
+        "reactivate_reasons": timekeeping_roster_changes.REACTIVATE_REASONS,
+        "withdrawn_note": timekeeping_roster_changes.WITHDRAWN_NOTE,
+        "reasons_kept": timekeeping_roster_changes.reasons_kept(),
+        "change_reason": timekeeping_roster_changes.reason_label,
+        "can_onboard": parish_onboarding.available(parish),
+        "added_id": int(added) if added and added.isdigit() else None,
+        "today": dt.date.today().isoformat(),
     })
 
 
@@ -162,16 +185,24 @@ async def roster_create(request: Request):
         return RedirectResponse(
             "/timekeeping/roster?error=Both+first+and+last+name+are+required.", status_code=303
         )
+    hire_date = None
+    raw_hire = (form.get("hire_date") or "").strip()
+    if raw_hire:
+        try:
+            hire_date = dt.date.fromisoformat(raw_hire)
+        except ValueError:
+            return RedirectResponse("/timekeeping/roster?error=Hire+date+must+be+a+date.", status_code=303)
     # Roster Review & Approval (2026-08-16): PROPOSE the add, don't write
     # portal.staff_roster directly -- an hr_admin must approve it first (see
     # timekeeping_roster_changes.py's own docstring for the full flow).
-    timekeeping_roster_changes.propose_add(
+    change = timekeeping_roster_changes.propose_add(
         parish["id"], first_name, last_name,
         (form.get("position") or "").strip(),
         (form.get("employee_number") or "").strip(),
-        user["id"],
+        user["id"], hire_date=hire_date,
     )
-    return RedirectResponse("/timekeeping/roster?change_proposed=1", status_code=303)
+    # the screen offers "Continue to onboarding" for this new person (the id says which one)
+    return RedirectResponse(f"/timekeeping/roster?change_proposed=1&added={change['id']}", status_code=303)
 
 
 @router.post("/timekeeping/roster/{staff_id}/update")
@@ -208,8 +239,15 @@ async def roster_update(staff_id: int, request: Request):
     return RedirectResponse("/timekeeping/roster?change_proposed=1", status_code=303)
 
 
+def _back(**msg) -> RedirectResponse:
+    q = "&".join(f"{k}={quote(str(v))}" for k, v in msg.items() if v)
+    return RedirectResponse("/timekeeping/roster" + (("?" + q) if q else ""), status_code=303)
+
+
 @router.post("/timekeeping/roster/{staff_id}/toggle-active")
-def roster_toggle_active(staff_id: int, request: Request):
+async def roster_toggle_active(staff_id: int, request: Request):
+    """Status change (Jay, 2026-10-25): the pop-up asks what the change is (resignation, termination ...), from what date and,
+    for 'Other', a note, then asks the person to confirm. It is still only a PROPOSAL: the diocese's HR Admin approves it."""
     user, parish, diocese_org, err = timekeeping.timekeeping_context(request)
     if err:
         return err
@@ -219,10 +257,51 @@ def roster_toggle_active(staff_id: int, request: Request):
         )
     existing = get_staff(staff_id, parish["id"])
     if not existing:
-        return RedirectResponse("/timekeeping/roster")
+        return _back(error="Staff member not found.")
+    name = f"{existing['first_name']} {existing['last_name']}"
+    if any(c["status"] == "pending" and c["staff_id"] == staff_id
+           for c in timekeeping_roster_changes.list_all_for_parish(parish["id"])):
+        return _back(error=f"A change for {name} is already waiting. Withdraw it first, then make the new one.")
+    form = await request.form()
+    new_active = not existing["is_active"]
+    table = (timekeeping_roster_changes.REACTIVATE_REASONS if new_active
+             else timekeeping_roster_changes.DEACTIVATE_REASONS)
+    reason = (form.get("reason") or "").strip()
+    if reason not in table:
+        return _back(error="Choose what the change is.")
+    note = (form.get("note") or "").strip()
+    if reason == "other" and not note:
+        return _back(error="Explain the change in the note.")
+    if len(note) > 300:
+        return _back(error="Keep the note to 300 characters or fewer.")
+    try:
+        note = privacy.check_text(note, "Note") if note else None   # no Social Security numbers, birth dates or bank details
+    except HrError as exc:
+        return _back(error=exc.message)
+    raw_date = (form.get("effective_date") or "").strip()
+    try:
+        effective = dt.date.fromisoformat(raw_date) if raw_date else dt.date.today()
+    except ValueError:
+        return _back(error="The date must be a real date.")
     # Roster Review & Approval (2026-08-16): PROPOSE the deactivate/
     # reactivate, don't flip is_active directly.
     timekeeping_roster_changes.propose_toggle(
-        parish["id"], staff_id, not existing["is_active"], user["id"]
-    )
-    return RedirectResponse("/timekeeping/roster?change_proposed=1", status_code=303)
+        parish["id"], staff_id, new_active, user["id"], as_of_date=effective, reason=reason, note=note)
+    return _back(change_proposed=1)
+
+
+@router.post("/timekeeping/roster/changes/{change_id}/withdraw")
+def roster_withdraw_change(change_id: int, request: Request):
+    """The parish takes back one of its own changes that nobody has answered yet (Jay, 2026-10-25: there was no way to unwind
+    a proposed deactivation). Only this parish's own pending change; the row is kept as history."""
+    user, parish, diocese_org, err = timekeeping.timekeeping_context(request)
+    if err:
+        return err
+    if not timekeeping.can_manage_timekeeping(user, parish):
+        return JSONResponse(
+            {"error": "You don't have permission to manage this parish's staff roster."}, status_code=403
+        )
+    row = timekeeping_roster_changes.withdraw_change(change_id, parish["id"], user["id"])
+    if not row:
+        return _back(error="That change was already answered by the diocese, or is not on this parish's list.")
+    return _back(withdrawn=1)

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Checklist templates — Onboarding &amp; Offboarding{% endblock %}
+{#
+  26-162: the checklist templates. Read here; changed in the editor (Edit button, hr_template_editor.py): a changed template is
+  published as a new version, and open cases keep their copy. The CSV seed file (26-162 templates\checklist_templates.csv) was
+  the starting point only: re-running the seed loader would publish the file's version over an edit made here.
+#}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/hr_lifecycle.css?v={{ asset_version('css/hr_lifecycle.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide hr-page">
+  <div class="hr-case-head">
+    <h1>Checklist templates</h1>
+    <a href="/hr/onboarding">&larr; Back to Onboarding &amp; Offboarding</a>
+  </div>
+  {% if saved == 'published' %}<div class="banner banner-success">Saved as a new version. Cases already open keep the checklist they started with; new cases use this one.</div>
+  {% elif saved == 'unchanged' %}<div class="banner banner-info">Nothing was different from the current version, so no new version was made.</div>{% endif %}
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+  <p class="hr-muted" style="font-size:0.86rem">A changed checklist becomes a new version, and cases already open keep the version they started with.{% if not can_edit %} You can look at the checklists here; changing one needs the HR Admin role (the Benefits Admin role for the parish benefits checklists).{% endif %}</p>
+  <div class="hr-panel">
+    {% for t in templates %}
+    <a class="hr-chip {{ 'ok' if chosen and chosen.id == t.id else 'open' }}" href="?id={{ t.id }}">{{ t.label }} &middot; v{{ t.version }} &middot; {{ t.item_count }} items</a>
+    {% else %}<p class="hr-muted">No templates are loaded for {{ current_org.code }} yet.</p>{% endfor %}
+  </div>
+  {% if chosen %}
+  <div class="hr-panel">
+    <h2>{{ chosen.label }} <span class="hr-count">{{ kinds[chosen.case_kind] }} &middot; v{{ chosen.version }} &middot; {{ chosen.applies_to|join(', ') }}</span>
+      {% if can_edit %}<a class="btn btn-sm btn-primary" style="float:right" href="/hr/onboarding/templates/{{ chosen.id }}/edit">Edit this checklist</a>{% endif %}</h2>
+    <table class="hr-table">
+      <thead><tr><th>Section</th><th>Item</th><th>Owner</th><th>Due</th><th>Hard</th><th>Applies when</th></tr></thead>
+      <tbody>
+      {% for it in chosen['items'] %}
+        <tr><td>{{ section_labels[it.section] }}</td>
+          <td>{{ it.label }}{% if not it.required %} <span class="hr-req">(optional)</span>{% endif %}{% if it.help_text %}<div class="hr-muted" style="font-size:0.78rem">{{ it.help_text }}</div>{% endif %}</td>
+          <td>{{ it.owner_group }}</td>
+          <td>{{ {'start_date': 'hire', 'separation_date': 'last day', 'benefits_effective': 'benefits start', 'opened': 'opened'}[it.due_basis] }}{% if it.due_offset_days %} {{ '+' if it.due_offset_days > 0 else '−' }} {{ it.due_offset_days|abs }}{% endif %}{% if it.business_days %} business days{% endif %}</td>
+          <td>{% if it.hard_deadline_days is not none %}+{{ it.hard_deadline_days }}{% endif %}</td>
+          <td>{{ describe(it.condition) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if history|length > 1 %}
+    <p class="hr-muted" style="font-size:0.8rem; margin-top:10px">Earlier versions: {% for h in history if not h.is_active %}v{{ h.version }} ({{ h.published_at.strftime('%m/%d/%y') if h.published_at else '' }}{% if h.published_by %}, {{ h.published_by }}{% endif %}){{ ', ' if not loop.last }}{% endfor %}.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

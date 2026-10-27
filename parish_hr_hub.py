@@ -50,7 +50,7 @@ def _timekeeping_on(user, parish) -> bool:
 
 
 _CARDS = [
-    {"title": "Staff", "url": "/timekeeping/roster", "visible": _timekeeping_on,
+    {"title": "Staff", "url": "/timekeeping/roster", "visible": _timekeeping_on, "guide": "parish-staff",
      "desc": "Your parish's staff roster: see who is on it, and propose adding, changing or ending someone. The diocese reviews each change."},
     {"title": "Timekeeping", "url": "/timekeeping", "visible": _timekeeping_on, "guide": "parish-timekeeping",
      "desc": "Enter and submit staff hours for the current payroll period."},

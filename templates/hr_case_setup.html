@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Set up the checklist — {{ c.last_name }}, {{ c.first_name }} — Onboarding &amp; Offboarding{% endblock %}
+{#
+  26-162 (2026-10-27): the checklist setup screen for ONE person. Jay: review the checklist when onboarding someone, with the ability to
+  add / change / remove a step for this onboarding (a removal is a cross-out, stamped with the person and the date), and assign steps to
+  people. "Open this case" lands here; a Set up checklist button on the case page comes back at any time while the case is open.
+  Built on the shared fixed frame (title row, info line, sticky headings, locked bottom bar). Nothing here changes the template.
+  The person pick lists are filled by static/js/hr_case_setup.js from the JSON below (a few hundred options would otherwise repeat on
+  every row); only the assignments that changed are posted.
+#}
+{% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+<link rel="stylesheet" href="/static/css/hr_lifecycle.css?v={{ asset_version('css/hr_lifecycle.css') }}">
+<link rel="stylesheet" href="/static/css/hr_template_edit.css?v={{ asset_version('css/hr_template_edit.css') }}">
+<link rel="stylesheet" href="/static/css/hr_case_setup.css?v={{ asset_version('css/hr_case_setup.css') }}">
+{% endblock %}
+{% block content %}
+{% set tok = csrf_token(request) %}
+{% set base = '/hr/onboarding/case/' ~ c.id %}
+<div class="page-shell-wide hr-page"><div class="ff-shell">
+
+  <div class="ff-title-row">
+    <h1>Set up the checklist</h1>
+    <a class="ff-back" href="{{ base }}" id="csBack">&larr; Back to the case</a>
+    <div class="ff-actions">
+      {% if counts.rule_na %}<button type="button" class="btn btn-sm btn-secondary" data-hr-toggle-na data-count="{{ counts.rule_na }}" aria-pressed="false">Show not applicable items ({{ counts.rule_na }})</button>{% endif %}
+      <button type="button" class="btn btn-sm btn-secondary" id="csAdd">+ Add a step</button>
+      <button type="submit" form="assignForm" class="btn btn-sm btn-secondary" id="csSaveAssign" disabled>Save assignments</button>
+      <a class="btn btn-sm btn-primary" href="{{ base }}" id="csDone">Done: go to the case</a>
+    </div>
+  </div>
+
+  <div class="ff-info te-info">
+    <strong>{{ c.last_name }}, {{ c.preferred_name or c.first_name }}</strong>
+    <span>{{ kinds[c.case_kind] }} &middot; {{ c.case_number }}{% if c.parish_label %} &middot; {{ c.parish_label }}{% endif %}</span>
+    <label class="te-search">Search <input type="text" id="csSearch" placeholder="wording, section, who" autocomplete="off"></label>
+    <span class="te-meta" id="csCounts">{{ counts.total }} steps &middot; {{ counts.assigned }} assigned to a person &middot; {{ counts.crossed }} crossed out &middot; {{ counts.by_hand }} added or changed for this person</span>
+  </div>
+
+  {% if is_new %}
+  <div class="banner banner-info ff-banner">Review this checklist for {{ c.first_name }} {{ c.last_name }}. <strong>Change</strong> a step, <strong>cross out</strong> one that does not apply, <strong>add</strong> one of your own, and pick who each step is assigned to. Every change is stamped with your name and today's date. Press <strong>Done</strong> when you are finished; you can come back to this screen from the case at any time.</div>
+  {% endif %}
+  {% if request.query_params.get('error') %}<div class="banner banner-error ff-banner" role="alert">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% if request.query_params.get('saved') %}<div class="banner banner-success ff-banner">{{ request.query_params.get('saved') }}</div>{% endif %}
+  <noscript><div class="banner banner-error ff-banner">This screen needs JavaScript. Turn it on for this site and reload.</div></noscript>
+
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      <table class="ff-table te-table cs-table">
+        <colgroup><col style="width:112px"><col><col style="width:92px"><col style="width:200px"><col style="width:132px"><col style="width:74px"><col style="width:190px"></colgroup>
+        <thead>
+          <tr><th>Section</th><th>Step</th><th>Group</th><th>Assigned to</th><th>Due</th><th class="c-center">Required</th><th aria-label="Actions"></th></tr>
+        </thead>
+        <tbody id="csBody">
+        {% for it in rows %}
+          {% set open_item = it.status == 'open' %}
+          <tr class="ff-row cs-row{{ ' is-crossed' if it.crossed }}{{ ' is-rule-na is-na-item' if it.rule_na }}{{ ' is-closed' if it.status in ('done', 'waived') }}"
+              id="item-{{ it.item_key }}" data-text="{{ (it.label ~ ' ' ~ it.section_label ~ ' ' ~ it.owner_group ~ ' ' ~ (it.assigned_name or ''))|lower }}">
+            <td>{{ it.section_label }}</td>
+            <td class="cs-step"{% if it.label %} data-tip="{{ it.label }}{% if it.help_text %} — {{ it.help_text }}{% endif %}"{% endif %}>
+              <div class="te-label">{{ it.label }}{% if not it.required %} <span class="hr-req">(optional)</span>{% endif %}
+                {% if it.added_by_hand %}<span class="te-tag te-tag-new">added</span>{% elif it.customized_at %}<span class="te-tag te-tag-chg">changed</span>{% endif %}</div>
+              <div class="te-help cs-stamp">
+                {% if it.crossed %}Crossed out by {{ it.done_by_name or 'someone' }}, {{ local_date(it.done_at) }}{% if it.status_note %}: {{ it.status_note }}{% endif %}
+                {% elif it.rule_na %}{{ it.status_note or 'Does not apply to this person' }}
+                {% elif it.status in ('done', 'waived') %}{{ 'Waived' if it.status == 'waived' else 'Done' }} by {{ it.done_by_name or 'someone' }}, {{ local_date(it.done_at) }}
+                {% elif it.added_by_hand %}Added by {{ it.customized_by_name or 'someone' }}, {{ local_date(it.customized_at) }}
+                {% elif it.customized_at %}Changed by {{ it.customized_by_name or 'someone' }}, {{ local_date(it.customized_at) }}{% endif %}
+              </div>
+            </td>
+            <td>{{ it.owner_group }}</td>
+            <td class="cs-assign">
+              {% if open_item %}
+              <select name="assign_{{ it.item_key }}" form="assignForm" data-cs-assign data-orig="{{ it.assigned_user_id or '' }}" aria-label="Assigned to, {{ it.label }}">
+                {% if it.assigned_user_id %}<option value="{{ it.assigned_user_id }}" selected>{{ it.assigned_name }}</option>{% else %}<option value="">Nobody in particular</option>{% endif %}
+              </select>
+              {% if it.assigned_user_id and it.assigned_at %}<div class="te-help cs-stamp">by {{ it.assigned_by_name or 'someone' }}, {{ local_date(it.assigned_at) }}</div>{% endif %}
+              {% else %}{{ it.assigned_name or '' }}{% endif %}
+            </td>
+            <td>{{ dt(it.due_date) }}{% if it.hard_deadline_date %}<div class="te-help">firm {{ dt(it.hard_deadline_date) }}</div>{% endif %}</td>
+            <td class="c-center">{{ '✓' if it.required else 'optional' }}</td>
+            <td class="te-actions">
+              {% if open_item %}
+              <button type="button" class="btn btn-sm btn-secondary ff-rowbtn" data-cs-change data-key="{{ it.item_key }}" data-label="{{ it.label }}" data-section="{{ it.section }}"
+                      data-owner="{{ it.owner_group }}" data-due="{{ it.due_date.isoformat() if it.due_date else '' }}" data-hard="{{ it.hard_deadline_date.isoformat() if it.hard_deadline_date else '' }}"
+                      data-required="{{ '1' if it.required else '' }}" data-doc="{{ it.doc_type_key or '' }}">Change</button>
+              <button type="button" class="btn btn-sm btn-secondary ff-rowbtn" data-cs-cross data-key="{{ it.item_key }}" data-label="{{ it.label }}">Cross out</button>
+              {% else %}
+              <form method="post" action="{{ base }}/setup/item/{{ it.item_key }}/status" class="cs-inline">
+                <input type="hidden" name="csrf_token" value="{{ tok }}"><input type="hidden" name="status" value="open">
+                <button type="submit" class="btn btn-sm btn-secondary ff-rowbtn">{{ 'Reopen' if it.status in ('done', 'waived') else 'Restore' }}</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count" id="csShown"></span>
+      <span class="ff-msg" id="csMsg">No unsaved assignments</span>
+    </div>
+  </div>
+
+</div>
+
+{# the one form that saves assignments: its selects sit in the table (form="assignForm"); only the changed ones are posted #}
+<form method="post" action="{{ base }}/setup/assign" id="assignForm" hidden>
+  <input type="hidden" name="csrf_token" value="{{ tok }}">
+</form>
+<script type="application/json" id="csPeople">{{ people|tojson }}</script>
+
+<dialog class="hr-dialog wide" id="changeDialog">
+  <h2>Change this step</h2>
+  <p class="hr-muted cs-dlg-note">For {{ c.first_name }} {{ c.last_name }} only. The checklist template does not change. Your name and today's date are kept on the step.</p>
+  <form method="post" id="changeForm" action="">
+    <input type="hidden" name="csrf_token" value="{{ tok }}">
+    <div class="hr-form-grid">
+      <label class="wide">Wording <input type="text" name="label" id="chLabel" maxlength="200" required></label>
+      <label>Section <select name="section" id="chSection">{% for s in sections %}<option value="{{ s.key }}">{{ s.label }}</option>{% endfor %}</select></label>
+      <label>Who does it (group) <select name="owner_group" id="chOwner">{% for o in owners %}<option value="{{ o }}">{{ o }}</option>{% endfor %}</select></label>
+      <label>Due date <input type="date" name="due_date" id="chDue"></label>
+      <label>Firm deadline (optional) <input type="date" name="hard_deadline_date" id="chHard"></label>
+      <label>Document expected (optional) <select name="doc_type_key" id="chDoc"><option value="">None</option>{% for d in doc_types %}<option value="{{ d.key }}">{{ d.label }}{% if d.sensitivity != 'standard' %} (restricted){% endif %}</option>{% endfor %}</select></label>
+      <label class="cs-check"><input type="checkbox" name="required" value="1" id="chRequired"> Required: the case cannot be completed until it is done, waived or crossed out</label>
+    </div>
+    <div class="hr-dialog-actions"><button type="button" class="btn btn-secondary" data-hr-close>Cancel</button><button type="submit" class="btn btn-primary">Save the change</button></div>
+  </form>
+</dialog>
+
+<dialog class="hr-dialog wide" id="addDialog">
+  <h2>Add a step</h2>
+  <p class="hr-muted cs-dlg-note">For {{ c.first_name }} {{ c.last_name }} only. Your name and today's date are kept on the step.</p>
+  <form method="post" id="addForm" action="{{ base }}/setup/add">
+    <input type="hidden" name="csrf_token" value="{{ tok }}">
+    <div class="hr-form-grid">
+      <label class="wide">Wording <input type="text" name="label" maxlength="200" required placeholder="For example: Order a building key"></label>
+      <label>Section <select name="section">{% for s in sections %}<option value="{{ s.key }}" {{ 'selected' if s.key == 'orientation' }}>{{ s.label }}</option>{% endfor %}</select></label>
+      <label>Who does it (group) <select name="owner_group">{% for o in owners %}<option value="{{ o }}">{{ o }}</option>{% endfor %}</select></label>
+      <label>Due date <input type="date" name="due_date"></label>
+      <label>Firm deadline (optional) <input type="date" name="hard_deadline_date"></label>
+      <label>Assigned to (optional) <select name="assigned_user_id" id="addAssignee" data-cs-people></select></label>
+      <label>Document expected (optional) <select name="doc_type_key"><option value="">None</option>{% for d in doc_types %}<option value="{{ d.key }}">{{ d.label }}{% if d.sensitivity != 'standard' %} (restricted){% endif %}</option>{% endfor %}</select></label>
+      <label class="cs-check"><input type="checkbox" name="required" value="1" checked> Required: the case cannot be completed until it is done, waived or crossed out</label>
+    </div>
+    <div class="hr-dialog-actions"><button type="button" class="btn btn-secondary" data-hr-close>Cancel</button><button type="submit" class="btn btn-primary">Add the step</button></div>
+  </form>
+</dialog>
+
+<dialog class="hr-dialog" id="crossDialog">
+  <h2>Cross out this step</h2>
+  <p class="cs-dlg-note"><strong id="crLabel"></strong></p>
+  <p class="hr-muted cs-dlg-note">It stays on the list, crossed out, with your name, today's date and your reason. You can restore it later.</p>
+  <form method="post" id="crossForm" action="">
+    <input type="hidden" name="csrf_token" value="{{ tok }}"><input type="hidden" name="status" value="not_applicable">
+    <label class="cs-reason">Reason (required) <textarea name="note" id="crNote" rows="2" maxlength="1000" required></textarea></label>
+    <div class="hr-dialog-actions"><button type="button" class="btn btn-secondary" data-hr-close>Cancel</button><button type="submit" class="btn btn-primary">Cross it out</button></div>
+  </form>
+</dialog>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
+<script src="/static/js/hr_lifecycle.js?v={{ asset_version('js/hr_lifecycle.js') }}"></script>
+<script src="/static/js/hr_case_setup.js?v={{ asset_version('js/hr_case_setup.js') }}"></script>
+{% endblock %}

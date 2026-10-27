@@ -175,6 +175,25 @@ def download_bytes(token: str, site_id: str, file_path: str) -> bytes:
     return resp.content
 
 
+def download_item_bytes(token: str, drive_id: str, item_id: str) -> bytes:
+    """A file's bytes by its drive and item ids (26-162 HR documents, 2026-10-26). An item id survives a rename or a move of the
+    file or its folder, where a stored path would not; the HR document table keeps ids only. Same 302-to-a-short-lived-URL
+    behavior as download_bytes."""
+    url = f"{GRAPH_BASE}/drives/{drive_id}/items/{item_id}/content"
+    resp = _check(requests.get(url, headers=_headers(token, content_type=None), timeout=_TIMEOUT_TRANSFER),
+                  "download of an item by id")
+    return resp.content
+
+
+def delete_item(token: str, drive_id: str, item_id: str) -> None:
+    """Deletes a driveItem by id (404 = already gone). Used only to take back a file this app uploaded a moment ago when the
+    second half of a two-copy filing failed (26-162); nothing in the app deletes a filed document otherwise."""
+    url = f"{GRAPH_BASE}/drives/{drive_id}/items/{item_id}"
+    resp = requests.delete(url, headers=_headers(token, content_type=None), timeout=_TIMEOUT)
+    if resp.status_code not in (204, 404):
+        raise RuntimeError(f"Graph delete of an item by id failed ({resp.status_code})")
+
+
 def list_folder(token: str, site_id: str, folder_path: str) -> list[dict]:
     """Lists a folder's immediate children (files and subfolders).
     folder_path='' lists the drive root. Returns [] if the folder doesn't

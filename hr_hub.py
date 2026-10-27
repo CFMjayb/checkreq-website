@@ -12,7 +12,8 @@ Tasks would also move to a sub menu under HR & Payroll", and "Time Review and Ro
 
 These pages only LINK to the screens that already exist; every one of those screens still enforces its own gate. A card is shown
 only when the person holds one of the roles that screen's own route accepts at the CURRENT diocese, and only when the diocese has
-Timekeeping turned on (org_features), which also keeps Cornerstone Mode out. The roles below must stay in step with each
+that card's own switch on (org_features): Timekeeping unless the card names another ("feature"; Onboarding & Offboarding uses
+hr_lifecycle, 26-162), which also keeps Cornerstone Mode out. The roles below must stay in step with each
 screen's own gate (timekeeping_status / timekeeping_review: hr_admin or beacon_admin; timekeeping_employees: hr_admin or
 beacon_admin; timekeeping.py's diocese-admin screens: setup_admin or hr_admin; timekeeping_activation: setup_admin).
 Carried over as it was on the old Administrative Tasks hub, NOT widened: the Payroll Periods / Time Categories routes also accept
@@ -43,6 +44,11 @@ def register(app, *, current_user, current_org, render) -> None:
 
 # The day-to-day screens, on the HR & Payroll page itself.
 _OPERATIONS = [
+    # 26-162 (2026-10-22): Onboarding & Offboarding. Its own switch (hr_lifecycle), not Timekeeping's, so EDOM and Claggett
+    # (Timekeeping off) still get it. "feature" on a card names the org_features key it needs; Timekeeping is the default.
+    {"title": "Onboarding & Offboarding", "url": "/hr/onboarding", "role": ["hr_admin", "benefits_admin", "beacon_admin"],
+     "feature": "hr_lifecycle", "guide": "hr-onboarding",
+     "desc": "The HR Status Board: every open onboarding and offboarding case on one screen, what is late and who it is waiting on."},
     {"title": "Time Review", "url": "/admin/timekeeping/status", "role": ["hr_admin", "beacon_admin"], "guide": "payroll-hours",
      "desc": "Review each parish's hours, open or close a period, close it out after payroll, enter missing hours, and export."},
     {"title": "Roster Review", "url": "/admin/timekeeping/review", "role": ["hr_admin", "beacon_admin"], "guide": "roster-review",
@@ -66,10 +72,12 @@ _SUBMENU_CARD = {"title": "HR Administrative Tasks", "url": "/hr/admin", "submen
 
 
 def _visible(user, org_id, cards) -> list[dict]:
-    """The cards this person may see at the current diocese. Nothing at all when no diocese is selected or Timekeeping is off."""
-    if not org_id or not org_features.is_enabled(org_id, "timekeeping"):
+    """The cards this person may see at the current diocese. Nothing at all when no diocese is selected; each card also needs
+    its own switch on (org_features: the card's "feature", Timekeeping unless it says otherwise -- 26-162)."""
+    if not org_id:
         return []
-    return [c for c in cards if rbac.user_has_any_role(user["id"], c["role"], org_id=org_id)]
+    return [c for c in cards if org_features.is_enabled(org_id, c.get("feature", "timekeeping"))
+            and rbac.user_has_any_role(user["id"], c["role"], org_id=org_id)]
 
 
 @router.get("/hr", response_class=HTMLResponse)

@@ -1,20 +1,18 @@
 """
-hr_hub_badges.py -- the red count on a tile of the HR & Payroll menu (26-129 / 26-158, 2026-10-25).
+hr_hub_badges.py -- the red count on a tile of the HR & Payroll menu (26-129 / 26-158 / 26-162, 2026-10-25).
 
-Jay: "Time Review and Roster Review need the red round number dot in the upper right-hand corner of the menu pill ... I think it's
-really easy to miss what's in these screens that is new."
+Jay: "Time Review, Roster Review and Onboarding & Offboarding all need the red round number dot in the upper right-hand corner
+of the menu pill ... I think it's really easy to miss what's in these screens that is new."
 
 What each number means is the SAME number the screen itself works from, so the dot and the screen can never disagree:
 
     Time Review (/admin/timekeeping/status)    lines waiting for a decision in the open pay period, plus people an email named
                                                that nobody entered: the figure "Mark hours Final" waits on (payroll_screens.board_summary)
     Roster Review (/admin/timekeeping/review)  roster changes parishes and emails asked for that nobody has answered yet
+    Onboarding & Offboarding (/hr/onboarding)  open cases with an item past due, or a parish request waiting (the board's own flags)
 
 A dot shows only when the number is above zero. Nothing here may ever break the menu: every count is computed on its own, and a
 count that fails is simply left off the tile (the failure is printed for the logs).
-
-(The dev copy also counts Onboarding & Offboarding cases (26-162). That tile does not exist in production yet, so the counter is
-left out of this release and comes with 26-162.)
 """
 from __future__ import annotations
 
@@ -24,6 +22,7 @@ import db
 _TIPS = {
     "/admin/timekeeping/status": "Lines and emailed names waiting for a decision in the open pay period, plus late emails held for a decision.",
     "/admin/timekeeping/review": "Roster changes waiting for you to approve or reject.",
+    "/hr/onboarding": "Cases with an item past due, or a parish request waiting.",
 }
 
 
@@ -47,9 +46,16 @@ def roster_review(org_id: int) -> int:
     return int(row["n"]) if row else 0
 
 
+def onboarding(org_id: int) -> int:
+    from logic.hr_lifecycle import board
+    rows = board.build([org_id])["rows"]
+    return sum(1 for r in rows if r["flags"]["late"] or r["flags"]["waiting_parish"])
+
+
 _COUNTERS = {
     "/admin/timekeeping/status": time_review,
     "/admin/timekeeping/review": roster_review,
+    "/hr/onboarding": onboarding,
 }
 
 

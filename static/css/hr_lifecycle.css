@@ -1,0 +1,138 @@
+/* 26-162 Onboarding & Offboarding (hr_cases.py). Builds on fixed_frame.css for the board; the case page is two panes.
+   Status always carries a word as well as a color (WCAG 1.4.1); chips are plain text boxes, not buttons. */
+
+/* ---- summary tiles (each one is a filter link) ---- */
+.hr-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; flex: 0 0 auto; }
+.hr-tile { display: block; text-decoration: none; color: inherit; background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #ddd4c0); border-radius: 8px; padding: 7px 10px; }
+.hr-tile:hover, .hr-tile:focus-visible { border-color: var(--color-franciscan-green, #2f5d50); }
+.hr-tile.is-on { border-color: var(--color-franciscan-green, #2f5d50); box-shadow: inset 0 0 0 1px var(--color-franciscan-green, #2f5d50); }
+.hr-tile b { display: block; font-size: 1.35rem; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.hr-tile span { font-size: 0.78rem; color: var(--color-text-muted, #6b645a); }
+.hr-tile.late b { color: var(--color-danger, #a3352b); }
+.hr-tile.due b { color: #8a5a00; }
+
+/* ---- section chips ---- */
+.hr-chip { display: inline-flex; gap: 5px; align-items: baseline; padding: 1px 7px; border-radius: 5px; font-size: 0.76rem;
+  white-space: nowrap; font-variant-numeric: tabular-nums; text-decoration: none; }
+.hr-chip .n { font-weight: 700; }
+.hr-chip.ok { background: #e0f0e6; color: var(--color-success, #2f6b3c); }
+.hr-chip.late { background: #fbe6e6; color: var(--color-danger, #a3352b); }
+.hr-chip.due { background: #fdf0d6; color: #8a5a00; }
+.hr-chip.open { background: #eef1ee; color: var(--color-text, #2b2b2b); }
+.hr-chip.na { background: transparent; color: var(--color-text-muted, #6b645a); }
+a.hr-chip:hover { text-decoration: underline; }
+
+.hr-tag { font-size: 0.72rem; padding: 0 6px; border-radius: 4px; background: #eef1ee; color: var(--color-text-muted, #6b645a); white-space: nowrap; }
+.hr-tag.stalled { background: #fdf0d6; color: #8a5a00; }
+.hr-tag.ready { background: #e0f0e6; color: var(--color-success, #2f6b3c); }
+.hr-late-text { color: var(--color-danger, #a3352b); font-weight: 600; }
+.hr-soon-text { color: #8a5a00; font-weight: 600; }
+.hr-muted { color: var(--color-text-muted, #6b645a); }
+.hr-viewtabs { display: inline-flex; gap: 2px; border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; overflow: hidden; }
+.hr-viewtabs a { padding: 2px 10px; font-size: 0.82rem; text-decoration: none; color: inherit; }
+.hr-viewtabs a.is-on { background: var(--color-franciscan-green, #2f5d50); color: #fff; }
+
+/* ---- the case page: on the shared fixed frame. The title row, banners and section chips stay put; the checklist (left) and
+   the person / coverage / history (right) each scroll on their own, so a 50-item checklist never scrolls the whole page. ---- */
+.hr-pane { min-height: 0; overflow: auto; padding-right: 4px; scroll-behavior: smooth; }
+@media (max-width: 960px) {
+  .hr-panes { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+  .hr-pane { overflow: visible; }
+}
+.ff-shell .hr-secnav { flex: 0 0 auto; }
+.hr-case-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 14px; margin-bottom: 8px; }
+.hr-case-head h1 { margin: 0; font-size: 1.45rem; }
+.hr-case-head .hr-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.hr-panel { background: var(--color-surface, #fff); border: 1px solid var(--color-border, #ddd4c0); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; }
+.hr-panel h2 { font-size: 1.02rem; margin: 0 0 6px; display: flex; align-items: baseline; gap: 8px; }
+.hr-panel h2 .hr-count { margin-left: auto; font-weight: 400; font-size: 0.82rem; }
+.hr-bucket { font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-muted, #6b645a); margin: 10px 0 2px; }
+.hr-secnav { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.hr-secnav .hr-chip { font-size: 0.8rem; padding: 2px 9px; }
+.hr-reopen { display: inline; margin: 0 0 0 6px; }
+.hr-linkbtn { background: none; border: 0; padding: 0; font: inherit; font-size: 0.74rem; font-weight: 400; color: var(--color-franciscan-green, #2f5d50); text-decoration: underline; cursor: pointer; }
+.hr-req { font-size: 0.7rem; color: var(--color-text-muted, #6b645a); }
+.hr-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; font-size: 0.88rem; margin: 0; }
+.hr-dl dt { color: var(--color-text-muted, #6b645a); }
+.hr-dl dd { margin: 0; overflow-wrap: anywhere; }
+.hr-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+.hr-table th, .hr-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--color-border-soft, #eee8da); vertical-align: top; }
+.hr-table th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-muted, #6b645a); }
+.hr-events { list-style: none; padding: 0; margin: 0; font-size: 0.8rem; }
+.hr-events li { padding: 3px 0; border-top: 1px solid var(--color-border-soft, #eee8da); }
+.hr-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; }
+@media (max-width: 640px) { .hr-form-grid { grid-template-columns: minmax(0, 1fr); } }
+.hr-form-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 0.85rem; }
+.hr-form-grid .wide { grid-column: 1 / -1; }
+.hr-form-grid input, .hr-form-grid select, .hr-form-grid textarea { margin: 0; }
+.hr-preview td.na { color: var(--color-text-muted, #6b645a); }
+dialog.hr-dialog { border: 1px solid var(--color-border, #ddd4c0); border-radius: 8px; padding: 14px 18px; width: min(560px, 94vw); }
+dialog.hr-dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+dialog.hr-dialog h2 { margin: 0 0 10px; font-size: 1.12rem; }
+.hr-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+/* ---- the case page, reworked 2026-10-25 (Jay): the checklist is the whole screen. Each item is its own boxed row of at most two
+   lines (the item; under it who owns it and when it is due), a roomy note box, then Waive, Not applicable and Done at the far right
+   (Done last). Items marked not applicable are hidden until "Show not applicable items" is pressed. ---- */
+.hr-panes { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.hr-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hr-item { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(200px, 1fr) auto; gap: 2px 12px; align-items: center;
+  padding: 6px 10px; border: 1px solid var(--color-border, #ddd4c0); border-left: 5px solid #cfc8b6; border-radius: 6px; background: #fff; }
+.hr-item.is-late { border-left-color: var(--color-danger, #a3352b); background: #fdf5f5; }
+.hr-item.is-due { border-left-color: #c58a00; background: #fffaf0; }
+.hr-item.is-done { border-left-color: #7fb08a; background: #f6faf6; }
+.hr-item.is-na { border-left-color: #cfc8b6; background: #faf8f3; }
+.hr-item .lbl { min-width: 0; }
+.hr-item .lbl .t { display: block; font-weight: 600; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hr-item .lbl .meta { display: block; font-size: 0.78rem; color: var(--color-text-muted, #6b645a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hr-item .lbl .meta b.st.late { color: var(--color-danger, #a3352b); }
+.hr-item .lbl .meta b.st.due { color: #8a5a00; }
+.hr-item.is-done .lbl .t { color: var(--color-text-muted, #6b645a); }
+.hr-item.is-na .lbl .t { color: var(--color-text-muted, #6b645a); text-decoration: line-through; }
+.hr-item .hr-q { display: inline-block; width: 15px; height: 15px; line-height: 15px; text-align: center; border-radius: 50%; background: #eef1ee;
+  color: var(--color-text-muted, #6b645a); font-size: 0.7rem; font-weight: 700; vertical-align: 1px; }
+.hr-item-form { display: contents; }
+.hr-item textarea.hr-note { width: 100%; height: 46px; min-height: 46px; margin: 0; padding: 4px 8px; font-size: 0.85rem; resize: vertical; box-sizing: border-box; }
+.hr-item textarea.hr-note.needs { border-color: var(--color-danger, #a3352b); background: #fff5f5; }
+.hr-item .acts { display: flex; gap: 6px; align-items: center; justify-content: flex-end; white-space: nowrap; }
+.hr-item .acts .btn { padding: 3px 12px; font-size: 0.82rem; margin: 0; }
+.hr-item .acts .st { font-size: 0.8rem; font-weight: 600; }
+.hr-item .acts .st.done { color: var(--color-success, #2f6b3c); }
+.hr-item .acts .st.late { color: var(--color-danger, #a3352b); }
+.hr-item .acts .st.na { color: var(--color-text-muted, #6b645a); font-weight: 400; }
+.hr-item .hr-done-note { font-size: 0.82rem; color: var(--color-text-muted, #6b645a); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@media (max-width: 760px) { .hr-item { grid-template-columns: minmax(0, 1fr); } .hr-item .acts { justify-content: flex-start; } }
+/* not applicable: hidden until the button at the top is pressed (an empty bucket or section goes with them) */
+.hr-page:not(.show-na) .hr-item.is-na-item,
+.hr-page:not(.show-na) .hr-items.all-na,
+.hr-page:not(.show-na) .hr-bucket.all-na,
+.hr-page:not(.show-na) .hr-panel.all-na { display: none; }
+dialog.hr-dialog.wide { width: min(760px, 94vw); }
+dialog.hr-dialog h2 .btn { font-size: 0.8rem; }
+
+/* ---- documents (26-162 Phase 2, 2026-10-26): an item's own Upload File line, and the right-hand Documents list and viewer ---- */
+.hr-panes.has-docs { grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); }
+@media (max-width: 960px) { .hr-panes.has-docs { grid-template-columns: minmax(0, 1fr); } }
+.hr-item .lbl .docline { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 0.78rem; margin-top: 2px; }
+.hr-item .lbl .docline a { overflow-wrap: anywhere; }
+.hr-upload-form { display: inline-flex; align-items: center; gap: 6px; margin: 0; flex-wrap: wrap; }
+.hr-upload-form .btn { padding: 1px 10px; font-size: 0.78rem; margin: 0; }
+.hr-upload-form select { margin: 0; font-size: 0.82rem; max-width: 100%; }
+.hr-upload-form select.needs { border-color: var(--color-danger, #a3352b); background: #fff5f5; }
+.hr-upload-form.general { display: flex; margin-bottom: 4px; }
+.hr-upload-form.general select { flex: 1 1 160px; min-width: 0; }
+.hr-upload-msg { font-size: 0.76rem; color: var(--color-danger, #a3352b); }
+.hr-docnote { font-size: 0.8rem; margin: 4px 0 8px; }
+.hr-doclist { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hr-doclist li { border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; padding: 5px 9px; background: #fff; }
+.hr-doclist li.is-viewing { border-color: var(--color-franciscan-green, #2f5d50); box-shadow: inset 0 0 0 1px var(--color-franciscan-green, #2f5d50); }
+.hr-doclist .top { font-size: 0.88rem; }
+.hr-doclist .sub { font-size: 0.76rem; overflow-wrap: anywhere; }
+.hr-doclist .acts { display: flex; gap: 10px; align-items: center; margin-top: 3px; font-size: 0.8rem; }
+.hr-doclist .acts .btn { padding: 1px 10px; font-size: 0.78rem; margin: 0; }
+.hr-olddocs { margin-top: 10px; font-size: 0.84rem; }
+.hr-olddocs summary { cursor: pointer; color: var(--color-text-muted, #6b645a); }
+.hr-viewer { min-height: 240px; }
+.hr-viewer iframe { width: 100%; height: min(70vh, 640px); border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; background: #fff; }
+.hr-viewer img { max-width: 100%; max-height: 70vh; display: block; border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; }

@@ -79,12 +79,18 @@ GUIDES = {
         "back_url": "/giving/statements",
         "back_label": "Giving statements",
     },
-    # 2026-10-25 (26-129): HR & Payroll guides, written for the people who use the screens.
+    # 2026-10-25 (26-129 / 26-162): HR & Payroll guides, written for the people who use the screens.
     "parish-hr": {
         "title": "HR & Payroll",
         "template": "guide_parish_hr.html",
         "back_url": "/parish-hr",
         "back_label": "HR & Payroll",
+    },
+    "parish-staff": {
+        "title": "Staff",
+        "template": "guide_parish_staff.html",
+        "back_url": "/timekeeping/roster",
+        "back_label": "Staff",
     },
     "parish-timekeeping": {
         "title": "Timekeeping",
@@ -97,6 +103,12 @@ GUIDES = {
         "template": "guide_roster_review.html",
         "back_url": "/admin/timekeeping/review",
         "back_label": "Roster Review",
+    },
+    "hr-onboarding": {
+        "title": "Onboarding & Offboarding",
+        "template": "guide_hr_onboarding.html",
+        "back_url": "/hr/onboarding",
+        "back_label": "Onboarding & Offboarding",
     },
 }
 

@@ -1,0 +1,355 @@
+{% extends "base.html" %}
+{% block title %}{{ c.case_number }} {{ c.last_name }}, {{ c.first_name }} — Onboarding &amp; Offboarding{% endblock %}
+{#
+  26-162 case page (hr_cases.case_page), on the shared fixed frame. Reworked 2026-10-25 on Jay's feedback:
+    - the whole screen is the checklist: the person, the benefits coverage and the history are pop-ups from the title row (plus a
+      one-line summary of the person under the title), no longer a column beside it;
+    - each item is its own boxed row, at most two lines: the item and, under it, who owns it and when it is due; a roomy note box;
+      then Waive, Not applicable and Done at the far right, Done rightmost (the long help text is a hover tip);
+    - items marked not applicable are hidden until the "Show not applicable items" button at the top is pressed;
+    - still: a status in words as well as color, times in the entity's time zone (local_date / local_time), Reopen on a closed item.
+  Documents (Phase 2, 2026-10-26): an item that expects a document shows what is filed for it and an Upload File button (one button, Standing
+  UI-UX Rule 7); the right-hand pane lists everything filed on the case and shows a real viewer (Rule 8). The files live in SharePoint in two
+  places (hr_documents.py, logic/hr_lifecycle/documents.py); this page only reads metadata. The checklist flow editor is a separate piece.
+#}
+{% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
+{% macro yn(v) %}{{ 'Yes' if v else ('No' if v is not none and v != '' else 'Not set') }}{% endmacro %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+<link rel="stylesheet" href="/static/css/hr_lifecycle.css?v={{ asset_version('css/hr_lifecycle.css') }}">
+{% endblock %}
+{% block content %}
+{% set tok = csrf_token(request) %}
+{% set ST = {'done': 'Done', 'late': 'Late', 'due': 'Due soon', 'open': 'Open', 'na': 'Not applicable'} %}
+{% set nac = namespace(n=0) %}
+{% for s in sections %}{% for b in s.buckets %}{% for it in b['items'] %}{% if it.status == 'not_applicable' and it.auto_na %}{% set nac.n = nac.n + 1 %}{% endif %}{% endfor %}{% endfor %}{% endfor %}
+<div class="page-shell-wide hr-page">
+<div class="ff-shell">
+
+  <div class="ff-title-row">
+    <h1>{{ c.last_name }}, {{ c.preferred_name or c.first_name }}</h1>
+    <span class="badge {{ 'badge-submitted' if is_open else ('badge-approved' if c.close_outcome == 'completed' else 'badge-cancelled') }}">
+      {{ kinds[c.case_kind] }} &middot; {% if is_open %}{{ c.status|replace('_', ' ')|capitalize }}{% else %}{{ outcomes[c.close_outcome] if c.close_outcome else c.status|capitalize }}{% endif %}</span>
+    <span class="hr-muted">{{ c.case_number }} &middot; {{ c.org_code }}{% if c.parish_label %} &middot; {{ c.parish_label }}{% endif %}</span>
+    <a class="ff-back" href="/hr/onboarding">&larr; Back to the board</a>
+    <div class="ff-actions">
+      {% if nac.n %}<button type="button" class="btn btn-sm btn-secondary" data-hr-toggle-na data-count="{{ nac.n }}" aria-pressed="false">Show not applicable items ({{ nac.n }})</button>{% endif %}
+      {% if is_open %}<a class="btn btn-sm btn-secondary" href="/hr/onboarding/case/{{ c.id }}/setup" data-tip="Change, cross out or add steps for this person, and assign steps to people">Set up checklist</a>{% endif %}
+      <button type="button" class="btn btn-sm btn-secondary" data-hr-dialog="personDialog">Person</button>
+      <button type="button" class="btn btn-sm btn-secondary" data-hr-dialog="coverageDialog">Benefits coverage ({{ c.enrollments|length }})</button>
+      <button type="button" class="btn btn-sm btn-secondary" data-hr-dialog="historyDialog">History</button>
+      {% if is_open %}
+      <button type="button" class="btn btn-sm btn-primary" data-hr-dialog="closeDialog">{{ 'Close as completed' if c.ready_to_close else 'Close or withdraw' }}</button>
+      {% elif c.case_kind in ('onboard', 'benefits_enroll') and c.close_outcome == 'completed' %}
+      <button type="button" class="btn btn-sm btn-primary" data-hr-dialog="offboardDialog">{{ 'Start offboarding' if c.case_kind == 'onboard' else 'End coverage' }}</button>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="ff-info">
+    <span>
+      {{ c.position or 'No position entered' }} &middot; {{ 'Clergy' if c.is_clergy else 'Lay' }}
+      {% if c.start_date %}&middot; hired {{ dt(c.start_date) }}{% endif %}
+      {% if c.benefits_effective_date %}&middot; benefits start {{ dt(c.benefits_effective_date) }}{% endif %}
+      {% if c.separation_date %}&middot; last day {{ dt(c.separation_date) }}{% endif %}
+    </span>
+  </div>
+  {% if request.query_params.get('error') %}<div class="banner banner-error ff-banner">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% if request.query_params.get('saved') %}<div class="banner banner-success ff-banner">{{ request.query_params.get('saved') }}</div>{% endif %}
+
+  <nav class="hr-secnav" aria-label="Sections">
+    {% for key, label in [('documents', 'Documents'), ('benefits', 'Benefits'), ('payroll', 'Payroll'), ('access', 'Access'), ('orientation', 'Orientation / records')] %}
+    {% set n = c.counts[key] %}
+    {% if n.state == 'na' %}<span class="hr-chip na">{{ label }}: N/A</span>
+    {% else %}<a class="hr-chip {{ n.state }}" href="#sec-{{ key if key != 'orientation' or sections|selectattr('key', 'equalto', 'orientation')|list else 'records' }}">{{ label }} <span class="n">{{ n.done }}/{{ n.total }}</span> {{ n.label }}</a>{% endif %}
+    {% endfor %}
+  </nav>
+
+  <div class="hr-panes has-docs">
+    <div class="hr-pane">
+      {% for s in sections %}
+      {% set svis = namespace(n=0) %}
+      {% for b in s.buckets %}{% for it in b['items'] %}{% if not (it.status == 'not_applicable' and it.auto_na) %}{% set svis.n = svis.n + 1 %}{% endif %}{% endfor %}{% endfor %}
+      <section class="hr-panel{{ ' all-na' if svis.n == 0 }}" id="sec-{{ s.key }}">
+        <h2>{{ s.label }} <span class="hr-count">{{ s.done }} of {{ s.total }} required done</span></h2>
+        {% for b in s.buckets %}
+        {% set bvis = namespace(n=0) %}
+        {% for it in b['items'] %}{% if not (it.status == 'not_applicable' and it.auto_na) %}{% set bvis.n = bvis.n + 1 %}{% endif %}{% endfor %}
+        <div class="hr-bucket{{ ' all-na' if bvis.n == 0 }}">{{ b.label }}</div>
+        <ul class="hr-items{{ ' all-na' if bvis.n == 0 }}">
+          {% for it in b['items'] %}
+          {% set isna = it.status == 'not_applicable' and it.auto_na %}
+          {% set crossed = it.status == 'not_applicable' and not it.auto_na %}
+          <li class="hr-item is-{{ it.state }}{{ ' is-na-item' if isna }}{{ ' is-crossed' if crossed }}" id="item-{{ it.item_key }}">
+            <div class="lbl">
+              <span class="t"{% if it.help_text %} data-tip="{{ it.help_text }}"{% endif %}>{{ it.label }}{% if not it.required %} <span class="hr-req">(optional)</span>{% endif %}{% if it.help_text %} <span class="hr-q" aria-hidden="true">?</span>{% endif %}</span>
+              <span class="meta" data-tip="{{ it.owner_group }}{% if it.due_date %}, due {{ dt(it.due_date) }}{% endif %}{% if it.hard_deadline_date %}, hard deadline {{ dt(it.hard_deadline_date) }}{% endif %}">
+                {% if it.status == 'open' %}<b class="st {{ it.state }}">{{ ST[it.state] }}</b> &middot; {% endif %}{{ it.owner_group }}
+                {% if it.due_date %} &middot; due {{ dt(it.due_date) }}{% endif %}
+                {% if it.hard_deadline_date %} &middot; <strong>hard deadline {{ dt(it.hard_deadline_date) }}</strong>{% endif %}
+                {% if it.assigned_name and it.status == 'open' %} &middot; <strong>assigned to {{ it.assigned_name }}</strong>{% endif %}
+                {% if it.status in ('done', 'waived') and it.done_at %} &middot; {{ 'waived' if it.status == 'waived' else 'done' }} {{ local_date(it.done_at) }}{% if it.done_by_name %} by {{ it.done_by_name }}{% endif %}{% endif %}
+                {% if it.added_by_hand and it.customized_at %} &middot; added by {{ it.customized_by_name or 'someone' }} {{ local_date(it.customized_at) }}{% elif it.customized_at %} &middot; changed by {{ it.customized_by_name or 'someone' }} {{ local_date(it.customized_at) }}{% endif %}
+              </span>
+              {% if it.doc_type_key %}
+              {# the document this item expects: what is filed for it, and one Upload File button for a role that may file that kind #}
+              <span class="docline">
+                {% for d in item_docs.get(it.item_key, []) %}{% if d.can_view %}<a href="/hr/onboarding/case/{{ c.id }}/documents/{{ d.id }}/file" data-hr-view data-ctype="{{ d.content_type }}">{{ d.file_name }}</a>{% else %}<span class="hr-muted">{{ d.file_name }} (restricted)</span>{% endif %}{{ ', ' if not loop.last }}{% else %}<span class="hr-muted">Nothing filed yet</span>{% endfor %}
+                {% if it.doc_type_key in fileable %}
+                <form method="post" action="/hr/onboarding/case/{{ c.id }}/documents/upload" enctype="multipart/form-data" class="hr-upload-form" data-hr-upload-form data-max="{{ max_upload_mb }}">
+                  <input type="hidden" name="csrf_token" value="{{ tok }}">
+                  <input type="hidden" name="item_key" value="{{ it.item_key }}">
+                  <input type="file" name="file" accept="application/pdf,image/jpeg,image/png,image/gif,image/webp" hidden tabindex="-1" aria-label="File for {{ it.label }}">
+                  <button type="button" class="btn btn-sm btn-secondary" data-hr-upload>Upload File</button><span class="hr-upload-msg" role="alert"></span>
+                </form>
+                {% endif %}
+              </span>
+              {% endif %}
+            </div>
+            {% if is_open and it.status == 'open' %}
+            <form method="post" action="/hr/onboarding/case/{{ c.id }}/item/{{ it.item_key }}" class="hr-item-form" data-hr-needs-note>
+              <input type="hidden" name="csrf_token" value="{{ tok }}">
+              <textarea name="note" class="hr-note" rows="2" maxlength="1000" placeholder="Note (needed to Waive or mark Not applicable)" aria-label="Note for {{ it.label }}"></textarea>
+              <div class="acts">
+                <button type="submit" name="status" value="waived" class="btn btn-sm btn-secondary" data-tip="Not needed this time. A reason is required.">Waive</button>
+                <button type="submit" name="status" value="not_applicable" class="btn btn-sm btn-secondary" data-tip="Does not apply to this person: it stays on the list, crossed out, with your name and the date. A reason is required.">Cross out</button>
+                <button type="submit" name="status" value="done" class="btn btn-sm btn-primary">Done</button>
+              </div>
+            </form>
+            {% else %}
+            <div class="hr-done-note" {% if it.status_note %}data-tip="{{ it.status_note }}"{% endif %}>{% if crossed %}Crossed out by {{ it.done_by_name or 'someone' }}{% if it.done_at %}, {{ local_date(it.done_at) }}{% endif %}{% if it.status_note %}: {{ it.status_note }}{% endif %}{% else %}{{ it.status_note or '' }}{% endif %}</div>
+            <div class="acts">
+              <span class="st {{ it.state }}">{{ 'Waived' if it.status == 'waived' else ('Crossed out' if crossed else ST[it.state]) }}</span>
+              {% if is_open and it.status != 'open' %}
+              <form method="post" action="/hr/onboarding/case/{{ c.id }}/item/{{ it.item_key }}" class="hr-reopen">
+                <input type="hidden" name="csrf_token" value="{{ tok }}">
+                <button type="submit" name="status" value="open" class="hr-linkbtn" aria-label="Reopen {{ it.label }}">Reopen</button>
+              </form>
+              {% endif %}
+            </div>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% endfor %}
+      </section>
+      {% endfor %}
+    </div>
+
+    {# ---- Documents: everything filed on this case, and the viewer (Standing UI-UX Rules 7 and 8) ---- #}
+    <aside class="hr-pane hr-docs-pane" id="hrDocs" aria-label="Documents">
+      <section class="hr-panel">
+        <h2>Documents <span class="hr-count">{{ current_docs|length }} filed</span></h2>
+        {% if doc_options %}
+        <form method="post" action="/hr/onboarding/case/{{ c.id }}/documents/upload" enctype="multipart/form-data" class="hr-upload-form general" data-hr-upload-form data-max="{{ max_upload_mb }}">
+          <input type="hidden" name="csrf_token" value="{{ tok }}">
+          <select name="doc_type" aria-label="Kind of document"><option value="">Kind of document...</option>{% for o in doc_options %}<option value="{{ o.key }}">{{ o.label }}</option>{% endfor %}</select>
+          <input type="file" name="file" accept="application/pdf,image/jpeg,image/png,image/gif,image/webp" hidden tabindex="-1" aria-label="File to upload">
+          <button type="button" class="btn btn-sm btn-primary" data-hr-upload>Upload File</button><span class="hr-upload-msg" role="alert"></span>
+        </form>
+        <p class="hr-muted hr-docnote">PDF or an image, up to {{ max_upload_mb }} MB. Each file is kept in two places in SharePoint (an I-9 in one). Pick the kind first; an item's own button needs no choice.</p>
+        {% else %}<p class="hr-muted hr-docnote">Your role cannot file documents on this case.</p>{% endif %}
+        {% if current_docs %}
+        <ul class="hr-doclist">
+          {% for d in current_docs %}
+          <li>
+            <div class="top"><b>{{ d.doc_label }}</b>{% if d.item_label %} <span class="hr-muted">for {{ d.item_label }}</span>{% endif %}</div>
+            <div class="sub hr-muted">{{ d.file_name }} &middot; {{ local_date(d.uploaded_at) }}{% if d.uploaded_by_name %} by {{ d.uploaded_by_name }}{% endif %}{% if d.size_bytes %} &middot; {{ ((d.size_bytes or 0) / 1024)|round|int }} KB{% endif %}</div>
+            <div class="acts">
+              {% if d.can_view %}
+              <a href="/hr/onboarding/case/{{ c.id }}/documents/{{ d.id }}/file" class="btn btn-sm btn-secondary" data-hr-view data-ctype="{{ d.content_type }}">View</a>
+              <a href="/hr/onboarding/case/{{ c.id }}/documents/{{ d.id }}/file?download=1" class="hr-linkbtn">Download</a>
+              {% else %}<span class="hr-muted">{{ 'HR Admin only' if d.sensitivity == 'i9' else 'Your role cannot open this' }}</span>{% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}<p class="hr-muted hr-docnote">Nothing filed on this case yet.</p>{% endif %}
+        {% if old_docs %}
+        <details class="hr-olddocs"><summary>Earlier versions ({{ old_docs|length }})</summary>
+          <ul class="hr-doclist">
+            {% for d in old_docs %}
+            <li><div class="top">{{ d.doc_label }} <span class="hr-muted">(replaced)</span></div>
+              <div class="sub hr-muted">{{ d.file_name }} &middot; {{ local_date(d.uploaded_at) }}{% if d.uploaded_by_name %} by {{ d.uploaded_by_name }}{% endif %}</div>
+              <div class="acts">{% if d.can_view %}<a href="/hr/onboarding/case/{{ c.id }}/documents/{{ d.id }}/file" class="btn btn-sm btn-secondary" data-hr-view data-ctype="{{ d.content_type }}">View</a>
+                <a href="/hr/onboarding/case/{{ c.id }}/documents/{{ d.id }}/file?download=1" class="hr-linkbtn">Download</a>{% endif %}</div></li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endif %}
+      </section>
+      <section class="hr-panel hr-viewer-panel">
+        <h2>Viewer</h2>
+        <div id="hrViewer" class="hr-viewer" aria-live="polite"><p class="hr-muted hr-docnote">Press View on a document to read it here.</p></div>
+      </section>
+    </aside>
+  </div>
+
+</div>
+
+{# The pop-ups sit INSIDE .hr-page so the button pulse (Standing UI-UX Rule 6) reaches their forms too. #}
+<dialog class="hr-dialog wide" id="personDialog">
+  <h2>Person {% if is_open %}<button type="button" class="btn btn-sm btn-secondary" style="margin-left:auto" data-hr-dialog="editDialog">Edit details</button>{% endif %}</h2>
+  <dl class="hr-dl">
+    <dt>Name</dt><dd>{{ c.first_name }}{% if c.preferred_name %} ("{{ c.preferred_name }}"){% endif %} {{ c.last_name }}</dd>
+    <dt>Position</dt><dd>{{ c.position or '—' }}</dd>
+    <dt>Track</dt><dd>{{ 'Clergy' if c.is_clergy else 'Lay' }}{% if c.exemption %}, {{ 'exempt' if c.exemption == 'exempt' else 'non-exempt' }}{% endif %}</dd>
+    <dt>Hours</dt><dd>{% if c.hours_per_week is not none %}{{ c.hours_per_week|round(2) }} a week ({{ (c.hours_per_week * 52)|round|int }} a year){% else %}not entered{% endif %}</dd>
+    <dt>Eligible</dt><dd>{% if c.health_eligible is none %}not known until hours are entered{% else %}health {{ 'yes' if c.health_eligible else 'no' }}, lay pension {{ 'yes' if c.pension_eligible else 'no' }}{% if c.eligibility_overridden %} (set by hand: {{ c.eligibility_note }}){% endif %}{% endif %}</dd>
+    <dt>Housing</dt><dd>{{ yn(c.housing_provided) }}</dd>
+    <dt>Hire date</dt><dd>{{ dt(c.start_date) or '—' }}</dd>
+    {% if c.benefits_effective_date %}<dt>Benefits start</dt><dd>{{ dt(c.benefits_effective_date) }}</dd>{% endif %}
+    {% if c.separation_date %}<dt>Last day</dt><dd>{{ dt(c.separation_date) }}{% if c.separation_category %} ({{ separation_categories[c.separation_category] }}){% endif %}</dd>{% endif %}
+    <dt>Unit</dt><dd>{{ c.parish_label or 'none' }}{% if c.staff_id %} &middot; on the roster{% endif %}</dd>
+    {% if c.payroll_employee_ref %}<dt>Payroll ID</dt><dd>{{ c.payroll_employee_ref }}</dd>{% endif %}
+    <dt>Opened</dt><dd>{{ local_date(c.opened_at) }}{% if c.opened_by_name %} by {{ c.opened_by_name }}{% endif %} &middot; template {{ c.template_key }} v{{ c.template_version }}</dd>
+    {% if c.notes %}<dt>Notes</dt><dd>{{ c.notes }}</dd>{% endif %}
+  </dl>
+  {% if c.linked or c.followups %}
+  <h3 style="font-size:0.95rem;margin:12px 0 4px">Linked cases</h3>
+  <ul class="hr-events">
+    {% if c.linked %}<li>From <a href="/hr/onboarding/case/{{ c.linked.id }}">{{ c.linked.case_number }}</a> ({{ kinds[c.linked.case_kind] }}, {{ c.linked.status }})</li>{% endif %}
+    {% for x in c.followups %}<li>Followed by <a href="/hr/onboarding/case/{{ x.id }}">{{ x.case_number }}</a> ({{ kinds[x.case_kind] }}, {{ x.status }})</li>{% endfor %}
+  </ul>
+  {% endif %}
+  <div class="hr-dialog-actions"><button type="button" class="btn btn-secondary" data-hr-close>Close</button></div>
+</dialog>
+
+<dialog class="hr-dialog wide" id="coverageDialog">
+  <h2>Benefits coverage {% if is_open %}<button type="button" class="btn btn-sm btn-secondary" style="margin-left:auto" data-hr-dialog="enrollDialog">Record coverage</button>{% endif %}</h2>
+  {% if c.enrollments %}
+  <table class="hr-table">
+    <thead><tr><th>Coverage</th><th>Election</th><th>Plan / tier</th><th>Status</th><th>Dates</th></tr></thead>
+    <tbody>
+    {% for e in c.enrollments %}
+      <tr><td>{{ coverages[e.coverage] }}</td><td>{{ elections[e.election] }}</td>
+        <td>{{ plans.get(e.plan_key, '') }}{% if e.tier %}{{ ', ' if e.plan_key }}{{ tiers[e.tier] }}{% endif %}{% if e.dependents_count is not none %} ({{ e.dependents_count }} dep.){% endif %}</td>
+        <td>{{ enroll_statuses[e.status] }}{% if e.carrier_ref %}<div class="hr-muted">ref {{ e.carrier_ref }}</div>{% endif %}</td>
+        <td>{% if e.effective_date %}from {{ dt(e.effective_date) }}{% endif %}{% if e.end_date %}<br>to {{ dt(e.end_date) }}{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="hr-muted" style="margin:0;font-size:0.85rem">No coverage recorded yet. Record each coverage as the forms come in: plan and tier only, never dependent details.</p>{% endif %}
+  <div class="hr-dialog-actions"><button type="button" class="btn btn-secondary" data-hr-close>Close</button></div>
+</dialog>
+
+<dialog class="hr-dialog wide" id="historyDialog">
+  <h2>History</h2>
+  <div style="max-height:60vh;overflow:auto">
+  <ul class="hr-events">
+    {% for e in c.events %}
+    <li><span class="hr-muted">{{ local_time(e.at) }}</span> {{ e.actor_name or 'Beacon' }}:
+      {% set d = e.detail or {} %}
+      {% if e.event == 'opened' %}opened the case ({{ d.template }}{{ ', backfilled' if d.backfilled }})
+      {% elif e.event == 'item_status' %}{{ item_labels.get(d.item, d.item) }}: {{ {'open': 'reopened', 'done': 'done', 'waived': 'waived', 'not_applicable': 'crossed out'}.get(d.to, d.to) }}
+      {% elif e.event == 'item_added' %}added the step "{{ d.label }}"
+      {% elif e.event == 'item_changed' %}changed {{ item_labels.get(d.item, d.item) }}: {% for k in (d.changes or {}) %}{{ {'label': 'the wording', 'section': 'the section', 'owner_group': 'the group', 'due_date': 'the due date', 'hard_deadline_date': 'the firm deadline', 'required': 'required or optional', 'doc_type_key': 'the document'}.get(k, k) }}{{ ', ' if not loop.last }}{% endfor %}
+      {% elif e.event == 'item_assigned' %}{{ item_labels.get(d.item, d.item) }}: {% if d.to %}assigned to {{ d.to }}{% if d['from'] %} (was {{ d['from'] }}){% endif %}{% else %}taken off {{ d['from'] or 'the person' }}{% endif %}
+      {% elif e.event == 'updated' %}changed {{ (d.fields or [])|join(', ') }}{% if d.items_rechecked %}; {{ d.items_rechecked }} item(s) updated{% endif %}
+      {% elif e.event == 'enrollment' %}{{ coverages.get(d.coverage, d.coverage) }}: {{ d.election }}, {{ d.status }}
+      {% elif e.event == 'document_added' %}filed {{ doc_labels.get(d.doc_type, d.doc_type) }}{% if d.item %} for {{ item_labels.get(d.item, d.item) }}{% endif %}{% if d.replaced %} (replaced an earlier one){% endif %}
+      {% elif e.event == 'closed' %}closed as {{ outcomes.get(d.outcome, d.outcome)|lower }}{% if d.roster %} ({{ d.roster }}){% endif %}
+      {% else %}{{ e.event }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  </div>
+  <div class="hr-dialog-actions"><button type="button" class="btn btn-secondary" data-hr-close>Close</button></div>
+</dialog>
+
+{% if is_open %}
+<dialog class="hr-dialog" id="editDialog">
+  <h2>Edit details</h2>
+  <form method="post" action="/hr/onboarding/case/{{ c.id }}/update">
+    <input type="hidden" name="csrf_token" value="{{ tok }}">
+    <div class="hr-form-grid">
+      <label>First name <input type="text" name="first_name" value="{{ c.first_name }}" required maxlength="80"></label>
+      <label>Last name <input type="text" name="last_name" value="{{ c.last_name }}" required maxlength="80"></label>
+      <label>Goes by <input type="text" name="preferred_name" value="{{ c.preferred_name or '' }}" maxlength="80"></label>
+      <label>Position <input type="text" name="position" value="{{ c.position or '' }}" maxlength="120"></label>
+      <label>Clergy or lay <select name="is_clergy"><option value="no" {{ 'selected' if not c.is_clergy }}>Lay</option><option value="yes" {{ 'selected' if c.is_clergy }}>Clergy</option></select></label>
+      <label>Exempt status <select name="exemption"><option value="" {{ 'selected' if not c.exemption }}>Not set</option><option value="exempt" {{ 'selected' if c.exemption == 'exempt' }}>Exempt</option><option value="non_exempt" {{ 'selected' if c.exemption == 'non_exempt' }}>Non-exempt</option></select></label>
+      <label>Hours per week <input type="text" name="hours_per_week" value="{{ c.hours_per_week if c.hours_per_week is not none else '' }}" inputmode="decimal"></label>
+      <label>Housing provided <select name="housing_provided"><option value="" {{ 'selected' if c.housing_provided is none }}>Not set</option><option value="no" {{ 'selected' if c.housing_provided == false }}>No</option><option value="yes" {{ 'selected' if c.housing_provided }}>Yes</option></select></label>
+      <label>Date of hire <input type="date" name="start_date" value="{{ c.start_date.isoformat() if c.start_date else '' }}"></label>
+      {% if c.case_kind in ('offboard', 'benefits_end') %}
+      <label>Last day <input type="date" name="separation_date" value="{{ c.separation_date.isoformat() if c.separation_date else '' }}" required></label>
+      <label>Reason <select name="separation_category">{% for k, l in separation_categories.items() %}<option value="{{ k }}" {{ 'selected' if c.separation_category == k }}>{{ l }}</option>{% endfor %}</select></label>
+      {% endif %}
+      <label>Employing unit <select name="parish_id"><option value="">None</option>{% for u in units %}<option value="{{ u.id }}" {{ 'selected' if c.parish_id == u.id }}>{{ u.code }} {{ u.label }}</option>{% endfor %}</select></label>
+      <label>Payroll employee ID <input type="text" name="payroll_employee_ref" value="{{ c.payroll_employee_ref or '' }}" maxlength="40"></label>
+      <label class="wide">Notes <textarea name="notes" rows="2" maxlength="1000">{{ c.notes or '' }}</textarea></label>
+      <label>Set eligibility by hand <select name="override_eligibility" data-hr-toggle="overrideBox"><option value="no">{{ 'Keep as set' if c.eligibility_overridden else 'No' }}</option><option value="yes">Yes</option>{% if c.eligibility_overridden %}<option value="clear">Clear: work it out from the hours again</option>{% endif %}</select></label>
+      <div class="wide hr-form-grid" id="overrideBox" hidden>
+        <label>Health eligible <select name="health_eligible"><option value="yes">Yes</option><option value="no">No</option></select></label>
+        <label>Pension eligible <select name="pension_eligible"><option value="yes">Yes</option><option value="no">No</option></select></label>
+        <label class="wide">Why (required) <input type="text" name="eligibility_note" maxlength="300"></label>
+      </div>
+    </div>
+    <p class="hr-muted" style="font-size:0.8rem">Changing a date, the hours or the clergy and housing answers updates the due dates and the items that apply. Items someone already closed are not touched.</p>
+    <div class="hr-dialog-actions"><button type="button" class="btn btn-secondary" data-hr-close>Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
+  </form>
+</dialog>
+
+<dialog class="hr-dialog" id="closeDialog">
+  <h2>Close this case</h2>
+  <form method="post" action="/hr/onboarding/case/{{ c.id }}/close">
+    <input type="hidden" name="csrf_token" value="{{ tok }}">
+    <div class="hr-form-grid">
+      <label class="wide">Outcome
+        <select name="outcome">
+          <option value="completed" {{ '' if c.ready_to_close else 'disabled' }}>Completed{{ '' if c.ready_to_close else ' (required items still open)' }}</option>
+          <option value="withdrawn" {{ '' if c.ready_to_close else 'selected' }}>Withdrawn</option>
+          {% if c.case_kind == 'onboard' %}<option value="not_hired">Not hired</option>{% endif %}
+        </select></label>
+      <label class="wide">Note (optional) <input type="text" name="note" maxlength="1000"></label>
+    </div>
+    {% if c.case_kind == 'onboard' %}<p class="hr-muted" style="font-size:0.8rem">Completing an onboarding case adds the person to the Employees roster under the employing unit.</p>
+    {% elif c.case_kind == 'offboard' %}<p class="hr-muted" style="font-size:0.8rem">Completing an offboarding case marks the person inactive on the roster as of the last day.</p>{% endif %}
+    <div class="hr-dialog-actions"><button type="button" class="btn btn-secondary" data-hr-close>Cancel</button><button type="submit" class="btn btn-primary">Close case</button></div>
+  </form>
+</dialog>
+
+<dialog class="hr-dialog" id="enrollDialog">
+  <h2>Record coverage</h2>
+  <form method="post" action="/hr/onboarding/case/{{ c.id }}/enrollment">
+    <input type="hidden" name="csrf_token" value="{{ tok }}">
+    <div class="hr-form-grid">
+      <label>Coverage <select name="coverage">{% for k, l in coverages.items() %}<option value="{{ k }}">{{ l }}{% if enrollments.get(k) %} (recorded){% endif %}</option>{% endfor %}</select></label>
+      <label>Election <select name="election">{% for k, l in elections.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></label>
+      <label>Plan <select name="plan_key"><option value="">None</option>{% for k, l in plans.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></label>
+      <label>Tier <select name="tier"><option value="">None</option>{% for k, l in tiers.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></label>
+      <label>Dependents (a count only) <input type="number" name="dependents_count" min="0" max="20"></label>
+      <label>Status <select name="status">{% for k, l in enroll_statuses.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></label>
+      <label>Submitted <input type="date" name="submitted_at"></label>
+      <label>Confirmed <input type="date" name="confirmed_at"></label>
+      <label>Effective <input type="date" name="effective_date" value="{{ c.benefits_effective_date.isoformat() if c.benefits_effective_date else '' }}"></label>
+      <label>Ends <input type="date" name="end_date"></label>
+      <label>Confirmation reference <input type="text" name="carrier_ref" maxlength="80"></label>
+      <label>Note <input type="text" name="note" maxlength="1000"></label>
+    </div>
+    <p class="hr-muted" style="font-size:0.8rem">Saving a coverage that is already recorded replaces it.</p>
+    <div class="hr-dialog-actions"><button type="button" class="btn btn-secondary" data-hr-close>Cancel</button><button type="submit" class="btn btn-primary">Save coverage</button></div>
+  </form>
+</dialog>
+{% endif %}
+
+{% if not is_open and c.case_kind in ('onboard', 'benefits_enroll') and c.close_outcome == 'completed' %}
+<dialog class="hr-dialog" id="offboardDialog">
+  <h2>{{ 'Start offboarding' if c.case_kind == 'onboard' else 'End coverage' }}</h2>
+  <form method="post" action="/hr/onboarding/case/{{ c.id }}/offboard">
+    <input type="hidden" name="csrf_token" value="{{ tok }}">
+    <div class="hr-form-grid">
+      <label>Last day of employment <input type="date" name="separation_date" required></label>
+      <label>Reason <select name="separation_category">{% for k, l in separation_categories.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></label>
+      <label class="wide">Note (optional) <input type="text" name="notes" maxlength="1000"></label>
+    </div>
+    <div class="hr-dialog-actions"><button type="button" class="btn btn-secondary" data-hr-close>Cancel</button><button type="submit" class="btn btn-primary">Open the case</button></div>
+  </form>
+</dialog>
+{% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
+<script src="/static/js/hr_lifecycle.js?v={{ asset_version('js/hr_lifecycle.js') }}"></script>
+{% endblock %}

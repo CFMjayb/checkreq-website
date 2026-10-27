@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Onboarding &amp; Offboarding — {{ current_org.name }}{% endblock %}
+{#
+  26-162 HR Status Board (hr_cases.board_page, logic/hr_lifecycle/board.py). Built on the shared fixed frame: the title row,
+  the summary tiles and the filters stay at the top, only the case rows scroll, the counts stay at the bottom.
+  Every tile is a filter (HR Cloud's pattern). Each section chip says done of required AND a word (Done / Late / Due soon /
+  Open / N/A), never color alone. "Waiting on" is who holds the case now (the owner groups of its earliest open required
+  items), so the board shows whose turn it is, not just a percent.
+#}
+{% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
+{% macro qs(extra) %}{% set p = {'f': f, 'kind': kind, 'scope': scope, 'view': view} %}{% for k, v in extra.items() %}{% set _ = p.update({k: v}) %}{% endfor %}?{% for k, v in p.items() if v %}{{ k }}={{ v|urlencode }}{% if not loop.last %}&amp;{% endif %}{% endfor %}{% endmacro %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+<link rel="stylesheet" href="/static/css/hr_lifecycle.css?v={{ asset_version('css/hr_lifecycle.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide hr-page">
+<div class="ff-shell">
+
+  <div class="ff-title-row">
+    <h1>Onboarding &amp; Offboarding</h1>
+    <a class="ff-back" href="/hr">&larr; Back to HR &amp; Payroll</a>
+    <div class="ff-actions">
+      {% if multi_entity %}
+      <span class="hr-viewtabs" role="group" aria-label="Entities">
+        <a href="{{ qs({'scope': ''}) }}" class="{{ '' if scope == 'all' else 'is-on' }}">{{ current_org.code }}</a>
+        <a href="{{ qs({'scope': 'all'}) }}" class="{{ 'is-on' if scope == 'all' else '' }}">All my entities</a>
+      </span>
+      {% endif %}
+      <span class="hr-viewtabs" role="group" aria-label="View">
+        <a href="{{ qs({'view': ''}) }}" class="{{ '' if view in ('owners', 'closed') else 'is-on' }}">By person</a>
+        <a href="{{ qs({'view': 'owners'}) }}" class="{{ 'is-on' if view == 'owners' else '' }}">By who it is waiting on</a>
+        <a href="{{ qs({'view': 'closed'}) }}" class="{{ 'is-on' if view == 'closed' else '' }}">Closed cases</a>
+      </span>
+      <a class="btn btn-sm btn-secondary" href="/hr/onboarding/templates" data-tip="See and change the steps in each onboarding and offboarding checklist">Checklist setup</a>
+      <div class="ff-dropdown">
+        <button type="button" class="btn btn-sm btn-primary" data-ff-dropdown aria-haspopup="menu" aria-expanded="false">New &#9662;</button>
+        <div class="ff-dropdown-menu" role="menu" hidden>
+          <a role="menuitem" href="/hr/onboarding/new?kind=onboard">Onboard a new employee</a>
+          <a role="menuitem" href="/hr/onboarding/new?kind=offboard">Offboard someone not yet in Beacon</a>
+          <a role="menuitem" href="/hr/onboarding/templates">Checklist templates</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if request.query_params.get('error') %}<div class="banner banner-error ff-banner">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% if request.query_params.get('saved') %}<div class="banner banner-success ff-banner">{{ request.query_params.get('saved') }}</div>{% endif %}
+  {% if not has_templates %}<div class="banner banner-info ff-banner">No checklist templates are loaded for {{ current_org.code }} yet, so a case cannot be opened. Ask Jay Boggs to load them.</div>{% endif %}
+
+  {% if view != 'closed' %}
+  <div class="hr-tiles" role="navigation" aria-label="Filters">
+    {% set s = board.summary %}
+    {% for key, label in board.filters.items() %}
+    <a class="hr-tile {{ 'is-on' if f == key else '' }} {{ 'late' if key in ('late',) and s[key] else '' }} {{ 'due' if key in ('deadline', 'stalled') and s[key] else '' }}"
+       href="{{ qs({'f': '' if key == 'all' else key}) }}" aria-current="{{ 'true' if f == key else 'false' }}">
+      <b>{{ s[key] }}</b><span>{{ label }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="ff-filters">
+    <label>Search <input type="text" data-ff-search placeholder="name, case number or entity"></label>
+    <label>Type
+      <select data-hr-nav-select>
+        <option value="{{ qs({'kind': ''}) }}">All types</option>
+        {% for k, l in kinds.items() if k != 'change' %}<option value="{{ qs({'kind': k}) }}" {{ 'selected' if kind == k }}>{{ l }}</option>{% endfor %}
+      </select>
+    </label>
+    {% if f != 'all' or kind %}<a href="{{ qs({'f': '', 'kind': ''}) }}">Clear filters</a>{% endif %}
+  </div>
+
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      {% if view == 'owners' %}
+      <table class="ff-table">
+        <thead><tr><th>Waiting on</th><th class="c-num">Open cases</th><th class="c-num">With late items</th><th>Cases</th></tr></thead>
+        <tbody>
+        {% for g in owners %}
+          <tr class="ff-row"><td>{{ g.owner }}</td><td class="c-num">{{ g.cases }}</td>
+            <td class="c-num">{% if g.late_cases %}<span class="hr-late-text">{{ g.late_cases }} late</span>{% else %}0{% endif %}</td>
+            <td>{% for r in board.rows if r.id in g.case_ids %}<a href="/hr/onboarding/case/{{ r.id }}">{{ r.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+        {% else %}
+          <tr class="ff-empty"><td colspan="4">Nothing is waiting on anyone.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% elif view == 'closed' %}
+      <table class="ff-table">
+        <colgroup><col style="width:34%"><col style="width:18%"><col style="width:16%"><col style="width:16%"><col style="width:16%"></colgroup>
+        <thead>
+          <tr>
+            <th data-sort="1">Person<span class="arrow"></span></th>
+            <th data-sort="1">Entity / unit<span class="arrow"></span></th>
+            <th data-sort="1">Type<span class="arrow"></span></th>
+            <th data-sort="1">Outcome<span class="arrow"></span></th>
+            <th data-sort="1" data-dir="desc">Closed<span class="arrow">&#9660;</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in closed_rows %}
+          <tr class="ff-row">
+            <td data-v="{{ r.name }}"><a href="/hr/onboarding/case/{{ r.id }}">{{ r.name }}</a>
+              <div class="hr-muted" style="font-size:0.76rem">{{ r.case_number }}{% if r.position %} &middot; {{ r.position }}{% endif %}</div></td>
+            <td>{{ r.org_code }}{% if r.unit and r.unit != r.org_code %}<div class="hr-muted" style="font-size:0.76rem">{{ r.unit }}</div>{% endif %}</td>
+            <td>{{ r.kind_label }}</td>
+            <td>{{ r.outcome }}</td>
+            <td data-v="{{ r.closed_on.isoformat() if r.closed_on else '' }}">{% if r.closed_on %}{{ dt(r.closed_on) }}{% else %}<span class="hr-muted">no date</span>{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr class="ff-empty"><td colspan="5">No closed cases{% if kind %} of this type{% endif %}.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <table class="ff-table">
+        <colgroup>
+          <col style="width:15%"><col style="width:10%"><col style="width:9%"><col style="width:8%"><col style="width:14%"><col style="width:8%">
+          <col style="width:7.2%"><col style="width:7.2%"><col style="width:7.2%"><col style="width:7.2%"><col style="width:7.2%">
+        </colgroup>
+        <thead>
+          <tr>
+            <th data-sort="1">Person<span class="arrow"></span></th>
+            <th data-sort="1">Entity / unit<span class="arrow"></span></th>
+            <th data-sort="1">Type<span class="arrow"></span></th>
+            <th data-sort="1">Date<span class="arrow"></span></th>
+            <th data-sort="1" data-dir="asc">Next deadline<span class="arrow">&#9650;</span></th>
+            <th data-sort="1" data-tip="Who holds the case now: the owners of its earliest open required items">Waiting on<span class="arrow"></span></th>
+            {% for key, label in board.sections %}<th data-sort="1" data-tip="Required items done of required. Late = past due or a hard deadline within 3 days; Due soon = within 10 days.">{{ label.split(' /')[0] }}<span class="arrow"></span></th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr class="ff-row {{ 'is-attn' if r.flags.late else ('is-ok' if r.ready else '') }}">
+            <td data-v="{{ r.name }}"><a href="/hr/onboarding/case/{{ r.id }}">{{ r.name }}</a>
+              <div class="hr-muted" style="font-size:0.76rem">{{ r.case_number }} &middot; {{ r.track }}{% if r.position %} &middot; {{ r.position }}{% endif %}
+              {% if r.stalled %} <span class="hr-tag stalled" data-tip="Nothing on this case has changed for several days">Stalled</span>{% endif %}
+              {% if r.ready %} <span class="hr-tag ready" data-tip="Every required item is done, waived or N/A. Close it from the case.">Ready to close</span>{% endif %}
+              {% if r.status == 'returned' %} <span class="hr-tag">Returned to parish</span>{% elif r.status == 'requested' %} <span class="hr-tag">Waiting on the diocese</span>{% endif %}</div></td>
+            <td>{{ r.org_code }}{% if r.unit and r.unit != r.org_code %}<div class="hr-muted" style="font-size:0.76rem">{{ r.unit }}</div>{% endif %}</td>
+            <td>{{ r.kind_label }}</td>
+            <td data-v="{{ r.anchor.isoformat() if r.anchor else '' }}">{% if r.anchor %}{{ r.anchor_label }} {{ dt(r.anchor) }}{% else %}<span class="hr-muted">no date</span>{% endif %}</td>
+            <td data-v="{{ r.next.date.isoformat() if r.next else '9999' }}">
+              {% if r.next %}
+                {% set d = r.next.days %}
+                <span class="{{ 'hr-late-text' if d is not none and d < 0 else ('hr-soon-text' if d is not none and d <= 10 else '') }}">
+                  {% if d is none %}{% elif d < 0 %}{{ -d }} day{{ '' if d == -1 else 's' }} late{% elif d == 0 %}today{% else %}in {{ d }} day{{ '' if d == 1 else 's' }}{% endif %}</span>
+                <div class="hr-muted" style="font-size:0.76rem">{{ r.next.label }}{% if r.next.hard %} (hard deadline){% endif %}</div>
+              {% else %}<span class="hr-muted">none</span>{% endif %}
+            </td>
+            <td>{{ r.waiting_on|join(', ') if r.waiting_on else '—' }}</td>
+            {% for key, label in board.sections %}{% set c = r.sections[key] %}
+            <td data-v="{{ {'late': 0, 'due': 1, 'open': 2, 'ok': 3, 'na': 4}[c.state] }}">
+              {% if c.state == 'na' %}<span class="hr-chip na">N/A</span>
+              {% else %}<a class="hr-chip {{ c.state }}" href="/hr/onboarding/case/{{ r.id }}#sec-{{ key }}" aria-label="{{ label }}: {{ c.done }} of {{ c.total }} done, {{ c.label }}"><span class="n">{{ c.done }}/{{ c.total }}</span> {{ c.label }}</a>{% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% else %}
+          <tr class="ff-empty"><td colspan="11">{% if f != 'all' or kind %}No open cases match this filter.{% else %}No open cases. Use New &rsaquo; Onboard a new employee to start one.{% endif %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count" data-ff-count>{{ closed_rows|length if view == 'closed' else rows|length }} shown</span>
+      {% if view == 'closed' %}<span class="ff-count">{{ closed_rows|length }} closed case{{ '' if closed_rows|length == 1 else 's' }}</span>{% else %}
+      <span class="ff-count">{{ board.summary.all }} open &middot; {{ board.summary.late }} item{{ '' if board.summary.late == 1 else 's' }} past due &middot; {{ board.summary.deadline }} hard deadline{{ '' if board.summary.deadline == 1 else 's' }} in 10 days &middot; {{ board.summary.ready }} ready to close</span>{% endif %}
+    </div>
+  </div>
+
+</div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
+<script src="/static/js/hr_lifecycle.js?v={{ asset_version('js/hr_lifecycle.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}{{ guide.title }} — Quick Guide — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/how_it_works.css?v={{ asset_version('css/how_it_works.css') }}">
+<link rel="stylesheet" href="/static/css/guides.css?v={{ asset_version('css/guides.css') }}">
+{% endblock %}
+{% block content %}
+<div class="howitworks-hero">
+  <div class="eyebrow">Quick guide</div>
+  <h1>{{ guide.title }}</h1>
+  <p class="tagline">Follow each new hire and each departure until every step is done.</p>
+</div>
+
+<div class="howitworks guide">
+
+  <p class="back-link"><a href="{{ guide.back_url }}">&larr; Back to {{ guide.back_label }}</a></p>
+
+  <section class="hiw-section" id="where">
+    <h2>Where to find it</h2>
+    <p><strong>HR &amp; Payroll</strong> &rarr; <strong>Onboarding &amp; Offboarding</strong>. The board lists every open case, what is late and who it is waiting on. A red number on the tile counts the cases with something past due or a parish request waiting.</p>
+  </section>
+
+  <section class="hiw-section" id="case">
+    <h2>Working a case</h2>
+    <p>Open a case to see its checklist. Each step is one box: what the step is, who owns it and when it is due, a note box, and three buttons on the right.</p>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard"><h3>Done</h3><p>The step is finished. A note is optional.</p></div>
+      <div class="hiw-subcard"><h3>Waive</h3><p>The step is not needed this time. A note saying why is required.</p></div>
+      <div class="hiw-subcard"><h3>Not applicable</h3><p>The step does not apply to this person. A note is required. Steps the checklist itself rules out are hidden: press <strong>Show not applicable items</strong> at the top to see them again. A step a person crossed out stays on the list, struck through, with their name and the date.</p></div>
+    </div>
+    <p>A finished step can be reopened. The buttons at the top open the person's details, the benefits coverage recorded so far, and the case history.</p>
+  </section>
+
+  <section class="hiw-section" id="setup">
+    <h2>Setting up one person's checklist</h2>
+    <p>Opening a new case takes you to the <strong>Set up the checklist</strong> screen, where you review this person's steps before work starts. It is also the <strong>Set up checklist</strong> button on the case page. Nothing here changes the standard checklist, only this person's copy.</p>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard"><h3>Change a step</h3><p>Reword it, move its due date or change who does it. The step shows who changed it.</p></div>
+      <div class="hiw-subcard"><h3>Cross out a step</h3><p>Use this when a step is not needed for this person. A short reason is required. It stays on the list, struck through, with your name and the date. <strong>Restore</strong> brings it back.</p></div>
+      <div class="hiw-subcard"><h3>Add a step</h3><p>For something this person needs that the standard checklist does not have.</p></div>
+      <div class="hiw-subcard"><h3>Assign steps</h3><p>Pick a person for any step and press <strong>Save assignments</strong>. They get a bell notice and see the step on <strong>My Steps</strong>. At EDOM and Claggett you can pick anyone with an episcopalmaryland.org, edom.org or claggettcenter.org login, plus anyone holding an HR role there. Other entities offer only their own logins.</p></div>
+    </div>
+    <p>The standard checklist can name a default person for each step (<strong>Checklist setup</strong> &rarr; <strong>Edit this checklist</strong>). That person is filled in when a case opens, if they can be assigned at that entity. A closed case cannot be changed.</p>
+  </section>
+
+  <section class="hiw-section" id="mysteps">
+    <h2>If a step is assigned to you</h2>
+    <p>Open <strong>My Steps</strong> from the menu under your name (it shows a number while steps are waiting). You see only the steps assigned to you: the person's name, the kind of case, the step and its dates. Press <strong>Done</strong>, with a note if you like. HR sees your name and the time on the step. You cannot see the rest of the case.</p>
+  </section>
+
+  <section class="hiw-section" id="documents">
+    <h2>Filing documents</h2>
+    <p>A step that expects a document (a signed form, an I-9, a letter) shows what is filed for it and an <strong>Upload File</strong> button. Press it, choose the file, and it is filed at once. The panel on the right lists everything filed on the case; press <strong>View</strong> to read a document there, or <strong>Download</strong> to save it. For a document that is not tied to a step, choose its kind at the top of that panel first, then press <strong>Upload File</strong>.</p>
+    <div class="hiw-subcards">
+      <div class="hiw-subcard"><h3>What can be uploaded</h3><p>A PDF or a picture (JPG, PNG, GIF or WebP), up to 25 MB. Save a Word document as a PDF first. A file is checked by what it really is, not by its name.</p></div>
+      <div class="hiw-subcard"><h3>Where it goes</h3><p>Every file is kept in two places in SharePoint: the entity's own HRPayroll folder and the central HR Administration folder. An I-9 is kept in one place only, in HR Administration. Beacon keeps no copy of the file itself.</p></div>
+      <div class="hiw-subcard"><h3>Who can open it</h3><p>HR Admins, Benefits Admins and Beacon Admins can open and file documents. An I-9 can only be filed and opened by an HR Admin. If you cannot open a document the list says so.</p></div>
+      <div class="hiw-subcard"><h3>Replacing a document</h3><p>Uploading another file for the same step does not delete the first. The new one becomes the current document and the old one stays under <strong>Earlier versions</strong>.</p></div>
+    </div>
+    <p>A document can still be filed on a finished case. If the upload says a folder is not set up yet, nothing was filed: ask the administrator to run the HR folder setup for the entity.</p>
+  </section>
+
+  <section class="hiw-section" id="parish">
+    <h2>Requests from parishes</h2>
+    <p>When a parish sends a new hire for benefits, it appears here as a case waiting on the diocese. Work it like any other case.</p>
+  </section>
+
+  <section class="hiw-section" id="edit-checklist">
+    <h2>Changing a checklist</h2>
+    <p>On the board, press <strong>Checklist setup</strong>, pick a checklist and press <strong>Edit this checklist</strong>. Each step is one row. Press <strong>Edit</strong> on a row to change its wording, who does it, when it is due, whether it is required, the document it expects and who it applies to (everyone, clergy only, and so on). <strong>Add item</strong>, <strong>Remove</strong> and the arrows change the list on the page only. Nothing is saved until you press <strong>Save as new version</strong>.</p>
+    <p>A saved change is a new version. Cases already open keep the checklist they started with; new cases use the new one. <strong>Version history</strong> shows who changed it and when.</p>
+    <p>HR Admins change the staff checklists. Benefits Admins change the parish benefits checklists, which every diocese uses.</p>
+  </section>
+
+  <section class="hiw-section" id="close">
+    <h2>Closing a case</h2>
+    <p>When every required step is done, choose <strong>Close as completed</strong>. Closing an onboarding case adds the person to the Employees roster. Closing an offboarding case marks them inactive as of their last day.</p>
+  </section>
+
+</div>
+{% endblock %}
