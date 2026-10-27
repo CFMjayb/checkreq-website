@@ -120,12 +120,13 @@
     <div class="ff-scroll">
       <table class="ff-table">
         <colgroup>
-          <col style="width:15%"><col style="width:14%"><col style="width:8%"><col style="width:10%"><col style="width:5%">
-          <col style="width:10%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:10%"><col style="width:10%"><col style="width:44px">
+          <col style="width:5%"><col style="width:11%"><col style="width:14%"><col style="width:8%"><col style="width:10%"><col style="width:5%">
+          <col style="width:10%"><col style="width:6%"><col style="width:6%"><col style="width:6%"><col style="width:9%"><col style="width:10%"><col style="width:44px">
         </colgroup>
         <thead>
           <tr>
-            <th data-sort="1" data-dir="asc">Department<span class="arrow">&#9650;</span></th>
+            <th data-sort="1" data-dir="asc" data-tip="The department's three-digit payroll number">ID<span class="arrow">&#9650;</span></th>
+            <th data-sort="1">Name<span class="arrow"></span></th>
             <th data-sort="1">Status<span class="arrow"></span></th>
             <th data-sort="1">Channel<span class="arrow"></span></th>
             <th data-sort="1">Expected<span class="arrow"></span></th>
@@ -143,7 +144,8 @@
           {% for r in rows %}
           {% set st = r.state %}
           <tr class="ff-row {{ 'is-attn' if st == 'attn' else 'is-miss' if st == 'miss' else 'is-ready' if st == 'ready' else 'is-ok' if (st == 'ok' or st == 'idle') else '' }}" data-state="{{ 'std' if r.pill in ('only_std', 'only_std_done') else st }}">
-            <td data-v="{{ r.parish_code or '~' }}" data-tip="{{ r.parish_name }}"><a href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{% if r.parish_code %}{{ r.parish_code }} {% endif %}{{ r.short_name or r.parish_name }}</a><span hidden>{{ r.parish_name }}</span></td>
+            <td data-v="{{ r.parish_code or '~' }}"><a href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{{ r.parish_code or "—" }}</a></td>
+            <td data-v="{{ (r.short_name or r.parish_name)|lower }}" data-tip="{{ r.parish_name }}"><a href="/admin/timekeeping/status/{{ period.id }}/{{ r.parish_id }}">{{ r.short_name or r.parish_name }}</a><span hidden>{{ r.parish_name }}</span></td>
             <td>
               {% if r.pill == 'approved' %}<span class="badge badge-approved" data-tip="Reviewed and approved {{ r.approval_tip or '' }}">Approved</span>
               {% elif r.pill == 'no_hours' %}<span class="badge badge-approved" data-tip="Confirmed no hours {{ r.approval_tip or '' }}">Confirmed no hours</span>
@@ -190,7 +192,7 @@
             </td>
           </tr>
           {% else %}
-          <tr class="ff-empty"><td colspan="12">No active parishes found for this diocese.</td></tr>
+          <tr class="ff-empty"><td colspan="13">No active parishes found for this diocese.</td></tr>
           {% endfor %}
         </tbody>
       </table>
