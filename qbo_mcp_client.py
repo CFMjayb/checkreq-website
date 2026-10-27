@@ -115,6 +115,24 @@ def get_budget_status(company: str, account_number: str, fiscal_year: int) -> tu
     )
 
 
+def find_duplicate_bills(company: str, vendor_id: str, doc_number: str) -> tuple[dict | None, str | None]:
+    """GET /api/checkreq/bill-duplicates/{company} (2026-10-27, Jay: warn before a post that QuickBooks would refuse).
+    The Bills this QuickBooks vendor already has under this DocNumber: ({"bills": [{id, doc_number, txn_date, total,
+    balance, vendor_id}]}, None). READ-ONLY. A server that does not have the route yet answers 404, which comes back
+    here as (None, "HTTP 404: ...") -- ap_post_failures treats any error as "cannot tell" and does not hold the row."""
+    return _get("/api/checkreq/bill-duplicates/{company}", company,
+                {"vendor_id": vendor_id, "doc_number": doc_number}, timeout=8)
+
+
+def get_bill_raw(company: str, bill_id: str) -> tuple[dict | None, str | None]:
+    """GET /api/entity/{company}/bill/{id}/raw (an existing diagnostic route): one Bill exactly as QuickBooks holds it.
+    Used to read back the Bill QuickBooks named in its own duplicate-number refusal. bill_id must be digits only."""
+    bid = str(bill_id).strip()
+    if not bid.isdigit():
+        return None, "bill id must be digits only"
+    return _get("/api/entity/{company}/bill/" + bid + "/raw", company, {}, timeout=8)
+
+
 def get_gl_detail(
     company: str, account_number: str, start_date: str, end_date: str,
 ) -> tuple[dict | None, str | None]:

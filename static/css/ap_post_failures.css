@@ -1,0 +1,26 @@
+/* AP Review: a row whose last QuickBooks post failed, or whose invoice number QuickBooks already holds.
+   26-129, Jay 2026-10-27: "put an exclamation point in red on the row and have the full message when you hover over it",
+   plus Cancel CR and Try QBO Post again buttons. Loaded by templates/ap_review.html only. */
+table.ap-compact-table tr.ap-row-failed td { background: #fdf0ef; }
+table.ap-compact-table tr.ap-row-failed td:first-child { box-shadow: inset 4px 0 0 var(--color-danger); }
+
+.ap-fail-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.4em; height: 1.4em; margin-right: 6px;
+  border-radius: 50%; background: var(--color-danger); color: #fff;
+  font-weight: 800; font-size: 0.95rem; line-height: 1;
+  cursor: help; vertical-align: middle;
+}
+.ap-fail-mark:focus { outline: 2px solid var(--color-danger); outline-offset: 2px; }
+
+.fail-text { color: var(--color-danger); }
+
+.btn-cancel-cr {
+  background: #fff; color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+}
+.btn-cancel-cr:hover { background: #fbe6e6; }
+
+/* A held button (W-9 hold, duplicate invoice, already in QuickBooks) must LOOK disabled: the app had no disabled style,
+   so a held "Post to QBO" / "Try QBO Post again" looked exactly like a live one. */
+table.ap-compact-table .btn[disabled] { opacity: 0.45; cursor: not-allowed; box-shadow: none; transform: none; }
