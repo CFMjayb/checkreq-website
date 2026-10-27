@@ -306,12 +306,17 @@ def board_rows(org_id: int, period: dict, rows: list[dict]) -> list[dict]:
 
 def board_summary(org_id: int, period: dict, rows: list[dict] | None = None) -> dict:
     prows = pt.period_rows(org_id, period["id"])
-    return {"left": len(pt.unresolved(prows)) + sum(pt.count_unentered(org_id, period["id"]).values()),
-            "not_done": sum(1 for r in (rows or []) if not r.get("done")),
+    left = len(pt.unresolved(prows)) + sum(pt.count_unentered(org_id, period["id"]).values())
+    not_done = sum(1 for r in (rows or []) if not r.get("done"))
+    late = late_rules.waiting_count(org_id)          # held emails (Late emails queue) that block "Mark hours Final"
+    return {"left": left, "not_done": not_done,
             "final": bool(period.get("hours_finalized_at")),
             "final_at": org_time.format_local(period.get("hours_finalized_at"), org_time.zone_name_for_org(org_id))
             if period.get("hours_finalized_at") else None,
-            "late": late_rules.waiting_count(org_id),          # held emails (Late emails queue) that block "Mark hours Final"
+            "late": late,
+            # Jay, 2026-10-27: the Checkwriters files are made from APPROVED hours, before they are marked Final (Final = entered into
+            # Checkwriters): nothing left to decide, every department green, no late email waiting
+            "ready_to_key": rows is not None and left == 0 and not_done == 0 and late == 0,
             "reader": payroll_inbox_run.summary(org_id)}
 
 
@@ -680,7 +685,7 @@ async def mark_final(period_id: int, request: Request):
         pt.finalize_period(org["id"], period_id, user["id"])
     except pt.PayrollError as e:
         return _status_back(period_id, err=e.message)
-    return _status_back(period_id, msg="The hours are marked Final for Checkwriters.")
+    return _status_back(period_id, msg="The hours are marked Final: they were entered into Checkwriters. Emailed hours are now held in the Late emails queue.")
 
 
 @router.post("/admin/timekeeping/status/{period_id}/unfinal")
@@ -707,9 +712,9 @@ def variance_page(period_id: int, request: Request):
         report = pt.variance(org["id"], period_id)
     except pt.PayrollError as e:
         return _status_back(period_id, err=e.message)
-    # decisions (paid next period / manual check / Beacon wrong) can be made only on a closed period whose paid hours are loaded
-    # and which is not actualized yet (payroll_closeout.py)
-    can_decide = (period["status"] == "closed" and period["register_loaded_at"] is not None
+    # decisions (paid next period / manual check / Beacon wrong) can be made only on a period whose hours are Final (or that is closed)
+    # and whose paid hours are loaded, and which is not actualized yet (payroll_closeout.py; Jay, 2026-10-27: not "closed first")
+    can_decide = (pt.settle_ready(period) and period["register_loaded_at"] is not None
                   and period["actualized_at"] is None)
     return _render(request, "timekeeping_variance.html", user,
                    {"current_org": org, "period": period, "report": report, "can_decide": can_decide,

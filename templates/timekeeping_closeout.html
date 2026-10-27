@@ -108,7 +108,7 @@
     <h2 class="co-h2">Automatic matching for {{ current_org.name }}</h2>
     <p>{% if state.auto %}<span class="badge badge-approved">On</span>{% else %}<span class="badge badge-cancelled">Off</span>{% endif %}
       When this is on, the moment the paid hours are loaded into a <strong>closed</strong> pay period, Beacon changes its hours to the paid hours
-      by itself. Every change keeps the old figure and a note in the edit history. When it is off, a person presses the button in step 5.</p>
+      by itself. Every change keeps the old figure and a note in the edit history. When it is off, a person presses the button in step 4.</p>
     <form method="post" action="/admin/timekeeping/status/{{ period.id }}/closeout/auto"
           data-confirm="{{ 'Turn automatic matching off?' if state.auto else 'Turn automatic matching on for this diocese?' }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">

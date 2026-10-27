@@ -9,8 +9,10 @@ report) stay in payroll_totals.py.
 
 THE HARD RULE: hours only. Nothing here reads, stores or returns a rate, salary, wage or any amount of money.
 
-ORDER (Jay, 2026-10-15): hours Final -> close the period -> load the paid hours -> tie out -> actualize -> file the
-documents -> open the next period. Actualize needs a CLOSED period so email hours are no longer changing.
+ORDER (Jay, 2026-10-27; it was Final -> close -> load ... until then): hours Final (approved AND entered into Checkwriters) ->
+load the paid hours -> tie out -> actualize -> file the documents -> CLOSE the period -> open the next period. Actualize needs the
+hours Final (or a period already Closed) so emailed hours are no longer changing (Final holds them in the Late emails queue). Closing
+is the next-to-last step, right before the next period opens, so Time Review never sits with no open period for long.
 """
 from __future__ import annotations
 
@@ -32,8 +34,8 @@ MAX_LINES = 5000
 # ------------------------------------------------------------------ the diocese's auto switch
 
 def auto_actualize_enabled(org_id: int) -> bool:
-    """When ON, the moment the paid hours are loaded into a CLOSED period Beacon's hours are made to match them without
-    a person pressing a button. OFF by default; each diocese decides."""
+    """When ON, the moment the paid hours are loaded into a period whose hours are Final (or already Closed) Beacon's hours are made to
+    match them without a person pressing a button. OFF by default; each diocese decides."""
     import app_settings
     return (app_settings.get_setting(AUTO_ACTUALIZE_KEY.format(org_id=org_id), "false") or "false").lower() == "true"
 
@@ -78,7 +80,7 @@ def load_register_batch(org_id: int, *, pay_date, lines: list, source_ref: str |
     """The PAID hours of one pay period (hours only), replacing whatever paid hours the period held. Each line is
     {employee_number, category_key, hours}. People are found by their Checkwriters ID across the diocese; an ID that is not
     on the roster is reported (never stored, never guessed) and keeps the period from being stamped Actualized. If the
-    diocese's auto switch is ON and the period is closed, Beacon is actualized straight away."""
+    diocese's auto switch is ON and the period's hours are Final (or it is closed), Beacon is actualized straight away."""
     period = period_by_pay_date(org_id, pay_date)
     _check_dates(period, period_start, period_end)
     if period["status"] == "future":
@@ -155,7 +157,7 @@ def load_register_batch(org_id: int, *, pay_date, lines: list, source_ref: str |
     out = {"period_id": period["id"], "pay_date": period["pay_date"].isoformat(), "period_status": period["status"],
            "loaded": loaded, "created": created, "updated": updated, "unchanged": unchanged, "removed": removed,
            "unmatched": unmatched, "actualized": None}
-    if period["status"] == "closed" and auto_actualize_enabled(org_id):
+    if pt.settle_ready(period) and auto_actualize_enabled(org_id):
         try:
             out["actualized"] = actualize_period(org_id, period["id"], actor, auto=True)
         except PayrollError as e:
@@ -168,11 +170,17 @@ def load_register_batch(org_id: int, *, pay_date, lines: list, source_ref: str |
 OPEN_KINDS = ("differs", "paid_no_beacon_hours", "beacon_hours_not_paid")
 
 
-def _need_closed_unactualized(period: dict) -> None:
-    if period["status"] == "open":
-        raise PayrollError("refused", "Close the pay period first, then settle the differences.")
+def need_final_or_closed(period: dict, then: str) -> None:
+    """The gate for settling a period (Jay, 2026-10-27: it used to be "Close the pay period first"): the hours are Final, or the period
+    is already Closed. `then` finishes the sentence ("settle the differences")."""
     if period["status"] == "future":
         raise PayrollError("refused", "That pay period has not started.")
+    if not pt.settle_ready(period):
+        raise PayrollError("refused", f"Mark the hours Final first (Time Review > Actions, once they are entered into Checkwriters), then {then}.")
+
+
+def _need_closed_unactualized(period: dict) -> None:
+    need_final_or_closed(period, "settle the differences")
     if period["register_loaded_at"] is None:
         raise PayrollError("refused", "The paid hours have not been loaded for this period yet.")
     if period["actualized_at"] is not None:
@@ -323,7 +331,7 @@ def _carry_into(cur, target_id: int, staff_id: int, category_id: int, hours: Dec
 
 
 def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: bool = False) -> dict:
-    """Settles every differing line of a CLOSED period, hours only, each by its decision (payroll_decisions.py):
+    """Settles every differing line of a period whose hours are Final (or that is Closed), hours only, each by its decision (payroll_decisions.py):
       beacon_wrong   the line takes the paid hours (confirmed, source register); the old figure stays in the edit history
                      (paid, no Beacon hours: the person gets a line; Beacon hours not paid: the hours become 0 with a note)
       next_period    the same, and the extra hours are added to the next period's line to be keyed there
@@ -333,10 +341,7 @@ def actualize_period(org_id: int, period_id: int, user_id: int | None, auto: boo
     is the one that counts. When nothing differs afterwards, and every paid person was found on the roster, the period is
     stamped Actualized."""
     period = pt.get_period(org_id, period_id)
-    if period["status"] == "open":
-        raise PayrollError("refused", "Close the pay period first, then make Beacon match the paid hours.")
-    if period["status"] == "future":
-        raise PayrollError("refused", "That pay period has not started.")
+    need_final_or_closed(period, "make Beacon match the paid hours")
     if period["register_loaded_at"] is None:
         raise PayrollError("refused", "The paid hours have not been loaded for this period yet.")
     actor = user_id if user_id is not None else pt.service_user_id()
@@ -519,12 +524,13 @@ def closeout_state(org_id: int, period_id: int) -> dict:
         u = db.query_one("SELECT display_name, email FROM checkreq.app_users WHERE id = %s", (period["reports_filed_by_user_id"],))
         filed_by = (u["display_name"] or u["email"]) if u else None
     return {"period": period, "final": period["hours_finalized_at"] is not None, "closed": period["status"] == "closed",
+            "settle_ready": pt.settle_ready(period),   # Final or Closed: the tie-out can be settled and the reports filed
             "register_loaded": period["register_loaded_at"] is not None,
             "register_lines": db.query_one("SELECT count(*) AS n FROM portal.time_register_hours WHERE period_id = %s",
                                            (period_id,))["n"],
             "variance": rep, "actualized": period["actualized_at"] is not None, "actualized_by": who,
             "auto": auto_actualize_enabled(org_id), "next": next_period(org_id, period),
-            # step 6: who marked the department reports as filed, and how (the Phoenix workbook or another way)
+            # step 5: who marked the department reports as filed, and how (the Phoenix workbook or another way)
             "reports_filed": period.get("reports_filed_at") is not None, "reports_filed_by": filed_by, "register_loaded_by": loaded_by,
             # what the PREVIOUS period's decisions mean here: hours carried in (to key) and manual checks (already paid, do not key)
             "prior": pdec.prior_period_notes(period_id)}
@@ -534,14 +540,14 @@ REPORTS_FILED_HOW = ("phoenix", "beacon", "other")
 
 
 def mark_reports_filed(org_id: int, period_id: int, user_id: int, how: str, note: str | None = None) -> dict:
-    """Step 6 of the checklist: someone says the department payroll reports are filed in the Documents folders, either by the
+    """Step 5 of the checklist: someone says the department payroll reports are filed in the Documents folders, either by the
     Phoenix workbook's "File Reports to Beacon Documents" button ('phoenix'), by Beacon itself ("File Reports Now Here",
     payroll_report_filing.py, 'beacon') or another way. This only records who and when, and a short note of what was filed."""
     if how not in REPORTS_FILED_HOW:
         raise PayrollError("invalid", "Say how the reports were filed: in the Phoenix workbook or another way.")
     period = pt.get_period(org_id, period_id)
-    if period["status"] != "closed":
-        raise PayrollError("refused", "Close the pay period first. The reports are filed after payroll has been processed.")
+    if not pt.settle_ready(period):
+        raise PayrollError("refused", "Mark the hours Final first. The reports are filed after payroll has been processed.")
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE portal.payroll_periods SET reports_filed_at = now(), reports_filed_by_user_id = %s, "
@@ -576,6 +582,19 @@ def close_period(org_id: int, period_id: int, user_id: int) -> dict:
                         "updated_at = now() WHERE id = %s AND org_id = %s", (user_id, period_id, org_id))
         conn.commit()
     return {"already": False}
+
+
+def close_and_open_next(org_id: int, period_id: int, user_id: int) -> dict:
+    """Step 6 and step 7 in one press (Jay, 2026-10-27): close the period, then open the next one. A next period that cannot be opened
+    (none set up, another one still open) never undoes the close: the answer says why, in next["message"]."""
+    res = close_period(org_id, period_id, user_id)
+    nxt = None
+    try:
+        r = open_next_period(org_id, period_id, user_id)
+        nxt = {"label": r["label"], "opened": not r["already"], "message": None}
+    except PayrollError as e:
+        nxt = {"label": None, "opened": False, "message": e.message}
+    return {"already": res["already"], "next": nxt}
 
 
 def final_blockers(org_id: int, period_id: int) -> list[str]:
@@ -623,8 +642,9 @@ def finish_blockers(org_id: int, period: dict, rep: dict | None = None) -> dict:
 
 
 def finish_period(org_id: int, period_id: int, user_id: int, open_next: bool = False) -> dict:
-    """Marks the hours Final, closes the period, records it as Actualized and (when asked) opens the next period, but ONLY when
-    finish_blockers() is empty. Each step is the normal one, stamped with this person, and safe to repeat. Returns what was done."""
+    """Marks the hours Final, records the period as Actualized, closes it and (when asked) opens the next period, in that order (Jay,
+    2026-10-27: Close is the next-to-last step), but ONLY when finish_blockers() is empty. Each step is the normal one, stamped with this
+    person, and safe to repeat. If Actualize cannot finish, the hours stay Final and the period is left OPEN. Returns what was done."""
     period = pt.get_period(org_id, period_id)
     fb = finish_blockers(org_id, period)
     if fb["already"]:
@@ -635,14 +655,18 @@ def finish_period(org_id: int, period_id: int, user_id: int, open_next: bool = F
     if not period["hours_finalized_at"]:
         pt.finalize_period(org_id, period_id, user_id)
         done.append("Marked the hours Final")
+    try:
+        res = actualize_period(org_id, period_id, user_id)
+    except PayrollError as e:
+        raise PayrollError("refused", f"The hours were marked Final, but the period could not be Actualized: {e.message} "
+                                      "The period was left open. Open the close-out page in Beacon.")
+    if not res["tied"]:
+        raise PayrollError("refused", "The hours were marked Final, but Actualize found something that no longer "
+                                      f"ties out ({res['left']} line(s) differ). The period was left open. Open the close-out page in Beacon.")
+    done.append("Recorded the period as Actualized")
     if period["status"] != "closed":
         close_period(org_id, period_id, user_id)
         done.append("Closed the pay period")
-    res = actualize_period(org_id, period_id, user_id)
-    if not res["tied"]:
-        raise PayrollError("refused", "The hours were marked Final and the period closed, but Actualize found something that no longer "
-                                      f"ties out ({res['left']} line(s) differ). Open the close-out page in Beacon.")
-    done.append("Recorded the period as Actualized")
     nxt = None
     if open_next:
         try:

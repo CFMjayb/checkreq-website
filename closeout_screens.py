@@ -1,8 +1,9 @@
 """
 closeout_screens.py -- the "Close out this pay period" checklist (26-158, 2026-10-15), under Time Review.
 
-One page that lists the steps after payroll is processed and what has been done: hours Final, close the period, load the paid
-hours (done on the payroll PC), tie out, actualize, file the documents, open the next period. All the rules live in
+One page that lists the steps after payroll is processed and what has been done: hours Final (approved and entered into Checkwriters),
+load the paid hours (done on the payroll PC), tie out, actualize, file the documents, CLOSE the period, open the next period (Jay,
+2026-10-27: Close is the next-to-last step; it used to be step 2). All the rules live in
 payroll_closeout.py and payroll_totals.py. hr_admin or beacon_admin of the diocese, like every Timekeeping screen.
 
 Registered from payroll_screens.register() (so it sits BEFORE the generic /status/{period}/{parish} route, which would
@@ -65,8 +66,9 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
     steps = []
 
     s1 = {"n": 1, "title": "Hours are Final", "state": "done" if st["final"] else "todo"}
-    s1["detail"] = (f"Marked Final {_when(p['hours_finalized_at'], org_id)}." if st["final"] else
-                    "Approve every department on Time Review, then Actions > Mark hours Final.")
+    s1["detail"] = (f"Marked Final {_when(p['hours_finalized_at'], org_id)}: the hours were entered into Checkwriters." if st["final"] else
+                    "Approve every department on Time Review, key the hours into Checkwriters (Actions > Excel for Checkwriters or "
+                    "CSV for Checkwriters import), then Actions > Mark hours Final.")
     if not st["final"]:
         s1["link"] = {"label": "Go to Time Review", "url": base}
         import payroll_late_rules as late_rules      # held emails block Final (payroll_totals.finalize_period refuses too)
@@ -76,62 +78,51 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
             s1["link"] = {"label": "Open Late emails", "url": "/admin/timekeeping/late"}
     steps.append(s1)
 
-    s2 = {"n": 2, "title": "Close the pay period"}
-    if st["closed"]:
-        s2.update(state="done", detail=f"Closed {_when(p['processed_at'], org_id)}." if p["processed_at"] else "Closed.")
-    elif p["status"] == "future":
-        s2.update(state="waiting", detail="This pay period has not started.")
-    else:
-        s2.update(state="todo", detail="Payroll has been processed. Closing stops new hours from landing in this period.",
-                  action={"label": "Close this pay period", "url": f"{base}/closeout/close",
-                          "confirm": "Close this pay period? Hours stop landing in it."})
-    steps.append(s2)
-
-    s3 = {"n": 3, "title": "Load the paid hours"}
+    s2 = {"n": 2, "title": "Load the paid hours"}
     if st["register_loaded"]:
         un = p["register_unmatched"]
-        s3.update(state="done" if not un else "todo",
+        s2.update(state="done" if not un else "todo",
                   detail=(f"{st['register_lines']} paid line(s) loaded {_when(p['register_loaded_at'], org_id)}"
                           + (f" by {st['register_loaded_by']}" if st.get("register_loaded_by") else "")
                           + (f" ({p['register_source_ref']})" if p["register_source_ref"] else "") + "."
                           + (f" {un} paid person(s) are not on the roster: refresh the roster from the register, then load again."
                              if un else "")))
     else:
-        s3.update(state="todo", detail="The Phoenix workbook sends the paid hours (hours only, never pay): after it generates the reports, "
+        s2.update(state="todo", detail="The Phoenix workbook sends the paid hours (hours only, never pay): after it generates the reports, "
                                        "press Send Paid Hours to Beacon, then review the Beacon Tie-Out tab before sending the reports.")
-    steps.append(s3)
+    steps.append(s2)
 
     undecided = var.get("undecided", 0) if var else 0
     decided = var.get("decided", 0) if var else 0
     manual_n = counts.get("manual_check", 0)
     manual_text = (f" {manual_n} line(s) settled by manual check or void-reissue: kept as entered, due on the next register."
                    if manual_n else "")
-    s4 = {"n": 4, "title": "Tie out: Beacon against the paid hours"}
+    s3 = {"n": 3, "title": "Tie out: Beacon against the paid hours"}
     if var is None:
-        s4.update(state="waiting", detail="Waits for the paid hours.")
+        s3.update(state="waiting", detail="Waits for the paid hours.")
     elif differing == 0:
-        s4.update(state="done", detail=f"All {counts.get('match', 0)} lines match the paid hours." + manual_text + review_text,
+        s3.update(state="done", detail=f"All {counts.get('match', 0)} lines match the paid hours." + manual_text + review_text,
                   **({"link": {"label": "See the lines for review", "url": f"{base}/variance"}} if (for_review or manual_n) else {}))
     else:
-        s4.update(state="todo", detail=(f"{counts.get('match', 0)} match. {counts.get('differs', 0)} differ, "
+        s3.update(state="todo", detail=(f"{counts.get('match', 0)} match. {counts.get('differs', 0)} differ, "
                                          f"{counts.get('paid_no_beacon_hours', 0)} were paid with no Beacon hours, "
                                          f"{counts.get('beacon_hours_not_paid', 0)} Beacon hours were not paid. "
                                          f"{decided} decided, {undecided} still need a decision (include in next period, "
                                          f"manual check / void-reissue, or Beacon wrong)." + manual_text + review_text),
                   link={"label": "Decide each difference" if undecided else "See each difference", "url": f"{base}/variance"})
-    steps.append(s4)
+    steps.append(s3)
 
-    s5 = {"n": 5, "title": "Actualize: settle the differences and match Beacon to the paid hours"}
+    s4 = {"n": 4, "title": "Actualize: settle the differences and match Beacon to the paid hours"}
     if st["actualized"]:
-        s5.update(state="done", detail=f"Actualized {_when(p['actualized_at'], org_id)}"
+        s4.update(state="done", detail=f"Actualized {_when(p['actualized_at'], org_id)}"
                                        + (" automatically." if p["actualized_automatically"] else
                                           f" by {st['actualized_by']}." if st["actualized_by"] else ".") + review_text)
-    elif not st["closed"] or var is None:
-        s5.update(state="waiting", detail="Needs the period closed and the paid hours loaded.")
+    elif not st["settle_ready"] or var is None:
+        s4.update(state="waiting", detail="Needs the hours marked Final (step 1) and the paid hours loaded (step 2).")
     elif differing == 0 and p["register_unmatched"]:
-        s5.update(state="waiting", detail="Every line matches, but some paid people are not on the roster (step 3).")
+        s4.update(state="waiting", detail="Every line matches, but some paid people are not on the roster (step 2).")
     elif undecided:
-        s5.update(state="todo", detail=f"Decide the {undecided} remaining line(s) on the tie-out page first. Then this step applies "
+        s4.update(state="todo", detail=f"Decide the {undecided} remaining line(s) on the tie-out page first. Then this step applies "
                                        "the decisions." + review_text,
                   link={"label": "Decide each difference", "url": f"{base}/variance"})
     else:
@@ -146,7 +137,7 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
             parts.append(f"{len(by[pdec.NEXT_PERIOD])} include in next period ({carry_h:g} hours move to {nxt_label})")
         if by[pdec.MANUAL_CHECK]:
             parts.append(f"{len(by[pdec.MANUAL_CHECK])} manual check / void-reissue (kept as entered)")
-        s5.update(state="todo",
+        s4.update(state="todo",
                   detail=((f"All decided: {', '.join(parts)}. The old figures stay in the edit history. "
                            "Beacon hours that were not paid become 0 with a note.") if differing else
                           "No line needs to change. Press the button to record the period as Actualized.") + review_text,
@@ -154,21 +145,21 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
                           "url": f"{base}/closeout/actualize",
                           "confirm": (f"Apply {differing} decision(s) now?" if differing else
                                       "Record this period as Actualized?")})
-    steps.append(s5)
+    steps.append(s4)
 
-    s6 = {"n": 6, "title": "File the reports in the Documents folders"}
+    s5 = {"n": 5, "title": "File the reports in the Documents folders"}
     here = prf.enabled_for(org_id)
     if st["reports_filed"]:
         how = {"phoenix": "Posted via the Phoenix workbook", "beacon": "Filed by Beacon"}.get(p.get("reports_filed_how"), "Filed another way")
-        s6.update(state="done", detail=f"{how}. Marked {_when(p['reports_filed_at'], org_id)}"
+        s5.update(state="done", detail=f"{how}. Marked {_when(p['reports_filed_at'], org_id)}"
                                        + (f" by {st['reports_filed_by']}." if st["reports_filed_by"] else ".")
                                        + (f" {p['reports_filed_note']}." if p.get("reports_filed_note") else ""),
                   actions=[{"label": "Undo", "url": f"{base}/closeout/reports-unfiled", "confirm": "Take the filed mark back?",
                             "plain": True}])
-    elif not st["closed"]:
-        s6.update(state="waiting", detail="Needs the pay period closed. Each department's two reports are posted by the Phoenix "
+    elif not st["settle_ready"]:
+        s5.update(state="waiting", detail="Needs the hours marked Final (payroll processed). Each department's two reports are posted by the Phoenix "
                                           "workbook's File Reports to Beacon Documents button"
-                                          + (", or filed from here once payroll is processed." if here else "."))
+                                          + (", or filed from here once the hours are Final." if here else "."))
     else:
         acts = [{"label": "Reports Posted via Phoenix", "url": f"{base}/closeout/reports-filed?how=phoenix",
                  "confirm": "Mark the reports as posted via the Phoenix workbook?"}]
@@ -177,12 +168,32 @@ def build_steps(org_id: int, st: dict) -> list[dict]:
                          "confirm": "Beacon will copy this pay date's department reports from the Accounting library into each "
                                     "department's HRPayroll folder on the Documents site. It copies only and never overwrites a "
                                     "different file. Continue?", "plain": True})
-        s6.update(state="todo",
+        s5.update(state="todo",
                   detail=("If the Phoenix workbook already posted each department's reports, say so with Reports Posted via Phoenix. "
                           + ("Otherwise File Reports Now Here copies this pay date's department reports from the Accounting library "
                              "into each department's HRPayroll > Payroll Reports folder (copy only, nothing overwritten, never the "
                              "all-department reports)." if here else "")).strip(),
                   actions=acts)
+    steps.append(s5)
+
+    s6 = {"n": 6, "title": "Close the pay period"}
+    nxt_future = nxt is not None and nxt["status"] == "future"
+    if st["closed"]:
+        s6.update(state="done", detail=f"Closed {_when(p['processed_at'], org_id)}." if p["processed_at"] else "Closed.")
+    elif p["status"] == "future":
+        s6.update(state="waiting", detail="This pay period has not started.")
+    elif not st["final"]:
+        s6.update(state="waiting", detail="Needs the hours marked Final (step 1). Close the period last, after the reports are filed.")
+    elif not st["actualized"]:
+        s6.update(state="waiting", detail="Waits for the tie-out and Actualize (steps 3 and 4). Close the period last, after the reports are filed.")
+    else:
+        acts = [{"label": "Close this pay period", "url": f"{base}/closeout/close",
+                 "confirm": "Close this pay period? Hours stop landing in it."}]
+        if nxt_future:
+            acts.append({"label": f"Close and open {nxt['label']}", "url": f"{base}/closeout/close?open_next=1",
+                         "confirm": f"Close this pay period and open {nxt['label']}?"})
+        s6.update(state="todo", detail="Do this last, after the reports are filed. Closing stops new hours from landing in this period "
+                                       "and lets the next one open.", actions=acts)
     steps.append(s6)
 
     s7 = {"n": 7, "title": "Open the next pay period"}
@@ -229,6 +240,15 @@ def _act(request: Request, period_id: int, fn, ok_msg):
 
 @router.post("/admin/timekeeping/status/{period_id}/closeout/close")
 async def closeout_close(period_id: int, request: Request):
+    if request.query_params.get("open_next") == "1":
+        def msg(r):
+            n = r["next"]
+            if n["opened"]:
+                return f"The pay period is closed and {n['label']} is open."
+            if n["label"]:
+                return f"The pay period is closed. {n['label']} was already open."
+            return f"The pay period is closed. The next one was not opened: {n['message']}"
+        return _act(request, period_id, lambda o, u: pc.close_and_open_next(o, period_id, u), msg)
     return _act(request, period_id, lambda o, u: pc.close_period(o, period_id, u),
                 lambda r: "Already closed." if r["already"] else "The pay period is closed.")
 
@@ -387,5 +407,5 @@ async def closeout_auto(period_id: int, request: Request):
     form = await request.form()
     on = str(form.get("on") or "") == "1"
     pc.set_auto_actualize(org["id"], on, user["id"])
-    return _back(period_id, msg=("Beacon will now match the paid hours automatically when they are loaded into a closed period."
+    return _back(period_id, msg=("Beacon will now match the paid hours automatically when they are loaded into a period whose hours are Final."
                                  if on else "Automatic matching is off. A person presses the button on this page."))

@@ -160,15 +160,15 @@ def entity_folders(client, token, dest_site_id) -> dict:
 
 
 def file_period(org_id: int, period_id: int, user_id: int, client=None) -> dict:
-    """Files one closed pay period's department reports (see the module docstring). Returns counts, and marks the period filed
+    """Files one pay period's department reports once its hours are Final or it is closed (see the module docstring). Returns counts, and marks the period filed
     (how = 'beacon') only when everything went through. Raises PayrollError for a refusal; nothing is written in that case."""
     client = client or CLIENT
     cfg = CONFIG.get(org_id)
     if not cfg:
         raise PayrollError("refused", "Filing reports from here is not set up for this diocese. Use Reports Posted via Phoenix.")
     period = pt.get_period(org_id, period_id)
-    if period["status"] != "closed":
-        raise PayrollError("refused", "Close the pay period first. The reports are filed after payroll has been processed.")
+    if not pt.settle_ready(period):    # Jay, 2026-10-27: the hours Final (or the period closed); Close is now the step AFTER the reports
+        raise PayrollError("refused", "Mark the hours Final first. The reports are filed after payroll has been processed.")
     pfolder = period_folder_name(period)
     pay_date = period["pay_date"]
     host = cfg["host"]
