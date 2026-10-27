@@ -16,7 +16,7 @@ import re
 
 import db
 
-from . import conditions, templates
+from . import assignees, conditions, templates
 from .errors import HrError
 
 MAX_ITEMS = 150
@@ -81,8 +81,19 @@ def editor_items(template_id: int) -> list[dict]:
             "hard_deadline_days": it["hard_deadline_days"], "required": bool(it["required"]),
             "doc_type_key": it["doc_type_key"] or "", "condition": it["condition"] or "",
             "condition_label": conditions.describe(it["condition"]),
+            "assignee_user_id": it.get("assignee_user_id"),
         })
     return out
+
+
+def assignee_names(user_ids) -> dict[int, str]:
+    """{user id: name} for the people named as a step's default assignee (so the editor can show a person who is not in this
+    entity's pick list)."""
+    ids = sorted({int(u) for u in user_ids if u})
+    if not ids:
+        return {}
+    return {r["id"]: r["name"] for r in db.query(
+        "SELECT id, coalesce(nullif(display_name, ''), email) AS name FROM checkreq.app_users WHERE id = ANY(%s)", (ids,))}
 
 
 # ------------------------------------------------------------------ checking
@@ -134,6 +145,10 @@ def normalize(raw_items, existing_keys: set[str]) -> tuple[list[dict], list[str]
     if len(raw_items) > MAX_ITEMS:
         return [], [f"A checklist can have at most {MAX_ITEMS} items."]
     known_docs = {r["key"] for r in db.query("SELECT key FROM hr.doc_types")}
+    posted_people = [r.get("assignee_user_id") for r in raw_items if isinstance(r, dict)]
+    known_people = {r["id"] for r in db.query(
+        "SELECT id FROM checkreq.app_users WHERE is_active AND id = ANY(%s)",
+        ([int(u) for u in posted_people if str(u or "").strip().isdigit()],))}
     taken = {str(r.get("item_key") or "").strip() for r in raw_items if isinstance(r, dict) and str(r.get("item_key") or "").strip()}
     taken |= set()
     items: list[dict] = []
@@ -170,6 +185,13 @@ def normalize(raw_items, existing_keys: set[str]) -> tuple[list[dict], list[str]
             conditions.validate(cond)
         except conditions.ConditionError as e:
             problems.append(f"{where}: {e}")
+        who_raw = r.get("assignee_user_id")
+        who = None
+        if str(who_raw if who_raw is not None else "").strip():
+            if not str(who_raw).strip().isdigit() or int(str(who_raw).strip()) not in known_people:
+                problems.append(f"{where}: the person assigned is not an active Beacon user.")
+            else:
+                who = int(str(who_raw).strip())
         key = str(r.get("item_key") or "").strip()
         if key:
             if not KEY_RE.match(key):
@@ -184,14 +206,31 @@ def normalize(raw_items, existing_keys: set[str]) -> tuple[list[dict], list[str]
             "item_key": key, "section": section, "label": label, "help_text": help_text, "owner_group": owner,
             "due_basis": basis, "due_offset_days": offset or 0, "business_days": _truthy(r.get("business_days")),
             "hard_deadline_days": hard, "required": _truthy(r.get("required")), "doc_type_key": doc, "condition": cond,
-            "sort_order": n * 10,
+            "sort_order": n * 10, "assignee_user_id": who,
         })
     return items, problems
 
 
 # ------------------------------------------------------------------ publishing
 
-def publish_edit(template_id: int, base_version: int, name: str, raw_items, actor_id: int) -> dict:
+def _assignee_scope_problems(template_id: int, items: list[dict], org_id: int) -> list[str]:
+    """A default person may only be NEWLY chosen from this entity's pick list. A person already saved on the item (perhaps chosen in
+    another entity that shares this checklist) is left alone."""
+    saved = {i["item_key"]: i.get("assignee_user_id") for i in templates.items_for(template_id)}
+    people = None
+    out = []
+    for n, it in enumerate(items, start=1):
+        uid = it.get("assignee_user_id")
+        if not uid or saved.get(it["item_key"]) == uid:
+            continue
+        if people is None:
+            people = {p["id"] for p in assignees.people_for(org_id)}
+        if uid not in people:
+            out.append(f"Item {n} ({it['label'][:40]}): that person cannot be assigned at this entity.")
+    return out
+
+
+def publish_edit(template_id: int, base_version: int, name: str, raw_items, actor_id: int, org_id: int | None = None) -> dict:
     """Publish an edited checklist as the next version (or report 'unchanged'). Raises HrError('invalid', every problem) for bad
     input and HrError('refused') when somebody else published a newer version since the screen opened. One transaction; the active
     row is locked while the new version is written."""
@@ -209,6 +248,8 @@ def publish_edit(template_id: int, base_version: int, name: str, raw_items, acto
     existing = {i["item_key"] for i in templates.items_for(template_id)}
     items, more = normalize(raw_items, existing)
     problems += more
+    if org_id and not more:
+        problems += _assignee_scope_problems(template_id, items, org_id)
     if problems:
         raise HrError("invalid", "\n".join(problems))
     with db.connect() as conn:

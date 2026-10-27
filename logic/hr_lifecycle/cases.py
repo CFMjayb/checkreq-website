@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from decimal import Decimal
 
 import psycopg
@@ -24,7 +25,7 @@ import psycopg
 import db
 import org_features
 
-from . import clock, conditions, dates, eligibility, privacy, roster_link, templates
+from . import assignees, clock, conditions, dates, eligibility, privacy, roster_link, templates
 from .errors import HrError
 
 OPEN_STATUSES = ("draft", "requested", "in_progress", "returned")
@@ -253,6 +254,9 @@ def open_case(org_id: int, kind: str, raw: dict, actor_id: int, *, source: str =
         raise HrError("invalid", "The last day of employment is required to start offboarding.")
     status = status or ("requested" if source == "parish" else "in_progress")
     today = clock.today(org_id)
+    # the template's default person for a step counts only if that person may still be assigned at THIS entity (a checklist can serve
+    # several entities); otherwise the step keeps just its owner group
+    eligible = {p["id"] for p in assignees.people_for(org_id)} if any(it.get("assignee_user_id") for it in items) else set()
     for attempt in range(3):
         try:
             with db.connect() as conn:
@@ -274,25 +278,31 @@ def open_case(org_id: int, kind: str, raw: dict, actor_id: int, *, source: str =
                          case.get("separation_date"), case.get("separation_category"), case.get("payroll_employee_ref"),
                          status, case.get("notes"), actor_id, source))
                     case_id = cur.fetchone()["id"]
+                    default_assigned: list[int] = []
                     for it in items:
                         if backfilled:
                             st, note = ("done", "Backfilled: in place before Beacon tracked it.") if it["applies"] \
                                 else ("not_applicable", it["na_reason"])
                         else:
                             st, note = ("open", None) if it["applies"] else ("not_applicable", it["na_reason"])
+                        who = it.get("assignee_user_id") if (it.get("assignee_user_id") in eligible and st == "open") else None
+                        if who:
+                            default_assigned.append(who)
                         cur.execute(
                             "INSERT INTO hr.case_items (case_id, template_item_id, item_key, section, label, owner_group, "
                             " required, doc_type_key, due_date, hard_deadline_date, status, status_note, auto_na, sort_order, "
-                            " done_at, done_by_user_id) "
+                            " done_at, done_by_user_id, assigned_user_id, assigned_by_user_id, assigned_at) "
                             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, CASE WHEN %s = 'done' THEN now() END, "
-                            " CASE WHEN %s = 'done' THEN %s::int END)",
+                            " CASE WHEN %s = 'done' THEN %s::int END, %s, CASE WHEN %s::int IS NOT NULL THEN %s::int END, "
+                            " CASE WHEN %s::int IS NOT NULL THEN now() END)",
                             (case_id, it["id"], it["item_key"], it["section"], it["label"], it["owner_group"],
                              it["required"], it.get("doc_type_key"), it["due_date"], it["hard_deadline_date"], st, note,
-                             not it["applies"], it.get("sort_order") or 0, st, st, actor_id))
+                             not it["applies"], it.get("sort_order") or 0, st, st, actor_id, who, who, actor_id, who))
                     _event(cur, case_id, "opened", actor_id, {"case_number": number, "kind": kind,
                                                               "template": f"{p['template']['key']} v{p['template']['version']}",
                                                               "backfilled": backfilled or None})
                 conn.commit()
+            _notify_assigned(case_id, case["first_name"], case["last_name"], number, default_assigned, actor_id)
             return case_id
         except psycopg.errors.UniqueViolation:
             if attempt == 2:
@@ -322,13 +332,20 @@ def get_case(case_id: int, org_ids: list[int]) -> dict:
     c = _scoped_case(case_id, org_ids)
     items = [dict(r) for r in db.query(
         "SELECT i.*, ti.due_basis, ti.due_offset_days, ti.hard_deadline_days, ti.help_text, ti.condition, "
-        "       u.display_name AS done_by_name "
+        "       coalesce(nullif(u.display_name, ''), u.email) AS done_by_name, "
+        "       coalesce(nullif(au.display_name, ''), au.email) AS assigned_name, "
+        "       coalesce(nullif(asb.display_name, ''), asb.email) AS assigned_by_name, "
+        "       coalesce(nullif(cb.display_name, ''), cb.email) AS customized_by_name "
         "FROM hr.case_items i LEFT JOIN hr.template_items ti ON ti.id = i.template_item_id "
         "LEFT JOIN checkreq.app_users u ON u.id = i.done_by_user_id "
+        "LEFT JOIN checkreq.app_users au ON au.id = i.assigned_user_id "
+        "LEFT JOIN checkreq.app_users asb ON asb.id = i.assigned_by_user_id "
+        "LEFT JOIN checkreq.app_users cb ON cb.id = i.customized_by_user_id "
         "WHERE i.case_id = %s ORDER BY i.sort_order, i.id", (case_id,))]
     today = clock.today(c["org_id"])
     for it in items:
-        it["bucket_key"], it["bucket"] = dates.bucket(it.get("due_basis") or "start_date", it.get("due_offset_days") or 0)
+        it["bucket_key"], it["bucket"] = _item_bucket(it, c)
+        it["added_by_hand"] = it.get("template_item_id") is None
         it["state"] = item_state(it, today)
         if not it["required"] and it["state"] == "late":
             it["state"] = "due"  # an optional item past its date is a reminder, never a red flag
@@ -349,6 +366,19 @@ def get_case(case_id: int, org_ids: list[int]) -> dict:
     c["followups"] = [dict(r) for r in db.query(
         "SELECT id, case_number, case_kind, status FROM hr.cases WHERE linked_case_id = %s ORDER BY id", (case_id,))]
     return c
+
+
+def _item_bucket(it: dict, case: dict) -> tuple[int, str]:
+    """The time group an item sits in on the case page. A template item uses the template's own due basis and offset; a step a person
+    added or changed is placed by its due date measured from the hire date (or the last day on an offboarding case)."""
+    if it.get("template_item_id") and not it.get("customized_at"):
+        return dates.bucket(it.get("due_basis") or "start_date", it.get("due_offset_days") or 0)
+    basis = "separation_date" if case.get("case_kind") in ("offboard", "benefits_end") else "start_date"
+    anchor = case.get(basis)
+    due = it.get("due_date")
+    if anchor and due:
+        return dates.bucket(basis, (due - anchor).days)
+    return dates.bucket("opened", 0)
 
 
 def item_state(it: dict, today: dt.date | None = None) -> str:
@@ -416,6 +446,8 @@ def _recompute(cur, case: dict, code: str, actor_id: int) -> int:
     facts = facts_for(case, code, _enrolled_coverages(case.get("linked_case_id")))
     changed = 0
     for it in cur.fetchall():
+        if it["customized_at"]:
+            continue  # a person changed this step for this case: its wording, dates and flags stay as they set them
         auto_na = it["status"] == "not_applicable" and it["auto_na"]
         if it["status"] != "open" and not auto_na:
             continue
@@ -502,6 +534,265 @@ def set_item_status(case_id: int, org_ids: list[int], item_key: str, status: str
                    item_id=it["id"])
         conn.commit()
     return {"item_key": item_key, "status": status, "changed": True}
+
+
+# ------------------------------------------------------------------ this person's checklist: change, add, assign, My steps
+# (26-162, 2026-10-27; Jay: review the checklist when onboarding someone, add / change / remove a step for THIS person with the person's
+# stamp, and assign steps to people.) Nothing here touches the template. Crossing a step out is set_item_status(..., "not_applicable"),
+# which already stamps who and when (done_by_user_id / done_at) and needs a reason.
+
+MAX_ITEM_LABEL = 200
+CHANGE_FIELDS = ("label", "section", "owner_group", "due_date", "hard_deadline_date", "required", "doc_type_key")
+
+
+def _parse_day(v, what: str) -> dt.date | None:
+    if v in ("", None):
+        return None
+    if isinstance(v, dt.date):
+        return v
+    try:
+        return dt.date.fromisoformat(str(v).strip())
+    except ValueError:
+        raise HrError("invalid", f"{what} must be a date like 2026-11-02.")
+
+
+def _truthy(v) -> bool:
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on", "y")
+    return bool(v)
+
+
+def _int_or_none(v) -> int | None:
+    if v in (None, ""):
+        return None
+    try:
+        return int(str(v).strip())
+    except ValueError:
+        raise HrError("invalid", "That person was not chosen from the list.")
+
+
+def clean_item_fields(raw: dict) -> dict:
+    """One step as a person types it: wording, section, who does it, due date, hard deadline, required, document expected.
+    Raises HrError('invalid' | 'pii') naming the first problem."""
+    label = privacy.check_text(raw.get("label"), "Wording")
+    if not label:
+        raise HrError("invalid", "The wording is required.")
+    if len(label) > MAX_ITEM_LABEL:
+        raise HrError("invalid", f"The wording is longer than {MAX_ITEM_LABEL} characters.")
+    section = str(raw.get("section") or "").strip()
+    if section not in templates.SECTIONS:
+        raise HrError("invalid", "Choose a section.")
+    owner = str(raw.get("owner_group") or "").strip()
+    if owner not in templates.OWNERS:
+        raise HrError("invalid", "Choose who does the step.")
+    due = _parse_day(raw.get("due_date"), "The due date")
+    hard = _parse_day(raw.get("hard_deadline_date"), "The hard deadline")
+    doc = str(raw.get("doc_type_key") or "").strip() or None
+    if doc and not db.query_one("SELECT 1 FROM hr.doc_types WHERE key = %s AND is_active", (doc,)):
+        raise HrError("invalid", "That document type does not exist.")
+    return {"label": label, "section": section, "owner_group": owner, "due_date": due, "hard_deadline_date": hard,
+            "required": _truthy(raw.get("required")), "doc_type_key": doc}
+
+
+def _custom_key(label: str, taken: set[str]) -> str:
+    base = "custom_" + (re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")[:30] or "step")
+    key, n = base, 2
+    while key in taken:
+        key = f"{base}_{n}"
+        n += 1
+    return key
+
+
+def _open_case(case_id: int, org_ids: list[int]) -> dict:
+    c = _scoped_case(case_id, org_ids)
+    if c["status"] not in OPEN_STATUSES:
+        raise HrError("refused", "This case is closed.")
+    return c
+
+
+def _notify_assigned(case_id: int, first: str, last: str, number: str, user_ids: list, actor_id: int | None) -> None:
+    """A bell notice to each person who was just given steps on a case: one notice per person, with a count. Never raises."""
+    counts: dict[int, int] = {}
+    for u in user_ids:
+        if u and u != actor_id:
+            counts[u] = counts.get(u, 0) + 1
+    if not counts:
+        return
+    try:
+        import notifications
+        for u, n in counts.items():
+            notifications.create_notification(
+                u, "hr_step_assigned", f"{'1 step' if n == 1 else f'{n} steps'} assigned to you for {first} {last} ({number}).",
+                "/hr/onboarding/my-steps")
+    except Exception as exc:  # a notice must never undo the assignment
+        print(f"[hr_lifecycle] assignment notice failed for case {case_id}: {exc}")
+
+
+def change_item(case_id: int, org_ids: list[int], item_key: str, raw: dict, actor_id: int) -> dict:
+    """Change one open step for this case only. Stamps who and when; the step's dates and wording are then left alone when the case's
+    dates are recomputed."""
+    c = _open_case(case_id, org_ids)
+    it = db.query_one("SELECT * FROM hr.case_items WHERE case_id = %s AND item_key = %s", (case_id, item_key))
+    if not it:
+        raise HrError("not_found", "That checklist item is not on this case.")
+    if it["status"] != "open":
+        raise HrError("refused", "Reopen this step first (it is done or crossed out), then change it.")
+    f = clean_item_fields(raw)
+    diff = {k: [it[k], f[k]] for k in CHANGE_FIELDS if f[k] != it[k]}
+    if not diff:
+        return {"item_key": item_key, "changed": False}
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE hr.case_items SET label = %s, section = %s, owner_group = %s, due_date = %s, hard_deadline_date = %s, "
+                " required = %s, doc_type_key = %s, customized_by_user_id = %s, customized_at = now() WHERE id = %s",
+                (f["label"], f["section"], f["owner_group"], f["due_date"], f["hard_deadline_date"], f["required"],
+                 f["doc_type_key"], actor_id, it["id"]))
+            _event(cur, case_id, "item_changed", actor_id, {"item": item_key, "changes": diff}, item_id=it["id"])
+        conn.commit()
+    return {"item_key": item_key, "changed": True, "fields": sorted(diff)}
+
+
+def add_item(case_id: int, org_ids: list[int], raw: dict, actor_id: int) -> dict:
+    """Add a step to this case only (it has no template link). raw may carry assigned_user_id."""
+    c = _open_case(case_id, org_ids)
+    f = clean_item_fields(raw)
+    who = _int_or_none(raw.get("assigned_user_id"))
+    if who and not assignees.can_be_assigned(who, c["org_id"]):
+        raise HrError("invalid", "That person cannot be given a step at this entity.")
+    taken = {r["item_key"] for r in db.query("SELECT item_key FROM hr.case_items WHERE case_id = %s", (case_id,))}
+    key = _custom_key(f["label"], taken)
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT coalesce(max(sort_order), 0) + 10 AS n FROM hr.case_items WHERE case_id = %s", (case_id,))
+            order = cur.fetchone()["n"]
+            cur.execute(
+                "INSERT INTO hr.case_items (case_id, template_item_id, item_key, section, label, owner_group, required, doc_type_key, "
+                " due_date, hard_deadline_date, status, auto_na, sort_order, assigned_user_id, assigned_by_user_id, assigned_at, "
+                " customized_by_user_id, customized_at) "
+                "VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, 'open', FALSE, %s, %s, "
+                " CASE WHEN %s::int IS NOT NULL THEN %s::int END, CASE WHEN %s::int IS NOT NULL THEN now() END, %s, now()) RETURNING id",
+                (case_id, key, f["section"], f["label"], f["owner_group"], f["required"], f["doc_type_key"], f["due_date"],
+                 f["hard_deadline_date"], order, who, who, actor_id, who, actor_id))
+            new_id = cur.fetchone()["id"]
+            _event(cur, case_id, "item_added", actor_id, {"item": key, "label": f["label"], "section": f["section"],
+                                                         "owner": f["owner_group"], "due": f["due_date"]}, item_id=new_id)
+        conn.commit()
+    _notify_assigned(case_id, c["first_name"], c["last_name"], c["case_number"], [who], actor_id)
+    return {"item_key": key, "added": True}
+
+
+def assign_many(case_id: int, org_ids: list[int], changes: dict, actor_id: int) -> dict:
+    """Give open steps a named person, or take the person off (None). changes = {item_key: user_id or None}. Everything is checked
+    before anything is written; each assignment is stamped (who, when) and noted in the history; each new assignee gets one notice."""
+    c = _open_case(case_id, org_ids)
+    if not changes:
+        return {"changed": 0}
+    people = {p["id"] for p in assignees.people_for(c["org_id"])}
+    rows = {r["item_key"]: dict(r) for r in db.query(
+        "SELECT * FROM hr.case_items WHERE case_id = %s AND item_key = ANY(%s)", (case_id, list(changes)))}
+    todo: list[tuple[dict, int | None]] = []
+    for key, raw_uid in changes.items():
+        uid = _int_or_none(raw_uid)
+        it = rows.get(key)
+        if not it:
+            raise HrError("not_found", "That checklist item is not on this case.")
+        if (it["assigned_user_id"] or None) == uid:
+            continue
+        if it["status"] != "open":
+            raise HrError("refused", "Only an open step can be assigned. Reopen it first.")
+        if uid and uid not in people:
+            raise HrError("invalid", "That person cannot be given a step at this entity.")
+        todo.append((it, uid))
+    if not todo:
+        return {"changed": 0}
+    ids = {u for it, u in todo if u} | {it["assigned_user_id"] for it, _ in todo if it["assigned_user_id"]}
+    names = {r["id"]: r["name"] for r in db.query(
+        "SELECT id, coalesce(nullif(display_name, ''), email) AS name FROM checkreq.app_users WHERE id = ANY(%s)", (list(ids),))}
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            for it, uid in todo:
+                cur.execute(
+                    "UPDATE hr.case_items SET assigned_user_id = %s, assigned_by_user_id = CASE WHEN %s::int IS NULL THEN NULL ELSE %s::int END, "
+                    " assigned_at = CASE WHEN %s::int IS NULL THEN NULL ELSE now() END WHERE id = %s",
+                    (uid, uid, actor_id, uid, it["id"]))
+                _event(cur, case_id, "item_assigned", actor_id,
+                       {"item": it["item_key"], "from": names.get(it["assigned_user_id"]), "to": names.get(uid)}, item_id=it["id"])
+        conn.commit()
+    _notify_assigned(case_id, c["first_name"], c["last_name"], c["case_number"], [u for _, u in todo], actor_id)
+    return {"changed": len(todo)}
+
+
+def assign_item(case_id: int, org_ids: list[int], item_key: str, user_id, actor_id: int) -> dict:
+    return assign_many(case_id, org_ids, {item_key: user_id}, actor_id)
+
+
+# ---- My steps: a person's own open steps across cases, whatever their role
+
+FEATURE = "hr_lifecycle"
+
+
+def my_steps(user_id: int) -> list[dict]:
+    """The open steps assigned to this person on open cases, at entities that use Onboarding & Offboarding, soonest first.
+    Only what the person needs to do the step: the new hire's name, the case, the step, its dates and who assigned it."""
+    rows = db.query(
+        "SELECT i.item_key, i.label, i.section, i.owner_group, i.required, i.due_date, i.hard_deadline_date, i.assigned_at, "
+        "       ti.help_text, c.id AS case_id, c.case_number, c.case_kind, c.org_id, c.first_name, c.last_name, c.preferred_name, "
+        "       o.code AS org_code, coalesce(p.short_name, p.name) AS unit_label, "
+        "       coalesce(nullif(ab.display_name, ''), ab.email) AS assigned_by_name "
+        "FROM hr.case_items i JOIN hr.cases c ON c.id = i.case_id "
+        "JOIN checkreq.organizations o ON o.id = c.org_id "
+        "LEFT JOIN hr.template_items ti ON ti.id = i.template_item_id "
+        "LEFT JOIN portal.parishes p ON p.id = c.parish_id "
+        "LEFT JOIN checkreq.app_users ab ON ab.id = i.assigned_by_user_id "
+        "WHERE i.assigned_user_id = %s AND i.status = 'open' AND c.status = ANY(%s) "
+        "ORDER BY i.due_date NULLS LAST, lower(c.last_name), lower(c.first_name), i.sort_order, i.id",
+        (user_id, list(OPEN_STATUSES)))
+    enabled: dict[int, bool] = {}
+    todays: dict[int, dt.date] = {}
+    out = []
+    for r in rows:
+        oid = r["org_id"]
+        if oid not in enabled:
+            enabled[oid] = bool(org_features.is_enabled(oid, FEATURE))
+            todays[oid] = clock.today(oid)
+        if not enabled[oid]:
+            continue
+        s = dict(r)
+        s["state"] = item_state({"status": "open", "due_date": s["due_date"], "hard_deadline_date": s["hard_deadline_date"]}, todays[oid])
+        if not s["required"] and s["state"] == "late":
+            s["state"] = "due"
+        s["kind_label"] = templates.KINDS.get(s["case_kind"], s["case_kind"])
+        s["section_label"] = templates.SECTION_LABELS.get(s["section"], s["section"])
+        s["person"] = f"{s['last_name']}, {s['preferred_name'] or s['first_name']}"
+        out.append(s)
+    return out
+
+
+def my_steps_count(user_id: int) -> int:
+    """How many open steps are waiting on this person (the user-menu count). Same rule as my_steps(), one cheap query."""
+    rows = db.query(
+        "SELECT DISTINCT c.org_id FROM hr.case_items i JOIN hr.cases c ON c.id = i.case_id "
+        "WHERE i.assigned_user_id = %s AND i.status = 'open' AND c.status = ANY(%s)", (user_id, list(OPEN_STATUSES)))
+    orgs = [r["org_id"] for r in rows if org_features.is_enabled(r["org_id"], FEATURE)]
+    if not orgs:
+        return 0
+    row = db.query_one(
+        "SELECT count(*) AS n FROM hr.case_items i JOIN hr.cases c ON c.id = i.case_id "
+        "WHERE i.assigned_user_id = %s AND i.status = 'open' AND c.status = ANY(%s) AND c.org_id = ANY(%s)",
+        (user_id, list(OPEN_STATUSES), orgs))
+    return int(row["n"]) if row else 0
+
+
+def complete_my_step(user_id: int, case_id: int, item_key: str, note: str | None) -> dict:
+    """The assigned person marks THEIR OWN open step done (with an optional note). Nothing else about the case is reachable from here."""
+    row = db.query_one(
+        "SELECT c.org_id FROM hr.case_items i JOIN hr.cases c ON c.id = i.case_id "
+        "WHERE i.case_id = %s AND i.item_key = %s AND i.assigned_user_id = %s AND i.status = 'open' AND c.status = ANY(%s)",
+        (case_id, item_key, user_id, list(OPEN_STATUSES)))
+    if not row or not org_features.is_enabled(row["org_id"], FEATURE):
+        raise HrError("not_found", "That step is not assigned to you, or it is already done.")
+    return set_item_status(case_id, [row["org_id"]], item_key, "done", note, user_id)
 
 
 def record_enrollment(case_id: int, org_ids: list[int], coverage: str, raw: dict, actor_id: int) -> dict:

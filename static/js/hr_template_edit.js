@@ -27,14 +27,15 @@
   var f = {
     title: document.getElementById('itemDialogTitle'), error: document.getElementById('itemError'),
     label: document.getElementById('fLabel'), help: document.getElementById('fHelp'),
-    section: document.getElementById('fSection'), owner: document.getElementById('fOwner'),
+    section: document.getElementById('fSection'), owner: document.getElementById('fOwner'), assignee: document.getElementById('fAssignee'),
     basis: document.getElementById('fBasis'), offset: document.getElementById('fOffset'), hard: document.getElementById('fHard'),
     biz: document.getElementById('fBizDays'), required: document.getElementById('fRequired'),
     doc: document.getElementById('fDoc'), cond: document.getElementById('fCondition'),
     customWrap: document.getElementById('fCustomWrap'), custom: document.getElementById('fCustom')
   };
 
-  var sectionLabel = {}, basisLabel = {}, presetLabel = {};
+  var sectionLabel = {}, basisLabel = {}, presetLabel = {}, personName = {};
+  (D.people || []).forEach(function (p) { personName[String(p.id)] = p.name; });
   D.sections.forEach(function (s) { sectionLabel[s.key] = s.label; });
   D.bases.forEach(function (b) { basisLabel[b.key] = b.label; });
   D.presets.forEach(function (p) { presetLabel[p.value] = p.label; });
@@ -51,13 +52,13 @@
       id: nextId++, key: txt(r.item_key), label: txt(r.label), help: txt(r.help_text), section: txt(r.section),
       owner: txt(r.owner_group), basis: txt(r.due_basis), offset: txt(r.due_offset_days === null ? 0 : r.due_offset_days),
       hard: txt(r.hard_deadline_days), biz: !!r.business_days, required: !!r.required, doc: txt(r.doc_type_key),
-      cond: txt(r.condition), removed: false
+      cond: txt(r.condition), assignee: txt(r.assignee_user_id), removed: false
     };
   }
   function whole(v) { var s = txt(v).trim(); return s === '' ? null : Number(s); }
   function signature(it) {
     return JSON.stringify([it.label.trim(), it.help.trim(), it.section, it.owner, it.basis, whole(it.offset) || 0, whole(it.hard),
-      !!it.biz, !!it.required, it.doc, it.cond.split(/\s+/).filter(Boolean).join(' ')]);
+      !!it.biz, !!it.required, it.doc, it.cond.split(/\s+/).filter(Boolean).join(' '), it.assignee || '']);
   }
   var original = {};          // item_key -> signature, as last saved
   var originalOrder = [];
@@ -168,7 +169,9 @@
       if (it.label || it.help) tdItem.setAttribute('data-tip', it.help ? it.label + ' — ' + it.help : it.label);
       tr.appendChild(tdItem);
       tr.appendChild(el('td', '', sectionLabel[it.section] || it.section));
-      tr.appendChild(el('td', '', it.owner));
+      var tdWho = el('td', 'te-who', it.owner);
+      if (it.assignee && personName[it.assignee]) tdWho.appendChild(el('div', 'te-help', personName[it.assignee]));
+      tr.appendChild(tdWho);
       var tdDue = el('td', '', dueText(it));
       tdDue.setAttribute('data-tip', tdDue.textContent);
       tr.appendChild(tdDue);
@@ -186,7 +189,7 @@
         tdAct.appendChild(btn('Remove', isNew ? 'Take this new item out' : 'Mark for removal (nothing is removed until you save)', 'remove'));
       }
       tr.appendChild(tdAct);
-      tr.dataset.text = (it.label + ' ' + it.help + ' ' + (sectionLabel[it.section] || '') + ' ' + it.owner + ' ' + condText(it.cond)).toLowerCase();
+      tr.dataset.text = (it.label + ' ' + it.help + ' ' + (sectionLabel[it.section] || '') + ' ' + it.owner + ' ' + (personName[it.assignee] || '') + ' ' + condText(it.cond)).toLowerCase();
       body.appendChild(tr);
     });
     applySearch();
@@ -244,6 +247,7 @@
   }
   fill(f.section, D.sections.map(function (s) { return [s.key, s.label]; }));
   fill(f.owner, D.owners.map(function (o) { return [o, o]; }));
+  fill(f.assignee, [['', 'Nobody in particular (the group)']].concat((D.people || []).map(function (p) { return [String(p.id), p.name]; })));
   fill(f.basis, D.bases.map(function (b) { return [b.key, b.label.charAt(0).toUpperCase() + b.label.slice(1)]; }));
   fill(f.doc, [['', 'None']].concat(D.docTypes.map(function (d) { return [d.key, d.label + (d.sensitivity && d.sensitivity !== 'standard' ? ' (restricted)' : '')]; })));
   fill(f.cond, D.presets.map(function (p) { return [p.value, p.label]; }).concat([['__custom', 'Custom rule…']]));
@@ -257,10 +261,11 @@
   function openDialog(it) {
     editing = it;
     var v = it || { label: '', help: '', section: D.sections[0].key, owner: D.owners[0], basis: D.defaultBasis, offset: '0', hard: '',
-                    biz: false, required: true, doc: '', cond: '' };
+                    biz: false, required: true, doc: '', cond: '', assignee: '' };
     f.title.textContent = it ? 'Edit item' : 'Add item';
     showError('');
     f.label.value = v.label; f.help.value = v.help; f.section.value = v.section; f.owner.value = v.owner; f.basis.value = v.basis;
+    f.assignee.value = v.assignee || '';
     f.offset.value = v.offset; f.hard.value = v.hard; f.biz.checked = !!v.biz; f.required.checked = !!v.required; f.doc.value = v.doc;
     var c = v.cond.split(/\s+/).filter(Boolean).join(' ');
     if (!c || presetLabel[c] !== undefined) { f.cond.value = c; f.custom.value = ''; }
@@ -291,7 +296,8 @@
     var bad = validateCondition(cond);
     if (bad) { showError(bad); if (f.cond.value === '__custom') f.custom.focus(); return; }
     var vals = { label: label, help: f.help.value.trim(), section: f.section.value, owner: f.owner.value, basis: f.basis.value,
-                 offset: off.v === '' ? '0' : off.v, hard: hard.v, biz: f.biz.checked, required: f.required.checked, doc: f.doc.value, cond: cond };
+                 offset: off.v === '' ? '0' : off.v, hard: hard.v, biz: f.biz.checked, required: f.required.checked, doc: f.doc.value, cond: cond,
+                 assignee: f.assignee.value };
     var target = editing;
     if (target) { Object.keys(vals).forEach(function (k) { target[k] = vals[k]; }); }
     else {
@@ -326,7 +332,7 @@
     var rows = active().map(function (it) {
       return { item_key: it.key, label: it.label, help_text: it.help, section: it.section, owner_group: it.owner, due_basis: it.basis,
                due_offset_days: it.offset, business_days: it.biz, hard_deadline_days: it.hard, required: it.required,
-               doc_type_key: it.doc, condition: it.cond };
+               doc_type_key: it.doc, condition: it.cond, assignee_user_id: it.assignee || null };
     });
     payloadEl.value = JSON.stringify(rows);
     submitting = true;

@@ -51,7 +51,7 @@
   <div class="ff-frame">
     <div class="ff-scroll">
       <table class="ff-table te-table">
-        <colgroup><col style="width:44px"><col><col style="width:104px"><col style="width:84px"><col style="width:240px"><col style="width:200px"><col style="width:72px"><col style="width:218px"></colgroup>
+        <colgroup><col style="width:44px"><col><col style="width:104px"><col style="width:150px"><col style="width:240px"><col style="width:200px"><col style="width:72px"><col style="width:218px"></colgroup>
         <thead>
           <tr>
             <th class="c-num">#</th><th>Item</th><th>Section</th><th>Who</th><th>Due</th><th>Applies when</th><th class="c-center">Required</th><th aria-label="Actions"></th>
@@ -84,8 +84,10 @@
   <div class="field"><label for="fHelp">Help text (optional, a line of guidance under the item)</label><textarea id="fHelp" rows="2"></textarea></div>
   <div class="te-grid te-grid-2">
     <div class="field"><label for="fSection">Section</label><select id="fSection"></select></div>
-    <div class="field"><label for="fOwner">Who does it</label><select id="fOwner"></select></div>
+    <div class="field"><label for="fOwner">Who does it (group)</label><select id="fOwner"></select></div>
   </div>
+  <div class="field"><label for="fAssignee">Assigned to (optional: the person who gets this step when a case opens)</label><select id="fAssignee"></select>
+    <p class="ff-help" style="margin:4px 0 0">You can change it for each person when you set up their checklist. A person who cannot be assigned at the entity opening the case is skipped, and the step keeps just its group.</p></div>
   <div class="te-grid te-grid-3">
     <div class="field"><label for="fBasis">Due date counts from</label><select id="fBasis"></select></div>
     <div class="field"><label for="fOffset">Days after (a minus number = before)</label><input type="number" id="fOffset" step="1"></div>

@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 import cornerstone_mode
 import db
+import hr_case_setup
 import hr_documents
 import hr_template_editor
 import org_features
@@ -52,6 +53,8 @@ def register(app, *, current_user, current_org, render) -> None:
     hr_template_editor.register(app, gate=_gate, render=lambda *a, **k: _render(*a, **k))
     # the case's documents (upload and view, Phase 2) are their own module too, handed the same gate and the entity lookup
     hr_documents.register(app, gate=_gate, allowed_org_ids=allowed_org_ids)
+    # setting up one person's checklist (change / cross out / add / assign), and where "Open this case" lands (2026-10-27)
+    hr_case_setup.register(app, gate=_gate, render=lambda *a, **k: _render(*a, **k), allowed_org_ids=allowed_org_ids)
 
 
 # ------------------------------------------------------------------ access
@@ -174,7 +177,9 @@ async def new_case_post(request: Request):
         if form.get("action") == "create":
             cid = cases.open_case(org["id"], kind, raw, user["id"])
             num = db.query_one("SELECT case_number FROM hr.cases WHERE id = %s", (cid,))["case_number"]
-            return _back(f"/hr/onboarding/case/{cid}", saved=f"Opened {num}.")
+            # a new staff case opens on the checklist setup screen, so the person who opened it reviews the list before anything else
+            return _back(f"/hr/onboarding/case/{cid}/setup" if kind in HR_KINDS else f"/hr/onboarding/case/{cid}",
+                         saved=f"Opened {num}.", new="1" if kind in HR_KINDS else "")
         p = cases.preview(org["id"], kind, raw)
         return _render(request, "hr_case_new.html", user, _new_ctx(org, kind, form, preview=p))
     except HrError as e:

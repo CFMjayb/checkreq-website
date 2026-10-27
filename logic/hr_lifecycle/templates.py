@@ -143,7 +143,7 @@ def load_csv_rows(path: str) -> dict[str, dict]:
 
 def same_items(a: list[dict], b: list[dict]) -> bool:
     keys = ["item_key", "section", "label", "help_text", "owner_group", "due_basis", "due_offset_days",
-            "hard_deadline_days", "required", "doc_type_key", "condition", "business_days", "sort_order"]
+            "hard_deadline_days", "required", "doc_type_key", "condition", "business_days", "sort_order", "assignee_user_id"]
     if len(a) != len(b):
         return False
     return all(all((x.get(k) if x.get(k) != "" else None) == (y.get(k) if y.get(k) != "" else None) for k in keys)
@@ -189,9 +189,9 @@ def publish(cur, key: str, spec: dict, actor_id: int | None) -> tuple[str, int]:
     for it in spec["items"]:
         cur.execute(
             "INSERT INTO hr.template_items (template_id, item_key, section, label, help_text, owner_group, due_basis, "
-            " due_offset_days, business_days, hard_deadline_days, required, doc_type_key, condition, sort_order) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            " due_offset_days, business_days, hard_deadline_days, required, doc_type_key, condition, sort_order, assignee_user_id) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (tid, it["item_key"], it["section"], it["label"], it["help_text"], it["owner_group"], it["due_basis"],
              it["due_offset_days"], it["business_days"], it["hard_deadline_days"], it["required"], it["doc_type_key"],
-             it["condition"], it["sort_order"]))
+             it["condition"], it["sort_order"], it.get("assignee_user_id")))
     return "published", version

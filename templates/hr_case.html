@@ -22,7 +22,7 @@
 {% set tok = csrf_token(request) %}
 {% set ST = {'done': 'Done', 'late': 'Late', 'due': 'Due soon', 'open': 'Open', 'na': 'Not applicable'} %}
 {% set nac = namespace(n=0) %}
-{% for s in sections %}{% for b in s.buckets %}{% for it in b['items'] %}{% if it.status == 'not_applicable' %}{% set nac.n = nac.n + 1 %}{% endif %}{% endfor %}{% endfor %}{% endfor %}
+{% for s in sections %}{% for b in s.buckets %}{% for it in b['items'] %}{% if it.status == 'not_applicable' and it.auto_na %}{% set nac.n = nac.n + 1 %}{% endif %}{% endfor %}{% endfor %}{% endfor %}
 <div class="page-shell-wide hr-page">
 <div class="ff-shell">
 
@@ -34,6 +34,7 @@
     <a class="ff-back" href="/hr/onboarding">&larr; Back to the board</a>
     <div class="ff-actions">
       {% if nac.n %}<button type="button" class="btn btn-sm btn-secondary" data-hr-toggle-na data-count="{{ nac.n }}" aria-pressed="false">Show not applicable items ({{ nac.n }})</button>{% endif %}
+      {% if is_open %}<a class="btn btn-sm btn-secondary" href="/hr/onboarding/case/{{ c.id }}/setup" data-tip="Change, cross out or add steps for this person, and assign steps to people">Set up checklist</a>{% endif %}
       <button type="button" class="btn btn-sm btn-secondary" data-hr-dialog="personDialog">Person</button>
       <button type="button" class="btn btn-sm btn-secondary" data-hr-dialog="coverageDialog">Benefits coverage ({{ c.enrollments|length }})</button>
       <button type="button" class="btn btn-sm btn-secondary" data-hr-dialog="historyDialog">History</button>
@@ -68,24 +69,27 @@
     <div class="hr-pane">
       {% for s in sections %}
       {% set svis = namespace(n=0) %}
-      {% for b in s.buckets %}{% for it in b['items'] %}{% if it.status != 'not_applicable' %}{% set svis.n = svis.n + 1 %}{% endif %}{% endfor %}{% endfor %}
+      {% for b in s.buckets %}{% for it in b['items'] %}{% if not (it.status == 'not_applicable' and it.auto_na) %}{% set svis.n = svis.n + 1 %}{% endif %}{% endfor %}{% endfor %}
       <section class="hr-panel{{ ' all-na' if svis.n == 0 }}" id="sec-{{ s.key }}">
         <h2>{{ s.label }} <span class="hr-count">{{ s.done }} of {{ s.total }} required done</span></h2>
         {% for b in s.buckets %}
         {% set bvis = namespace(n=0) %}
-        {% for it in b['items'] %}{% if it.status != 'not_applicable' %}{% set bvis.n = bvis.n + 1 %}{% endif %}{% endfor %}
+        {% for it in b['items'] %}{% if not (it.status == 'not_applicable' and it.auto_na) %}{% set bvis.n = bvis.n + 1 %}{% endif %}{% endfor %}
         <div class="hr-bucket{{ ' all-na' if bvis.n == 0 }}">{{ b.label }}</div>
         <ul class="hr-items{{ ' all-na' if bvis.n == 0 }}">
           {% for it in b['items'] %}
-          {% set isna = it.status == 'not_applicable' %}
-          <li class="hr-item is-{{ it.state }}{{ ' is-na-item' if isna }}" id="item-{{ it.item_key }}">
+          {% set isna = it.status == 'not_applicable' and it.auto_na %}
+          {% set crossed = it.status == 'not_applicable' and not it.auto_na %}
+          <li class="hr-item is-{{ it.state }}{{ ' is-na-item' if isna }}{{ ' is-crossed' if crossed }}" id="item-{{ it.item_key }}">
             <div class="lbl">
               <span class="t"{% if it.help_text %} data-tip="{{ it.help_text }}"{% endif %}>{{ it.label }}{% if not it.required %} <span class="hr-req">(optional)</span>{% endif %}{% if it.help_text %} <span class="hr-q" aria-hidden="true">?</span>{% endif %}</span>
               <span class="meta" data-tip="{{ it.owner_group }}{% if it.due_date %}, due {{ dt(it.due_date) }}{% endif %}{% if it.hard_deadline_date %}, hard deadline {{ dt(it.hard_deadline_date) }}{% endif %}">
                 {% if it.status == 'open' %}<b class="st {{ it.state }}">{{ ST[it.state] }}</b> &middot; {% endif %}{{ it.owner_group }}
                 {% if it.due_date %} &middot; due {{ dt(it.due_date) }}{% endif %}
                 {% if it.hard_deadline_date %} &middot; <strong>hard deadline {{ dt(it.hard_deadline_date) }}</strong>{% endif %}
+                {% if it.assigned_name and it.status == 'open' %} &middot; <strong>assigned to {{ it.assigned_name }}</strong>{% endif %}
                 {% if it.status in ('done', 'waived') and it.done_at %} &middot; {{ 'waived' if it.status == 'waived' else 'done' }} {{ local_date(it.done_at) }}{% if it.done_by_name %} by {{ it.done_by_name }}{% endif %}{% endif %}
+                {% if it.added_by_hand and it.customized_at %} &middot; added by {{ it.customized_by_name or 'someone' }} {{ local_date(it.customized_at) }}{% elif it.customized_at %} &middot; changed by {{ it.customized_by_name or 'someone' }} {{ local_date(it.customized_at) }}{% endif %}
               </span>
               {% if it.doc_type_key %}
               {# the document this item expects: what is filed for it, and one Upload File button for a role that may file that kind #}
@@ -108,14 +112,14 @@
               <textarea name="note" class="hr-note" rows="2" maxlength="1000" placeholder="Note (needed to Waive or mark Not applicable)" aria-label="Note for {{ it.label }}"></textarea>
               <div class="acts">
                 <button type="submit" name="status" value="waived" class="btn btn-sm btn-secondary" data-tip="Not needed this time. A reason is required.">Waive</button>
-                <button type="submit" name="status" value="not_applicable" class="btn btn-sm btn-secondary" data-tip="Does not apply to this person. A reason is required.">Not applicable</button>
+                <button type="submit" name="status" value="not_applicable" class="btn btn-sm btn-secondary" data-tip="Does not apply to this person: it stays on the list, crossed out, with your name and the date. A reason is required.">Cross out</button>
                 <button type="submit" name="status" value="done" class="btn btn-sm btn-primary">Done</button>
               </div>
             </form>
             {% else %}
-            <div class="hr-done-note" {% if it.status_note %}data-tip="{{ it.status_note }}"{% endif %}>{{ it.status_note or '' }}</div>
+            <div class="hr-done-note" {% if it.status_note %}data-tip="{{ it.status_note }}"{% endif %}>{% if crossed %}Crossed out by {{ it.done_by_name or 'someone' }}{% if it.done_at %}, {{ local_date(it.done_at) }}{% endif %}{% if it.status_note %}: {{ it.status_note }}{% endif %}{% else %}{{ it.status_note or '' }}{% endif %}</div>
             <div class="acts">
-              <span class="st {{ it.state }}">{{ 'Waived' if it.status == 'waived' else ST[it.state] }}</span>
+              <span class="st {{ it.state }}">{{ 'Waived' if it.status == 'waived' else ('Crossed out' if crossed else ST[it.state]) }}</span>
               {% if is_open and it.status != 'open' %}
               <form method="post" action="/hr/onboarding/case/{{ c.id }}/item/{{ it.item_key }}" class="hr-reopen">
                 <input type="hidden" name="csrf_token" value="{{ tok }}">
@@ -237,7 +241,10 @@
     <li><span class="hr-muted">{{ local_time(e.at) }}</span> {{ e.actor_name or 'Beacon' }}:
       {% set d = e.detail or {} %}
       {% if e.event == 'opened' %}opened the case ({{ d.template }}{{ ', backfilled' if d.backfilled }})
-      {% elif e.event == 'item_status' %}{{ item_labels.get(d.item, d.item) }}: {{ {'open': 'reopened', 'done': 'done', 'waived': 'waived', 'not_applicable': 'marked not applicable'}.get(d.to, d.to) }}
+      {% elif e.event == 'item_status' %}{{ item_labels.get(d.item, d.item) }}: {{ {'open': 'reopened', 'done': 'done', 'waived': 'waived', 'not_applicable': 'crossed out'}.get(d.to, d.to) }}
+      {% elif e.event == 'item_added' %}added the step "{{ d.label }}"
+      {% elif e.event == 'item_changed' %}changed {{ item_labels.get(d.item, d.item) }}: {% for k in (d.changes or {}) %}{{ {'label': 'the wording', 'section': 'the section', 'owner_group': 'the group', 'due_date': 'the due date', 'hard_deadline_date': 'the firm deadline', 'required': 'required or optional', 'doc_type_key': 'the document'}.get(k, k) }}{{ ', ' if not loop.last }}{% endfor %}
+      {% elif e.event == 'item_assigned' %}{{ item_labels.get(d.item, d.item) }}: {% if d.to %}assigned to {{ d.to }}{% if d['from'] %} (was {{ d['from'] }}){% endif %}{% else %}taken off {{ d['from'] or 'the person' }}{% endif %}
       {% elif e.event == 'updated' %}changed {{ (d.fields or [])|join(', ') }}{% if d.items_rechecked %}; {{ d.items_rechecked }} item(s) updated{% endif %}
       {% elif e.event == 'enrollment' %}{{ coverages.get(d.coverage, d.coverage) }}: {{ d.election }}, {{ d.status }}
       {% elif e.event == 'document_added' %}filed {{ doc_labels.get(d.doc_type, d.doc_type) }}{% if d.item %} for {{ item_labels.get(d.item, d.item) }}{% endif %}{% if d.replaced %} (replaced an earlier one){% endif %}

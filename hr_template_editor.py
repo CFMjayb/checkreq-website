@@ -22,7 +22,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 import rbac
-from logic.hr_lifecycle import conditions, template_edit, templates
+from logic.hr_lifecycle import assignees, conditions, template_edit, templates
 from logic.hr_lifecycle.errors import HrError
 
 router = APIRouter()
@@ -101,6 +101,7 @@ def _shape_posted(raw_items) -> list[dict]:
             "due_offset_days": r.get("due_offset_days"), "business_days": template_edit._truthy(r.get("business_days")),
             "hard_deadline_days": r.get("hard_deadline_days"), "required": template_edit._truthy(r.get("required")),
             "doc_type_key": str(r.get("doc_type_key") or ""), "condition": cond, "condition_label": _label_for(cond or None),
+            "assignee_user_id": r.get("assignee_user_id"),
         })
     return out
 
@@ -108,7 +109,14 @@ def _shape_posted(raw_items) -> list[dict]:
 def _page(request, user, org, t, *, items, name, base_version, problems=None, notice=None):
     kind = t["case_kind"]
     shared = _shared_with(t)
+    original = template_edit.editor_items(t["id"])
+    # who a step can be assigned to at this entity, plus anybody already named on a step (chosen in another entity that shares this list)
+    people = [{"id": p["id"], "name": p["name"]} for p in assignees.people_for(org["id"])]
+    listed = {p["id"] for p in people}
+    extra = template_edit.assignee_names(i.get("assignee_user_id") for i in list(items) + original)
+    people += [{"id": uid, "name": nm + " (not at this entity)", "outside": True} for uid, nm in extra.items() if uid not in listed]
     data = {
+        "people": people,
         "items": items,
         "sections": [{"key": k, "label": templates.SECTION_LABELS[k]} for k in templates.SECTIONS],
         "owners": templates.OWNERS,
@@ -122,7 +130,7 @@ def _page(request, user, org, t, *, items, name, base_version, problems=None, no
         "baseVersion": base_version,
         "shared": shared,
         # as last saved, so the screen can say what is changed even after a refused save brought back what was typed
-        "original": template_edit.editor_items(t["id"]),
+        "original": original,
         "originalName": t["label"],
     }
     return _render(request, "hr_template_edit.html", user, {
@@ -159,7 +167,7 @@ async def save(request: Request, template_id: int):
     except ValueError:
         raw_items = None
     try:
-        result = template_edit.publish_edit(t["id"], base_version, name, raw_items, user["id"])
+        result = template_edit.publish_edit(t["id"], base_version, name, raw_items, user["id"], org_id=org["id"])
     except HrError as e:
         problems = [p for p in e.message.split("\n") if p.strip()]
         if e.code == "refused":
