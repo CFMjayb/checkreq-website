@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}Late emails — {{ current_org.name }}{% endblock %}
+{#
+  Late emails (payroll_late_screens.py): payroll emails with hours that were NOT recorded because the pay period's hours are Final or the
+  period is Closed, because the reader could not tell the church, or because no pay period fits. A person decides each one. On the shared
+  fixed frame (fixed_frame.css / .js). Hours only, never pay. Plan: 26-158 "Plan - Late Email Queue.md".
+#}
+{% from "_guide_link.html" import guide_link %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+<link rel="stylesheet" href="/static/css/payroll_hours.css?v={{ asset_version('css/payroll_hours.css') }}">
+<link rel="stylesheet" href="/static/css/timekeeping_entry.css?v={{ asset_version('css/timekeeping_entry.css') }}">
+<link rel="stylesheet" href="/static/css/payroll_late.css?v={{ asset_version('css/payroll_late.css') }}">
+{% endblock %}
+{% block content %}
+<div class="page-shell-wide">
+<div class="ff-shell">
+
+  <div class="ff-title-row">
+    <h1>Late emails {{ guide_link("payroll-hours", "How payroll hours from email work") }}</h1>
+    <a class="ff-back" href="/admin/timekeeping/status">&larr; Back to Time Review</a>
+    <div class="ff-actions">
+      {% if view == 'waiting' and repeats_n %}
+      <form method="post" action="/admin/timekeeping/late/dismiss-repeats"
+            data-confirm="Dismiss every email whose hours are all already entered? Nothing is recorded; each one is kept in the Decided list.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+        <button type="submit" class="btn btn-sm btn-primary"
+                data-tip="Dismisses only the emails whose every line matches hours that are already entered and accepted. You are asked first.">Dismiss all {{ repeats_n }} repeat{{ '' if repeats_n == 1 else 's' }}</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="ff-info">
+    {% if view == 'waiting' %}
+    <strong>Waiting for a decision: {{ items|length }}</strong>
+    <a href="/admin/timekeeping/late?view=decided">Show decided emails</a>
+    {% else %}
+    <strong>Decided emails</strong>
+    <a href="/admin/timekeeping/late">&larr; Back to the waiting emails</a>
+    {% endif %}
+    <span>Hours only. Nothing here is recorded until you press a button.</span>
+  </div>
+
+  {% if error %}<div class="banner banner-error ff-banner">{{ error }}</div>{% endif %}
+  {% if done %}<div class="banner banner-success ff-banner">{{ done }}</div>{% endif %}
+
+  <div class="ff-frame">
+    <div class="ff-scroll">
+      <table class="ff-table late-table">
+        <colgroup>
+          <col style="width:104px"><col style="width:13%"><col style="width:19%"><col style="width:10%"><col><col style="width:{{ '23%' if view == 'waiting' else '19%' }}">
+        </colgroup>
+        <thead>
+          <tr>
+            <th data-sort="1">{{ 'Arrived' if view == 'waiting' else 'Decided' }}<span class="arrow"></span></th>
+            <th data-sort="1">Department<span class="arrow"></span></th>
+            <th>From and subject</th>
+            <th data-sort="1">{{ 'Why held' if view == 'waiting' else 'Result' }}<span class="arrow"></span></th>
+            <th>People and hours</th>
+            <th>{{ 'Decide' if view == 'waiting' else 'Note' }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for i in items %}
+          <tr class="late-row{{ ' is-repeat' if view == 'waiting' and i.all_repeats else '' }}">
+            <td data-v="{{ (i.received_at if view == 'waiting' else i.handled_at).isoformat() if (i.received_at if view == 'waiting' else i.handled_at) else '' }}">{{ when(i.received_at if view == 'waiting' else i.handled_at) }}</td>
+            <td data-v="{{ i.parish_code or '~' }}"{% if i.parish_name %} data-tip="{{ i.parish_name }}"{% endif %}>
+              {% if i.parish_code %}{{ i.parish_code }} {{ i.dept_name }}{% else %}<span class="late-unknown">Church unknown</span>{% endif %}
+              {% if i.period_label %}<div class="c-muted late-period">{{ i.period_label }}</div>{% endif %}
+            </td>
+            <td>
+              <div class="late-from">{{ i.sender or 'unknown sender' }}</div>
+              <div class="late-subject">{{ i.subject or '(no subject)' }}</div>
+              {% if i.pdf_url %}<button type="button" class="te-pdf" data-pdf-pop data-pdf-src="{{ i.pdf_url }}" aria-label="Open the email PDF">PDF</button>{% endif %}
+            </td>
+            <td data-v="{{ i.reason_label if view == 'waiting' else i.status_label }}">
+              {% if view == 'waiting' %}
+              <span class="late-reason late-reason-{{ i.reason }}">{{ i.reason_label }}</span>
+              {% if i.kind == 'change' %}<div class="c-muted">A change to the roster, not hours</div>{% endif %}
+              {% if i.all_repeats %}<div class="late-repeat">Looks like a repeat</div>{% endif %}
+              {% else %}
+              <span class="late-status late-status-{{ i.status }}">{{ i.status_label }}</span>
+              {% if i.target_label %}<div class="c-muted late-period">into {{ i.target_label }}</div>{% endif %}
+              {% endif %}
+            </td>
+            <td class="late-people">
+              {% for ln in i.lines %}
+              <div class="late-line">
+                <span class="late-who">{{ ln.employee }}{% if ln.employee_number %} <span class="c-muted">#{{ ln.employee_number }}</span>{% endif %}</span>
+                {% if view == 'waiting' and ln.cells %}
+                  {% for c in ln.cells %}
+                  <span class="late-cell late-cell-{{ c.state }}"
+                        {% if c.state == 'different' and c.entered is not none %}data-tip="Beacon already has {{ '%.2f'|format(c.entered) }} for this person and kind of hours"{% elif c.state == 'same' %}data-tip="Already entered, with this same figure"{% elif c.state == 'unmatched' %}data-tip="Not matched to a person on the roster, so it cannot be checked"{% endif %}>
+                    {{ c.category|capitalize }} {{ c.hours }}
+                    <em>{% if c.state == 'same' %}already entered{% elif c.state == 'different' %}Beacon has {{ '%.2f'|format(c.entered) if c.entered is not none else '?' }}{% elif c.state == 'unmatched' %}not matched{% else %}not entered{% endif %}</em>
+                  </span>
+                  {% endfor %}
+                {% elif view != 'waiting' %}
+                  {% for cat, h in (ln.hours or {}).items() %}<span class="late-cell">{{ cat|capitalize }} {{ h }}</span>{% endfor %}
+                {% else %}
+                  <span class="c-muted">no figure given</span>
+                {% endif %}
+                {% if ln.quote %}<div class="late-quote c-muted">&ldquo;{{ ln.quote }}&rdquo;</div>{% endif %}
+              </div>
+              {% else %}
+              <span class="c-muted">The reader found no people in this email.</span>
+              {% endfor %}
+            </td>
+            <td class="late-decide">
+              {% if view == 'waiting' %}
+                {% if i.needs_church %}
+                <form method="post" action="/admin/timekeeping/late/{{ i.id }}/church" class="late-pick">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                  <select name="parish_id" aria-label="Pick the church for this email" required>
+                    <option value="">Pick the church&hellip;</option>
+                    {% for p in parishes %}<option value="{{ p.id }}">{{ p.code }} {{ p.name }}</option>{% endfor %}
+                  </select>
+                  <button type="submit" class="btn btn-sm btn-primary">Pick the church</button>
+                </form>
+                {% elif i.kind == 'hours' and i.all_repeats %}
+                <form method="post" action="/admin/timekeeping/late/{{ i.id }}/dismiss-repeat"
+                      data-confirm="Dismiss this email? Every hour in it is already entered, so nothing is recorded.">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                  <button type="submit" class="btn btn-sm btn-primary">Dismiss as already entered</button>
+                </form>
+                {% elif i.kind == 'hours' %}
+                  {% if i.can_reopen %}
+                  <form method="post" action="/admin/timekeeping/late/{{ i.id }}/reopen"
+                        data-confirm="Reopen {{ i.period_label or 'the pay period' }} and record these hours (lines already entered are skipped)? The hours go in waiting for review.">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                    <button type="submit" class="btn btn-sm btn-primary"
+                            data-tip="{{ 'Takes the period off Final' if i.reason == 'period_final' else 'Reopens the period' }} and records the hours in it, waiting for review.">Reopen and record</button>
+                  </form>
+                  {% endif %}
+                  {% if i.next_period %}
+                  <form method="post" action="/admin/timekeeping/late/{{ i.id }}/carry"
+                        data-confirm="Record these hours in {{ i.next_period.label or 'the next pay period' }} instead?">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                    <button type="submit" class="btn btn-sm btn-secondary"
+                            data-tip="Records the hours in {{ i.next_period.label or 'the next pay period' }}, waiting for review.">Carry to next period</button>
+                  </form>
+                  {% endif %}
+                  {% if i.can_reopen %}
+                  <form method="post" action="/admin/timekeeping/late/{{ i.id }}/manual"
+                        data-confirm="Record these hours in {{ i.period_label or 'the pay period' }} with a note that they are paid by manual check? Mark them Manual check on the Variance report afterwards.">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                    <button type="submit" class="btn btn-sm btn-secondary"
+                            data-tip="Records the hours in the period they belong to with a note. The paid register will not have them: the Variance report shows the difference and you mark it Manual check there.">Pay by manual check</button>
+                  </form>
+                  {% endif %}
+                {% endif %}
+                {% if not i.all_repeats or i.kind != 'hours' %}
+                <form method="post" action="/admin/timekeeping/late/{{ i.id }}/dismiss"
+                      data-confirm="Dismiss this email as not hours? Nothing is recorded; it is kept in the Decided list.">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+                  <button type="submit" class="btn btn-sm btn-secondary" data-plain>Dismiss as not hours</button>
+                </form>
+                {% endif %}
+              {% else %}
+                <span class="c-muted">{{ i.handled_note or '' }}</span>
+                {% if i.handled_by_name %}<div class="c-muted late-period">{{ i.handled_by_name }}</div>{% endif %}
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr class="ff-empty"><td colspan="6">{% if view == 'waiting' %}No late emails are waiting. When payroll mail with hours arrives after the hours are Final, or the reader cannot tell the church, it will be listed here.{% else %}Nothing has been decided yet.{% endif %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="ff-foot">
+      <span class="ff-count">{{ items|length }} email{{ '' if items|length == 1 else 's' }}{% if view == 'waiting' %} waiting{% endif %}</span>
+    </div>
+  </div>
+</div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
+<script src="/static/js/email_pdf_pop.js?v={{ asset_version('js/email_pdf_pop.js') }}"></script>
+{% endblock %}

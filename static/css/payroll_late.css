@@ -1,0 +1,30 @@
+/* Late emails screen (payroll_late_screens.py, 26-158 / 26-129). Rows here hold several lines of people and hours, so they are not the
+   one-line rows of the other Time Review tables: top-aligned, free height. Hours only. */
+/* The shared frame makes every cell ONE clipped line (nowrap, overflow hidden, ellipsis) and every form in a cell inline; these rows hold
+   several lines and a stack of buttons, so those rules are undone here (loaded after fixed_frame.css; the form rule needs the extra weight). */
+.late-table td { vertical-align: top; padding-top: 7px; padding-bottom: 7px; height: auto; white-space: normal; overflow: visible; text-overflow: clip; }
+.late-table td.late-decide form { display: block; margin: 0 0 5px 0; }
+.late-row.is-repeat { background: #f6f3ec; }
+.late-unknown { color: #9c0006; font-weight: 600; }
+.late-period { font-size: 0.78rem; margin-top: 2px; }
+.late-from { font-weight: 600; word-break: break-word; }
+.late-subject { color: var(--color-muted, #6b645a); word-break: break-word; margin-bottom: 3px; }
+.late-reason { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.78rem; font-weight: 600; background: #fff3d6; border: 1px solid var(--color-gold, #c9a227); }
+.late-reason-parish_unknown { background: #fde7e7; border-color: #c97b7b; }
+.late-reason-no_period { background: #eef0f3; border-color: #9aa3ad; }
+.late-repeat { margin-top: 4px; font-size: 0.78rem; font-weight: 600; color: #1f3d2e; }
+.late-status { font-weight: 600; }
+.late-status-dismissed { color: var(--color-muted, #6b645a); }
+.late-people .late-line { margin-bottom: 6px; }
+.late-people .late-line:last-child { margin-bottom: 0; }
+.late-who { font-weight: 600; margin-right: 6px; }
+.late-cell { display: inline-block; margin: 0 6px 2px 0; padding: 1px 7px; border-radius: 4px; background: #f1ede2; font-variant-numeric: tabular-nums; }
+.late-cell em { font-style: normal; font-size: 0.74rem; margin-left: 4px; color: var(--color-muted, #6b645a); }
+.late-cell-same { background: #e7efe8; }
+.late-cell-same em { color: #1f3d2e; }
+.late-cell-different { background: #fff3d6; }
+.late-cell-different em { color: #8a5a00; font-weight: 600; }
+.late-cell-unmatched { background: #fde7e7; }
+.late-quote { font-size: 0.78rem; margin-top: 2px; word-break: break-word; }
+.late-decide .btn { white-space: normal; text-align: left; }
+.late-pick select { width: 100%; margin-bottom: 4px; }

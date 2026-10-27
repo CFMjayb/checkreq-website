@@ -32,6 +32,7 @@ import email_pdf
 import org_time
 import payroll_decisions as pdec
 import payroll_inbox_run
+import payroll_late_rules as late_rules
 import payroll_totals as pt
 import rbac
 import registry
@@ -73,6 +74,8 @@ def register(app, *, current_user, current_org, render) -> None:
     payroll_import_csv.register(app, gate=_require_hr_admin)
     import payroll_reminders  # Send reminder emails (26-158); registered here so it sits before /status/{period}/{parish}
     payroll_reminders.register(app, current_user=current_user, current_org=current_org, render=render, gate=_require_hr_admin)
+    import payroll_late_screens  # Late emails (26-158); registered here so it sits before /status/{period}/{parish}
+    payroll_late_screens.register(app, current_user=current_user, current_org=current_org, render=render, gate=_require_hr_admin)
     app.include_router(router)
 
 
@@ -308,6 +311,7 @@ def board_summary(org_id: int, period: dict, rows: list[dict] | None = None) -> 
             "final": bool(period.get("hours_finalized_at")),
             "final_at": org_time.format_local(period.get("hours_finalized_at"), org_time.zone_name_for_org(org_id))
             if period.get("hours_finalized_at") else None,
+            "late": late_rules.waiting_count(org_id),          # held emails (Late emails queue) that block "Mark hours Final"
             "reader": payroll_inbox_run.summary(org_id)}
 
 

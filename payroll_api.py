@@ -34,6 +34,7 @@ import email_pdf
 import org_features
 import payroll_closeout
 import payroll_inbox_run
+import payroll_late
 import payroll_totals as pt
 
 router = APIRouter()
@@ -274,6 +275,41 @@ def beacon_put_email_notes(request: Request, body: dict = Body(...)):
         return _pe(e)
     except (TypeError, ValueError, AttributeError):
         return _err(422, "invalid", "period_id must be a whole number and every item must be an object.")
+
+
+@router.put("/api/payroll/email-late")
+def beacon_put_email_late(request: Request, body: dict = Body(...)):
+    """ONE emailed-hours message the reader is NOT allowed to record (the period's hours are Final or it is Closed, the church cannot be
+    told, or no pay period fits yet): held in the Late emails queue for a person to decide, with the people and hours the reader found
+    (hours only, never pay). One row per message: a waiting row is replaced by a later read, a decided row is never touched."""
+    org, bad = _auth(request)
+    if bad:
+        return bad
+    try:
+        _need(body, "source_ref", "reason")
+        pid = body.get("period_id")
+        return _ok(payroll_late.put_late(
+            org["id"], source_ref=str(body["source_ref"]), reason=str(body["reason"]), kind=str(body.get("kind") or "hours"),
+            period_id=(int(pid) if pid not in (None, "") else None), parish_code=(str(body["parish_code"]) if body.get("parish_code") else None),
+            received_at=_when(body.get("received_at"), "received_at"), sender=body.get("sender"), subject=body.get("subject"),
+            lines=body.get("lines") or []))
+    except pt.PayrollError as e:
+        return _pe(e)
+    except (TypeError, ValueError, AttributeError):
+        return _err(422, "invalid", "period_id must be a whole number and lines must be a list of objects.")
+
+
+@router.post("/api/payroll/email-late/alert")
+def beacon_alert_email_late(request: Request):
+    """Sends ONE email (to the diocese's alert address) about every held email that arrived after Final and has not been alerted yet.
+    The reader calls it once at the end of a run, so a run with three late emails sends one message. No hours figures in it."""
+    org, bad = _auth(request)
+    if bad:
+        return bad
+    try:
+        return _ok(payroll_late.send_alert(org["id"]))
+    except pt.PayrollError as e:
+        return _pe(e)
 
 
 @router.post("/api/payroll/submissions/received")
