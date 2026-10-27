@@ -5,6 +5,8 @@ phoenix_api.py -- the calls the DME Phoenix payroll workbook makes to Beacon (26
     PUT  /api/payroll/phoenix/paid-hours    the paid hours (hours only) for one pay date; answers with the comparison summary
     GET  /api/payroll/phoenix/tie-out       the full comparison for the Beacon Tie-Out tab (hours only)
     POST /api/payroll/phoenix/finish-period when everything ties out: mark Final, close, Actualize, optionally open the next period
+    POST /api/payroll/phoenix/reports-filed the workbook's "File Reports to Beacon Documents" button finished: tick step 5 of the close-out
+                                            checklist (how = phoenix), the same as the "Reports Posted via Phoenix" button on Beacon's page
 
 THE HARD RULE: hours only. Nothing here reads, stores or returns a rate, salary, wage or any amount of money.
 
@@ -174,5 +176,21 @@ def phoenix_finish_period(request: Request, body: dict = Body(...)):
         period = _period(org, _date(body.get("pay_date"), "pay_date"))
         res = pc.finish_period(org["id"], period["id"], user["id"], open_next=bool(body.get("open_next")))
         return _ok({"result": res, "tie_out": _report(request, org, pt.get_period(org["id"], period["id"]))})
+    except pt.PayrollError as e:
+        return _pe(e)
+
+
+@router.post("/api/payroll/phoenix/reports-filed")
+def phoenix_reports_filed(request: Request, body: dict = Body(...)):
+    """The workbook filed the department reports into Beacon Documents: record it as step 5 of the close-out checklist, how = 'phoenix'.
+    Same rule as the button on Beacon's page (the hours must be Final or the period closed). Filing again just records the newest time."""
+    user, org, err = _identity(request)
+    if err:
+        return err
+    try:
+        period = _period(org, _date(body.get("pay_date"), "pay_date"))
+        note = str(body.get("note") or "").strip()[:200] or None
+        pc.mark_reports_filed(org["id"], period["id"], user["id"], "phoenix", note)
+        return _ok({"marked": True, "how": "phoenix"})
     except pt.PayrollError as e:
         return _pe(e)
