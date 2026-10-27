@@ -242,6 +242,11 @@
           {% if my_polls_nav is defined %}{% set _mp = my_polls_nav(user) %}{% if _mp.total %}
           <a href="/my-polls" class="user-menu-item">My Polls{% if _mp.waiting and not impersonating %} <span style="display:inline-block;background:var(--color-danger);color:#fff;border-radius:999px;font-size:0.7rem;font-weight:700;line-height:1;padding:2px 7px;margin-left:4px;">{{ _mp.waiting }}</span>{% endif %}</a>
           {% endif %}{% endif %}
+          {# 26-162 My Steps (2026-10-27): only for people who have onboarding / offboarding steps assigned to them (hr_my_steps.py; cached
+             per person, never raises; `is defined` keeps this safe wherever that module is not registered). #}
+          {% if my_steps_nav is defined %}{% set _ms = my_steps_nav(user) %}{% if _ms.total %}
+          <a href="/hr/onboarding/my-steps" class="user-menu-item">My Steps{% if not impersonating %} <span style="display:inline-block;background:var(--color-danger);color:#fff;border-radius:999px;font-size:0.7rem;font-weight:700;line-height:1;padding:2px 7px;margin-left:4px;">{{ _ms.total }}</span>{% endif %}</a>
+          {% endif %}{% endif %}
           {# 2026-10-17, Jay: Request Access left the main menu and lives here. A Parish login goes to the parish page (which also
              holds the review queue for a reviewer, with its pending count); an Entity login to the entity page. #}
           {% if user.login_type == 'parish' %}

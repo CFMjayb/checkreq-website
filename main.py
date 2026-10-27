@@ -9598,7 +9598,7 @@ hr_hub.register(app, current_user=_current_user, current_org=_current_org, rende
 parish_hr_hub.register(app, current_user=_current_user, current_org=_current_org, render=_render)
 # 26-162 Onboarding & Offboarding: the screens (gated per route on hr_lifecycle + hr_admin/benefits_admin/beacon_admin) and the
 # service API (X-API-Key from Secret Manager beacon-hr-api-keys; /api/hr/ is CSRF-exempt in csrf_guard.py).
-hr_cases.register(app, current_user=_current_user, current_org=_current_org, render=_render)
+hr_cases.register(app, current_user=_current_user, current_org=_current_org, render=_render, templates=templates)
 hr_api.register(app)
 # 26-163 Beacon Overview library: read-only pages and two read tools; all rules live in logic/overview_docs/.
 overview_docs.register(app, current_user=_current_user, current_org=_current_org, render=_render)

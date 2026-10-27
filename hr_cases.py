@@ -26,6 +26,7 @@ import cornerstone_mode
 import db
 import hr_case_setup
 import hr_documents
+import hr_my_steps
 import hr_template_editor
 import org_features
 import org_time
@@ -45,7 +46,7 @@ _current_org = None
 _render = None
 
 
-def register(app, *, current_user, current_org, render) -> None:
+def register(app, *, current_user, current_org, render, templates=None) -> None:
     global _current_user, _current_org, _render
     _current_user, _current_org, _render = current_user, current_org, render
     app.include_router(router)
@@ -55,6 +56,9 @@ def register(app, *, current_user, current_org, render) -> None:
     hr_documents.register(app, gate=_gate, allowed_org_ids=allowed_org_ids)
     # setting up one person's checklist (change / cross out / add / assign), and where "Open this case" lands (2026-10-27)
     hr_case_setup.register(app, gate=_gate, render=lambda *a, **k: _render(*a, **k), allowed_org_ids=allowed_org_ids)
+    # "My steps": the steps assigned to the signed-in person, whatever their role (needs the template engine for the user-menu entry)
+    if templates is not None:
+        hr_my_steps.register(app, templates=templates, current_user=current_user, render=lambda *a, **k: _render(*a, **k))
 
 
 # ------------------------------------------------------------------ access

@@ -1,0 +1,51 @@
+{#
+hr_my_steps.html -- 26-162 (2026-10-27): "My steps" (hr_my_steps.py). The onboarding / offboarding steps assigned to the signed-in person.
+Only rows assigned to the signed-in person are ever passed in, and each shows only what is needed to do the step: the new hire's name, the
+kind of case, the step, its dates and who assigned it. No coverage, history, documents or personal details. The Done form posts to
+/hr/onboarding/my-steps/{case}/{step}/done (the server checks the step is theirs).
+#}
+{% extends "base.html" %}
+{% block title %}My steps — Beacon{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/hr_my_steps.css?v={{ asset_version('css/hr_my_steps.css') }}">
+{% endblock %}
+{% macro dt(v) %}{{ v.strftime('%m/%d/%y') if v and v.strftime is defined else (v or '') }}{% endmacro %}
+{% block content %}
+{% set tok = csrf_token(request) %}
+{% set ST = {'late': 'Late', 'due': 'Due soon', 'open': 'Open'} %}
+<div class="page-shell hr-mysteps">
+  <h1>My steps</h1>
+  <p class="ms-intro">Steps from Onboarding and Offboarding that were assigned to you. Mark each one done when it is finished; HR can see who did it and when.</p>
+  {% if request.query_params.get('error') %}<div class="banner banner-error" role="alert">{{ request.query_params.get('error') }}</div>{% endif %}
+  {% if request.query_params.get('saved') %}<div class="banner banner-success">{{ request.query_params.get('saved') }}</div>{% endif %}
+
+  {% if not steps %}
+  <p class="ms-empty">Nothing is assigned to you right now.</p>
+  {% else %}
+  <p class="ms-count">{{ steps|length }} {{ 'step is' if steps|length == 1 else 'steps are' }} waiting on you.</p>
+  <ul class="ms-list">
+    {% for s in steps %}
+    <li class="ms-item is-{{ s.state }}" id="step-{{ s.case_id }}-{{ s.item_key }}">
+      <div class="ms-main">
+        <div class="ms-step">{{ s.label }}{% if not s.required %} <span class="ms-opt">(optional)</span>{% endif %}</div>
+        <div class="ms-meta">
+          <strong>{{ s.person }}</strong> &middot; {{ s.kind_label }} &middot; {{ s.org_code }}{% if s.unit_label %} &middot; {{ s.unit_label }}{% endif %} &middot; {{ s.case_number }}
+        </div>
+        <div class="ms-meta">
+          <b class="ms-state {{ s.state }}">{{ ST[s.state] }}</b>
+          {% if s.due_date %} &middot; due {{ dt(s.due_date) }}{% endif %}{% if s.hard_deadline_date %} &middot; <strong>firm deadline {{ dt(s.hard_deadline_date) }}</strong>{% endif %}
+          &middot; {{ s.section_label }} &middot; {{ s.owner_group }}{% if s.assigned_by_name %} &middot; assigned by {{ s.assigned_by_name }}{% endif %}
+        </div>
+        {% if s.help_text %}<div class="ms-help">{{ s.help_text }}</div>{% endif %}
+      </div>
+      <form method="post" action="/hr/onboarding/my-steps/{{ s.case_id }}/{{ s.item_key }}/done" class="ms-form">
+        <input type="hidden" name="csrf_token" value="{{ tok }}">
+        <textarea name="note" rows="2" maxlength="1000" placeholder="Note (optional)" aria-label="Note for {{ s.label }}"></textarea>
+        <button type="submit" class="btn btn-sm btn-primary">Done</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endblock %}
