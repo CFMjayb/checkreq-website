@@ -161,6 +161,7 @@ import security_headers
 import upload_guard
 import submission_guard
 import invoice_numbers
+import ap_post_failures
 import csrf_guard
 import error_log
 
@@ -7575,6 +7576,7 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
                u.email AS submitter_email,
                v.id AS existing_vendor_id, v.display_name AS vendor_display_name,
                v.w9_on_file, v.w9_requested_at, v.w9_uploaded_at, v.w9_not_required,
+               v.qbo_vendor_id AS vendor_qbo_id, vr.qbo_vendor_id AS vr_qbo_vendor_id,
                vr.entity_type AS vr_entity_type, vr.first_name AS vr_first_name,
                vr.last_name AS vr_last_name, vr.company_name AS vr_company_name,
                vr.dba_name AS vr_dba_name, vr.status AS vr_status,
@@ -7668,6 +7670,10 @@ def ap_review_list(request: Request, posted: str = "", returned: str = "",
             {"id": r["pr_id"], "org_id": r["org_id"], "vendor_id": r["vendor_id"],
              "invoice_number": r["invoice_number"]})
         r["dup_hold"] = invoice_numbers.describe(_dup) if _dup else None
+
+    # 2026-10-27 (Jay): rows whose last post failed, or whose invoice number QuickBooks already holds, get the red !,
+    # the reason on hover, and the Try again / Cancel CR buttons. See ap_post_failures.py.
+    ap_post_failures.decorate_rows(rows)
 
     # Ask My Accountant (2026-08-16): requests waiting on AP to assign GL
     # coding before the approval chain can even start -- same screen/role
@@ -8484,7 +8490,8 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
                 phone=vr.get("phone") or "", email=vr.get("contact_email") or "",
             )
             if vendor_error:
-                return False, f"vendor creation failed -- {vendor_error}"
+                # 2026-10-27 (Jay): a failed post is written to the request's history and shown on its AP Review row.
+                return ap_post_failures.failed(pr, user, impersonated_by, f"vendor creation failed -- {vendor_error}")
             qbo_vendor_id = result["vendor_id"]
             with db.connect() as conn:
                 with conn.cursor() as cur:
@@ -8498,7 +8505,8 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
             "SELECT * FROM checkreq.vendors WHERE id = %s", (pr["vendor_id"],),
         )
         if not v or not v.get("qbo_vendor_id"):
-            return False, "this vendor has no qbo_vendor_id on file -- cannot post"
+            return ap_post_failures.failed(pr, user, impersonated_by,
+                                           "this vendor has no qbo_vendor_id on file -- cannot post")
         # 2026-09-14: existing-vendor YTD W-9 hold -- re-checked here
         # server-side (never trust the UI's own disabled-button state
         # alone), matching the identical re-check pattern the new-vendor
@@ -8508,6 +8516,13 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
         if pr["existing_vendor_w9_flagged"] and not _w9_hold_cleared(pr, v):
             return False, "W-9 not yet received (year-to-date threshold)"
         qbo_vendor_id = v["qbo_vendor_id"]
+
+    # 2026-10-27 (Jay): ask QuickBooks first whether this vendor already has a Bill under this number (CR26-025 and
+    # CR26-026 were refused that way after the fact). Advisory: if QuickBooks cannot say, the post goes ahead and
+    # QuickBooks' own refusal is still the gate. See ap_post_failures.py.
+    in_qbo = ap_post_failures.refuse_if_in_quickbooks(pr, company, qbo_vendor_id, user, impersonated_by)
+    if in_qbo:
+        return False, in_qbo
 
     # Step 5/6: resolve GL lines and post the Bill.
     gl_lines = db.query(
@@ -8575,7 +8590,7 @@ def _post_one_request_to_qbo(request_number: str, user: dict, impersonated_by: i
         attachments=qbo_attachments,
     )
     if bill_error:
-        return False, f"Bill creation failed -- {bill_error}"
+        return ap_post_failures.failed(pr, user, impersonated_by, f"Bill creation failed -- {bill_error}")
 
     with db.connect() as conn:
         with conn.cursor() as cur:
@@ -9651,6 +9666,13 @@ outreach_mine.register(app, templates=templates, current_user=_current_user, ren
 
 # ── Invoice numbers (2026-10-09): AP's "this is not a duplicate" action. See invoice_numbers.py. Thin wiring only. ──
 invoice_numbers.register(
+    app, current_user=_current_user,
+    impersonated_by=lambda request: (_real_user(request)["id"] if request.session.get("impersonating_user_id") else None),
+    can_ap_edit=_can_ap_edit, request_is_editable=_request_is_editable,
+)
+
+# ── AP Review: the Cancel CR action for a request whose post failed (2026-10-27). See ap_post_failures.py. Thin wiring only. ──
+ap_post_failures.register(
     app, current_user=_current_user,
     impersonated_by=lambda request: (_real_user(request)["id"] if request.session.get("impersonating_user_id") else None),
     can_ap_edit=_can_ap_edit, request_is_editable=_request_is_editable,

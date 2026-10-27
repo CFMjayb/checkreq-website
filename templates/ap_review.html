@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}AP Review{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/ap_post_failures.css?v={{ asset_version('css/ap_post_failures.css') }}">
+{% endblock %}
 {% block content %}
 <div class="page-shell-wide">
 {% from "_guide_link.html" import guide_link %}
@@ -11,6 +14,7 @@ that writes to QuickBooks.</p>
 
 {% if posted %}<div class="banner banner-success">Posted to QBO: {{ posted }}</div>{% endif %}
 {% if returned %}<div class="banner banner-info">Returned to submitter: {{ returned }}</div>{% endif %}
+{% if request.query_params.get('cancelled') %}<div class="banner banner-info">Cancelled {{ request.query_params.get('cancelled') }}. It is kept in the request history (not deleted) and can no longer be posted.</div>{% endif %}
 {% if request.query_params.get('w9_requested') %}<div class="banner banner-success">W-9 request email sent.</div>{% endif %}
 {% if w9_confirmed %}<div class="banner banner-success">W-9 confirmed received.</div>{% endif %}
 {% if post_error %}
@@ -113,13 +117,17 @@ that writes to QuickBooks.</p>
       <th>Submitted By</th><th class="num">Amount</th><th>Status</th><th>Actions</th>
     </tr>
     {% for r in rows %}
-    <tr>
+    <tr class="{% if r.row_alert %}ap-row-failed{% endif %}">
       <td class="col-select">
-        {% if not r.vendor_gate_wait and not r.dup_hold %}
+        {% if not r.vendor_gate_wait and not r.dup_hold and not r.qbo_dup %}
         <input type="checkbox" class="batchSelectCheckbox" value="{{ r.request_number }}">
         {% endif %}
       </td>
-      <td class="nowrap"><a href="/requests/{{ r.request_number }}/ap-edit"><b>{{ r.request_number }}</b></a>
+      <td class="nowrap">
+        {# 2026-10-27 (Jay): a red ! on any row whose last QuickBooks post failed or whose invoice number is already in
+           QuickBooks; hover for the full message. #}
+        {% if r.row_alert %}<span class="ap-fail-mark" tabindex="0" role="img" title="{{ r.alert_title }}" aria-label="Problem posting to QuickBooks. {{ r.alert_title }}">!</span>{% endif %}
+        <a href="/requests/{{ r.request_number }}/ap-edit"><b>{{ r.request_number }}</b></a>
         <div class="sub">{{ r.type_abbr }}</div></td>
       <td>{{ r.org_code }}</td>
       <td>{{ r.vendor_name }}</td>
@@ -133,8 +141,16 @@ that writes to QuickBooks.</p>
         {% if r.existing_vendor_w9_flagged and r.w9_requested_at %}
         <div class="sub">W-9 requested {{ r.w9_requested_at.strftime("%Y-%m-%d") }}</div>
         {% endif %}
-        {% elif not r.dup_hold %}
+        {% elif not r.dup_hold and not r.qbo_dup and not r.post_failure %}
         <span class="badge badge-approved">Ready to post</span>
+        {% endif %}
+        {% if r.qbo_dup %}
+        {# 2026-10-27: QuickBooks already has a Bill for this vendor under this number: held, nothing is sent. #}
+        <div><span class="badge badge-rejected" title="{{ r.alert_title }}">Already in QuickBooks</span></div>
+        <div class="sub fail-text">{{ r.qbo_dup_text }}</div>
+        {% elif r.post_failure %}
+        <div><span class="badge badge-rejected" title="{{ r.alert_title }}">QuickBooks post failed</span></div>
+        <div class="sub fail-text">{{ r.post_failure.when }}: {{ r.post_failure.headline }}{% if r.post_failure.edited_since %} (Edited since.){% endif %}</div>
         {% endif %}
         {% if r.dup_hold %}
         {# 2026-10-09: same invoice number already submitted for this vendor -- held until AP acknowledges it. #}
@@ -152,8 +168,17 @@ that writes to QuickBooks.</p>
           <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
           <input type="hidden" name="dev_confirmed" value="1">
           <button type="submit" class="btn btn-primary btn-sm"
-                  {% if r.vendor_gate_wait %}disabled title="{{ r.vendor_gate_wait }}"{% elif r.dup_hold %}disabled title="Possible duplicate invoice -- acknowledge it on the Edit screen first"{% endif %}>Post to QBO</button>
+                  {% if r.vendor_gate_wait %}disabled title="{{ r.vendor_gate_wait }}"{% elif r.dup_hold %}disabled title="Possible duplicate invoice -- acknowledge it on the Edit screen first"{% elif r.qbo_dup %}disabled title="QuickBooks already has this invoice number for this vendor (see the red message). Change the invoice # on the Edit screen, or cancel the request."{% endif %}>{% if r.post_failure or r.qbo_dup %}Try QBO Post again{% else %}Post to QBO{% endif %}</button>
         </form>
+        {% if r.row_alert %}
+        {# 2026-10-27 (Jay): cancel the CR from here. Soft only: the request stays in its history. #}
+        <form method="post" action="/admin/ap-review/{{ r.request_number }}/cancel" data-prompt-reason="cancel_reason"
+              data-prompt-text="Cancel {{ r.request_number }}? It leaves AP Review and can no longer be posted (the request is kept, not deleted). Reason (required):">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+          <input type="hidden" name="cancel_reason" value="">
+          <button type="submit" class="btn btn-cancel-cr btn-sm">Cancel CR</button>
+        </form>
+        {% endif %}
         {% if r.dup_hold %}
         <a class="btn btn-primary btn-sm" href="/requests/{{ r.request_number }}/ap-edit#duplicate">Review duplicate</a>
         {% endif %}
