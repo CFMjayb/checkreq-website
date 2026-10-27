@@ -102,7 +102,7 @@
     var reason = sel.options[sel.selectedIndex].text;
     summary.textContent = current.mode === 'deactivate'
       ? 'You are asking the diocese to make ' + current.name + ' inactive as of ' + fmtDate(date) + '. Reason: ' + reason + '.' + (note ? ' Note: ' + note : '')
-        + ' If that last day is today or later, ' + current.name + ' stays on staff until it has passed.'
+        + ' If that last day is today or later, or its pay period is not closed yet, ' + current.name + ' stays on staff until the day has passed and the pay period is closed.'
       : current.mode === 'stay'
         ? 'You are asking the diocese to keep ' + current.name + ' on staff and cancel the leaving date (' + current.leaving + '). Reason: ' + reason + '.' + (note ? ' Note: ' + note : '')
         : 'You are asking the diocese to bring ' + current.name + ' back as of ' + fmtDate(date) + '. Reason: ' + reason + '.' + (note ? ' Note: ' + note : '');

@@ -12,7 +12,7 @@
 under {{ current_org.name }}.</p>
 
 {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
-{% if request.query_params.get('approved') %}{% set leaves = request.query_params.get('leaves') %}<div class="banner banner-success">{% if leaves and leaves|length <= 8 %}Termination approved. The person stays on the roster until {{ leaves }}, then becomes inactive automatically.{% else %}Change approved and applied to the roster.{% endif %}</div>{% endif %}
+{% if request.query_params.get('approved') %}{% set leaves = request.query_params.get('leaves') %}<div class="banner banner-success">{% if leaves and leaves|length <= 8 %}Termination approved. The person stays on the roster until {{ leaves }} and until the pay period that holds that day is closed, then becomes inactive automatically.{% else %}Change approved and applied to the roster.{% endif %}</div>{% endif %}
 {% if request.query_params.get('reactivated') %}<div class="banner banner-success">Reactivated. The person is back on the roster, and the hours recorded for her moved onto her record.</div>{% endif %}
 {% if request.query_params.get('rejected') %}<div class="banner banner-success">Change rejected. The parish has been notified.</div>{% endif %}
 {# Move to Onboarding (26-158 / 26-162): the case that was opened after Approve, or the one sentence saying why not #}
@@ -56,7 +56,7 @@ reason — the parish sees it and can correct and resubmit.</p>
       {% elif c.change_type in ('deactivate', 'reactivate') and (c.proposed_reason or c.as_of_date or c.proposed_note) %}
         {{ roster_reason(c) or '' }}{% if c.as_of_date %}<span class="sub"> &middot; {{ 'last day' if c.change_type == 'deactivate' else 'returns' }} {{ c.as_of_date.strftime('%m/%d/%y') }}</span>{% endif %}
         {% if c.proposed_note %}<div class="sub">{{ c.proposed_note }}</div>{% endif %}
-        {% if c.leaves_on %}<div class="sub" style="color:#7a5a00">Stays on the roster until {{ c.leaves_on.strftime('%m/%d/%y') }}, then becomes inactive automatically.</div>{% endif %}
+        {% if c.leaves_on %}<div class="sub" style="color:#7a5a00">Stays on the roster until {{ c.leaves_on.strftime('%m/%d/%y') }} and until the pay period that holds that day is closed, then becomes inactive automatically.</div>{% endif %}
       {% else %}
         &mdash;
       {% endif %}
@@ -77,7 +77,7 @@ reason — the parish sees it and can correct and resubmit.</p>
          still submits the pop-up's form with the box unticked, which is a plain approve. #}
       <button type="submit" form="onboardForm" formaction="/admin/timekeeping/review/roster-changes/{{ c.id }}/approve" class="btn btn-primary btn-sm" data-onb-open data-who="{{ c.proposed_first_name }} {{ c.proposed_last_name }}">Approve</button>
       {% else %}
-      <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/approve" style="display:inline"{% if c.existing_staff_id %} data-confirm="This person looks like someone already on the roster. Add a second person anyway?"{% elif c.leaves_on %} data-confirm="Approve this termination? The person stays on the roster until {{ c.leaves_on.strftime('%m/%d/%y') }} (their last day), then becomes inactive automatically."{% endif %}>
+      <form method="post" action="/admin/timekeeping/review/roster-changes/{{ c.id }}/approve" style="display:inline"{% if c.existing_staff_id %} data-confirm="This person looks like someone already on the roster. Add a second person anyway?"{% elif c.leaves_on %} data-confirm="Approve this termination? The person stays on the roster until {{ c.leaves_on.strftime('%m/%d/%y') }} (their last day) and until the pay period that holds that day is closed, then becomes inactive automatically."{% endif %}>
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
         <button type="submit" class="btn {% if c.existing_staff_id %}btn-secondary{% else %}btn-primary{% endif %} btn-sm">{% if c.existing_staff_id %}Add anyway{% elif c.change_type == 'reactivate' and c.proposed_reason == 'staying' %}Keep on staff{% elif c.change_type == 'reactivate' %}Reactivate{% else %}Approve{% endif %}</button>
       </form>

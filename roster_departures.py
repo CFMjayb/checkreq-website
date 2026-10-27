@@ -21,11 +21,18 @@ readers of inactive_as_of itself are the four listed in the 2026-10-27 report: p
 service API; the payroll email reader ignores it), timekeeping_employees (marks "Leaving"), timekeeping_roster_changes (writes
 it) and logic/hr_lifecycle/roster_link (the HR offboarding case closes a person at once with the separation date).
 
+THE PAY-PERIOD RULE (Jay, 2026-10-27: "wait until the pay period closes"). A person with a last day stays on -- still active, still
+getting hours -- until the last day has PASSED and the pay period that CONTAINS the last day is CLOSED (portal.payroll_periods.status
+= 'closed'; 'open' and 'future', and any other value, wait). Hours for that last pay period can still come in until then. A last
+day that no pay period holds (an entity without pay periods, or a date outside them) is judged by the day alone, as it always was.
+keep_until() is the one place that decides this: the Roster Review approval, the HR offboarding case and the sweep all ask it.
+
 THE SWITCH-OFF. apply_due_departures() is idempotent and cheap (one small SELECT when nobody is leaving). It is called lazily at
 the top of the roster-reading paths (see the call sites in the report; there is no scheduled job, and a scheduler could call it
-later). It switches off a person whose last day has passed (last day < today in the diocese's zone) and writes the same APPROVED
-history row the other doors write (portal.staff_roster_changes, change_type 'deactivate', as_of = the last day, no creator: the
-system did it), so the roster keeps one dated history.
+later). It switches off a person whose last day has passed (last day < today in the diocese's zone) and whose pay period is
+closed. It writes NO history row of its own: the approved 'deactivate' row of the request (or HR case) that set the date is already
+the dated history, and a second row made the parish's Proposed changes list show one termination twice (Jay, 2026-10-27: "show as
+one").
 
 SAFETY GUARD. A person is switched off only when the staff row's date is backed by an approved 'deactivate' history row with the
 same date. That protects an active person who happens to carry a stale inactive_as_of from an older script (none on dev; the
@@ -45,9 +52,6 @@ from zoneinfo import ZoneInfo
 
 import db
 import org_time
-
-# The note on the history row the switch-off writes (also how the screens recognise it).
-AUTO_NOTE = "The last day has passed: the person was switched to inactive automatically (the termination was approved earlier)."
 
 
 def fmt(d) -> str:
@@ -74,13 +78,32 @@ def is_leaving(staff: dict | None) -> bool:
     return bool(staff) and bool(staff.get("is_active")) and staff.get("inactive_as_of") is not None
 
 
-def leaves_later(as_of, today: dt.date) -> dt.date | None:
-    """The last day when it is today or later (so approving it keeps the person on the roster until then), else None."""
+def period_not_closed(org_id: int | None, last_day) -> bool:
+    """True when a pay period of this entity CONTAINS the last day and is not closed yet (status open, future or anything but
+    'closed': the safe direction, the person simply waits). False when no pay period holds that day."""
+    if org_id is None or last_day is None:
+        return False
+    if isinstance(last_day, dt.datetime):
+        last_day = last_day.date()
+    row = db.query_one(
+        "SELECT bool_or(status <> 'closed') AS waiting FROM portal.payroll_periods "
+        "WHERE org_id = %s AND period_start <= %s AND period_end >= %s", (org_id, last_day, last_day))
+    return bool(row and row["waiting"])
+
+
+def keep_until(org_id: int | None, as_of, today: dt.date | None = None) -> dt.date | None:
+    """The last day when the person must STAY on the roster ("leaving"), else None (switch them off at once, as before).
+    Stay when the last day is today or later (the diocese's own today), or when it has passed but the pay period that holds it is
+    not closed yet. today overrides the clock (tests)."""
     if as_of is None:
         return None
     if isinstance(as_of, dt.datetime):
         as_of = as_of.date()
-    return as_of if as_of >= today else None
+    if today is None:
+        today = today_for_org(org_id)
+    if as_of >= today:
+        return as_of
+    return as_of if period_not_closed(org_id, as_of) else None
 
 
 def apply_due_departures(org_id: int | None = None, *, parish_id: int | None = None, today: dt.date | None = None) -> int:
@@ -119,25 +142,20 @@ def _sweep(org_id, parish_id, today) -> int:
             day = cutoff[r["org_id"]]
         if r["inactive_as_of"] >= day:
             continue                                    # the last day is today or later: still working
+        if period_not_closed(r["org_id"], r["inactive_as_of"]):
+            continue                                    # the pay period that holds the last day is not closed: hours may still come in
         with db.connect() as conn:
             with conn.cursor() as cur:
-                # the guard in the module docstring, and the conditions again so two requests at once switch off once
+                # the guard in the module docstring, and the conditions again so two requests at once switch off once. No history
+                # row is written: the approved request (or HR case) that set the date is the history.
                 cur.execute(
                     "UPDATE portal.staff_roster s SET is_active = FALSE, updated_at = now() "
                     "WHERE s.id = %s AND s.is_active AND s.inactive_as_of IS NOT NULL AND s.inactive_as_of < %s "
                     "AND EXISTS (SELECT 1 FROM portal.staff_roster_changes c WHERE c.staff_id = s.id "
                     "            AND c.change_type = 'deactivate' AND c.status = 'approved' AND c.as_of_date = s.inactive_as_of) "
-                    "RETURNING s.parish_id, s.first_name, s.last_name, s.position, s.employee_number, s.captures_hours",
+                    "RETURNING s.id",
                     (r["id"], day))
-                s = cur.fetchone()
-                if s:
-                    cur.execute(
-                        "INSERT INTO portal.staff_roster_changes "
-                        "(parish_id, staff_id, change_type, proposed_first_name, proposed_last_name, proposed_position, "
-                        " proposed_employee_number, proposed_captures_hours, as_of_date, status, reviewed_at, review_note) "
-                        "VALUES (%s, %s, 'deactivate', %s, %s, %s, %s, %s, %s, 'approved', now(), %s)",
-                        (s["parish_id"], r["id"], s["first_name"], s["last_name"], s["position"], s["employee_number"],
-                         s["captures_hours"], r["inactive_as_of"], AUTO_NOTE))
+                if cur.fetchone():
                     switched += 1
     return switched
 

@@ -3,7 +3,8 @@ roster_link.py -- completing a case updates Beacon's employee roster (portal.sta
 
   completed onboarding (types 1-2) with an employing unit and no roster row yet -> add the person to the roster under
       that unit ("Diocesan Office" for EDOM, "Claggett Center" for Claggett), effective the hire date;
-  completed offboarding -> inactivate the person's roster row as of the last day;
+  completed offboarding -> inactivate the person's roster row as of the last day, or, when that day is still ahead or its pay
+      period is not closed yet, keep them on as "leaving" until then (roster_departures.keep_until);
   parish benefits cases (type 3) -> never touch the roster: those people are the parish's employees, not the diocese's.
 
 Every change also writes an APPROVED portal.staff_roster_changes row (source_ref 'hr_case:<id>'), the same shape the
@@ -76,9 +77,20 @@ def on_complete(cur, case: dict, actor_id: int) -> str:
             return "roster not changed: the roster row is not in this entity"
         if not row["is_active"]:
             return "already inactive on the roster"
-        cur.execute("UPDATE portal.staff_roster SET is_active = FALSE, inactive_as_of = %s, updated_at = now() WHERE id = %s",
-                    (case.get("separation_date"), staff_id))
+        # Jay, 2026-10-27: a separation date still ahead (or in a pay period not closed yet) keeps the person on until then, exactly
+        # like an approved Roster Review termination; roster_departures switches them off later, and the approved history row below
+        # is what lets that sweep act. (Imported here, not at the top: that module needs only db and org_time.)
+        import roster_departures
+        stays_until = roster_departures.keep_until(case["org_id"], case.get("separation_date"))
+        if stays_until is not None:
+            cur.execute("UPDATE portal.staff_roster SET inactive_as_of = %s, updated_at = now() WHERE id = %s", (stays_until, staff_id))
+        else:
+            cur.execute("UPDATE portal.staff_roster SET is_active = FALSE, inactive_as_of = %s, updated_at = now() WHERE id = %s",
+                        (case.get("separation_date"), staff_id))
         _log(cur, parish_id=row["parish_id"], staff_id=staff_id, change_type="deactivate",
              as_of=case.get("separation_date"), actor_id=actor_id, case=case)
+        if stays_until is not None:
+            return (f"stays on the roster until {stays_until.strftime('%m/%d/%y')} and until its pay period is closed, "
+                    "then inactivated automatically")
         return "inactivated on the roster"
     return "roster not used for parish benefits cases"

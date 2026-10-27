@@ -268,8 +268,9 @@ def list_pending_review_for_org(org_id: int) -> list[dict]:
     # inactive, instead of approving a duplicate).
     today = roster_departures.today_for_org(org_id)
     for r in rows:
-        # 26-158: approving a termination whose last day is today or later keeps the person on the roster until then (the screen says so)
-        r["leaves_on"] = (roster_departures.leaves_later(r["as_of_date"], today)
+        # 26-158: approving a termination whose last day is today or later, or whose pay period is not closed yet, keeps the person on
+        # the roster until then (the screen says so)
+        r["leaves_on"] = (roster_departures.keep_until(org_id, r["as_of_date"], today)
                           if r["change_type"] == "deactivate" and r["current_active"] else None)
         ex = existing_staff_for_add(r)
         r["existing_staff_id"] = ex["id"] if ex else None
@@ -332,16 +333,16 @@ _UNSET = object()
 
 
 def leaving_date_for(change: dict):
-    """26-158: for a DEACTIVATE whose last day is today or later (the diocese's own today) and whose person is still active,
-    that last day: approving it keeps the person on the roster until then (roster_departures.py). Otherwise None: it takes
-    effect at once, exactly as before."""
+    """26-158: for a DEACTIVATE whose last day is today or later (the diocese's own today), or has passed but sits in a pay period
+    that is not closed yet, and whose person is still active, that last day: approving it keeps the person on the roster until
+    then (roster_departures.keep_until). Otherwise None: it takes effect at once, exactly as before."""
     if change.get("change_type") != "deactivate" or not change.get("staff_id"):
         return None
     st = db.query_one("SELECT s.is_active, p.org_id FROM portal.staff_roster s JOIN portal.parishes p ON p.id = s.parish_id "
                       "WHERE s.id = %s AND s.parish_id = %s", (change["staff_id"], change["parish_id"]))
     if not st or not st["is_active"]:
         return None
-    return roster_departures.leaves_later(change.get("as_of_date"), roster_departures.today_for_org(st["org_id"]))
+    return roster_departures.keep_until(st["org_id"], change.get("as_of_date"))
 
 
 def _apply_change(change: dict, leaves_on=_UNSET) -> int | None:
@@ -509,7 +510,8 @@ def _notify_outcome(change: dict, approved: bool, review_note: str | None, leave
     if approved:
         message = f"{label} ({name}) for {parish_name} was approved."
         if leaves_on is not None:
-            message += f" {name} stays on the roster until {roster_departures.fmt(leaves_on)}, then becomes inactive automatically."
+            message += (f" {name} stays on the roster until {roster_departures.fmt(leaves_on)} and until the pay period that holds "
+                        "that day is closed, then becomes inactive automatically.")
     else:
         reason = f" Reason: {review_note}" if review_note else ""
         message = f"{label} ({name}) for {parish_name} was rejected.{reason}"
