@@ -44,7 +44,9 @@ allowlist, app_users (via _complete_login, below) remains the only real gate.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import secrets as pysecrets
 import time
 from urllib.parse import quote
@@ -127,23 +129,29 @@ def _branding_for_host(host: str) -> dict | None:
     return {"org_id": row["org_id"], "org_name": row["org_name"], "has_logo": bool(row["logo_gcs_path"])}
 
 
-def _sso_hostname_provider(host: str) -> str | None:
-    """Which OAuth provider THIS branded hostname belongs to, if any --
-    used only to decide whether Azure/Google must redirect back to this
+def _is_branded_host(host: str) -> bool:
+    """True when THIS hostname is an active row of checkreq.sso_auto_hostnames
+    -- used only to decide whether Azure/Google must redirect back to this
     exact hostname (vs the default per-environment callback URL), for
     whichever provider's flow a visitor ends up in (auto-skipped or by
-    manually clicking a button). A pure hostname->domain->provider lookup,
-    with no email/cookie involved -- see _sso_auto_login_target() below for
+    manually clicking a button). A pure hostname lookup, with no
+    email/cookie/provider involved -- see _sso_auto_login_target() below for
     the separate (much narrower) "should we skip the email-entry screen"
-    decision."""
+    decision.
+
+    2026-10-28: this replaced _sso_hostname_provider(), which also answered
+    WHICH provider the host's own domain routes to and let the redirect
+    helpers use the host-specific callback only for that provider. That was
+    the cause of "Login state mismatch" for anyone using the OTHER provider
+    on a branded host -- see _microsoft_redirect_uri()."""
     if not host:
-        return None
+        return False
     row = db.query_one(
-        "SELECT expected_email_domain FROM checkreq.sso_auto_hostnames "
+        "SELECT 1 AS present FROM checkreq.sso_auto_hostnames "
         "WHERE hostname = %s AND is_active",
         (host,),
     )
-    return _provider_for_domain(row["expected_email_domain"]) if row else None
+    return row is not None
 
 
 def _sso_auto_login_target(request: Request) -> tuple[str, str] | None:
@@ -199,9 +207,24 @@ def _microsoft_redirect_uri(request: Request) -> str:
     registered as a redirect URI on the same Azure AD app registration
     (client id a7f89cbd-0d41-457d-a090-ee367fda4f65, tenant cfmins.org) --
     additive, Jay can do this himself since it's Cornerstone's own app
-    registration."""
+    registration.
+
+    2026-10-28 (Jay: a Microsoft sign-in for jay@cfmins.org on
+    beacon.episcopalmaine.org ended on "Login state mismatch"): the
+    host-specific callback used to be chosen only when the host's OWN domain
+    routed to THIS provider. Maine's host is a Google host, so a Microsoft
+    sign-in there went back to the default host (beacon.cfmins.org), where
+    the state cookie set on beacon.episcopalmaine.org does not exist -- a
+    cookie never crosses hosts. The rule is now: ANY active branded host
+    gets its own callback for BOTH providers, so the whole round trip, and
+    the session it ends in, stays on the address the person started at.
+    That means EVERY row of checkreq.sso_auto_hostnames needs
+    https://{host}/auth/callback on Azure AND
+    https://{host}/auth/google/callback on the Google client. Check with
+    Tools\\check_oauth_redirects.py before adding a hostname or releasing a
+    change to this rule."""
     host = _request_host(request)
-    if host and _sso_hostname_provider(host) == "microsoft":
+    if host and _is_branded_host(host):
         return f"https://{host}/auth/callback"
     return REDIRECT_URI
 
@@ -210,16 +233,133 @@ def _google_redirect_uri(request: Request) -> str:
     """Google's exact equivalent of _microsoft_redirect_uri above -- same
     reasoning, same requirement (https://{host}/auth/google/callback must be
     an authorized redirect URI on the Google OAuth 2.0 Client, project
-    cfm-qbo-mcp)."""
+    cfm-qbo-mcp), and the same 2026-10-28 rule: every active branded host
+    uses its own callback for both providers."""
     host = _request_host(request)
-    if host and _sso_hostname_provider(host) == "google":
+    if host and _is_branded_host(host):
         return f"https://{host}/auth/google/callback"
     return GOOGLE_REDIRECT_URI
 
-_NOT_REGISTERED_MESSAGE = (
-    "This email address isn't set up in Beacon yet. Contact your "
-    "administrator to be added, then try signing in again."
+# Sign-in failure messages (2026-10-28, Jay: "clean up some of the error
+# messages people sometimes receive ... a warning that is actually
+# actionable"). Every failure a person can land on after a sign-in attempt
+# says what happened in plain words and what to do next. Raw provider text
+# (error codes, AADSTS prose, table names) is never shown AS the message; a
+# short reference code is, so support can still be given something to look
+# up. What reaches the log is that same code and a few flags -- never an
+# email, name, token or error prose.
+_PROVIDER_LABELS = {"microsoft": "Microsoft", "google": "Google"}
+
+_STATE_MISMATCH_MESSAGE = (
+    "Your sign-in didn't finish: it timed out, or it was started in a "
+    "different browser tab or window. Choose a sign-in option below and "
+    "finish it in the same tab. If this keeps happening, make sure your "
+    "browser allows cookies for this site."
 )
+
+_NO_EMAIL_MESSAGE = (
+    "{provider} signed you in but didn't share an email address with Beacon, "
+    "so we can't tell who you are. Please contact your administrator."
+)
+
+
+def _not_registered_message(email: str) -> str:
+    """Names the address that was actually used: the commonest reason for
+    this screen is someone signing in with the wrong one of their accounts."""
+    return (
+        f"{email} isn't set up in Beacon yet. If you have another account, "
+        "choose a sign-in option below to use that one; otherwise contact "
+        "your administrator to be added."
+    )
+
+
+def _deactivated_message(email: str) -> str:
+    return (
+        f"The Beacon account for {email} has been deactivated. Contact your "
+        "administrator if you think this is a mistake."
+    )
+
+
+_AADSTS_RE = re.compile(r"AADSTS(\d{3,7})")
+
+# The keys (the OAuth error code, or Microsoft's AADSTS number) that
+# _provider_failure_message() chooses its wording from.
+_ERR_CANCELLED = {"access_denied", "AADSTS65004"}
+_ERR_NEEDS_APPROVAL = {"AADSTS65001", "AADSTS90094", "consent_required"}
+_ERR_USED_OR_EXPIRED = {"AADSTS54005", "AADSTS70008", "invalid_grant"}
+_ERR_POLICY_BLOCK = {"AADSTS53003", "AADSTS530003"}
+_ERR_TEMPORARY = {"temporarily_unavailable", "server_error"}
+
+
+def _error_reference(code: str, description: str = "") -> str:
+    """A short code that is safe to show and to log: Microsoft's AADSTS
+    number if the text has one, else the provider's own error code with
+    anything but letters, digits and _.- removed (the callback's query
+    string is attacker-controlled, so nothing else is ever echoed)."""
+    m = _AADSTS_RE.search(description or "")
+    if m:
+        return "AADSTS" + m.group(1)
+    return re.sub(r"[^A-Za-z0-9_.-]", "", code or "")[:40] or "unknown"
+
+
+def _provider_failure_message(provider: str, code: str, description: str = "") -> str:
+    label = _PROVIDER_LABELS.get(provider, "Your sign-in provider")
+    ref = _error_reference(code, description)
+    keys = {ref, (code or "").strip()}
+    if "invalid_grant" in (description or ""):
+        keys.add("invalid_grant")
+    if keys & _ERR_NEEDS_APPROVAL:
+        return (
+            f"Your organization has to approve Beacon in {label} before you can sign in this "
+            "way. Ask your IT administrator, or choose another sign-in option below."
+        )
+    if keys & _ERR_POLICY_BLOCK:
+        return (
+            "Your organization's security rules blocked this sign-in (for example, it may need a "
+            "managed device or a trusted location). Contact your IT administrator."
+        )
+    if keys & _ERR_USED_OR_EXPIRED:
+        return "That sign-in link was already used or has expired. Choose a sign-in option below to start again."
+    if keys & _ERR_CANCELLED:
+        return f"Sign-in with {label} was cancelled before it finished. Choose a sign-in option below to try again."
+    if keys & _ERR_TEMPORARY:
+        return f"{label} had a temporary problem. Please wait a minute and try again."
+    if "google_email_not_verified" in keys:
+        return (
+            "Google says the email address on this account hasn't been verified, so Beacon can't use it "
+            "to sign you in. Verify the address with Google, or sign in another way."
+        )
+    return (
+        f"{label} couldn't complete the sign-in. Please try again. If it keeps happening, contact your "
+        f"administrator and give them this reference: {ref}."
+    )
+
+
+def _log_login_event(event: str, **fields) -> None:
+    """One structured line to stdout (Cloud Run logging): codes and flags only."""
+    try:
+        print(json.dumps({"severity": "WARNING", "event": event, **fields}, default=str), flush=True)
+    except Exception:  # noqa: BLE001 -- logging must never break a sign-in page
+        pass
+
+
+def _provider_failure(request: Request, provider: str, code: str, description: str = "") -> str:
+    """The message for a provider-side failure, with the code logged."""
+    _log_login_event("login_provider_error", provider=provider, ref=_error_reference(code, description),
+                     host=_request_host(request))
+    return _provider_failure_message(provider, code, description)
+
+
+def _state_mismatch(request: Request, provider: str, state: str, expected_state: str | None) -> str:
+    """The message for a callback whose state does not match the cookie. The
+    log line says WHICH kind of mismatch (no cookie at all = expired, another
+    browser, another host or blocked cookies; a cookie that differs = another
+    tab started a newer attempt), the one thing that was missing when this
+    was first reported."""
+    _log_login_event("login_state_mismatch", provider=provider, host=_request_host(request),
+                     state_present=bool(state), cookie_present=bool(expected_state))
+    return _STATE_MISMATCH_MESSAGE
+
 
 _INCORRECT_CREDENTIALS_MESSAGE = "Incorrect email or password."
 
@@ -491,16 +631,17 @@ def create_router(templates) -> APIRouter:
     @router.get("/auth/callback", response_class=HTMLResponse)
     def auth_callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = ""):
         if error:
-            return templates.TemplateResponse(request, "login.html", {"error": f"{error}: {error_description}"})
+            return templates.TemplateResponse(request, "login.html", {"error": _provider_failure(request, "microsoft", error, error_description)})
 
         expected_state = request.cookies.get(_OAUTH_STATE_COOKIE)
         if not state or state != expected_state:
-            return templates.TemplateResponse(request, "login.html", {"error": "Login state mismatch — please try signing in again."})
+            return templates.TemplateResponse(request, "login.html", {"error": _state_mismatch(request, "microsoft", state, expected_state)})
 
         try:
             result = auth_azure.acquire_token(code, _microsoft_redirect_uri(request))
         except ValueError as exc:
-            return templates.TemplateResponse(request, "login.html", {"error": str(exc)})
+            err_code, _, err_description = str(exc).partition(": ")
+            return templates.TemplateResponse(request, "login.html", {"error": _provider_failure(request, "microsoft", err_code, err_description)})
 
         claims = result.get("id_token_claims", {})
         email = (claims.get("preferred_username") or claims.get("email") or "").strip().lower()
@@ -508,13 +649,13 @@ def create_router(templates) -> APIRouter:
         oid = claims.get("oid", "")
 
         if not email:
-            return templates.TemplateResponse(request, "login.html", {"error": "Microsoft did not return an email/UPN claim — cannot identify user."})
+            return templates.TemplateResponse(request, "login.html", {"error": _NO_EMAIL_MESSAGE.format(provider="Microsoft")})
 
         user_id, reject_reason = _complete_login(request, email, display_name, "microsoft", oid)
         if reject_reason == "not_registered":
-            return templates.TemplateResponse(request, "login.html", {"error": _NOT_REGISTERED_MESSAGE})
+            return templates.TemplateResponse(request, "login.html", {"error": _not_registered_message(email)})
         if reject_reason == "deactivated":
-            return templates.TemplateResponse(request, "login.html", {"error": f"{email} is deactivated in checkreq.app_users — contact an admin."})
+            return templates.TemplateResponse(request, "login.html", {"error": _deactivated_message(email)})
 
         resp = RedirectResponse("/portal", status_code=303)
         resp.delete_cookie(_OAUTH_STATE_COOKIE)
@@ -533,33 +674,35 @@ def create_router(templates) -> APIRouter:
     @router.get("/auth/google/callback", response_class=HTMLResponse)
     def auth_google_callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = ""):
         if error:
-            return templates.TemplateResponse(request, "login.html", {"error": f"{error}: {error_description}"})
+            return templates.TemplateResponse(request, "login.html", {"error": _provider_failure(request, "google", error, error_description)})
 
         expected_state = request.cookies.get(_OAUTH_STATE_COOKIE)
         if not state or state != expected_state:
-            return templates.TemplateResponse(request, "login.html", {"error": "Login state mismatch — please try signing in again."})
+            return templates.TemplateResponse(request, "login.html", {"error": _state_mismatch(request, "google", state, expected_state)})
 
         code_verifier = request.cookies.get(_OAUTH_PKCE_COOKIE)
         if not code_verifier:
-            return templates.TemplateResponse(request, "login.html", {"error": "Login state mismatch — please try signing in again."})
+            _log_login_event("login_pkce_missing", provider="google", host=_request_host(request))
+            return templates.TemplateResponse(request, "login.html", {"error": _STATE_MISMATCH_MESSAGE})
 
         try:
             claims = auth_google.acquire_token(code, _google_redirect_uri(request), state, code_verifier)
         except ValueError as exc:
-            return templates.TemplateResponse(request, "login.html", {"error": str(exc)})
+            err_code, _, err_description = str(exc).partition(": ")
+            return templates.TemplateResponse(request, "login.html", {"error": _provider_failure(request, "google", err_code, err_description)})
 
         email = claims.get("email", "")
         display_name = claims.get("name", "")
         sub = claims.get("sub", "")
 
         if not email:
-            return templates.TemplateResponse(request, "login.html", {"error": "Google did not return an email claim — cannot identify user."})
+            return templates.TemplateResponse(request, "login.html", {"error": _NO_EMAIL_MESSAGE.format(provider="Google")})
 
         user_id, reject_reason = _complete_login(request, email, display_name, "google", sub)
         if reject_reason == "not_registered":
-            return templates.TemplateResponse(request, "login.html", {"error": _NOT_REGISTERED_MESSAGE})
+            return templates.TemplateResponse(request, "login.html", {"error": _not_registered_message(email)})
         if reject_reason == "deactivated":
-            return templates.TemplateResponse(request, "login.html", {"error": f"{email} is deactivated in checkreq.app_users — contact an admin."})
+            return templates.TemplateResponse(request, "login.html", {"error": _deactivated_message(email)})
 
         resp = RedirectResponse("/portal", status_code=303)
         resp.delete_cookie(_OAUTH_STATE_COOKIE)
@@ -596,9 +739,9 @@ def create_router(templates) -> APIRouter:
         row = db.query_one("SELECT display_name FROM checkreq.app_users WHERE email = %s", (email,))
         user_id, reject_reason = _complete_login(request, email, row["display_name"] if row else "", "password", "")
         if reject_reason == "not_registered":
-            return templates.TemplateResponse(request, "login.html", {"error": _NOT_REGISTERED_MESSAGE})
+            return templates.TemplateResponse(request, "login.html", {"error": _not_registered_message(email)})
         if reject_reason == "deactivated":
-            return templates.TemplateResponse(request, "login.html", {"error": f"{email} is deactivated in checkreq.app_users — contact an admin."})
+            return templates.TemplateResponse(request, "login.html", {"error": _deactivated_message(email)})
 
         resp = RedirectResponse("/portal", status_code=303)
         _remember_email(resp, email)
@@ -630,9 +773,9 @@ def create_router(templates) -> APIRouter:
         row = db.query_one("SELECT display_name FROM checkreq.app_users WHERE email = %s", (email,))
         user_id, reject_reason = _complete_login(request, email, row["display_name"] if row else "", "code", "")
         if reject_reason == "not_registered":
-            return templates.TemplateResponse(request, "login.html", {"error": _NOT_REGISTERED_MESSAGE})
+            return templates.TemplateResponse(request, "login.html", {"error": _not_registered_message(email)})
         if reject_reason == "deactivated":
-            return templates.TemplateResponse(request, "login.html", {"error": f"{email} is deactivated in checkreq.app_users — contact an admin."})
+            return templates.TemplateResponse(request, "login.html", {"error": _deactivated_message(email)})
 
         resp = RedirectResponse("/portal", status_code=303)
         _remember_email(resp, email)
