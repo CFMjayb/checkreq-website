@@ -1,0 +1,25 @@
+/* admin_users_frames.css -- the User Management list screen on the shared fixed frame (26-129, 2026-10-30; Jay: lock the
+   titles, scroll only the rows, show the number of users, like the other screens).
+
+   Sits inside .ff-shell (static/css/fixed_frame.css: the title row at the top, the shell fitted to the window by
+   static/js/fixed_frame.js). The screen has TWO lists, so instead of one .ff-frame it holds two .uf-section blocks, each
+   with a locked head (title + count) and its own scrolling body. A section is as tall as its rows up to its half of the
+   room; when both are long they share it equally and each scrolls on its own, and a short one hands its spare room over. The sticky column headers and the click-to-reveal
+   pop-ups come from scroll_panel.css and admin_users.js, as before (the body keeps the .scroll-panel class for that). */
+
+.uf-section {
+  /* equal share of the room, but never taller than its own rows: a short list leaves the rest to the other one */
+  flex: 1 1 0; min-height: 96px; max-height: max-content; display: flex; flex-direction: column;
+  border: 1px solid var(--color-border, #ddd4c0); border-radius: 6px; background: #fff; overflow: hidden;
+}
+.uf-head {
+  flex: 0 0 auto; display: flex; align-items: baseline; gap: 10px; padding: 6px 10px;
+  background: #f7f3ea; border-bottom: 1px solid var(--color-border, #ddd4c0);
+}
+.uf-head h2 { margin: 0; font-size: 1.05rem; line-height: 1.3; }
+.uf-count { font-size: 0.9rem; font-weight: 400; color: var(--color-muted, #6b645a); white-space: nowrap; }
+.uf-note { flex: 0 0 auto; margin: 0; padding: 8px 10px; }
+
+/* Beats scroll_panel.css's own .scroll-panel (max-height: 100vh - 300px, min-height: 220px): here the section sets the height. */
+.uf-scroll.scroll-panel { flex: 1 1 auto; min-height: 0; max-height: none; overflow: auto; }
+.uf-scroll table { margin: 0; }
