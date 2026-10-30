@@ -332,6 +332,10 @@ def cfm_items(request: Request):
     org = _current_org(request)
     if not org or not is_cornerstone_org(org["id"]):
         return RedirectResponse("/portal")
+    # 2026-10-30: Cornerstone staff or a Beacon Admin at this client only (the tile's gate, and the write routes' own rule). A church's
+    # own people, promoted to entity logins here, have no business in the CFM Items screen.
+    if not rbac.user_has_any_role(user["id"], ["cornerstone_employee", "beacon_admin"], org_id=org["id"]):
+        return RedirectResponse("/portal")
     company = _fund_mask_company_code(org)
     masks = get_fund_account_masks(company)
     return _render(request, "cfm_items.html", user, {"fund_masks": masks, "fund_mask_company": company})
