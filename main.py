@@ -619,7 +619,10 @@ CORNERSTONE_ONLY_MODULES = [
     # served client's own context, same reasoning as the two tiles above.
     {"key": "cfm_items", "title": "CFM Items",
      "desc": "Cornerstone-specific tools for this client (more coming soon).",
-     "url": "/admin/cfm-items", "enabled": True, "gate": None},
+     "url": "/admin/cfm-items", "enabled": True, "gate": "cfm_staff"},
+    # 2026-10-30: "cfm_staff" is a synthetic gate (set in _render): Cornerstone staff or a Beacon Admin at this client. The tile used to
+    # show to anyone inside a served client's context, which was only ever Cornerstone staff until a church's own people became
+    # entity logins there (the promoted parish logins). Same two roles cornerstone_mode._fund_mask_write_denied already uses.
 ]
 
 
@@ -834,6 +837,8 @@ def _render(request: Request, template: str, user: dict, extra: dict | None = No
     # before /portal ever renders.
     # 2026-10-17: the two Request Access TILES are gone (Request Access is now an item in the user menu, base.html, chosen by
     # user.login_type), so nothing on the portal grid reads these two pseudo-roles any more; kept because they are harmless.
+    if entity_roles & {"cornerstone_employee", "beacon_admin"}:
+        entity_roles = entity_roles | {"cfm_staff"}      # gate of the CFM Items tile (see CORNERSTONE_ONLY_MODULES)
     if user.get("login_type") == "entity":
         entity_roles = entity_roles | {"is_entity_login"}
     elif user.get("login_type") == "parish":
@@ -1109,10 +1114,21 @@ def _accessible_diocese_orgs(user_id: int) -> list[dict]:
     _user_has_org_access() alone can't tell it apart from a diocese), but
     it's meant to be reached ONLY through the Cornerstone Mode picker, never
     the plain entity switcher -- otherwise the two pickers show overlapping,
-    indistinguishable lists (EDOM/Claggett next to a dozen parish codes)."""
-    return [o for o in db.query(
+    indistinguishable lists (EDOM/Claggett next to a dozen parish codes).
+
+    2026-10-30 (Parish to Entity Promotion plan, Jay): ONE exception. A login whose only entities are Cornerstone-served churches and
+    who is not Cornerstone staff (cornerstone_employee) -- a parish login promoted to an entity login at its own church, e.g. St Johns
+    (SJE) -- would otherwise have NO entity to pick and no way to the Cornerstone Mode picker (which lists only cornerstone_employee
+    grants): it landed on "Select an Entity" with nothing in it. For that login the list is its served churches, so /portal can take
+    it straight to its own church (one church) or list them (several). Anyone with a diocese, and every Cornerstone employee, gets
+    exactly the list they always did."""
+    reachable = [o for o in db.query(
         "SELECT id, code, name FROM checkreq.organizations WHERE is_active ORDER BY name"
-    ) if _user_has_org_access(user_id, o["id"]) and not cornerstone_mode.is_cornerstone_org(o["id"])]
+    ) if _user_has_org_access(user_id, o["id"])]
+    dioceses = [o for o in reachable if not cornerstone_mode.is_cornerstone_org(o["id"])]
+    if dioceses or rbac.user_has_role(user_id, "cornerstone_employee", org_id=None):
+        return dioceses
+    return reachable
 
 
 def _select_entity_core(request: Request, org_id: int) -> bool:
