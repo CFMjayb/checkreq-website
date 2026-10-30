@@ -69,16 +69,19 @@ already 609 lines) -- see feedback_modular_file_organization.md.
 """
 from __future__ import annotations
 
+from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import db
+import login_promotion
 import notifications
 import rbac
 import parish_roles
 import registry
+import user_screen_scope
 
 router = APIRouter()
 
@@ -198,7 +201,7 @@ def _user_list_rows() -> list[dict]:
     # Every program-area assignment for every user, one query.
     all_pa_rows = db.query(
         """
-        SELECT upa.user_id, pa.title AS program_area_title, o.code AS org_code
+        SELECT upa.user_id, pa.title AS program_area_title, pa.org_id AS org_id, o.code AS org_code
           FROM checkreq.user_program_areas upa
           JOIN checkreq.program_areas pa ON pa.id = upa.program_area_id
           JOIN checkreq.organizations o ON o.id = pa.org_id
@@ -287,29 +290,42 @@ def users_list_page(request: Request):
     _user_list_rows' batched query -- no extra DB round trip needed).
     Falls back to an empty list (not an error) when no entity is currently
     selected; the template tells the admin to pick one rather than showing
-    a silently-empty table with no explanation."""
+    a silently-empty table with no explanation.
+
+    2026-10-30 (Jay, Parish to Entity Promotion and User Screens Plan.md,
+    Step A): the "Diocesan-Related Logins" list is now "Entity-Related
+    Logins" and shows each person's roles and Program Areas AT the selected
+    entity only (they used to be every entity's), and "Parish-Related
+    Logins" shows only the parish logins of the selected entity's own
+    church(es) (it used to be every parish login in Beacon). The scoping
+    lives in user_screen_scope.py. The page is built on the shared fixed
+    frame: locked titles with the number of users, only the rows scroll."""
     user, is_full_admin, err = _require_parish_login_admin(request)
     if err:
         return err
     rows = _user_list_rows()
     current_org = _current_org(request)
-    parish_rows = [r for r in rows if r["has_any_parish_role"]]
-    diocese_rows = (
-        [r for r in rows if any(role["org_id"] == current_org["id"] for role in r["roles"])]
+    scope_parishes = user_screen_scope.parishes_for_entity(current_org["id"]) if current_org else []
+    parish_rows = user_screen_scope.scope_parish_rows(rows, [p["id"] for p in scope_parishes])
+    entity_rows = (
+        user_screen_scope.scope_entity_rows(rows, current_org["id"])
         if is_full_admin and current_org else []
     )
     unreachable = [r for r in rows if r["is_unreachable_approver"]] if is_full_admin else []
-    # 2026-09-15: for the Add User form's Parish picker below -- same
-    # current-entity scoping as user_detail_page's own all_parishes (there's
-    # no "current parish" concept in the header the way there's a current
-    # entity, so Add User needs an explicit picker; scoped to whichever
-    # diocese is currently selected, same reasoning as that page's comment).
-    all_parishes = registry.list_parishes(current_org["id"]) if current_org else []
+    # 2026-09-15: for the Add User form's Parish picker below -- there's no
+    # "current parish" concept in the header the way there's a current
+    # entity, so Add User needs an explicit picker. 2026-10-30: the churches
+    # the selected entity owns OR is linked to (a served church such as SJE
+    # owns none itself, so the old diocese-only list came up empty there).
+    all_parishes = user_screen_scope.add_user_parishes(current_org["id"]) if current_org else []
     return _render(request, "admin_users_index.html", user, {
         "parish_rows": parish_rows,
-        "diocese_rows": diocese_rows,
+        "entity_rows": entity_rows,
         "is_full_admin": is_full_admin,
         "current_org": current_org,
+        "entity_label": user_screen_scope.entity_label(current_org),
+        "parish_label": user_screen_scope.parish_label(scope_parishes, current_org),
+        "multi_parish": len(scope_parishes) > 1,
         "unreachable_count": len(unreachable),
         "all_parishes": all_parishes,
     })
@@ -595,6 +611,13 @@ def user_detail_page(user_id: int, request: Request):
     current_org = _current_org(request)
     all_parishes = registry.list_parishes(current_org["id"]) if current_org else []
 
+    # 2026-10-30 (Parish to Entity Promotion Plan, Step C): the Promote card (a parish login at a Cornerstone-served church) and the
+    # Return to parish only card (a promotion not yet undone). Beacon Admin only, like every entity-level panel on this page.
+    promote_options = login_promotion.promote_options(user_id, user["id"]) if is_full_admin else []
+    open_promotions = login_promotion.open_promotions(user_id, user["id"]) if is_full_admin else []
+    for p in open_promotions:
+        p["promoted_display"] = _format_last_login(p["promoted_at"])
+
     return _render(request, "admin_users_detail.html", user, {
         "target": target,
         "provider_guess": None if target["last_login_provider"] else _guess_provider(target["email"]),
@@ -613,6 +636,8 @@ def user_detail_page(user_id: int, request: Request):
         "all_parish_roles": parish_roles.all_parish_roles(),
         "all_parishes": all_parishes,
         "is_full_admin": is_full_admin,
+        "promote_options": promote_options,
+        "open_promotions": open_promotions,
     })
 
 
@@ -895,6 +920,86 @@ async def user_revoke_parish_role(user_id: int, request: Request):
 
     parish_roles.revoke_parish_role(user_id, parish_id, role_key, user["id"])
     return RedirectResponse(f"/admin/setup/users/{user_id}?parish_revoked=1", status_code=303)
+
+
+# ── Promote a parish login to an entity login, and the undo ─────────────────────────────────────────────────────────────────
+# Parish to Entity Promotion and User Screens Plan.md, Step C (Jay, 2026-10-30). The rules and both transactions live in
+# login_promotion.py. Beacon Admin only (D3): at the church's diocese or at its own linked entity, checked again on every POST.
+
+def _promotion_error(user_id: int, message: str):
+    return RedirectResponse(f"/admin/setup/users/{user_id}?error={quote_plus(message)}", status_code=303)
+
+
+@router.get("/admin/setup/users/{user_id}/promote", response_class=HTMLResponse)
+def promote_confirm_page(user_id: int, request: Request, parish_id: int = 0):
+    """The confirmation screen: nothing changes until its form is posted. Shows what carries over, what does not, and anything that
+       blocks the promotion."""
+    user, err = _require_beacon_admin(request)
+    if err:
+        return err
+    plan = login_promotion.load_plan(user_id, parish_id)
+    if not plan["user"]:
+        return RedirectResponse("/admin/setup/users")
+    if not plan["parish"] or not login_promotion.actor_may_promote(user["id"], plan["parish"]):
+        return _promotion_error(user_id, "You can't promote this person at that church.")
+    return _render(request, "admin_users_promotion.html", user, {"mode": "promote", "plan": plan, "target": plan["user"]})
+
+
+@router.post("/admin/setup/users/{user_id}/promote")
+async def promote_do(user_id: int, request: Request):
+    user, err = _require_beacon_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        parish_id = int(form.get("parish_id") or 0)
+    except (TypeError, ValueError):
+        parish_id = 0
+    parish = db.query_one("SELECT id, org_id, linked_org_id FROM portal.parishes WHERE id = %s", (parish_id,))
+    if not parish or not login_promotion.actor_may_promote(user["id"], parish):
+        return _promotion_error(user_id, "You can't promote this person at that church.")
+    extras = [str(v) for v in form.getlist("extra_role")]
+    try:
+        login_promotion.promote(user_id, parish_id, user["id"], extras)
+    except login_promotion.PromotionBlocked as exc:
+        return _promotion_error(user_id, " ".join(exc.messages))
+    return RedirectResponse(f"/admin/setup/users/{user_id}?promoted=1", status_code=303)
+
+
+@router.get("/admin/setup/users/{user_id}/return-to-parish", response_class=HTMLResponse)
+def return_confirm_page(user_id: int, request: Request, promotion_id: int = 0):
+    user, err = _require_beacon_admin(request)
+    if err:
+        return err
+    plan = login_promotion.load_return_plan(promotion_id)
+    promo = plan["promotion"]
+    if (not promo or promo["user_id"] != user_id
+            or not login_promotion.actor_may_manage(user["id"], [promo["org_id"], promo["parish_org_id"]])):
+        return _promotion_error(user_id, "You can't return this person to a parish login.")
+    return _render(request, "admin_users_promotion.html", user, {"mode": "return", "plan": plan, "target": plan["user"]})
+
+
+@router.post("/admin/setup/users/{user_id}/return-to-parish")
+async def return_do(user_id: int, request: Request):
+    user, err = _require_beacon_admin(request)
+    if err:
+        return err
+    form = await request.form()
+    try:
+        promotion_id = int(form.get("promotion_id") or 0)
+    except (TypeError, ValueError):
+        promotion_id = 0
+    promo = db.query_one(
+        "SELECT lp.user_id, lp.org_id, p.org_id AS parish_org_id FROM portal.login_promotions lp "
+        "JOIN portal.parishes p ON p.id = lp.parish_id WHERE lp.id = %s", (promotion_id,))
+    if (not promo or promo["user_id"] != user_id
+            or not login_promotion.actor_may_manage(user["id"], [promo["org_id"], promo["parish_org_id"]])):
+        return _promotion_error(user_id, "You can't return this person to a parish login.")
+    try:
+        login_promotion.return_to_parish(promotion_id, user["id"])
+    except login_promotion.PromotionBlocked as exc:
+        return _promotion_error(user_id, " ".join(exc.messages))
+    return RedirectResponse(f"/admin/setup/users/{user_id}?returned=1", status_code=303)
 
 
 @router.post("/admin/setup/users/{user_id}/grant-approval-rule")

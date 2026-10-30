@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Promote to entity login' if mode == 'promote' else 'Return to parish only' }} — {{ target.email }}{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
+{% endblock %}
+{% block content %}
+{# 2026-10-30, Jay (Parish to Entity Promotion and User Screens Plan.md, Step C): the confirmation screen for promoting a parish login to an
+   entity login (mode "promote") and for undoing it (mode "return"). Nothing changes until the form is posted, and the button stays off
+   while anything blocks it. The plan on this screen is rebuilt from the database again when the form is posted (login_promotion.py). #}
+<div class="page-shell">
+
+{% set who = target.display_name or target.email %}
+{% if mode == 'promote' %}
+<h1>Promote {{ who }} to an entity login</h1>
+{% else %}
+<h1>Return {{ who }} to a parish login</h1>
+{% endif %}
+<p class="back-link"><a href="/admin/setup/users/{{ target.id }}">&larr; Back to {{ who }}</a></p>
+
+{% if plan.blockers %}
+<div class="banner banner-error">
+  <strong>This can't go ahead yet:</strong>
+  <ul>{% for b in plan.blockers %}<li>{{ b }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+{% if mode == 'promote' %}
+{% set code = plan.parish.entity_code|upper if plan.parish.entity_code else plan.parish.entity_name %}
+<div class="card" style="margin-top: var(--space-5);">
+  <h2>What changes</h2>
+  <table class="simple-table compact">
+    <tbody>
+      <tr><th>Today</th><td>Parish login at {{ plan.parish.name }}.</td></tr>
+      <tr><th>After</th><td>Entity login at {{ plan.parish.entity_name }} ({{ code }}). They sign in to the entity screens only: no Parish Mode, no switch.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top: var(--space-5);">
+  <h2>Roles at {{ code }}</h2>
+  <table class="simple-table compact">
+    <thead><tr><th>Parish role today</th><th>Becomes at {{ code }}</th></tr></thead>
+    <tbody>
+      <tr><td>{% if plan.replaced %}{{ plan.replaced[0].label }}{% else %}&mdash;{% endif %}</td><td>Entity Member (always granted)</td></tr>
+      {% for c in plan.carry %}
+      <tr><td>{{ c.parish_label }}</td><td>{{ c.entity_label }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if plan.dropped %}
+  <h3>Will not carry over</h3>
+  <p class="muted">These parish roles have no entity-level version. They are retired at {{ plan.parish.name }} when this person is promoted
+    (not deleted: Return to parish only brings them back).</p>
+  <ul>{% for d in plan.dropped %}<li>{{ d.label }}</li>{% endfor %}</ul>
+  {% endif %}
+</div>
+
+<form method="post" action="/admin/setup/users/{{ target.id }}/promote">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+  <input type="hidden" name="parish_id" value="{{ plan.parish.id }}">
+  {% if plan.extras %}
+  <div class="card" style="margin-top: var(--space-5);">
+    <h2>Also grant at {{ code }} (optional)</h2>
+    <p class="muted">Anything else can be granted afterwards from the Roles screen.</p>
+    {% for e in plan.extras %}
+    <p><label><input type="checkbox" name="extra_role" value="{{ e.key }}"> {{ e.label }}</label></p>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <p>
+    <button type="submit" class="btn btn-primary" {% if plan.blockers %}disabled{% endif %}>Promote to entity login</button>
+    <a class="btn btn-secondary" href="/admin/setup/users/{{ target.id }}">Cancel</a>
+  </p>
+</form>
+
+{% else %}
+{% set promo = plan.promotion %}
+<div class="card" style="margin-top: var(--space-5);">
+  <h2>What changes</h2>
+  <table class="simple-table compact">
+    <tbody>
+      <tr><th>Today</th><td>Entity login at {{ promo.entity_name }} ({{ promo.entity_code|upper }}), promoted from {{ promo.parish_name }}.</td></tr>
+      <tr><th>After</th><td>Parish login at {{ promo.parish_name }} again.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top: var(--space-5);">
+  <h2>Roles</h2>
+  <h3>Removed at {{ promo.entity_code|upper }}</h3>
+  <ul>{% for r in plan.revoke %}<li>{{ r.label }}</li>{% else %}<li>None.</li>{% endfor %}</ul>
+  <h3>Restored at {{ promo.parish_name }}</h3>
+  <ul>{% for r in plan.restore %}<li>{{ r.label }}</li>{% else %}<li>None.</li>{% endfor %}</ul>
+</div>
+
+<form method="post" action="/admin/setup/users/{{ target.id }}/return-to-parish">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+  <input type="hidden" name="promotion_id" value="{{ promo.id }}">
+  <p>
+    <button type="submit" class="btn btn-primary" {% if plan.blockers %}disabled{% endif %}>Return to parish only</button>
+    <a class="btn btn-secondary" href="/admin/setup/users/{{ target.id }}">Cancel</a>
+  </p>
+</form>
+{% endif %}
+
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+document.querySelectorAll('form[method="post" i]').forEach(function (form) {
+  form.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    showButtonLoading(e.submitter || form.querySelector('button[type="submit"]'));
+  });
+});
+</script>
+{% endblock %}

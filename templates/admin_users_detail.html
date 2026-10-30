@@ -37,7 +37,32 @@
 {% if request.query_params.get('ar_revoked') %}<div class="banner banner-success">Approval rule updated.</div>{% endif %}
 {% if request.query_params.get('parish_granted') %}<div class="banner banner-success">Parish role granted.</div>{% endif %}
 {% if request.query_params.get('parish_revoked') %}<div class="banner banner-success">Parish role revoked.</div>{% endif %}
+{% if request.query_params.get('promoted') %}<div class="banner banner-success">Promoted to an entity login. They now hold their roles at the entity and sign in to the entity screens only.</div>{% endif %}
+{% if request.query_params.get('returned') %}<div class="banner banner-success">Returned to a parish login. Their parish roles are back.</div>{% endif %}
 {% if request.query_params.get('error') %}<div class="banner banner-error">{{ request.query_params.get('error') }}</div>{% endif %}
+
+{# 2026-10-30, Jay (Parish to Entity Promotion and User Screens Plan.md, Step C): a person set up as a PARISH login at a church Cornerstone
+   now serves as an entity of its own is promoted to an ENTITY login here, and can be returned. Both cards are Beacon Admin only (the
+   routes check it again) and open a confirmation screen: nothing changes from this page. See login_promotion.py. #}
+{% if is_full_admin and promote_options %}
+<div class="card" style="margin-top: var(--space-5);">
+  <h2>Promote to entity login</h2>
+  <p class="muted">This person is a parish login at a Cornerstone-served church. Promote them to an entity login to hold their roles at
+    the church's own entity, including the roles they hold at the parish today. A confirmation screen shows exactly what changes first.</p>
+  {% for o in promote_options %}
+  <p><a class="btn btn-primary" href="/admin/setup/users/{{ target.id }}/promote?parish_id={{ o.parish_id }}">Promote at {{ o.parish_name }} into {{ o.entity_code|upper if o.entity_code else o.entity_name }}&hellip;</a></p>
+  {% endfor %}
+</div>
+{% endif %}
+{% if is_full_admin and open_promotions %}
+<div class="card" style="margin-top: var(--space-5);">
+  <h2>Return to parish only</h2>
+  {% for p in open_promotions %}
+  <p>Promoted into {{ p.entity_code|upper }} (from {{ p.parish_name }}) on {{ p.promoted_display }} by {{ p.promoted_by_email or "—" }}.
+    <a class="btn btn-secondary" href="/admin/setup/users/{{ target.id }}/return-to-parish?promotion_id={{ p.id }}">Return to parish only&hellip;</a></p>
+  {% endfor %}
+</div>
+{% endif %}
 
 {# 2026-09-13, Jay: "Anyone with the RBAC of Parish Mode will also be able
    to manage Parish-related user logins." A parish_mode_user holder without

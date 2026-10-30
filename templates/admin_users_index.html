@@ -2,48 +2,184 @@
 {% block title %}User Management — Beacon{% endblock %}
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/admin_setup.css?v={{ asset_version('css/admin_setup.css') }}">
-{# Phase E (2026-08-16), item 11: this table had NO scroll wrapper of any
-   kind -- unlike every sibling admin table (My Requests, Admin -> All
-   Requests, AP Review, Vendor Requests, GL Mapping, Manage Parishes all
-   wrap their table in .table-scroll), a 9-column table here (Display Name /
-   First Name / Email / Active / Last Sign-in / Program Areas / Entities /
-   Roles / Manage) had nothing containing its overflow -- on a narrower
-   viewport or with real long emails/names, the table pushes the PAGE itself
-   wider instead of showing a clean, contained horizontal scrollbar. This is
-   the strongest concrete match found for the plan's own "still-unidentified
-   horizontal-scrollbar screen" (item 11) -- see the session report for the
-   other candidates checked and ruled out. #}
 <link rel="stylesheet" href="/static/css/scroll_panel.css?v={{ asset_version('css/scroll_panel.css') }}">
+<link rel="stylesheet" href="/static/css/fixed_frame.css?v={{ asset_version('css/fixed_frame.css') }}">
+<link rel="stylesheet" href="/static/css/admin_users_frames.css?v={{ asset_version('css/admin_users_frames.css') }}">
 {% endblock %}
 {% block content %}
-<div class="page-shell-wide">
+{# 2026-10-30, Jay (Parish to Entity Promotion and User Screens Plan.md, Step A): the shared fixed frame
+   (static/css/fixed_frame.css + js/fixed_frame.js, the standard for a screen whose rows run longer than a page):
+   the title row and each list's title (with the number of users) stay locked, only the rows scroll. Two lists on one
+   page, so each is its own .uf-section (admin_users_frames.css) rather than one .ff-frame. fixed_frame.js only fits
+   the shell to the window and opens the Add User dialog here: these tables are not .ff-table, so it leaves them alone.
+   The sticky column headers (scroll_panel.css) and the click-to-reveal pop-ups and sorting (admin_users.js) are the
+   ones the screen already had.
 
-<h1>User Management</h1>
-<p class="back-link"><a href="/admin">&larr; Back to Administrative Tasks</a></p>
+   Renamed "Diocesan-Related Logins" -> "Entity-Related Logins" and scoped to the entity selected at the top (people
+   AND their roles/Program Areas at that entity only); "Parish-Related Logins" shows only that entity's own church(es).
+   The Entities column went: every row is the one selected entity. See user_screen_scope.py.
+   2026-09-13..16 history kept in the pre-change copy (admin_users_index_pre_user_screens.html). #}
+<div class="page-shell-wide"><div class="ff-shell">
 
-{% if unreachable_count %}
-<div class="banner banner-error">
-  <strong>{{ unreachable_count }} user{{ '' if unreachable_count == 1 else 's' }}</strong> —
-  each is a named approver or backup on a live approval rule, but has never signed in and holds
-  no role. Requests routed to them will never be seen. Repoint the approval rule to their real
-  login identity, or confirm they'll sign in soon.
-</div>
-{% endif %}
+  <div class="ff-title-row">
+    <h1>User Management</h1>
+    <a class="ff-back" href="/admin">&larr; Back to Administrative Tasks</a>
+    {% if is_full_admin %}
+    <div class="ff-actions">
+      <button type="button" class="btn btn-sm btn-primary" data-ff-dialog="addUserDialog">Add User</button>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if unreachable_count %}
+  <div class="banner banner-error ff-banner">
+    <strong>{{ unreachable_count }} user{{ '' if unreachable_count == 1 else 's' }}</strong> —
+    each is a named approver or backup on a live approval rule, but has never signed in and holds
+    no role. Requests routed to them will never be seen. Repoint the approval rule to their real
+    login identity, or confirm they'll sign in soon.
+  </div>
+  {% endif %}
+
+  {% if is_full_admin %}
+  <section class="uf-section" id="entityLogins">
+    <div class="uf-head">
+      <h2>Entity-Related Logins{% if current_org %} — {{ entity_label }} <span class="uf-count">({{ entity_rows|length }} user{{ '' if entity_rows|length == 1 else 's' }})</span>{% endif %}</h2>
+    </div>
+    {% if not current_org %}
+    <p class="sub uf-note">Select an entity (top of the page) to see its entity-related logins here.</p>
+    {% endif %}
+    <div class="uf-scroll scroll-panel">
+      <table class="simple-table compact" id="usersTable">
+        <thead>
+          <tr>
+            <th data-sort="display_name" class="sortable">Display Name</th>
+            <th data-sort="first_name" class="sortable">First Name</th>
+            <th data-sort="email" class="sortable">Email</th>
+            <th data-sort="active" class="sortable">Active</th>
+            <th data-sort="last_sign_in" class="sortable">Last Sign-in</th>
+            <th>Program Areas</th>
+            <th>Roles</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in entity_rows %}
+          <tr data-row="1">
+            <td data-sort-value="display_name">{{ u.display_name or "—" }}</td>
+            <td data-sort-value="first_name">{{ u.first_name or "—" }}</td>
+            <td data-sort-value="email">{{ u.email }}</td>
+            <td data-sort-value="active" data-value="{{ '0' if not u.is_active else '1' }}">
+              {% if not u.is_active %}<span class="badge badge-draft">Deactivated</span>{% else %}Yes{% endif %}
+            </td>
+            {# data-value stays the raw timestamp (still sorts correctly as a string -- ISO8601 UTC sorts
+               chronologically); only the user-visible text is reformatted to ET/24hr (2026-09-16, Jay). #}
+            <td data-sort-value="last_sign_in" data-value="{{ u.last_login_at or '' }}">
+              {% if u.last_login_display %}{{ u.last_login_display }}{% else %}Never{% endif %}
+              {% if u.is_unreachable_approver %}<br><span class="badge badge-draft">Required approver, never signed in</span>{% endif %}
+            </td>
+            <td class="status-cell">
+              <button type="button" class="status-pill-btn" data-popup="pa-popup-{{ u.id }}">
+                {{ u.pa_count }} {{ "area" if u.pa_count == 1 else "areas" }}
+              </button>
+              <div class="status-popup compact" id="pa-popup-{{ u.id }}" hidden>
+                <div class="status-popup-title">Program Areas at {{ entity_label }} — {{ u.display_name or u.email }}</div>
+                {% if u.program_areas %}
+                <ul class="popup-list">
+                  {% for pa in u.program_areas %}<li>{{ pa.program_area_title }}</li>{% endfor %}
+                </ul>
+                {% else %}
+                <div class="sub">No program-area assignments here.</div>
+                {% endif %}
+              </div>
+            </td>
+            <td class="status-cell">
+              {# 2026-08-02, Item 13: Roles live in a click-to-reveal pop-up, not in the row. Now only the roles at this entity. #}
+              <button type="button" class="status-pill-btn" data-popup="roles-popup-{{ u.id }}">
+                <span class="badge badge-approved">{{ u.roles|length }} role{{ '' if u.roles|length == 1 else 's' }}</span>
+              </button>
+              <div class="status-popup compact" id="roles-popup-{{ u.id }}" hidden>
+                <div class="status-popup-title">Roles at {{ entity_label }} — {{ u.display_name or u.email }}</div>
+                <ul class="popup-list">
+                  {% for r in u.roles %}<li>{{ r.role_label }}</li>{% endfor %}
+                </ul>
+              </div>
+            </td>
+            <td><a class="btn btn-secondary" href="/admin/setup/users/{{ u.id }}">Manage</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8">
+            {% if not current_org %}Select an entity to see its entity-related logins.
+            {% else %}No entity-related logins found for {{ entity_label }}.
+            {% endif %}
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="uf-section" id="parishLogins">
+    <div class="uf-head">
+      <h2>Parish-Related Logins{% if current_org %} — {{ parish_label }} <span class="uf-count">({{ parish_rows|length }} user{{ '' if parish_rows|length == 1 else 's' }})</span>{% endif %}</h2>
+    </div>
+    {% if not current_org %}
+    <p class="sub uf-note">Select an entity (top of the page) to see its parish-related logins here.</p>
+    {% endif %}
+    <div class="uf-scroll scroll-panel">
+      <table class="simple-table compact">
+        <thead>
+          <tr>
+            <th>Display Name</th><th>Email</th><th>Active</th><th>Parish Roles</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in parish_rows %}
+          <tr>
+            <td>{{ u.display_name or "—" }}</td>
+            <td>{{ u.email }}</td>
+            <td>{% if not u.is_active %}<span class="badge badge-draft">Deactivated</span>{% else %}Yes{% endif %}</td>
+            <td class="status-cell">
+              <button type="button" class="status-pill-btn" data-popup="prole-popup-{{ u.id }}">
+                <span class="badge badge-approved">{{ u.parish_roles|length }} role{{ '' if u.parish_roles|length == 1 else 's' }}</span>
+              </button>
+              <div class="status-popup compact" id="prole-popup-{{ u.id }}" hidden>
+                <div class="status-popup-title">Parish Roles — {{ u.display_name or u.email }}</div>
+                <ul class="popup-list">
+                  {% for r in u.parish_roles %}<li>{{ r.role_label }}{% if multi_parish %} ({{ r.parish_name }}){% endif %}</li>{% endfor %}
+                </ul>
+              </div>
+            </td>
+            <td><a class="btn btn-secondary" href="/admin/setup/users/{{ u.id }}">Manage</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5">
+            {% if not current_org %}Select an entity to see its parish-related logins.
+            {% else %}No parish-related logins found for {{ parish_label }}.
+            {% endif %}
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div></div>
 
 {% if is_full_admin %}
-<!-- 2026-08-02 feedback batch, Item 13-continued: "Add User" moved to the
-     top of the screen. Still a single-step form -- the "guided" part of
-     the flow is what happens next, on the detail page (a highlighted
-     next-steps prompt via ?new=1), not a multi-page wizard here.
-     2026-09-14: made collapsible (closed by default -- a secondary action
-     on a page whose main job is browsing the two lists below), per Jay. -->
-<details class="card setup-section">
-  <summary><h2>Add User</h2></summary>
-  <form method="post" action="/admin/setup/users/add" class="filter-bar" style="align-items:flex-end;">
+{# Add User, moved out of the page into a pop-up opened from the title row (the fixed frame has no room for a card). Still a
+   single-step form; the "guided" part is what happens next, on the detail page (?new=1), not a multi-page wizard.
+   2026-09-15, Jay: it asks which type of login is being added (Entity or Parish -- never both, see
+   rbac.MixedLoginTypeError), required with no default so an admin can't tab past it. An Entity login gets baseline access
+   at the entity selected at the top; a Parish login gets it at the parish picked here. #}
+<dialog class="ff-dialog" id="addUserDialog">
+  <h2>Add User</h2>
+  <form method="post" action="/admin/setup/users/add">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
     <div class="field">
       <label for="email">Email</label>
-      <input type="email" id="email" name="email" required>
+      <input type="text" inputmode="email" autocomplete="off" id="email" name="email" required
+             pattern="[^@\s]+@[^@\s]+\.[^@\s]+" title="Enter a full email address">
     </div>
     <div class="field">
       <label for="first_name">First Name</label>
@@ -53,34 +189,14 @@
       <label for="display_name">Display Name</label>
       <input type="text" id="display_name" name="display_name" placeholder="Joe Smith">
     </div>
-    {# 2026-09-15, Jay: "when we add a user, what type of user is being
-       added... you should ask which type of user it is." A login is either
-       an Entity login (diocesan/entity-level roles, checkreq.user_roles) or
-       a Parish login (portal.parish_user_roles) -- never both (see
-       rbac.MixedLoginTypeError). Required, no default selected, so an admin
-       can't tab past it without deciding. Parish role grants made through
-       Parish Mode's own "User Access" screen already create a Parish-typed
-       login automatically (parish_roles.get_or_create_user_for_grant) --
-       this selector only matters for accounts created here, on the
-       diocesan admin screen. #}
     <div class="field">
       <label for="login_type">Login Type</label>
       <select id="login_type" name="login_type" required onchange="document.getElementById('addUserParishField').hidden = (this.value !== 'parish')">
         <option value="" disabled selected>Choose one…</option>
-        <option value="entity">Entity Login — diocesan/entity-level roles</option>
+        <option value="entity">Entity Login — entity-level roles</option>
         <option value="parish">Parish Login — access at one or more parishes</option>
       </select>
     </div>
-    {# 2026-09-15, Jay's second follow-up: "I thought you were going to set
-       up a default role when a entity user is created... noone would be
-       roleless going forward" -- the Parish side had the same gap the
-       Entity side just had (see users_add's own docstring). Unlike an
-       entity (implicit from the header's current_org), there's no "current
-       parish," so this needs an explicit picker -- scoped to whichever
-       diocese is currently selected (same all_parishes source
-       user_detail_page's own Parish Roles panel already uses). Hidden
-       until "Parish Login" is chosen (onchange above) so it doesn't read
-       as relevant to an Entity login. #}
     <div class="field" id="addUserParishField" hidden>
       <label for="parish_id">Parish</label>
       <select id="parish_id" name="parish_id">
@@ -90,198 +206,17 @@
         {% endfor %}
       </select>
     </div>
-    <div class="field">
-      <button type="submit" class="btn btn-primary">Add User &amp; Continue</button>
+    <p class="ff-help">An Entity Login is granted baseline access at whichever entity is currently selected at the top of the page; a Parish Login is granted baseline access at the parish picked here. Either way they can sign in immediately. Submitting takes you straight to their page to grant more.</p>
+    <div class="ff-dialog-actions">
+      <button type="button" class="btn btn-sm btn-secondary" data-ff-close>Cancel</button>
+      <button type="submit" class="btn btn-sm btn-primary">Add User &amp; Continue</button>
     </div>
   </form>
-  <p class="setup-note">
-    An Entity Login is granted baseline access at whichever entity is currently selected above
-    (see the header); a Parish Login is granted baseline access at the parish picked here — either
-    way they can sign in immediately and reach the main portal. Submitting takes you straight to
-    their page to grant more (a Program Area / additional role, or an additional parish role) next.
-  </p>
-</details>
+</dialog>
 {% endif %}
-
-{# 2026-09-16, Jay: "I expected the user management sections to be ordered
-   a) add user, b) Diocesan-related Logins (entity) and c) Parish-related
-   logins" -- reordered below to match (Diocesan first, Parish second).
-   Checked git history first: this was never a lost/reverted commit, the
-   Parish section had simply always come first since the split was
-   originally built (commit 767e8e8, 2026-09-13) -- just never matched
-   what Jay expected. #}
-{% if is_full_admin %}
-<!-- 2026-09-14: scoped to the currently-selected entity (Jay: "I would
-     only like to see the users for that entity that is currently
-     selected") -- was previously every diocesan-role holder across every
-     entity regardless of the header switcher. See admin_users.py's
-     users_list_page for the actual filter. Made collapsible (open by
-     default, same reasoning as Parish-Related Logins below). -->
-<details class="card setup-section" open>
-  <summary>
-    <h2>Diocesan-Related Logins{% if current_org %} — {{ current_org.code|upper if current_org.code else current_org.name }}{% endif %}</h2>
-  </summary>
-  {% if not current_org %}
-  <p class="sub">Select an entity (top of the page) to see its diocesan-related logins here.</p>
-  {% endif %}
-  <div class="table-scroll scroll-panel">
-  {# 2026-09-16, Jay: "list these screens in a more compact fashion, row by
-     row" -- the .compact row-density modifier (base.css, 2026-09-14)
-     already existed and was already used on admin_users_detail.html's own
-     Roles table and parish_mode.html, but was never applied here -- the
-     gap Jay was recalling. #}
-  <table class="simple-table compact" id="usersTable">
-    <thead>
-      <tr>
-        <th data-sort="display_name" class="sortable">Display Name</th>
-        <th data-sort="first_name" class="sortable">First Name</th>
-        <th data-sort="email" class="sortable">Email</th>
-        <th data-sort="active" class="sortable">Active</th>
-        <th data-sort="last_sign_in" class="sortable">Last Sign-in</th>
-        <th>Program Areas</th>
-        <th>Entities</th>
-        <th>Roles</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for u in diocese_rows %}
-      <tr data-row="1">
-        <td data-sort-value="display_name">{{ u.display_name or "—" }}</td>
-        <td data-sort-value="first_name">{{ u.first_name or "—" }}</td>
-        <td data-sort-value="email">{{ u.email }}</td>
-        <td data-sort-value="active" data-value="{{ '0' if not u.is_active else '1' }}">
-          {% if not u.is_active %}<span class="badge badge-draft">Deactivated</span>{% else %}Yes{% endif %}
-        </td>
-        {# data-value stays the raw timestamp (still sorts correctly as a
-           string -- ISO8601 UTC sorts chronologically) -- only the
-           user-visible text is reformatted to ET/24hr (2026-09-16, Jay). #}
-        <td data-sort-value="last_sign_in" data-value="{{ u.last_login_at or '' }}">
-          {% if u.last_login_display %}{{ u.last_login_display }}{% else %}Never{% endif %}
-          {% if u.is_unreachable_approver %}<br><span class="badge badge-draft">Required approver, never signed in</span>{% endif %}
-        </td>
-        <td class="status-cell">
-          <button type="button" class="status-pill-btn" data-popup="pa-popup-{{ u.id }}">
-            {{ u.pa_count }} {{ "area" if u.pa_count == 1 else "areas" }}
-          </button>
-          <div class="status-popup compact" id="pa-popup-{{ u.id }}" hidden>
-            <div class="status-popup-title">Program Areas — {{ u.display_name or u.email }}</div>
-            {% if u.program_areas %}
-            <ul class="popup-list">
-              {% for pa in u.program_areas %}<li>{{ pa.org_code|upper }} &mdash; {{ pa.program_area_title }}</li>{% endfor %}
-            </ul>
-            {% else %}
-            <div class="sub">No program-area assignments.</div>
-            {% endif %}
-          </div>
-        </td>
-        <td class="status-cell">
-          <button type="button" class="status-pill-btn" data-popup="ent-popup-{{ u.id }}">
-            {% if u.entity_codes %}{{ u.entity_codes|join(', ') }}{% else %}—{% endif %}
-          </button>
-          <div class="status-popup compact" id="ent-popup-{{ u.id }}" hidden>
-            <div class="status-popup-title">Entities — {{ u.display_name or u.email }}</div>
-            {% if u.entity_codes %}
-            <div class="sub">Has a role or program-area assignment in: {{ u.entity_codes|join(', ') }}.</div>
-            {% else %}
-            <div class="sub">No entity access yet.</div>
-            {% endif %}
-          </div>
-        </td>
-        <td class="status-cell">
-          <!-- 2026-08-02 feedback batch, Item 13: Roles moved OUT of the
-               visible row -- a user with many role x entity combinations
-               (Jay's own account) would make every row scroll endlessly.
-               Popup instead, same click-to-reveal pattern as Program
-               Areas/Entities above. -->
-          {% if u.has_any_role %}
-          <button type="button" class="status-pill-btn" data-popup="roles-popup-{{ u.id }}">
-            <span class="badge badge-approved">{{ u.roles|length }} role{{ '' if u.roles|length == 1 else 's' }}</span>
-          </button>
-          {% else %}
-          <button type="button" class="status-pill-btn" data-popup="roles-popup-{{ u.id }}">
-            <span class="badge badge-draft">No roles</span>
-          </button>
-          {% endif %}
-          <div class="status-popup compact" id="roles-popup-{{ u.id }}" hidden>
-            <div class="status-popup-title">Roles — {{ u.display_name or u.email }}</div>
-            {% if u.roles %}
-            <ul class="popup-list">
-              {% for r in u.roles %}<li>{{ r.role_label }} ({{ r.org_code|upper }})</li>{% endfor %}
-            </ul>
-            {% else %}
-            <div class="sub">No live role grants.</div>
-            {% endif %}
-          </div>
-        </td>
-        <td><a class="btn btn-secondary" href="/admin/setup/users/{{ u.id }}">Manage</a></td>
-      </tr>
-      {% else %}
-      <tr><td colspan="9">
-        {% if not current_org %}Select an entity to see its diocesan-related logins.
-        {% else %}No diocesan-related logins found for {{ current_org.code|upper if current_org.code else current_org.name }}.
-        {% endif %}
-      </td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-</details>
-{% endif %}
-
-{# 2026-09-13, Jay: "manage Beacon user logins in two distinct groups -- the
-   parish-related logins, and the Diocesan-related logins." A user in both
-   groups (holds a checkreq.roles grant AND a live parish role) appears in
-   both -- same "membership, not exclusive category" idea the Entities
-   column already uses. A parish_mode_user holder (is_full_admin=False)
-   only ever gets `parish_rows` populated (see admin_users.py's
-   users_list_page) -- the Diocesan-Related section above is simply never
-   rendered for them, not just hidden by CSS. This is a first, functional
-   cut of the two-group split (real access control, real grouping) --
-   NOT yet the fuller per-group column/layout redesign (e.g. a parish-
-   specific column set instead of reusing the diocesan Program Areas/
-   Entities/Roles columns above), which is its own follow-up.
-   2026-09-14: made collapsible (open by default -- this list is the
-   page's own primary content, unlike Add User above), per Jay. #}
-<details class="card setup-section" open>
-  <summary><h2>Parish-Related Logins</h2></summary>
-  <div class="table-scroll scroll-panel">
-  <table class="simple-table compact">
-    <thead>
-      <tr>
-        <th>Display Name</th><th>Email</th><th>Active</th><th>Parish Roles</th><th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for u in parish_rows %}
-      <tr>
-        <td>{{ u.display_name or "—" }}</td>
-        <td>{{ u.email }}</td>
-        <td>{% if not u.is_active %}<span class="badge badge-draft">Deactivated</span>{% else %}Yes{% endif %}</td>
-        <td class="status-cell">
-          <button type="button" class="status-pill-btn" data-popup="prole-popup-{{ u.id }}">
-            <span class="badge badge-approved">{{ u.parish_roles|length }} role{{ '' if u.parish_roles|length == 1 else 's' }}</span>
-          </button>
-          <div class="status-popup compact" id="prole-popup-{{ u.id }}" hidden>
-            <div class="status-popup-title">Parish Roles — {{ u.display_name or u.email }}</div>
-            <ul class="popup-list">
-              {% for r in u.parish_roles %}<li>{{ r.role_label }} ({{ r.parish_name }})</li>{% endfor %}
-            </ul>
-          </div>
-        </td>
-        <td><a class="btn btn-secondary" href="/admin/setup/users/{{ u.id }}">Manage</a></td>
-      </tr>
-      {% else %}
-      <tr><td colspan="5">No parish-related logins yet.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-</details>
-
-</div>
 {% endblock %}
 {% block extra_js %}
+<script src="/static/js/fixed_frame.js?v={{ asset_version('js/fixed_frame.js') }}"></script>
 <script src="/static/js/admin_users.js?v={{ asset_version('js/admin_users.js') }}"></script>
 <script>
 document.querySelectorAll('form[method="post" i]').forEach(function (form) {
